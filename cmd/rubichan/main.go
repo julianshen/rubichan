@@ -281,7 +281,7 @@ func runHeadless() error {
 	fmt.Print(string(out))
 
 	if result.Error != "" {
-		os.Exit(1)
+		return fmt.Errorf("agent run failed: %s", result.Error)
 	}
 
 	return nil

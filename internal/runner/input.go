@@ -21,7 +21,11 @@ func ResolveInput(promptFlag, filePath string, stdinReader io.Reader) (string, e
 		if err != nil {
 			return "", fmt.Errorf("reading prompt file: %w", err)
 		}
-		return strings.TrimSpace(string(data)), nil
+		text := strings.TrimSpace(string(data))
+		if text == "" {
+			return "", fmt.Errorf("prompt file is empty: %s", filePath)
+		}
+		return text, nil
 	}
 
 	if stdinReader != nil {

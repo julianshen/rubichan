@@ -4,7 +4,6 @@ package output
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // MarkdownFormatter outputs RunResult as human-readable Markdown.
@@ -44,8 +43,15 @@ func (f *MarkdownFormatter) Format(result *RunResult) ([]byte, error) {
 	if result.TurnCount == 1 {
 		turnLabel = "turn"
 	}
+
+	var durationStr string
+	if result.DurationMs >= 1000 {
+		durationStr = fmt.Sprintf("%.1fs", float64(result.DurationMs)/1000)
+	} else {
+		durationStr = fmt.Sprintf("%dms", result.DurationMs)
+	}
 	b.WriteString(fmt.Sprintf("\n---\n*Completed in %d %s, %s*\n",
-		result.TurnCount, turnLabel, result.Duration.Round(100*time.Millisecond)))
+		result.TurnCount, turnLabel, durationStr))
 
 	return []byte(b.String()), nil
 }

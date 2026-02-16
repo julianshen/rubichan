@@ -4,8 +4,6 @@ package output
 import (
 	"encoding/json"
 	"testing"
-	"time"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +14,7 @@ func TestJSONFormatterBasic(t *testing.T) {
 		Prompt:    "say hello",
 		Response:  "Hello!",
 		TurnCount: 1,
-		Duration:  500 * time.Millisecond,
+		DurationMs: 500,
 		Mode:      "generic",
 	}
 
@@ -31,6 +29,7 @@ func TestJSONFormatterBasic(t *testing.T) {
 	assert.Equal(t, "Hello!", decoded["response"])
 	assert.Equal(t, "generic", decoded["mode"])
 	assert.Equal(t, float64(1), decoded["turn_count"])
+	assert.Equal(t, float64(500), decoded["duration_ms"])
 }
 
 func TestJSONFormatterWithToolCalls(t *testing.T) {
@@ -42,7 +41,7 @@ func TestJSONFormatterWithToolCalls(t *testing.T) {
 			{Name: "file", Input: json.RawMessage(`{"path":"main.go"}`), Result: "package main"},
 		},
 		TurnCount: 2,
-		Duration:  time.Second,
+		DurationMs: 1000,
 		Mode:      "generic",
 	}
 
@@ -64,7 +63,7 @@ func TestJSONFormatterWithError(t *testing.T) {
 		Prompt:    "fail",
 		Response:  "",
 		TurnCount: 0,
-		Duration:  0,
+		DurationMs: 0,
 		Mode:      "generic",
 		Error:     "something went wrong",
 	}

@@ -70,3 +70,14 @@ func TestResolveInputEmptyPrompt(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no input")
 }
+
+func TestResolveInputEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.txt")
+	err := os.WriteFile(path, []byte("   "), 0644)
+	require.NoError(t, err)
+
+	_, err = ResolveInput("", path, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prompt file is empty")
+}

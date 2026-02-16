@@ -14,15 +14,7 @@ func ExtractDiff(ctx context.Context, dir, diffRange string) (string, error) {
 		diffRange = "HEAD~1..HEAD"
 	}
 
-	parts := strings.SplitN(diffRange, "..", 2)
-	args := []string{"diff"}
-	if len(parts) == 2 {
-		args = append(args, parts[0], parts[1])
-	} else {
-		args = append(args, diffRange)
-	}
-
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", "diff", diffRange)
 	cmd.Dir = dir
 
 	out, err := cmd.CombinedOutput()

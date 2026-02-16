@@ -4,7 +4,6 @@ package output
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -13,9 +12,9 @@ func TestRunResultToolCallLogJSON(t *testing.T) {
 	r := RunResult{
 		Prompt:    "hello",
 		Response:  "world",
-		TurnCount: 1,
-		Duration:  2 * time.Second,
-		Mode:      "generic",
+		TurnCount:  1,
+		DurationMs: 2000,
+		Mode:       "generic",
 		ToolCalls: []ToolCallLog{
 			{Name: "file", Input: json.RawMessage(`{"op":"read"}`), Result: "ok", IsError: false},
 		},

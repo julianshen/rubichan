@@ -31,10 +31,10 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 	ch, err := r.turn(ctx, prompt)
 	if err != nil {
 		return &output.RunResult{
-			Prompt:   prompt,
-			Mode:     mode,
-			Duration: time.Since(start),
-			Error:    err.Error(),
+			Prompt:     prompt,
+			Mode:       mode,
+			DurationMs: time.Since(start).Milliseconds(),
+			Error:      err.Error(),
 		}, nil
 	}
 
@@ -50,15 +50,20 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 		case "tool_call":
 			if evt.ToolCall != nil {
 				toolCalls = append(toolCalls, output.ToolCallLog{
+					ID:    evt.ToolCall.ID,
 					Name:  evt.ToolCall.Name,
 					Input: json.RawMessage(evt.ToolCall.Input),
 				})
 			}
 		case "tool_result":
-			if evt.ToolResult != nil && len(toolCalls) > 0 {
-				last := &toolCalls[len(toolCalls)-1]
-				last.Result = evt.ToolResult.Content
-				last.IsError = evt.ToolResult.IsError
+			if evt.ToolResult != nil {
+				for i := range toolCalls {
+					if toolCalls[i].ID == evt.ToolResult.ID {
+						toolCalls[i].Result = evt.ToolResult.Content
+						toolCalls[i].IsError = evt.ToolResult.IsError
+						break
+					}
+				}
 			}
 		case "error":
 			if evt.Error != nil {
@@ -70,12 +75,12 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 	}
 
 	return &output.RunResult{
-		Prompt:    prompt,
-		Response:  textBuf.String(),
-		ToolCalls: toolCalls,
-		TurnCount: turns,
-		Duration:  time.Since(start),
-		Mode:      mode,
-		Error:     lastErr,
+		Prompt:     prompt,
+		Response:   textBuf.String(),
+		ToolCalls:  toolCalls,
+		TurnCount:  turns,
+		DurationMs: time.Since(start).Milliseconds(),
+		Mode:       mode,
+		Error:      lastErr,
 	}, nil
 }
