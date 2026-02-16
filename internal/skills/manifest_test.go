@@ -276,3 +276,86 @@ implementation:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "My Skill!")
 }
+
+func TestParseManifestInvalidYAML(t *testing.T) {
+	data := []byte(`{{{not valid yaml`)
+	_, err := ParseManifest(data)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse manifest")
+}
+
+func TestParseManifestMissingVersion(t *testing.T) {
+	yaml := []byte(`
+name: my-skill
+description: "A skill without a version"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+`)
+	_, err := ParseManifest(yaml)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "version")
+}
+
+func TestParseManifestMissingDescription(t *testing.T) {
+	yaml := []byte(`
+name: my-skill
+version: 1.0.0
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+`)
+	_, err := ParseManifest(yaml)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "description")
+}
+
+func TestParseManifestTrailingHyphenInName(t *testing.T) {
+	yaml := []byte(`
+name: my-skill-
+version: 1.0.0
+description: "Trailing hyphen in name"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+`)
+	_, err := ParseManifest(yaml)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid name")
+}
+
+func TestParseManifestNonPromptWithoutBackend(t *testing.T) {
+	yaml := []byte(`
+name: my-skill
+version: 1.0.0
+description: "Tool skill without backend"
+types:
+  - tool
+`)
+	_, err := ParseManifest(yaml)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "implementation.backend is required")
+}
+
+func TestParseManifestPurePromptWithoutBackend(t *testing.T) {
+	yaml := []byte(`
+name: my-prompt
+version: 1.0.0
+description: "A pure prompt skill"
+types:
+  - prompt
+prompt:
+  system_prompt_file: prompts/system.md
+`)
+	m, err := ParseManifest(yaml)
+	require.NoError(t, err)
+	require.NotNil(t, m)
+	assert.Equal(t, []SkillType{SkillTypePrompt}, m.Types)
+	assert.Equal(t, BackendType(""), m.Implementation.Backend)
+}

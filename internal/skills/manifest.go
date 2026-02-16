@@ -71,7 +71,8 @@ var validPermissions = map[Permission]bool{
 }
 
 // nameRegex enforces lowercase letters, digits, and hyphens, starting with a letter.
-var nameRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+// Hyphens must be followed by at least one alphanumeric character (no trailing hyphens).
+var nameRegex = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
 // SkillManifest represents a parsed SKILL.yaml file.
 type SkillManifest struct {
@@ -218,6 +219,15 @@ func validateManifest(m *SkillManifest) error {
 	// Backend.
 	if m.Implementation.Backend != "" && !validBackends[m.Implementation.Backend] {
 		return fmt.Errorf("manifest validation: unknown backend %q", m.Implementation.Backend)
+	}
+
+	// Non-prompt skill types require a backend.
+	if m.Implementation.Backend == "" {
+		for _, st := range m.Types {
+			if st != SkillTypePrompt {
+				return fmt.Errorf("manifest validation: implementation.backend is required for non-prompt skill type %q", st)
+			}
+		}
 	}
 
 	return nil
