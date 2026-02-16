@@ -94,12 +94,13 @@ type RunResult struct {
     Response   string
     ToolCalls  []ToolCallLog
     TurnCount  int
-    Duration   time.Duration
+    DurationMs int64
     Mode       string
     Error      string
 }
 
 type ToolCallLog struct {
+    ID      string
     Name    string
     Input   json.RawMessage
     Result  string

@@ -17,9 +17,13 @@ func ExtractDiff(ctx context.Context, dir, diffRange string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "diff", diffRange)
 	cmd.Dir = dir
 
-	out, err := cmd.CombinedOutput()
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git diff failed: %s: %w", strings.TrimSpace(string(out)), err)
+		stderr := ""
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = strings.TrimSpace(string(ee.Stderr))
+		}
+		return "", fmt.Errorf("git diff failed: %s: %w", stderr, err)
 	}
 
 	return string(out), nil

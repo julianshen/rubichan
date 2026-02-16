@@ -187,6 +187,10 @@ func runHeadless() error {
 		cfg.Agent.MaxTurns = maxTurnsFlag
 	}
 
+	// Single top-level timeout governs the entire headless execution.
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
+	defer cancel()
+
 	// Resolve input: code-review mode builds prompt from diff, others need explicit input.
 	var promptText string
 	if modeFlag == "code-review" {
@@ -194,8 +198,6 @@ func runHeadless() error {
 		if err != nil {
 			return fmt.Errorf("getting working directory: %w", err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
-		defer cancel()
 
 		diff, err := pipeline.ExtractDiff(ctx, cwd, diffFlag)
 		if err != nil {
@@ -204,8 +206,7 @@ func runHeadless() error {
 		promptText = pipeline.BuildReviewPrompt(diff)
 	} else {
 		var stdinReader io.Reader
-		stat, _ := os.Stdin.Stat()
-		if stat.Mode()&os.ModeCharDevice == 0 {
+		if stat, err := os.Stdin.Stat(); err == nil && stat.Mode()&os.ModeCharDevice == 0 {
 			stdinReader = os.Stdin
 		}
 
@@ -250,9 +251,6 @@ func runHeadless() error {
 	a := agent.New(p, registry, approvalFunc, cfg)
 
 	// Run headless
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
-	defer cancel()
-
 	mode := modeFlag
 	if mode == "" {
 		mode = "generic"
