@@ -119,6 +119,51 @@ func TestFileToolPathTraversal(t *testing.T) {
 	}
 }
 
+func TestFileToolSymlinkTraversal(t *testing.T) {
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+	secretFile := filepath.Join(outsideDir, "secret.txt")
+	require.NoError(t, os.WriteFile(secretFile, []byte("top secret"), 0644))
+
+	// Create a symlink inside rootDir pointing outside it
+	symlink := filepath.Join(dir, "escape")
+	require.NoError(t, os.Symlink(outsideDir, symlink))
+
+	ft := NewFileTool(dir)
+
+	// Reading through the symlink should be denied
+	input, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "escape/secret.txt",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "path traversal")
+}
+
+func TestFileToolSymlinkTraversalFileLink(t *testing.T) {
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+	secretFile := filepath.Join(outsideDir, "secret.txt")
+	require.NoError(t, os.WriteFile(secretFile, []byte("top secret"), 0644))
+
+	// Create a file symlink inside rootDir pointing to a file outside it
+	symlink := filepath.Join(dir, "linked.txt")
+	require.NoError(t, os.Symlink(secretFile, symlink))
+
+	ft := NewFileTool(dir)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "linked.txt",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "path traversal")
+}
+
 func TestFileToolReadMissing(t *testing.T) {
 	dir := t.TempDir()
 	ft := NewFileTool(dir)

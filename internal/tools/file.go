@@ -24,12 +24,19 @@ type FileTool struct {
 }
 
 // NewFileTool creates a new FileTool that operates within the given root directory.
+// The root is resolved through EvalSymlinks so that symlink checks inside
+// resolvePath compare against the canonical path.
 func NewFileTool(rootDir string) *FileTool {
 	abs, err := filepath.Abs(rootDir)
 	if err != nil {
 		abs = rootDir
 	}
-	return &FileTool{rootDir: abs}
+	// Resolve symlinks in the root itself (e.g. /var → /private/var on macOS)
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		resolved = abs
+	}
+	return &FileTool{rootDir: resolved}
 }
 
 func (f *FileTool) Name() string {
@@ -96,7 +103,8 @@ func (f *FileTool) Execute(_ context.Context, input json.RawMessage) (ToolResult
 	}
 }
 
-// resolvePath resolves and validates the path to prevent path traversal.
+// resolvePath resolves and validates the path to prevent both path traversal
+// and symlink traversal attacks.
 func (f *FileTool) resolvePath(relPath string) (string, error) {
 	// Reject absolute paths outright
 	if filepath.IsAbs(relPath) {
@@ -110,12 +118,54 @@ func (f *FileTool) resolvePath(relPath string) (string, error) {
 		return "", fmt.Errorf("path traversal denied: %s", err)
 	}
 
-	// Ensure the resolved path is within rootDir
+	// Lexical check first (catches ../.. before the file exists)
 	if !strings.HasPrefix(abs, f.rootDir+string(filepath.Separator)) && abs != f.rootDir {
 		return "", fmt.Errorf("path traversal denied: %s escapes root directory", relPath)
 	}
 
-	return abs, nil
+	// Resolve symlinks to get the real path on disk. If the file doesn't
+	// exist yet (write/create), walk up to the nearest existing ancestor.
+	evalPath, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			ancestorEval, ancestorErr := resolveNearestAncestor(abs)
+			if ancestorErr != nil {
+				return "", fmt.Errorf("path traversal denied: %s", ancestorErr)
+			}
+			if !strings.HasPrefix(ancestorEval, f.rootDir+string(filepath.Separator)) && ancestorEval != f.rootDir {
+				return "", fmt.Errorf("path traversal denied: %s escapes root directory via symlink", relPath)
+			}
+			return abs, nil
+		}
+		return "", fmt.Errorf("path traversal denied: %s", err)
+	}
+
+	// Verify the real (symlink-resolved) path is still within rootDir
+	if !strings.HasPrefix(evalPath, f.rootDir+string(filepath.Separator)) && evalPath != f.rootDir {
+		return "", fmt.Errorf("path traversal denied: %s escapes root directory via symlink", relPath)
+	}
+
+	return evalPath, nil
+}
+
+// resolveNearestAncestor walks up from path until it finds an existing
+// directory, then resolves symlinks on that ancestor.
+func resolveNearestAncestor(path string) (string, error) {
+	dir := filepath.Dir(path)
+	for {
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no existing ancestor found for %s", path)
+		}
+		dir = parent
+	}
 }
 
 func (f *FileTool) readFile(path string) (ToolResult, error) {
