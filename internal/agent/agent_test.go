@@ -1,0 +1,525 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// mockProvider is a simple mock that returns a fixed sequence of stream events.
+type mockProvider struct {
+	events []provider.StreamEvent
+}
+
+func (m *mockProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	ch := make(chan provider.StreamEvent, len(m.events))
+	for _, e := range m.events {
+		ch <- e
+	}
+	close(ch)
+	return ch, nil
+}
+
+// dynamicMockProvider returns different responses per call.
+type dynamicMockProvider struct {
+	responses [][]provider.StreamEvent
+	callIdx   int
+}
+
+func (d *dynamicMockProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	events := d.responses[d.callIdx]
+	d.callIdx++
+	ch := make(chan provider.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+	return ch, nil
+}
+
+// errorProvider always returns an error from Stream.
+type errorProvider struct {
+	err error
+}
+
+func (e *errorProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	return nil, e.err
+}
+
+func autoApprove(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+	return true, nil
+}
+
+func autoDeny(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+	return false, nil
+}
+
+func TestNewAgent(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	agent := New(mp, reg, autoApprove, cfg)
+
+	require.NotNil(t, agent)
+	assert.Equal(t, cfg.Provider.Model, agent.model)
+	assert.Equal(t, cfg.Agent.MaxTurns, agent.maxTurns)
+	assert.NotNil(t, agent.conversation)
+	assert.NotNil(t, agent.context)
+	assert.NotNil(t, agent.provider)
+	assert.NotNil(t, agent.tools)
+	assert.NotNil(t, agent.approve)
+}
+
+func TestNewAgentSystemPrompt(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	agent := New(mp, reg, autoApprove, cfg)
+
+	// System prompt should be non-empty
+	assert.NotEmpty(t, agent.conversation.SystemPrompt())
+}
+
+func TestTurnTextOnly(t *testing.T) {
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "Hello "},
+			{Type: "text_delta", Text: "world!"},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "say hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have: text_delta "Hello ", text_delta "world!", done
+	require.GreaterOrEqual(t, len(events), 3)
+
+	// Verify text deltas
+	var textContent string
+	for _, ev := range events {
+		if ev.Type == "text_delta" {
+			textContent += ev.Text
+		}
+	}
+	assert.Equal(t, "Hello world!", textContent)
+
+	// Last event should be done
+	assert.Equal(t, "done", events[len(events)-1].Type)
+
+	// Conversation should have 2 messages: user + assistant
+	msgs := agent.conversation.Messages()
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Equal(t, "Hello world!", msgs[1].Content[0].Text)
+}
+
+func TestTurnMaxTurnsExceeded(t *testing.T) {
+	// Create a provider that always returns a tool call to force recursive loops.
+	// But we set maxTurns to 0 so the first runLoop iteration hits the limit.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hi"},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 0 // immediate limit
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have error event about max turns and done event
+	var hasError bool
+	for _, ev := range events {
+		if ev.Type == "error" {
+			hasError = true
+			assert.Contains(t, ev.Error.Error(), "max turns")
+		}
+	}
+	assert.True(t, hasError, "should emit error event for max turns exceeded")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestTurnWithToolCall(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Create a test file for the file tool to read
+	testFilePath := filepath.Join(tmpDir, "hello.txt")
+	err := os.WriteFile(testFilePath, []byte("hello from file"), 0644)
+	require.NoError(t, err)
+
+	// First call: LLM returns a tool_use for file read
+	// Second call: LLM returns text after seeing the tool result
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				// First response: tool use
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_123",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"hello.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				// Second response: text after tool result
+				{Type: "text_delta", Text: "The file contains: hello from file"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	fileTool := tools.NewFileTool(tmpDir)
+	err = reg.Register(fileTool)
+	require.NoError(t, err)
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "read hello.txt")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Verify we got tool_call, tool_result, text_delta, and done events
+	var hasToolCall, hasToolResult, hasDone bool
+	var toolResultContent string
+	for _, ev := range events {
+		switch ev.Type {
+		case "tool_call":
+			hasToolCall = true
+			assert.Equal(t, "tool_123", ev.ToolCall.ID)
+			assert.Equal(t, "file", ev.ToolCall.Name)
+		case "tool_result":
+			hasToolResult = true
+			assert.Equal(t, "tool_123", ev.ToolResult.ID)
+			assert.Equal(t, "file", ev.ToolResult.Name)
+			assert.False(t, ev.ToolResult.IsError)
+			toolResultContent = ev.ToolResult.Content
+		case "done":
+			hasDone = true
+		}
+	}
+
+	assert.True(t, hasToolCall, "should have tool_call event")
+	assert.True(t, hasToolResult, "should have tool_result event")
+	assert.True(t, hasDone, "should have done event")
+	assert.Equal(t, "hello from file", toolResultContent)
+}
+
+func TestTurnWithDeniedTool(t *testing.T) {
+	// LLM returns a tool_use, but approval is denied
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_456",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"secret.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				// Second response after denied tool result
+				{Type: "text_delta", Text: "I understand, I cannot access that file."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	fileTool := tools.NewFileTool(tmpDir)
+	err := reg.Register(fileTool)
+	require.NoError(t, err)
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoDeny, cfg)
+
+	ch, err := agent.Turn(context.Background(), "read secret.txt")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Verify tool_result event has IsError=true and "denied" content
+	var hasToolResult bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" {
+			hasToolResult = true
+			assert.True(t, ev.ToolResult.IsError)
+			assert.Contains(t, ev.ToolResult.Content, "denied")
+		}
+	}
+	assert.True(t, hasToolResult, "should have tool_result event with denial")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestTurnWithUnknownTool(t *testing.T) {
+	// LLM returns a tool_use for a tool that doesn't exist in the registry
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_789",
+					Name: "nonexistent",
+				}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Sorry about that."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "use nonexistent tool")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var hasToolResult bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" {
+			hasToolResult = true
+			assert.True(t, ev.ToolResult.IsError)
+			assert.Contains(t, ev.ToolResult.Content, "unknown tool")
+		}
+	}
+	assert.True(t, hasToolResult, "should have tool_result event for unknown tool")
+}
+
+func TestTurnWithStreamInitError(t *testing.T) {
+	// Provider returns an error from Stream() itself (not during streaming)
+	errProvider := &errorProvider{err: fmt.Errorf("auth failed")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(errProvider, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var hasError bool
+	for _, ev := range events {
+		if ev.Type == "error" {
+			hasError = true
+			assert.Contains(t, ev.Error.Error(), "auth failed")
+		}
+	}
+	assert.True(t, hasError, "should have error event from Stream() failure")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestTurnWithApprovalError(t *testing.T) {
+	// The approval function returns an error
+	approvalErr := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+		return false, fmt.Errorf("approval service unavailable")
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_err",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"x.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "OK"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	fileTool := tools.NewFileTool(tmpDir)
+	err := reg.Register(fileTool)
+	require.NoError(t, err)
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, approvalErr, cfg)
+
+	ch, err := agent.Turn(context.Background(), "read file")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var hasToolResult bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" {
+			hasToolResult = true
+			assert.True(t, ev.ToolResult.IsError)
+			assert.Contains(t, ev.ToolResult.Content, "approval error")
+		}
+	}
+	assert.True(t, hasToolResult, "should have tool_result event with approval error")
+}
+
+func TestTurnWithToolExecutionError(t *testing.T) {
+	// Use file tool with a request that causes an execution error (tool returns error in result)
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_exec",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"nonexistent.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "File not found."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	fileTool := tools.NewFileTool(tmpDir)
+	err := reg.Register(fileTool)
+	require.NoError(t, err)
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "read nonexistent")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// File tool returns error as ToolResult.IsError=true, not as Go error
+	var hasToolResult bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" {
+			hasToolResult = true
+			assert.True(t, ev.ToolResult.IsError)
+		}
+	}
+	assert.True(t, hasToolResult, "should have tool_result event with error")
+}
+
+func TestTurnWithProviderError(t *testing.T) {
+	// Provider returns an error event during streaming
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "partial"},
+			{Type: "error", Error: fmt.Errorf("connection lost")},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var hasError bool
+	for _, ev := range events {
+		if ev.Type == "error" {
+			hasError = true
+		}
+	}
+	assert.True(t, hasError, "should have error event")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestClearConversation(t *testing.T) {
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "Hello!"},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	// Run a turn to add messages to conversation
+	ch, err := agent.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+		// drain
+	}
+
+	// Conversation should have messages
+	require.NotEmpty(t, agent.conversation.Messages())
+
+	// Clear and verify
+	agent.ClearConversation()
+	assert.Empty(t, agent.conversation.Messages())
+	assert.NotEmpty(t, agent.conversation.SystemPrompt(), "system prompt should survive clear")
+}
+
+func TestSetModel(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	assert.Equal(t, "claude-sonnet-4-5", agent.model)
+
+	agent.SetModel("claude-opus-4")
+	assert.Equal(t, "claude-opus-4", agent.model)
+}
