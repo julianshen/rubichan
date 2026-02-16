@@ -545,4 +545,60 @@ func TestStreamRequestBody(t *testing.T) {
 	assert.Equal(t, "read_file", tool["name"])
 }
 
+func TestStreamToolResultUsesContentField(t *testing.T) {
+	var capturedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	// Send a tool_result message — the result text must serialize as "content", not "text"
+	req := provider.CompletionRequest{
+		Model: "claude-sonnet-4-5",
+		Messages: []provider.Message{
+			provider.NewUserMessage("Read test.txt"),
+			{
+				Role: "assistant",
+				Content: []provider.ContentBlock{
+					{Type: "tool_use", ID: "toolu_1", Name: "file", Input: json.RawMessage(`{"path":"test.txt"}`)},
+				},
+			},
+			provider.NewToolResultMessage("toolu_1", "file contents here", false),
+		},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	// Parse the captured body and find the tool_result block
+	var apiReq map[string]any
+	err = json.Unmarshal(capturedBody, &apiReq)
+	require.NoError(t, err)
+
+	msgs := apiReq["messages"].([]any)
+	// Third message is the tool_result
+	toolResultMsg := msgs[2].(map[string]any)
+	blocks := toolResultMsg["content"].([]any)
+	block := blocks[0].(map[string]any)
+
+	assert.Equal(t, "tool_result", block["type"])
+	assert.Equal(t, "toolu_1", block["tool_use_id"])
+	assert.Equal(t, "file contents here", block["content"], "tool_result must use 'content' field, not 'text'")
+	assert.Nil(t, block["text"], "tool_result must not have 'text' field")
+}
+
 func floatPtr(f float64) *float64 { return &f }

@@ -56,6 +56,19 @@ type apiTool struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 
+// apiContentBlock is an Anthropic-specific content block for serialization.
+// The Anthropic API uses "content" (not "text") for tool_result blocks.
+type apiContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+}
+
 // Stream sends a completion request to the Anthropic API and returns a channel
 // of StreamEvents parsed from the SSE response.
 func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
@@ -103,11 +116,11 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 		apiReq.Temperature = &temp
 	}
 
-	// Convert messages
+	// Convert messages, remapping fields for the Anthropic API
 	for _, msg := range req.Messages {
 		apiReq.Messages = append(apiReq.Messages, apiMessage{
 			Role:    msg.Role,
-			Content: msg.Content,
+			Content: convertContentBlocks(msg.Content),
 		})
 	}
 
@@ -121,6 +134,29 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 	}
 
 	return json.Marshal(apiReq)
+}
+
+// convertContentBlocks maps provider.ContentBlock to Anthropic-specific
+// apiContentBlock. For tool_result blocks, the text is placed in the "content"
+// field (which is what the Anthropic API expects) instead of "text".
+func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
+	out := make([]apiContentBlock, len(blocks))
+	for i, b := range blocks {
+		out[i] = apiContentBlock{
+			Type:      b.Type,
+			ID:        b.ID,
+			Name:      b.Name,
+			Input:     b.Input,
+			ToolUseID: b.ToolUseID,
+			IsError:   b.IsError,
+		}
+		if b.Type == "tool_result" {
+			out[i].Content = b.Text
+		} else {
+			out[i].Text = b.Text
+		}
+	}
+	return out
 }
 
 // processStream reads SSE events from the response body and sends StreamEvents
