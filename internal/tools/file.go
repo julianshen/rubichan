@@ -190,6 +190,10 @@ func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
 }
 
 func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, error) {
+	if oldString == "" {
+		return ToolResult{Content: "old_string must not be empty", IsError: true}, nil
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ToolResult{Content: err.Error(), IsError: true}, nil

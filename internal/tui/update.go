@@ -16,6 +16,13 @@ import (
 // events from the agent can be dispatched through the Update loop.
 type TurnEventMsg agent.TurnEvent
 
+// turnStartedMsg carries the event channel and first event back to Update
+// so that m.eventCh is set in the Update goroutine rather than the Cmd goroutine.
+type turnStartedMsg struct {
+	ch    <-chan agent.TurnEvent
+	first agent.TurnEvent
+}
+
 // maxToolResultDisplay is the maximum number of characters to display for a
 // tool result before truncation.
 const maxToolResultDisplay = 500
@@ -45,6 +52,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = m.width
 		m.viewport.Height = viewportHeight
 		return m, nil
+
+	case turnStartedMsg:
+		m.eventCh = msg.ch
+		return m.handleTurnEvent(TurnEventMsg(msg.first))
 
 	case TurnEventMsg:
 		return m.handleTurnEvent(msg)
@@ -102,8 +113,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// startTurn initiates an agent turn and returns a tea.Cmd that sends the first
-// TurnEventMsg. If the agent is nil, it writes an error and returns nil.
+// startTurn initiates an agent turn and returns a tea.Cmd that sends back a
+// turnStartedMsg carrying the channel and first event. This avoids mutating
+// m.eventCh from the Cmd goroutine (which would be a data race).
 func (m *Model) startTurn(text string) tea.Cmd {
 	return func() tea.Msg {
 		if m.agent == nil {
@@ -121,14 +133,13 @@ func (m *Model) startTurn(text string) tea.Cmd {
 			})
 		}
 
-		m.eventCh = ch
-
-		// Read first event
+		// Read first event in the Cmd goroutine, but pass the channel
+		// back via turnStartedMsg so Update sets m.eventCh safely.
 		evt, ok := <-ch
 		if !ok {
 			return TurnEventMsg(agent.TurnEvent{Type: "done"})
 		}
-		return TurnEventMsg(evt)
+		return turnStartedMsg{ch: ch, first: evt}
 	}
 }
 

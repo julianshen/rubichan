@@ -198,6 +198,12 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 	// Execute tool calls
 	for _, tc := range pendingTools {
+		if ctx.Err() != nil {
+			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
+			ch <- TurnEvent{Type: "done"}
+			return
+		}
+
 		ch <- TurnEvent{
 			Type: "tool_call",
 			ToolCall: &ToolCallEvent{

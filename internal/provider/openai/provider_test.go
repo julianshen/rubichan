@@ -241,7 +241,7 @@ func TestMessageConversion(t *testing.T) {
 		System:      "You are helpful.",
 		Messages:    messages,
 		MaxTokens:   1024,
-		Temperature: 0.5,
+		Temperature: floatPtr(0.5),
 		Tools: []provider.ToolDef{
 			{
 				Name:        "read_file",
@@ -566,3 +566,5 @@ func TestStreamContextCancelledDuringProcessing(t *testing.T) {
 	}
 done:
 }
+
+func floatPtr(f float64) *float64 { return &f }

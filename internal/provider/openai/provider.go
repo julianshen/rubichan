@@ -150,8 +150,8 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 		Stream:    true,
 	}
 
-	if req.Temperature != 0 {
-		temp := req.Temperature
+	if req.Temperature != nil {
+		temp := *req.Temperature
 		apiReq.Temperature = &temp
 	}
 
@@ -165,7 +165,7 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 
 	// Convert messages
 	for _, msg := range req.Messages {
-		apiReq.Messages = append(apiReq.Messages, p.convertMessage(msg))
+		apiReq.Messages = append(apiReq.Messages, p.convertMessages(msg)...)
 	}
 
 	// Convert tools
@@ -183,12 +183,14 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 	return json.Marshal(apiReq)
 }
 
-func (p *Provider) convertMessage(msg provider.Message) apiMessage {
+// convertMessages converts a single provider.Message to one or more apiMessages.
+// A user message with multiple tool_result blocks produces one apiMessage per result.
+func (p *Provider) convertMessages(msg provider.Message) []apiMessage {
 	switch msg.Role {
 	case "assistant":
-		return p.convertAssistantMessage(msg)
+		return []apiMessage{p.convertAssistantMessage(msg)}
 	case "user":
-		return p.convertUserMessage(msg)
+		return p.convertUserMessages(msg)
 	default:
 		// Fallback: concatenate text blocks
 		var texts []string
@@ -197,10 +199,10 @@ func (p *Provider) convertMessage(msg provider.Message) apiMessage {
 				texts = append(texts, block.Text)
 			}
 		}
-		return apiMessage{
+		return []apiMessage{{
 			Role:    msg.Role,
 			Content: strings.Join(texts, ""),
-		}
+		}}
 	}
 }
 
@@ -237,29 +239,33 @@ func (p *Provider) convertAssistantMessage(msg provider.Message) apiMessage {
 	return apiMsg
 }
 
-func (p *Provider) convertUserMessage(msg provider.Message) apiMessage {
-	// Check if this is a tool result message
+// convertUserMessages handles user messages that may contain multiple tool_result
+// blocks. Each tool_result becomes a separate "tool" message in the OpenAI format.
+func (p *Provider) convertUserMessages(msg provider.Message) []apiMessage {
+	var toolResults []apiMessage
+	var texts []string
+
 	for _, block := range msg.Content {
-		if block.Type == "tool_result" {
-			return apiMessage{
+		switch block.Type {
+		case "tool_result":
+			toolResults = append(toolResults, apiMessage{
 				Role:       "tool",
 				Content:    block.Text,
 				ToolCallID: block.ToolUseID,
-			}
-		}
-	}
-
-	// Regular user message: concatenate text blocks
-	var texts []string
-	for _, block := range msg.Content {
-		if block.Type == "text" {
+			})
+		case "text":
 			texts = append(texts, block.Text)
 		}
 	}
-	return apiMessage{
+
+	if len(toolResults) > 0 {
+		return toolResults
+	}
+
+	return []apiMessage{{
 		Role:    "user",
 		Content: strings.Join(texts, ""),
-	}
+	}}
 }
 
 // processStream reads SSE lines from the response body and sends StreamEvents.

@@ -17,7 +17,7 @@ type CompletionRequest struct {
 	Messages    []Message `json:"messages"`
 	Tools       []ToolDef `json:"tools,omitempty"`
 	MaxTokens   int       `json:"max_tokens"`
-	Temperature float64   `json:"temperature,omitempty"`
+	Temperature *float64  `json:"temperature,omitempty"`
 }
 
 // Message represents a single message in a conversation.

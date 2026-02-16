@@ -76,7 +76,7 @@ func TestCompletionRequestJSON(t *testing.T) {
 			NewUserMessage("hello"),
 		},
 		MaxTokens:   4096,
-		Temperature: 0.7,
+		Temperature: floatPtr(0.7),
 	}
 
 	data, err := json.Marshal(req)
@@ -90,7 +90,8 @@ func TestCompletionRequestJSON(t *testing.T) {
 	assert.Equal(t, "You are a helpful assistant.", decoded.System)
 	assert.Len(t, decoded.Messages, 1)
 	assert.Equal(t, 4096, decoded.MaxTokens)
-	assert.Equal(t, 0.7, decoded.Temperature)
+	require.NotNil(t, decoded.Temperature)
+	assert.Equal(t, 0.7, *decoded.Temperature)
 }
 
 func TestStreamEventTypes(t *testing.T) {
@@ -183,3 +184,5 @@ func TestContentBlockJSON(t *testing.T) {
 	assert.Equal(t, "file contents", decodedResult.Text)
 	assert.False(t, decodedResult.IsError)
 }
+
+func floatPtr(f float64) *float64 { return &f }

@@ -509,7 +509,7 @@ func TestStreamRequestBody(t *testing.T) {
 		System:      "You are helpful.",
 		Messages:    []provider.Message{provider.NewUserMessage("Hi")},
 		MaxTokens:   2048,
-		Temperature: 0.7,
+		Temperature: floatPtr(0.7),
 		Tools: []provider.ToolDef{
 			{
 				Name:        "read_file",
@@ -544,3 +544,5 @@ func TestStreamRequestBody(t *testing.T) {
 	tool := tools[0].(map[string]any)
 	assert.Equal(t, "read_file", tool["name"])
 }
+
+func floatPtr(f float64) *float64 { return &f }

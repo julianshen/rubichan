@@ -57,16 +57,16 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", in.Command)
+	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", in.Command)
 	cmd.Dir = s.workDir
 
 	output, err := cmd.CombinedOutput()
 
-	// Check if the context deadline was exceeded (timeout)
-	if ctx.Err() == context.DeadlineExceeded {
+	// Check if the timeout context (not the parent) triggered a deadline exceeded
+	if timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 		return ToolResult{
 			Content: fmt.Sprintf("command timed out after %s", s.timeout),
 			IsError: true,

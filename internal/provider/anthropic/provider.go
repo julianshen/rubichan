@@ -98,8 +98,8 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 		System:    req.System,
 	}
 
-	if req.Temperature != 0 {
-		temp := req.Temperature
+	if req.Temperature != nil {
+		temp := *req.Temperature
 		apiReq.Temperature = &temp
 	}
 

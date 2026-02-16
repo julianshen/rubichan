@@ -19,6 +19,9 @@ func NewRegistry() *Registry {
 // Register adds a tool to the registry. Returns an error if a tool with the
 // same name is already registered.
 func (r *Registry) Register(t Tool) error {
+	if t == nil {
+		return fmt.Errorf("cannot register nil tool")
+	}
 	if _, exists := r.tools[t.Name()]; exists {
 		return fmt.Errorf("tool already registered: %s", t.Name())
 	}

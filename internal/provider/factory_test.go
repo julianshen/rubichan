@@ -1,7 +1,6 @@
 package provider_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -27,8 +26,8 @@ func TestNewProviderAnthropic(t *testing.T) {
 }
 
 func TestNewProviderAnthropicMissingKey(t *testing.T) {
-	// Ensure env var is not set
-	os.Unsetenv("ANTHROPIC_API_KEY")
+	// Ensure env var is not set (t.Setenv restores original value after test)
+	t.Setenv("ANTHROPIC_API_KEY", "")
 
 	cfg := config.DefaultConfig()
 	cfg.Provider.Default = "anthropic"
@@ -96,7 +95,7 @@ func TestNewProviderOpenAIWithConfigKey(t *testing.T) {
 }
 
 func TestNewProviderOpenAIMissingKey(t *testing.T) {
-	os.Unsetenv("OPENAI_API_KEY")
+	t.Setenv("OPENAI_API_KEY", "")
 
 	cfg := config.DefaultConfig()
 	cfg.Provider.Default = "openai"
