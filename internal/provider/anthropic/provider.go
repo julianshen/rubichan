@@ -124,21 +124,13 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 }
 
 // processStream reads SSE events from the response body and sends StreamEvents
-// to the channel. It closes both the body and the channel when done.
+// to the channel as they arrive. It closes both the body and the channel when done.
 func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
 	defer close(ch)
 	defer body.Close()
 
-	events, err := parseSSEEvents(body)
-	if err != nil {
-		select {
-		case ch <- provider.StreamEvent{Type: "error", Error: err}:
-		case <-ctx.Done():
-		}
-		return
-	}
-
-	for _, evt := range events {
+	scanner := newSSEScanner(body)
+	for scanner.Next() {
 		if ctx.Err() != nil {
 			select {
 			case ch <- provider.StreamEvent{Type: "error", Error: ctx.Err()}:
@@ -147,7 +139,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			return
 		}
 
-		streamEvt := p.convertSSEEvent(evt)
+		streamEvt := p.convertSSEEvent(scanner.Event())
 		if streamEvt == nil {
 			continue
 		}
@@ -160,6 +152,13 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			default:
 			}
 			return
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		select {
+		case ch <- provider.StreamEvent{Type: "error", Error: err}:
+		case <-ctx.Done():
 		}
 	}
 }
