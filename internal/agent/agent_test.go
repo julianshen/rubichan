@@ -484,3 +484,42 @@ func TestTurnWithProviderError(t *testing.T) {
 	assert.True(t, hasError, "should have error event")
 	assert.Equal(t, "done", events[len(events)-1].Type)
 }
+
+func TestClearConversation(t *testing.T) {
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "Hello!"},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	// Run a turn to add messages to conversation
+	ch, err := agent.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+		// drain
+	}
+
+	// Conversation should have messages
+	require.NotEmpty(t, agent.conversation.Messages())
+
+	// Clear and verify
+	agent.ClearConversation()
+	assert.Empty(t, agent.conversation.Messages())
+	assert.NotEmpty(t, agent.conversation.SystemPrompt(), "system prompt should survive clear")
+}
+
+func TestSetModel(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	assert.Equal(t, "claude-sonnet-4-5", agent.model)
+
+	agent.SetModel("claude-opus-4")
+	assert.Equal(t, "claude-opus-4", agent.model)
+}

@@ -70,6 +70,17 @@ func buildSystemPrompt(_ *config.Config) string {
 		"execute shell commands, and help with software development tasks."
 }
 
+// ClearConversation removes all messages from the conversation history,
+// preserving the system prompt.
+func (a *Agent) ClearConversation() {
+	a.conversation.Clear()
+}
+
+// SetModel changes the model used for LLM completions.
+func (a *Agent) SetModel(model string) {
+	a.model = model
+}
+
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
