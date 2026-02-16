@@ -259,7 +259,7 @@ func TestMessageConversion(t *testing.T) {
 	}
 
 	// Parse the captured request body
-	var apiReq map[string]interface{}
+	var apiReq map[string]any
 	err = json.Unmarshal(capturedBody, &apiReq)
 	require.NoError(t, err)
 
@@ -273,45 +273,45 @@ func TestMessageConversion(t *testing.T) {
 	assert.Equal(t, 0.5, apiReq["temperature"])
 
 	// Verify messages structure
-	msgs, ok := apiReq["messages"].([]interface{})
+	msgs, ok := apiReq["messages"].([]any)
 	require.True(t, ok)
 	// system + user + assistant + tool = 4 messages
 	require.Len(t, msgs, 4)
 
 	// First should be system message
-	systemMsg := msgs[0].(map[string]interface{})
+	systemMsg := msgs[0].(map[string]any)
 	assert.Equal(t, "system", systemMsg["role"])
 	assert.Equal(t, "You are helpful.", systemMsg["content"])
 
 	// Second should be user message
-	userMsg := msgs[1].(map[string]interface{})
+	userMsg := msgs[1].(map[string]any)
 	assert.Equal(t, "user", userMsg["role"])
 	assert.Equal(t, "Read /tmp/test.txt", userMsg["content"])
 
 	// Third should be assistant message with tool_calls
-	assistantMsg := msgs[2].(map[string]interface{})
+	assistantMsg := msgs[2].(map[string]any)
 	assert.Equal(t, "assistant", assistantMsg["role"])
-	toolCalls, ok := assistantMsg["tool_calls"].([]interface{})
+	toolCalls, ok := assistantMsg["tool_calls"].([]any)
 	require.True(t, ok)
 	require.Len(t, toolCalls, 1)
 
-	tc := toolCalls[0].(map[string]interface{})
+	tc := toolCalls[0].(map[string]any)
 	assert.Equal(t, "call_1", tc["id"])
 
 	// Fourth should be tool result message
-	toolMsg := msgs[3].(map[string]interface{})
+	toolMsg := msgs[3].(map[string]any)
 	assert.Equal(t, "tool", toolMsg["role"])
 	assert.Equal(t, "call_1", toolMsg["tool_call_id"])
 	assert.Equal(t, "file contents here", toolMsg["content"])
 
 	// Verify tools structure
-	tools, ok := apiReq["tools"].([]interface{})
+	tools, ok := apiReq["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 1)
 
-	tool := tools[0].(map[string]interface{})
+	tool := tools[0].(map[string]any)
 	assert.Equal(t, "function", tool["type"])
-	fn := tool["function"].(map[string]interface{})
+	fn := tool["function"].(map[string]any)
 	assert.Equal(t, "read_file", fn["name"])
 	assert.Equal(t, "Reads a file", fn["description"])
 }
@@ -491,15 +491,15 @@ func TestConvertMessageDefaultRole(t *testing.T) {
 	for range ch {
 	}
 
-	var apiReq map[string]interface{}
+	var apiReq map[string]any
 	err = json.Unmarshal(capturedBody, &apiReq)
 	require.NoError(t, err)
 
-	msgs, ok := apiReq["messages"].([]interface{})
+	msgs, ok := apiReq["messages"].([]any)
 	require.True(t, ok)
 	require.Len(t, msgs, 1)
 
-	msg := msgs[0].(map[string]interface{})
+	msg := msgs[0].(map[string]any)
 	assert.Equal(t, "developer", msg["role"])
 	assert.Equal(t, "First part. Second part.", msg["content"])
 }

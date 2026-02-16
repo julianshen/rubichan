@@ -526,7 +526,7 @@ func TestStreamRequestBody(t *testing.T) {
 	}
 
 	// Parse the captured request body
-	var apiReq map[string]interface{}
+	var apiReq map[string]any
 	err = json.Unmarshal(capturedBody, &apiReq)
 	require.NoError(t, err)
 
@@ -537,10 +537,10 @@ func TestStreamRequestBody(t *testing.T) {
 	assert.Equal(t, 0.7, apiReq["temperature"])
 
 	// Verify tools are included
-	tools, ok := apiReq["tools"].([]interface{})
+	tools, ok := apiReq["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 1)
 
-	tool := tools[0].(map[string]interface{})
+	tool := tools[0].(map[string]any)
 	assert.Equal(t, "read_file", tool["name"])
 }
