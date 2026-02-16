@@ -187,19 +187,8 @@ func runHeadless() error {
 		cfg.Agent.MaxTurns = maxTurnsFlag
 	}
 
-	// Resolve input
-	var stdinReader io.Reader
-	stat, _ := os.Stdin.Stat()
-	if stat.Mode()&os.ModeCharDevice == 0 {
-		stdinReader = os.Stdin
-	}
-
-	promptText, err := runner.ResolveInput(promptFlag, fileFlag, stdinReader)
-	if err != nil {
-		return err
-	}
-
-	// Code review mode: extract diff and build prompt
+	// Resolve input: code-review mode builds prompt from diff, others need explicit input.
+	var promptText string
 	if modeFlag == "code-review" {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -213,6 +202,18 @@ func runHeadless() error {
 			return fmt.Errorf("extracting diff: %w", err)
 		}
 		promptText = pipeline.BuildReviewPrompt(diff)
+	} else {
+		var stdinReader io.Reader
+		stat, _ := os.Stdin.Stat()
+		if stat.Mode()&os.ModeCharDevice == 0 {
+			stdinReader = os.Stdin
+		}
+
+		var err error
+		promptText, err = runner.ResolveInput(promptFlag, fileFlag, stdinReader)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Create provider
