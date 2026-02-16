@@ -52,7 +52,7 @@ type apiRequest struct {
 
 type apiMessage struct {
 	Role       string        `json:"role"`
-	Content    interface{}   `json:"content,omitempty"`
+	Content    any           `json:"content,omitempty"`
 	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
 }

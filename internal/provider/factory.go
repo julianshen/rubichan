@@ -13,6 +13,8 @@ const anthropicBaseURL = "https://api.anthropic.com"
 type ProviderConstructor func(baseURL, apiKey string, extraHeaders map[string]string) LLMProvider
 
 // registry holds registered provider constructors.
+// This map is only written to during init() functions and read thereafter,
+// so it is safe for concurrent reads without a mutex.
 var registry = map[string]ProviderConstructor{}
 
 // RegisterProvider registers a provider constructor by name.
