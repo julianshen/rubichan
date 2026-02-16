@@ -78,3 +78,80 @@ func TestNewAgentSystemPrompt(t *testing.T) {
 	// System prompt should be non-empty
 	assert.NotEmpty(t, agent.conversation.SystemPrompt())
 }
+
+func TestTurnTextOnly(t *testing.T) {
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "Hello "},
+			{Type: "text_delta", Text: "world!"},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "say hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have: text_delta "Hello ", text_delta "world!", done
+	require.GreaterOrEqual(t, len(events), 3)
+
+	// Verify text deltas
+	var textContent string
+	for _, ev := range events {
+		if ev.Type == "text_delta" {
+			textContent += ev.Text
+		}
+	}
+	assert.Equal(t, "Hello world!", textContent)
+
+	// Last event should be done
+	assert.Equal(t, "done", events[len(events)-1].Type)
+
+	// Conversation should have 2 messages: user + assistant
+	msgs := agent.conversation.Messages()
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Equal(t, "Hello world!", msgs[1].Content[0].Text)
+}
+
+func TestTurnMaxTurnsExceeded(t *testing.T) {
+	// Create a provider that always returns a tool call to force recursive loops.
+	// But we set maxTurns to 0 so the first runLoop iteration hits the limit.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hi"},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 0 // immediate limit
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have error event about max turns and done event
+	var hasError bool
+	for _, ev := range events {
+		if ev.Type == "error" {
+			hasError = true
+			assert.Contains(t, ev.Error.Error(), "max turns")
+		}
+	}
+	assert.True(t, hasError, "should emit error event for max turns exceeded")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
