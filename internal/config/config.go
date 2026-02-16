@@ -1,5 +1,12 @@
 package config
 
+import (
+	"fmt"
+	"os"
+
+	"github.com/BurntSushi/toml"
+)
+
 // Config represents the top-level application configuration.
 type Config struct {
 	Provider ProviderConfig `toml:"provider"`
@@ -34,6 +41,21 @@ type AgentConfig struct {
 	MaxTurns      int    `toml:"max_turns"`
 	ApprovalMode  string `toml:"approval_mode"`
 	ContextBudget int    `toml:"context_budget"`
+}
+
+// Load reads a TOML config file from the given path and returns a Config.
+// The returned Config starts with default values and is overridden by values
+// found in the file.
+func Load(path string) (*Config, error) {
+	cfg := DefaultConfig()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading config file: %w", err)
+	}
+	if err := toml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parsing config file: %w", err)
+	}
+	return cfg, nil
 }
 
 // DefaultConfig returns a Config populated with sensible default values.
