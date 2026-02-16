@@ -120,12 +120,3 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		return nil
 	}
 }
-
-// Init implements tea.Model.
-func (m *Model) Init() tea.Cmd { return nil }
-
-// Update implements tea.Model.
-func (m *Model) Update(_ tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
-
-// View implements tea.Model.
-func (m *Model) View() string { return "" }
