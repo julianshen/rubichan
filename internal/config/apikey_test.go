@@ -29,3 +29,9 @@ func TestResolveAPIKeyEmptyConfig(t *testing.T) {
 	_, err := ResolveAPIKey("config", "", "")
 	assert.Error(t, err)
 }
+
+func TestResolveAPIKeyUnknownSource(t *testing.T) {
+	_, err := ResolveAPIKey("unknown", "", "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown api_key_source")
+}

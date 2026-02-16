@@ -82,3 +82,12 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	assert.Equal(t, "anthropic", cfg.Provider.Default)
 	assert.Equal(t, 50, cfg.Agent.MaxTurns)
 }
+
+func TestLoadInvalidTOML(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "bad.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte("[invalid toml..."), 0644))
+
+	_, err := Load(tmpFile)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing config file")
+}
