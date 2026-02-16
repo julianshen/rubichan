@@ -31,6 +31,7 @@ var (
 	configPath   string
 	modelFlag    string
 	providerFlag string
+	autoApprove  bool
 )
 
 func versionString() string {
@@ -52,6 +53,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to config file")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "override model name")
 	rootCmd.PersistentFlags().StringVar(&providerFlag, "provider", "", "override provider name")
+	rootCmd.PersistentFlags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all tool calls (dangerous: enables RCE)")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -114,9 +116,10 @@ func runInteractive() error {
 		return fmt.Errorf("registering shell tool: %w", err)
 	}
 
-	// Create approval function (auto-approve for now; TODO: real TUI approval)
+	// Deny tool calls by default; require explicit --auto-approve flag to skip approval.
+	// TODO: replace with TUI-based interactive approval prompt.
 	approvalFunc := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
-		return true, nil
+		return autoApprove, nil
 	}
 
 	// Create agent

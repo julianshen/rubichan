@@ -20,3 +20,8 @@ func TestVersionStringDefaults(t *testing.T) {
 	assert.Contains(t, s, "none")
 	assert.Contains(t, s, "unknown")
 }
+
+func TestAutoApproveDefaultsFalse(t *testing.T) {
+	// autoApprove is a package-level var; verify it defaults to false
+	assert.False(t, autoApprove, "auto-approve must default to false to prevent RCE")
+}
