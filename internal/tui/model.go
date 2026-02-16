@@ -1,0 +1,131 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/julianshen/rubichan/internal/agent"
+)
+
+// UIState represents the current state of the TUI.
+type UIState int
+
+const (
+	// StateInput indicates the TUI is waiting for user input.
+	StateInput UIState = iota
+	// StateStreaming indicates the TUI is streaming a response from the agent.
+	StateStreaming
+	// StateAwaitingApproval indicates the TUI is waiting for user approval of a tool call.
+	StateAwaitingApproval
+)
+
+// Model is the Bubble Tea model for the Rubichan TUI.
+type Model struct {
+	agent     *agent.Agent
+	input     textinput.Model
+	viewport  viewport.Model
+	spinner   spinner.Model
+	content   strings.Builder
+	state     UIState
+	appName   string
+	modelName string
+	width     int
+	height    int
+	quitting  bool
+	eventCh   <-chan agent.TurnEvent
+}
+
+// Ensure Model satisfies the tea.Model interface at compile time.
+var _ tea.Model = (*Model)(nil)
+
+// NewModel creates a new TUI Model with the given agent, application name, and
+// model name. The agent may be nil for testing purposes.
+func NewModel(a *agent.Agent, appName, modelName string) *Model {
+	ti := textinput.New()
+	ti.Placeholder = "Type a message..."
+	ti.Focus()
+
+	vp := viewport.New(80, 20)
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+
+	return &Model{
+		agent:     a,
+		input:     ti,
+		viewport:  vp,
+		spinner:   sp,
+		state:     StateInput,
+		appName:   appName,
+		modelName: modelName,
+		width:     80,
+		height:    24,
+	}
+}
+
+// handleCommand processes slash commands entered by the user.
+// Returns a tea.Cmd if the command produces one (e.g., tea.Quit), or nil.
+func (m *Model) handleCommand(cmd string) tea.Cmd {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return nil
+	}
+
+	switch parts[0] {
+	case "/quit", "/exit":
+		m.quitting = true
+		return tea.Quit
+
+	case "/clear":
+		if m.agent != nil {
+			m.agent.ClearConversation()
+		}
+		m.content.Reset()
+		m.viewport.SetContent("")
+		return nil
+
+	case "/model":
+		if len(parts) < 2 {
+			m.content.WriteString("Usage: /model <name>\n")
+			m.viewport.SetContent(m.content.String())
+			return nil
+		}
+		newModel := parts[1]
+		if m.agent != nil {
+			m.agent.SetModel(newModel)
+		}
+		m.modelName = newModel
+		m.content.WriteString(fmt.Sprintf("Model switched to %s\n", newModel))
+		m.viewport.SetContent(m.content.String())
+		return nil
+
+	case "/help":
+		help := "Available commands:\n" +
+			"  /help          Show this help message\n" +
+			"  /clear         Clear conversation history\n" +
+			"  /model <name>  Switch to a different model\n" +
+			"  /quit          Exit the application\n"
+		m.content.WriteString(help)
+		m.viewport.SetContent(m.content.String())
+		return nil
+
+	default:
+		m.content.WriteString(fmt.Sprintf("Unknown command: %s\n", parts[0]))
+		m.viewport.SetContent(m.content.String())
+		return nil
+	}
+}
+
+// Init implements tea.Model.
+func (m *Model) Init() tea.Cmd { return nil }
+
+// Update implements tea.Model.
+func (m *Model) Update(_ tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
+
+// View implements tea.Model.
+func (m *Model) View() string { return "" }
