@@ -13,6 +13,12 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
+func init() {
+	provider.RegisterProvider("openai", func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
+		return New(baseURL, apiKey, extraHeaders)
+	})
+}
+
 // Provider implements the LLMProvider interface for OpenAI-compatible APIs.
 type Provider struct {
 	baseURL      string

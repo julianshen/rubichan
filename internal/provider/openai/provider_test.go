@@ -2,6 +2,8 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -170,4 +172,143 @@ func TestExtraHeaders(t *testing.T) {
 	// Drain the channel
 	for range ch {
 	}
+}
+
+func TestStreamAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}`))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+
+	req := provider.CompletionRequest{
+		Model:     "gpt-4",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	_, err := p.Stream(context.Background(), req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "429")
+}
+
+func TestMessageConversion(t *testing.T) {
+	// Test that assistant messages with tool_use and tool_result messages are
+	// properly converted in the request body.
+	var capturedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+
+	// Build a conversation with tool use
+	messages := []provider.Message{
+		provider.NewUserMessage("Read /tmp/test.txt"),
+		{
+			Role: "assistant",
+			Content: []provider.ContentBlock{
+				{Type: "text", Text: "Let me read that file."},
+				{
+					Type:  "tool_use",
+					ID:    "call_1",
+					Name:  "read_file",
+					Input: json.RawMessage(`{"path":"/tmp/test.txt"}`),
+				},
+			},
+		},
+		provider.NewToolResultMessage("call_1", "file contents here", false),
+	}
+
+	req := provider.CompletionRequest{
+		Model:       "gpt-4",
+		System:      "You are helpful.",
+		Messages:    messages,
+		MaxTokens:   1024,
+		Temperature: 0.5,
+		Tools: []provider.ToolDef{
+			{
+				Name:        "read_file",
+				Description: "Reads a file",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+			},
+		},
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	// Drain the channel
+	for range ch {
+	}
+
+	// Parse the captured request body
+	var apiReq map[string]interface{}
+	err = json.Unmarshal(capturedBody, &apiReq)
+	require.NoError(t, err)
+
+	// Verify stream is true
+	assert.Equal(t, true, apiReq["stream"])
+
+	// Verify model
+	assert.Equal(t, "gpt-4", apiReq["model"])
+
+	// Verify temperature
+	assert.Equal(t, 0.5, apiReq["temperature"])
+
+	// Verify messages structure
+	msgs, ok := apiReq["messages"].([]interface{})
+	require.True(t, ok)
+	// system + user + assistant + tool = 4 messages
+	require.Len(t, msgs, 4)
+
+	// First should be system message
+	systemMsg := msgs[0].(map[string]interface{})
+	assert.Equal(t, "system", systemMsg["role"])
+	assert.Equal(t, "You are helpful.", systemMsg["content"])
+
+	// Second should be user message
+	userMsg := msgs[1].(map[string]interface{})
+	assert.Equal(t, "user", userMsg["role"])
+	assert.Equal(t, "Read /tmp/test.txt", userMsg["content"])
+
+	// Third should be assistant message with tool_calls
+	assistantMsg := msgs[2].(map[string]interface{})
+	assert.Equal(t, "assistant", assistantMsg["role"])
+	toolCalls, ok := assistantMsg["tool_calls"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, toolCalls, 1)
+
+	tc := toolCalls[0].(map[string]interface{})
+	assert.Equal(t, "call_1", tc["id"])
+
+	// Fourth should be tool result message
+	toolMsg := msgs[3].(map[string]interface{})
+	assert.Equal(t, "tool", toolMsg["role"])
+	assert.Equal(t, "call_1", toolMsg["tool_call_id"])
+	assert.Equal(t, "file contents here", toolMsg["content"])
+
+	// Verify tools structure
+	tools, ok := apiReq["tools"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+
+	tool := tools[0].(map[string]interface{})
+	assert.Equal(t, "function", tool["type"])
+	fn := tool["function"].(map[string]interface{})
+	assert.Equal(t, "read_file", fn["name"])
+	assert.Equal(t, "Reads a file", fn["description"])
 }

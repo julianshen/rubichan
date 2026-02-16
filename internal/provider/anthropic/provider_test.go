@@ -2,7 +2,9 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -276,4 +278,63 @@ done:
 	// The channel should have been closed. We may or may not see an error event
 	// depending on timing, but the channel must close.
 	_ = gotError
+}
+
+func TestStreamRequestBody(t *testing.T) {
+	var capturedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	req := provider.CompletionRequest{
+		Model:       "claude-sonnet-4-5",
+		System:      "You are helpful.",
+		Messages:    []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens:   2048,
+		Temperature: 0.7,
+		Tools: []provider.ToolDef{
+			{
+				Name:        "read_file",
+				Description: "Reads a file",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+			},
+		},
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	for range ch {
+	}
+
+	// Parse the captured request body
+	var apiReq map[string]interface{}
+	err = json.Unmarshal(capturedBody, &apiReq)
+	require.NoError(t, err)
+
+	assert.Equal(t, true, apiReq["stream"])
+	assert.Equal(t, "claude-sonnet-4-5", apiReq["model"])
+	assert.Equal(t, "You are helpful.", apiReq["system"])
+	assert.Equal(t, float64(2048), apiReq["max_tokens"])
+	assert.Equal(t, 0.7, apiReq["temperature"])
+
+	// Verify tools are included
+	tools, ok := apiReq["tools"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+
+	tool := tools[0].(map[string]interface{})
+	assert.Equal(t, "read_file", tool["name"])
 }

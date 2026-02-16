@@ -12,6 +12,12 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
+func init() {
+	provider.RegisterProvider("anthropic", func(baseURL, apiKey string, _ map[string]string) provider.LLMProvider {
+		return New(baseURL, apiKey)
+	})
+}
+
 // Provider implements the LLMProvider interface for the Anthropic API.
 type Provider struct {
 	baseURL string
