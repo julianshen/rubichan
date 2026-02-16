@@ -238,7 +238,7 @@ func runHeadless() error {
 		}
 	}
 	if shouldRegister("shell", allowed) {
-		if err := registry.Register(tools.NewShellTool(cwd, 120*time.Second)); err != nil {
+		if err := registry.Register(tools.NewShellTool(cwd, timeoutFlag)); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
 	}

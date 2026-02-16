@@ -20,7 +20,7 @@
 
 ### New packages
 
-```
+```text
 internal/runner/
     runner.go          # Runner interface + HeadlessRunner
     headless.go        # Headless execution: input → agent → output
@@ -40,7 +40,7 @@ internal/pipeline/
 
 ### Data flow
 
-```
+```text
 CLI flags/stdin
     ↓
 InputResolver (--prompt | --file | stdin)

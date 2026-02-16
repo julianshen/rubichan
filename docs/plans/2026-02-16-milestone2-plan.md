@@ -10,6 +10,8 @@
 
 ---
 
+## Tasks
+
 ### Task 1: Output types and Formatter interface
 
 **Files:**
