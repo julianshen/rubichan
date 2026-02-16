@@ -2,9 +2,12 @@ package anthropic
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/stretchr/testify/assert"
@@ -170,4 +173,107 @@ data: {"type":"message_stop"}
 	assert.Equal(t, "read_file", toolUseEvents[0].ToolUse.Name)
 
 	assert.True(t, hasStop, "should have received stop event")
+}
+
+func TestStreamAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}`))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	_, err := p.Stream(context.Background(), req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "429")
+}
+
+func TestStreamContextCancellation(t *testing.T) {
+	var mu sync.Mutex
+	serverReady := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		// Write partial response
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("expected http.Flusher")
+			return
+		}
+
+		fmt.Fprintf(w, "event: message_start\n")
+		fmt.Fprintf(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_3\",\"type\":\"message\",\"role\":\"assistant\"}}\n\n")
+		flusher.Flush()
+
+		fmt.Fprintf(w, "event: content_block_start\n")
+		fmt.Fprintf(w, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+		flusher.Flush()
+
+		fmt.Fprintf(w, "event: content_block_delta\n")
+		fmt.Fprintf(w, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n")
+		flusher.Flush()
+
+		// Signal that we've sent partial data
+		mu.Lock()
+		close(serverReady)
+		mu.Unlock()
+
+		// Hang here - context cancellation should unblock the client
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(ctx, req)
+	require.NoError(t, err)
+
+	// Wait for server to send partial data
+	<-serverReady
+
+	// Give a brief moment for events to be processed
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel the context
+	cancel()
+
+	// Drain the channel - it should close eventually
+	var gotError bool
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				// Channel closed
+				goto done
+			}
+			if evt.Type == "error" && evt.Error != nil {
+				gotError = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for channel to close")
+		}
+	}
+done:
+	// The channel should have been closed. We may or may not see an error event
+	// depending on timing, but the channel must close.
+	_ = gotError
 }
