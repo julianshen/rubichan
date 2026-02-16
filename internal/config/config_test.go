@@ -44,3 +44,10 @@ context_budget = 50000
 	assert.Equal(t, "auto", cfg.Agent.ApprovalMode)
 	assert.Equal(t, 50000, cfg.Agent.ContextBudget)
 }
+
+func TestLoadMissingFileReturnsDefaults(t *testing.T) {
+	cfg, err := Load("/nonexistent/path/config.toml")
+	require.NoError(t, err)
+	assert.Equal(t, "anthropic", cfg.Provider.Default)
+	assert.Equal(t, 50, cfg.Agent.MaxTurns)
+}

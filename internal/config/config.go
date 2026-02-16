@@ -50,6 +50,9 @@ func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
 		return nil, fmt.Errorf("reading config file: %w", err)
 	}
 	if err := toml.Unmarshal(data, cfg); err != nil {
