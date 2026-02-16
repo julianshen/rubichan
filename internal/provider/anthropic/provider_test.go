@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -278,6 +279,211 @@ done:
 	// The channel should have been closed. We may or may not see an error event
 	// depending on timing, but the channel must close.
 	_ = gotError
+}
+
+func TestStreamMalformedContentBlockStart(t *testing.T) {
+	sseBody := `event: content_block_start
+data: {invalid json}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var hasError bool
+	for evt := range ch {
+		if evt.Type == "error" {
+			hasError = true
+		}
+	}
+
+	assert.True(t, hasError, "should have received error event for malformed JSON")
+}
+
+func TestStreamMalformedContentBlockDelta(t *testing.T) {
+	sseBody := `event: content_block_delta
+data: {invalid json}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var hasError bool
+	for evt := range ch {
+		if evt.Type == "error" {
+			hasError = true
+		}
+	}
+
+	assert.True(t, hasError, "should have received error event for malformed delta JSON")
+}
+
+func TestStreamUnknownDeltaType(t *testing.T) {
+	sseBody := `event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"unknown_delta","text":"test"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var events []provider.StreamEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// Should only have the stop event, unknown delta type returns nil
+	require.Len(t, events, 1)
+	assert.Equal(t, "stop", events[0].Type)
+}
+
+func TestStreamContentBlockStartTextType(t *testing.T) {
+	// content_block_start with "text" type should return nil (no event emitted)
+	sseBody := `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var events []provider.StreamEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// Only stop event should be emitted; text content_block_start returns nil
+	require.Len(t, events, 1)
+	assert.Equal(t, "stop", events[0].Type)
+}
+
+func TestStreamContextCancelledDuringEventIteration(t *testing.T) {
+	// Build a large SSE body with many events so there's time to cancel
+	// during iteration. Anthropic parseSSEEvents reads the full body first,
+	// then iterates events, so the body must be complete.
+	var sseBuilder strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&sseBuilder, "event: content_block_delta\n")
+		fmt.Fprintf(&sseBuilder, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"chunk%d\"}}\n\n", i)
+	}
+	fmt.Fprintf(&sseBuilder, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	sseBody := sseBuilder.String()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(ctx, req)
+	require.NoError(t, err)
+
+	// Read first event then cancel
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for first event")
+	}
+
+	cancel()
+
+	// Drain remaining events - channel should close
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				goto done
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for channel to close")
+		}
+	}
+done:
 }
 
 func TestStreamRequestBody(t *testing.T) {

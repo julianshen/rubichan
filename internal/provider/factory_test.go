@@ -95,6 +95,24 @@ func TestNewProviderOpenAIWithConfigKey(t *testing.T) {
 	assert.NotNil(t, p)
 }
 
+func TestNewProviderOpenAIMissingKey(t *testing.T) {
+	os.Unsetenv("OPENAI_API_KEY")
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "openai"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{
+			Name:         "openai",
+			BaseURL:      "https://api.openai.com/v1",
+			APIKeySource: "env",
+		},
+	}
+
+	_, err := provider.NewProvider(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OPENAI_API_KEY")
+}
+
 func TestNewProviderUnknown(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Provider.Default = "unknown-provider"

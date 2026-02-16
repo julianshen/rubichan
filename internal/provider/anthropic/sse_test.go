@@ -88,6 +88,23 @@ data: {"type":"message_stop"}
 	assert.Equal(t, "message_stop", events[4].Event)
 }
 
+func TestParseSSEEventsMultilineData(t *testing.T) {
+	input := "event: test\ndata: first line\ndata: second line\n\n"
+	events, err := parseSSEEvents(strings.NewReader(input))
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "first line\nsecond line", events[0].Data)
+}
+
+func TestParseSSEEventsNoTrailingNewline(t *testing.T) {
+	input := "event: test\ndata: some data"
+	events, err := parseSSEEvents(strings.NewReader(input))
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "test", events[0].Event)
+	assert.Equal(t, "some data", events[0].Data)
+}
+
 func TestParseSSEEventsSkipsComments(t *testing.T) {
 	input := `: this is a comment
 event: message_stop

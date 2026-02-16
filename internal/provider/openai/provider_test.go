@@ -3,10 +3,13 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/stretchr/testify/assert"
@@ -311,4 +314,255 @@ func TestMessageConversion(t *testing.T) {
 	fn := tool["function"].(map[string]interface{})
 	assert.Equal(t, "read_file", fn["name"])
 	assert.Equal(t, "Reads a file", fn["description"])
+}
+
+func TestStreamContextCancellation(t *testing.T) {
+	var mu sync.Mutex
+	serverReady := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("expected http.Flusher")
+			return
+		}
+
+		// Send partial data
+		fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n")
+		flusher.Flush()
+
+		// Signal ready
+		mu.Lock()
+		close(serverReady)
+		mu.Unlock()
+
+		// Hang until client disconnects
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	req := provider.CompletionRequest{
+		Model:     "gpt-4",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(ctx, req)
+	require.NoError(t, err)
+
+	// Wait for server to send partial data
+	<-serverReady
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel the context
+	cancel()
+
+	// Drain the channel - should close
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				goto done
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for channel to close")
+		}
+	}
+done:
+}
+
+func TestStreamMalformedChunk(t *testing.T) {
+	sseBody := "data: {invalid json}\n\ndata: [DONE]\n\n"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+
+	req := provider.CompletionRequest{
+		Model:     "gpt-4",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var hasError bool
+	var hasStop bool
+	for evt := range ch {
+		if evt.Type == "error" {
+			hasError = true
+		}
+		if evt.Type == "stop" {
+			hasStop = true
+		}
+	}
+
+	assert.True(t, hasError, "should have received error event for malformed JSON")
+	assert.True(t, hasStop, "should have received stop event after error")
+}
+
+func TestStreamEmptyChoices(t *testing.T) {
+	sseBody := `data: {"id":"chatcmpl-1","choices":[]}
+
+data: [DONE]
+
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+
+	req := provider.CompletionRequest{
+		Model:     "gpt-4",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var events []provider.StreamEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// Should only have the stop event; empty choices are skipped
+	require.Len(t, events, 1)
+	assert.Equal(t, "stop", events[0].Type)
+}
+
+func TestConvertMessageDefaultRole(t *testing.T) {
+	// Test the default case in convertMessage for a non-standard role
+	var capturedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+
+	// Use a non-standard role to hit the default case in convertMessage
+	messages := []provider.Message{
+		{
+			Role: "developer",
+			Content: []provider.ContentBlock{
+				{Type: "text", Text: "First part."},
+				{Type: "text", Text: " Second part."},
+			},
+		},
+	}
+
+	req := provider.CompletionRequest{
+		Model:     "gpt-4",
+		Messages:  messages,
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	for range ch {
+	}
+
+	var apiReq map[string]interface{}
+	err = json.Unmarshal(capturedBody, &apiReq)
+	require.NoError(t, err)
+
+	msgs, ok := apiReq["messages"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, msgs, 1)
+
+	msg := msgs[0].(map[string]interface{})
+	assert.Equal(t, "developer", msg["role"])
+	assert.Equal(t, "First part. Second part.", msg["content"])
+}
+
+func TestStreamContextCancelledDuringProcessing(t *testing.T) {
+	requestReceived := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("expected http.Flusher")
+			return
+		}
+
+		// Write many events
+		for i := 0; i < 100; i++ {
+			fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"chunk%d\"},\"finish_reason\":null}]}\n\n", i)
+			flusher.Flush()
+		}
+
+		close(requestReceived)
+
+		// Keep connection open
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	req := provider.CompletionRequest{
+		Model:     "gpt-4",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(ctx, req)
+	require.NoError(t, err)
+
+	// Wait for events to be written then cancel
+	<-requestReceived
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for first event")
+	}
+
+	cancel()
+
+	// Drain the channel - should close
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				goto done
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for channel to close")
+		}
+	}
+done:
 }
