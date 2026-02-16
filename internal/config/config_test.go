@@ -45,6 +45,37 @@ context_budget = 50000
 	assert.Equal(t, 50000, cfg.Agent.ContextBudget)
 }
 
+func TestLoadOpenAICompatibleProviders(t *testing.T) {
+	tomlContent := `
+[provider]
+default = "openrouter"
+model = "anthropic/claude-sonnet-4-5"
+
+[[provider.openai_compatible]]
+name = "openai"
+base_url = "https://api.openai.com/v1"
+api_key_source = "env"
+
+[[provider.openai_compatible]]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_key_source = "env"
+extra_headers = { HTTP-Referer = "https://github.com/user/rubichan" }
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter", cfg.Provider.Default)
+	require.Len(t, cfg.Provider.OpenAI, 2)
+	assert.Equal(t, "openai", cfg.Provider.OpenAI[0].Name)
+	assert.Equal(t, "https://api.openai.com/v1", cfg.Provider.OpenAI[0].BaseURL)
+	assert.Equal(t, "openrouter", cfg.Provider.OpenAI[1].Name)
+	assert.Equal(t, "https://openrouter.ai/api/v1", cfg.Provider.OpenAI[1].BaseURL)
+	assert.Equal(t, "https://github.com/user/rubichan", cfg.Provider.OpenAI[1].ExtraHeaders["HTTP-Referer"])
+}
+
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	cfg, err := Load("/nonexistent/path/config.toml")
 	require.NoError(t, err)
