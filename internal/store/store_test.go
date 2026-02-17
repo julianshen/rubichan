@@ -199,3 +199,34 @@ func TestCacheAndGetRegistryEntry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
+
+func TestDeleteSkillState(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Save a skill state.
+	require.NoError(t, s.SaveSkillState(SkillInstallState{
+		Name:    "to-delete",
+		Version: "1.0.0",
+		Source:  "local",
+	}))
+
+	// Verify it exists.
+	got, err := s.GetSkillState("to-delete")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	// Delete it.
+	err = s.DeleteSkillState("to-delete")
+	require.NoError(t, err)
+
+	// Verify it no longer exists.
+	got, err = s.GetSkillState("to-delete")
+	require.NoError(t, err)
+	assert.Nil(t, got, "skill state should be deleted")
+
+	// Deleting a non-existent skill should not error.
+	err = s.DeleteSkillState("nonexistent")
+	assert.NoError(t, err)
+}

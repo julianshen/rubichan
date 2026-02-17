@@ -205,6 +205,15 @@ func (s *Store) ListAllSkillStates() ([]SkillInstallState, error) {
 	return states, rows.Err()
 }
 
+// DeleteSkillState removes the install state for a skill by name.
+func (s *Store) DeleteSkillState(name string) error {
+	_, err := s.db.Exec(`DELETE FROM skill_state WHERE name = ?`, name)
+	if err != nil {
+		return fmt.Errorf("delete skill state: %w", err)
+	}
+	return nil
+}
+
 // CacheRegistryEntry stores a registry entry in the local cache.
 // If the entry already exists, it is replaced.
 func (s *Store) CacheRegistryEntry(entry RegistryEntry) error {
