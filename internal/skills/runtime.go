@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/julianshen/rubichan/internal/store"
@@ -37,15 +38,18 @@ func sourcePriority(src Source) int {
 // (LifecycleManager), tool registration (tools.Registry), and backend
 // creation (BackendFactory).
 type Runtime struct {
-	loader         *Loader
-	store          *store.Store
-	lifecycle      *LifecycleManager
-	registry       *tools.Registry
-	skills         map[string]*Skill
-	active         map[string]*Skill
-	autoApprove    []string
-	backendFactory BackendFactory
-	sandboxFactory SandboxFactory
+	loader          *Loader
+	store           *store.Store
+	lifecycle       *LifecycleManager
+	registry        *tools.Registry
+	skills          map[string]*Skill
+	active          map[string]*Skill
+	autoApprove     []string
+	backendFactory  BackendFactory
+	sandboxFactory  SandboxFactory
+	promptCollector *PromptCollector
+	workflowRunner  *WorkflowRunner
+	securityAdapter *SecurityRuleAdapter
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -61,15 +65,18 @@ func NewRuntime(
 	sandboxFactory SandboxFactory,
 ) *Runtime {
 	return &Runtime{
-		loader:         loader,
-		store:          s,
-		lifecycle:      NewLifecycleManager(),
-		registry:       registry,
-		skills:         make(map[string]*Skill),
-		active:         make(map[string]*Skill),
-		autoApprove:    autoApprove,
-		backendFactory: backendFactory,
-		sandboxFactory: sandboxFactory,
+		loader:          loader,
+		store:           s,
+		lifecycle:       NewLifecycleManager(),
+		registry:        registry,
+		skills:          make(map[string]*Skill),
+		active:          make(map[string]*Skill),
+		autoApprove:     autoApprove,
+		backendFactory:  backendFactory,
+		sandboxFactory:  sandboxFactory,
+		promptCollector: NewPromptCollector(),
+		workflowRunner:  NewWorkflowRunner(),
+		securityAdapter: NewSecurityRuleAdapter(),
 	}
 }
 
@@ -185,10 +192,26 @@ func (rt *Runtime) Activate(name string) error {
 		}
 	}
 
-	// Register hooks.
+	// Register hooks from the backend.
 	priority := sourcePriority(sk.Source)
 	for phase, handler := range backend.Hooks() {
 		rt.lifecycle.Register(phase, name, priority, handler)
+	}
+
+	// Wire integrations based on skill types.
+	for _, st := range sk.Manifest.Types {
+		switch st {
+		case SkillTypeTool:
+			// Tools are already registered above via backend.Tools().
+		case SkillTypePrompt:
+			wirePromptSkill(rt, sk)
+		case SkillTypeWorkflow:
+			wireWorkflowSkill(rt, sk)
+		case SkillTypeSecurityRule:
+			wireSecurityRuleSkill(rt, sk)
+		case SkillTypeTransform:
+			wireTransformSkill(rt, sk)
+		}
 	}
 
 	// Store the backend reference and transition to Active.
@@ -219,6 +242,18 @@ func (rt *Runtime) Deactivate(name string) error {
 	// Unregister hooks.
 	rt.lifecycle.Unregister(name)
 
+	// Clean up integration state for all skill types.
+	for _, st := range sk.Manifest.Types {
+		switch st {
+		case SkillTypePrompt:
+			rt.promptCollector.RemoveBySkill(name)
+		case SkillTypeWorkflow:
+			rt.workflowRunner.Unregister(name)
+		case SkillTypeSecurityRule:
+			rt.securityAdapter.UnregisterBySkill(name)
+		}
+	}
+
 	// Unload backend.
 	if sk.Backend != nil {
 		if err := sk.Backend.Unload(); err != nil {
@@ -244,4 +279,22 @@ func (rt *Runtime) GetActiveSkills() []*Skill {
 		result = append(result, sk)
 	}
 	return result
+}
+
+// GetPromptFragments returns the prompt fragments collected from all active
+// prompt skills.
+func (rt *Runtime) GetPromptFragments() []PromptFragment {
+	return rt.promptCollector.Fragments()
+}
+
+// InvokeWorkflow executes a named workflow handler. Returns an error if no
+// workflow is registered with the given name.
+func (rt *Runtime) InvokeWorkflow(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
+	return rt.workflowRunner.Invoke(ctx, name, args)
+}
+
+// GetScanners returns the registered security scanners from all active
+// security-rule skills.
+func (rt *Runtime) GetScanners() []RegisteredScanner {
+	return rt.securityAdapter.Scanners()
 }
