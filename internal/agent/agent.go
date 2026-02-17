@@ -7,6 +7,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
@@ -38,6 +39,17 @@ type ToolResultEvent struct {
 	IsError bool
 }
 
+// AgentOption is a functional option for configuring an Agent.
+type AgentOption func(*Agent)
+
+// WithSkillRuntime attaches a skill runtime to the agent, enabling hook
+// dispatch and prompt fragment injection.
+func WithSkillRuntime(rt *skills.Runtime) AgentOption {
+	return func(a *Agent) {
+		a.skillRuntime = rt
+	}
+}
+
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
 	provider     provider.LLMProvider
@@ -47,13 +59,15 @@ type Agent struct {
 	approve      ApprovalFunc
 	model        string
 	maxTurns     int
+	skillRuntime *skills.Runtime
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
-// function, and configuration.
-func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *config.Config) *Agent {
+// function, and configuration. Optional AgentOption values can be provided
+// to attach a skill runtime.
+func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *config.Config, opts ...AgentOption) *Agent {
 	systemPrompt := buildSystemPrompt(cfg)
-	return &Agent{
+	a := &Agent{
 		provider:     p,
 		tools:        t,
 		conversation: NewConversation(systemPrompt),
@@ -62,6 +76,10 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // buildSystemPrompt constructs the system prompt from configuration.
@@ -95,6 +113,37 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 	return ch, nil
 }
 
+// buildSystemPromptWithFragments returns the base system prompt with any
+// skill prompt fragments appended.
+func (a *Agent) buildSystemPromptWithFragments() string {
+	base := a.conversation.SystemPrompt()
+	if a.skillRuntime == nil {
+		return base
+	}
+
+	fragments := a.skillRuntime.GetPromptFragments()
+	if len(fragments) == 0 {
+		return base
+	}
+
+	result := base
+	for _, f := range fragments {
+		if f.SystemPromptFile != "" {
+			result += "\n\n" + f.SystemPromptFile
+		}
+	}
+	return result
+}
+
+// dispatchHook dispatches a hook event via the skill runtime. If no runtime is
+// configured, it returns nil. This is safe to call even when skillRuntime is nil.
+func (a *Agent) dispatchHook(event skills.HookEvent) (*skills.HookResult, error) {
+	if a.skillRuntime == nil {
+		return nil, nil
+	}
+	return a.skillRuntime.DispatchHook(event)
+}
+
 // runLoop recursively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
 	if turnCount >= a.maxTurns {
@@ -103,9 +152,12 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		return
 	}
 
+	// Build the system prompt, injecting prompt fragments from skills.
+	systemPrompt := a.buildSystemPromptWithFragments()
+
 	req := provider.CompletionRequest{
 		Model:     a.model,
-		System:    a.conversation.SystemPrompt(),
+		System:    systemPrompt,
 		Messages:  a.conversation.Messages(),
 		Tools:     a.tools.All(),
 		MaxTokens: 4096,
@@ -213,6 +265,44 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			},
 		}
 
+		// Dispatch HookOnBeforeToolCall hook. If cancelled, skip execution.
+		hookResult, hookErr := a.dispatchHook(skills.HookEvent{
+			Phase: skills.HookOnBeforeToolCall,
+			Data: map[string]any{
+				"tool_name": tc.Name,
+				"input":     string(tc.Input),
+			},
+			Ctx: ctx,
+		})
+		if hookErr != nil {
+			result := fmt.Sprintf("hook error: %s", hookErr)
+			a.conversation.AddToolResult(tc.ID, result, true)
+			ch <- TurnEvent{
+				Type: "tool_result",
+				ToolResult: &ToolResultEvent{
+					ID:      tc.ID,
+					Name:    tc.Name,
+					Content: result,
+					IsError: true,
+				},
+			}
+			continue
+		}
+		if hookResult != nil && hookResult.Cancel {
+			result := "tool call cancelled by skill"
+			a.conversation.AddToolResult(tc.ID, result, true)
+			ch <- TurnEvent{
+				Type: "tool_result",
+				ToolResult: &ToolResultEvent{
+					ID:      tc.ID,
+					Name:    tc.Name,
+					Content: result,
+					IsError: true,
+				},
+			}
+			continue
+		}
+
 		// Check approval
 		approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
 		if approvalErr != nil {
@@ -276,6 +366,22 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 				},
 			}
 			continue
+		}
+
+		// Dispatch HookOnAfterToolResult hook. If modified, use the new content.
+		afterResult, afterErr := a.dispatchHook(skills.HookEvent{
+			Phase: skills.HookOnAfterToolResult,
+			Data: map[string]any{
+				"tool_name": tc.Name,
+				"content":   toolResult.Content,
+				"is_error":  toolResult.IsError,
+			},
+			Ctx: ctx,
+		})
+		if afterErr == nil && afterResult != nil && afterResult.Modified != nil {
+			if modContent, ok := afterResult.Modified["content"].(string); ok {
+				toolResult.Content = modContent
+			}
 		}
 
 		a.conversation.AddToolResult(tc.ID, toolResult.Content, toolResult.IsError)

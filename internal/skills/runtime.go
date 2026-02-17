@@ -293,6 +293,14 @@ func (rt *Runtime) InvokeWorkflow(ctx context.Context, name string, args map[str
 	return rt.workflowRunner.Invoke(ctx, name, args)
 }
 
+// DispatchHook sends a hook event to all registered handlers for the event's
+// phase via the lifecycle manager. This is the public entry point used by
+// the agent loop to fire hooks at key points (before tool call, after tool
+// result, etc.).
+func (rt *Runtime) DispatchHook(event HookEvent) (*HookResult, error) {
+	return rt.lifecycle.Dispatch(event)
+}
+
 // GetScanners returns the registered security scanners from all active
 // security-rule skills.
 func (rt *Runtime) GetScanners() []RegisteredScanner {
