@@ -1,6 +1,7 @@
 package starlark
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -207,4 +208,235 @@ func (e *Engine) builtinProjectRoot(
 	}
 
 	return starlib.String(e.skillDir), nil
+}
+
+// builtinLLMComplete implements llm_complete(prompt) -> starlark.String.
+// Sends a prompt to the configured LLM provider and returns the response.
+// Requires the llm:call permission.
+func (e *Engine) builtinLLMComplete(
+	_ *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	var prompt string
+	if err := starlib.UnpackPositionalArgs(fn.Name(), args, kwargs, 1, &prompt); err != nil {
+		return nil, err
+	}
+
+	if err := e.checker.CheckPermission(skills.PermLLMCall); err != nil {
+		return nil, fmt.Errorf("llm_complete: %w", err)
+	}
+
+	if e.llmCompleter == nil {
+		return nil, fmt.Errorf("llm_complete: no LLM completer configured")
+	}
+
+	result, err := e.llmCompleter.Complete(context.Background(), prompt)
+	if err != nil {
+		return nil, fmt.Errorf("llm_complete: %w", err)
+	}
+
+	return starlib.String(result), nil
+}
+
+// builtinFetch implements fetch(url) -> starlark.String.
+// Fetches the given URL and returns the response body as a string.
+// Requires the net:fetch permission.
+func (e *Engine) builtinFetch(
+	_ *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	var url string
+	if err := starlib.UnpackPositionalArgs(fn.Name(), args, kwargs, 1, &url); err != nil {
+		return nil, err
+	}
+
+	if err := e.checker.CheckPermission(skills.PermNetFetch); err != nil {
+		return nil, fmt.Errorf("fetch: %w", err)
+	}
+
+	if e.httpFetcher == nil {
+		return nil, fmt.Errorf("fetch: no HTTP fetcher configured")
+	}
+
+	result, err := e.httpFetcher.Fetch(context.Background(), url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch: %w", err)
+	}
+
+	return starlib.String(result), nil
+}
+
+// builtinGitDiff implements git_diff(*args) -> starlark.String.
+// Runs git diff with the given arguments and returns the output.
+// Requires the git:read permission.
+func (e *Engine) builtinGitDiff(
+	_ *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	if err := e.checker.CheckPermission(skills.PermGitRead); err != nil {
+		return nil, fmt.Errorf("git_diff: %w", err)
+	}
+
+	if e.gitRunner == nil {
+		return nil, fmt.Errorf("git_diff: no git runner configured")
+	}
+
+	// Convert starlark args to strings.
+	strArgs := make([]string, len(args))
+	for i, a := range args {
+		s, ok := starlib.AsString(a)
+		if !ok {
+			return nil, fmt.Errorf("git_diff: argument %d must be a string", i)
+		}
+		strArgs[i] = s
+	}
+
+	result, err := e.gitRunner.Diff(context.Background(), strArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git_diff: %w", err)
+	}
+
+	return starlib.String(result), nil
+}
+
+// builtinGitLog implements git_log(*args) -> starlark.List of dicts.
+// Each dict has keys "hash", "author", "message".
+// Requires the git:read permission.
+func (e *Engine) builtinGitLog(
+	_ *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	if err := e.checker.CheckPermission(skills.PermGitRead); err != nil {
+		return nil, fmt.Errorf("git_log: %w", err)
+	}
+
+	if e.gitRunner == nil {
+		return nil, fmt.Errorf("git_log: no git runner configured")
+	}
+
+	// Convert starlark args to strings.
+	strArgs := make([]string, len(args))
+	for i, a := range args {
+		s, ok := starlib.AsString(a)
+		if !ok {
+			return nil, fmt.Errorf("git_log: argument %d must be a string", i)
+		}
+		strArgs[i] = s
+	}
+
+	entries, err := e.gitRunner.Log(context.Background(), strArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("git_log: %w", err)
+	}
+
+	elems := make([]starlib.Value, len(entries))
+	for i, entry := range entries {
+		dict := starlib.NewDict(3)
+		_ = dict.SetKey(starlib.String("hash"), starlib.String(entry.Hash))
+		_ = dict.SetKey(starlib.String("author"), starlib.String(entry.Author))
+		_ = dict.SetKey(starlib.String("message"), starlib.String(entry.Message))
+		elems[i] = dict
+	}
+
+	return starlib.NewList(elems), nil
+}
+
+// builtinGitStatus implements git_status() -> starlark.List of dicts.
+// Each dict has keys "path", "status".
+// Requires the git:read permission.
+func (e *Engine) builtinGitStatus(
+	_ *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	if err := starlib.UnpackPositionalArgs(fn.Name(), args, kwargs, 0); err != nil {
+		return nil, err
+	}
+
+	if err := e.checker.CheckPermission(skills.PermGitRead); err != nil {
+		return nil, fmt.Errorf("git_status: %w", err)
+	}
+
+	if e.gitRunner == nil {
+		return nil, fmt.Errorf("git_status: no git runner configured")
+	}
+
+	entries, err := e.gitRunner.Status(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("git_status: %w", err)
+	}
+
+	elems := make([]starlib.Value, len(entries))
+	for i, entry := range entries {
+		dict := starlib.NewDict(2)
+		_ = dict.SetKey(starlib.String("path"), starlib.String(entry.Path))
+		_ = dict.SetKey(starlib.String("status"), starlib.String(entry.Status))
+		elems[i] = dict
+	}
+
+	return starlib.NewList(elems), nil
+}
+
+// builtinInvokeSkill implements invoke_skill(name, input_dict) -> starlark dict.
+// Invokes another skill by name with the given input and returns the result.
+// Requires the skill:invoke permission.
+func (e *Engine) builtinInvokeSkill(
+	_ *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s: requires exactly 2 arguments (name, input_dict)", fn.Name())
+	}
+
+	name, ok := starlib.AsString(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s: name must be a string", fn.Name())
+	}
+
+	inputDict, ok := args[1].(*starlib.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%s: input must be a dict", fn.Name())
+	}
+
+	if err := e.checker.CheckPermission(skills.PermSkillInvoke); err != nil {
+		return nil, fmt.Errorf("invoke_skill: %w", err)
+	}
+
+	if e.skillInvoker == nil {
+		return nil, fmt.Errorf("invoke_skill: no skill invoker configured")
+	}
+
+	// Convert Starlark dict to Go map.
+	goInput := make(map[string]any)
+	for _, item := range inputDict.Items() {
+		key, ok := starlib.AsString(item[0])
+		if !ok {
+			return nil, fmt.Errorf("invoke_skill: dict key must be a string")
+		}
+		goInput[key] = starlarkValueToGo(item[1])
+	}
+
+	result, err := e.skillInvoker.Invoke(context.Background(), name, goInput)
+	if err != nil {
+		return nil, fmt.Errorf("invoke_skill: %w", err)
+	}
+
+	// Convert Go map result back to Starlark dict.
+	resultDict, err := goMapToStarlarkDict(result)
+	if err != nil {
+		return nil, fmt.Errorf("invoke_skill: convert result: %w", err)
+	}
+
+	return resultDict, nil
 }

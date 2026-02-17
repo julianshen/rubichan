@@ -17,17 +17,60 @@ import (
 	starlib "go.starlark.net/starlark"
 )
 
+// LLMCompleter abstracts LLM completion for the llm_complete() built-in.
+// Real implementations will be wired in Task 18; tests use mocks.
+type LLMCompleter interface {
+	Complete(ctx context.Context, prompt string) (string, error)
+}
+
+// HTTPFetcher abstracts HTTP fetching for the fetch() built-in.
+// Real implementations will be wired in Task 18; tests use mocks.
+type HTTPFetcher interface {
+	Fetch(ctx context.Context, url string) (string, error)
+}
+
+// GitLogEntry represents a single git log entry returned by GitRunner.Log.
+type GitLogEntry struct {
+	Hash    string
+	Author  string
+	Message string
+}
+
+// GitStatusEntry represents a single file status returned by GitRunner.Status.
+type GitStatusEntry struct {
+	Path   string
+	Status string
+}
+
+// GitRunner abstracts git operations for git_diff, git_log, git_status built-ins.
+// Real implementations will be wired in Task 18; tests use mocks.
+type GitRunner interface {
+	Diff(ctx context.Context, args ...string) (string, error)
+	Log(ctx context.Context, args ...string) ([]GitLogEntry, error)
+	Status(ctx context.Context) ([]GitStatusEntry, error)
+}
+
+// SkillInvoker abstracts cross-skill invocation for the invoke_skill() built-in.
+// Real implementations will be wired in Task 18; tests use mocks.
+type SkillInvoker interface {
+	Invoke(ctx context.Context, name string, input map[string]any) (map[string]any, error)
+}
+
 // Engine implements skills.SkillBackend using the go.starlark.net interpreter.
 // Each Engine instance gets its own Starlark thread with a fresh global scope
 // and injected SDK builtins (register_tool, register_hook, log).
 type Engine struct {
-	skillName string
-	skillDir  string
-	checker   skills.PermissionChecker
-	thread    *starlib.Thread
-	globals   starlib.StringDict
-	tools     []tools.Tool
-	hooks     map[skills.HookPhase]skills.HookHandler
+	skillName    string
+	skillDir     string
+	checker      skills.PermissionChecker
+	thread       *starlib.Thread
+	globals      starlib.StringDict
+	tools        []tools.Tool
+	hooks        map[skills.HookPhase]skills.HookHandler
+	llmCompleter LLMCompleter
+	httpFetcher  HTTPFetcher
+	gitRunner    GitRunner
+	skillInvoker SkillInvoker
 }
 
 // compile-time check: Engine implements skills.SkillBackend.
@@ -44,6 +87,18 @@ func NewEngine(skillName, skillDir string, checker skills.PermissionChecker) *En
 		hooks:     make(map[skills.HookPhase]skills.HookHandler),
 	}
 }
+
+// SetLLMCompleter sets the LLM completer used by the llm_complete() built-in.
+func (e *Engine) SetLLMCompleter(c LLMCompleter) { e.llmCompleter = c }
+
+// SetHTTPFetcher sets the HTTP fetcher used by the fetch() built-in.
+func (e *Engine) SetHTTPFetcher(f HTTPFetcher) { e.httpFetcher = f }
+
+// SetGitRunner sets the git runner used by git_diff, git_log, git_status built-ins.
+func (e *Engine) SetGitRunner(r GitRunner) { e.gitRunner = r }
+
+// SetSkillInvoker sets the skill invoker used by the invoke_skill() built-in.
+func (e *Engine) SetSkillInvoker(i SkillInvoker) { e.skillInvoker = i }
 
 // Load reads and executes the entrypoint .star file from the manifest. It
 // injects the SDK builtins (register_tool, register_hook, log) into the
@@ -78,6 +133,12 @@ func (e *Engine) Load(manifest skills.SkillManifest, checker skills.PermissionCh
 		"exec":          starlib.NewBuiltin("exec", e.builtinExec),
 		"env":           starlib.NewBuiltin("env", e.builtinEnv),
 		"project_root":  starlib.NewBuiltin("project_root", e.builtinProjectRoot),
+		"llm_complete":  starlib.NewBuiltin("llm_complete", e.builtinLLMComplete),
+		"fetch":         starlib.NewBuiltin("fetch", e.builtinFetch),
+		"git_diff":      starlib.NewBuiltin("git_diff", e.builtinGitDiff),
+		"git_log":       starlib.NewBuiltin("git_log", e.builtinGitLog),
+		"git_status":    starlib.NewBuiltin("git_status", e.builtinGitStatus),
+		"invoke_skill":  starlib.NewBuiltin("invoke_skill", e.builtinInvokeSkill),
 	}
 
 	globals, err := starlib.ExecFile(
@@ -307,4 +368,42 @@ func starlarkValueToString(v starlib.Value) string {
 		return string(s)
 	}
 	return v.String()
+}
+
+// starlarkValueToGo converts a Starlark value to a native Go value.
+// Used for converting Starlark dicts to Go maps when invoking skills.
+func starlarkValueToGo(v starlib.Value) any {
+	switch val := v.(type) {
+	case starlib.NoneType:
+		return nil
+	case starlib.Bool:
+		return bool(val)
+	case starlib.String:
+		return string(val)
+	case starlib.Int:
+		if i64, ok := val.Int64(); ok {
+			return i64
+		}
+		return val.String()
+	case starlib.Float:
+		return float64(val)
+	case *starlib.List:
+		result := make([]any, val.Len())
+		for i := range val.Len() {
+			result[i] = starlarkValueToGo(val.Index(i))
+		}
+		return result
+	case *starlib.Dict:
+		result := make(map[string]any)
+		for _, item := range val.Items() {
+			key, ok := starlib.AsString(item[0])
+			if !ok {
+				key = item[0].String()
+			}
+			result[key] = starlarkValueToGo(item[1])
+		}
+		return result
+	default:
+		return v.String()
+	}
 }
