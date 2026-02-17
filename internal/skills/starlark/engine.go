@@ -71,6 +71,13 @@ func (e *Engine) Load(manifest skills.SkillManifest, checker skills.PermissionCh
 		"register_tool": starlib.NewBuiltin("register_tool", e.builtinRegisterTool),
 		"register_hook": starlib.NewBuiltin("register_hook", e.builtinRegisterHook),
 		"log":           starlib.NewBuiltin("log", e.builtinLog),
+		"read_file":     starlib.NewBuiltin("read_file", e.builtinReadFile),
+		"write_file":    starlib.NewBuiltin("write_file", e.builtinWriteFile),
+		"list_dir":      starlib.NewBuiltin("list_dir", e.builtinListDir),
+		"search_files":  starlib.NewBuiltin("search_files", e.builtinSearchFiles),
+		"exec":          starlib.NewBuiltin("exec", e.builtinExec),
+		"env":           starlib.NewBuiltin("env", e.builtinEnv),
+		"project_root":  starlib.NewBuiltin("project_root", e.builtinProjectRoot),
 	}
 
 	globals, err := starlib.ExecFile(
@@ -96,6 +103,32 @@ func (e *Engine) Tools() []tools.Tool {
 // This is populated by register_hook() calls in the Starlark code.
 func (e *Engine) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return e.hooks
+}
+
+// Checker returns the engine's permission checker. This is used by tests
+// to pass the checker back into Load().
+func (e *Engine) Checker() skills.PermissionChecker {
+	return e.checker
+}
+
+// Global returns the value of a Starlark global variable by name. For
+// String values, the raw Go string is returned. For Int values, the int64
+// is returned. For other types, the Starlark string representation is
+// returned. Returns nil if the variable is not set.
+func (e *Engine) Global(name string) any {
+	v, ok := e.globals[name]
+	if !ok {
+		return nil
+	}
+	if s, ok := v.(starlib.String); ok {
+		return string(s)
+	}
+	if i, ok := v.(starlib.Int); ok {
+		if i64, ok := i.Int64(); ok {
+			return i64
+		}
+	}
+	return v.String()
 }
 
 // Unload releases resources held by the engine.
