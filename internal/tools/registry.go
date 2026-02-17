@@ -29,6 +29,16 @@ func (r *Registry) Register(t Tool) error {
 	return nil
 }
 
+// Unregister removes a tool from the registry by name. Returns an error
+// if the tool is not registered.
+func (r *Registry) Unregister(name string) error {
+	if _, exists := r.tools[name]; !exists {
+		return fmt.Errorf("tool not registered: %s", name)
+	}
+	delete(r.tools, name)
+	return nil
+}
+
 // Get retrieves a tool by name. Returns the tool and true if found,
 // or nil and false if not found.
 func (r *Registry) Get(name string) (Tool, bool) {
