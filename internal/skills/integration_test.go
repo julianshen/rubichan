@@ -136,7 +136,9 @@ func TestPromptSkillInjectsFragment(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	// For builtin skills (Dir=""), SystemPromptFile is used as inline content.
-	assert.Equal(t, "system.md", result.Modified["prompt_fragment"].(string))
+	fragment, ok := result.Modified["prompt_fragment"].(string)
+	require.True(t, ok, "prompt_fragment should be a string")
+	assert.Equal(t, "system.md", fragment)
 }
 
 // TestWorkflowSkillInvokable verifies that a skill with type "workflow"
@@ -348,7 +350,9 @@ func TestMultiTypeSkill(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	// For builtin skills (Dir=""), SystemPromptFile is used as inline content.
-	assert.Equal(t, "multi-system.md", result.Modified["prompt_fragment"].(string))
+	multiFragment, ok := result.Modified["prompt_fragment"].(string)
+	require.True(t, ok, "prompt_fragment should be a string")
+	assert.Equal(t, "multi-system.md", multiFragment)
 }
 
 // TestDeactivateCleanupIntegrations verifies that deactivating a skill with

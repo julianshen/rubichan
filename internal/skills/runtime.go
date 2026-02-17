@@ -155,55 +155,71 @@ func (rt *Runtime) isAutoApproved(name string) bool {
 // Activate transitions a skill from Inactive to Active. It creates a sandbox,
 // a backend, loads the backend, registers tools, and registers hooks. If any
 // step fails, the skill transitions to Error state.
+//
+// Backend creation and loading are performed outside the lock to avoid holding
+// the mutex across potentially slow I/O (network, disk, process spawn).
 func (rt *Runtime) Activate(name string) error {
+	// Phase 1: Read skill metadata and transition to Activating under lock.
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
-
 	sk, ok := rt.skills[name]
 	if !ok {
+		rt.mu.Unlock()
 		return fmt.Errorf("skill %q not found", name)
 	}
 
-	// Transition to Activating.
 	if err := sk.TransitionTo(SkillStateActivating); err != nil {
+		rt.mu.Unlock()
 		return fmt.Errorf("activate skill %q: %w", name, err)
 	}
 
-	// Create sandbox (permission checker).
-	sb := rt.sandboxFactory(name, sk.Manifest.Permissions)
+	// Snapshot the data we need outside the lock.
+	manifest := *sk.Manifest
+	permissions := sk.Manifest.Permissions
+	source := sk.Source
+	autoApproved := rt.isAutoApproved(name)
+	sandboxFactory := rt.sandboxFactory
+	backendFactory := rt.backendFactory
+	rt.mu.Unlock()
 
-	// Check all declared permissions before loading.
-	if !rt.isAutoApproved(name) {
-		for _, perm := range sk.Manifest.Permissions {
+	// Phase 2: Create sandbox and backend outside the lock (may involve I/O).
+	sb := sandboxFactory(name, permissions)
+
+	if !autoApproved {
+		for _, perm := range permissions {
 			if err := sb.CheckPermission(perm); err != nil {
-				// Transition to Error, then back to Inactive.
+				rt.mu.Lock()
 				_ = sk.TransitionTo(SkillStateError)
 				_ = sk.TransitionTo(SkillStateInactive)
+				rt.mu.Unlock()
 				return fmt.Errorf("activate skill %q: %w", name, err)
 			}
 		}
 	}
 
-	// Create backend.
-	backend, err := rt.backendFactory(*sk.Manifest)
+	backend, err := backendFactory(manifest)
 	if err != nil {
+		rt.mu.Lock()
 		_ = sk.TransitionTo(SkillStateError)
 		_ = sk.TransitionTo(SkillStateInactive)
+		rt.mu.Unlock()
 		return fmt.Errorf("create backend for skill %q: %w", name, err)
 	}
 
-	// Load backend.
-	if err := backend.Load(*sk.Manifest, sb); err != nil {
+	if err := backend.Load(manifest, sb); err != nil {
+		rt.mu.Lock()
 		_ = sk.TransitionTo(SkillStateError)
 		_ = sk.TransitionTo(SkillStateInactive)
+		rt.mu.Unlock()
 		return fmt.Errorf("load skill %q: %w", name, err)
 	}
 
-	// Register tools with rollback on failure.
+	// Phase 3: Register tools, hooks, and integrations under lock.
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
 	var registeredTools []tools.Tool
 	for _, tool := range backend.Tools() {
 		if err := rt.registry.Register(tool); err != nil {
-			// Rollback previously registered tools.
 			for _, t := range registeredTools {
 				_ = rt.registry.Unregister(t.Name())
 			}
@@ -214,13 +230,11 @@ func (rt *Runtime) Activate(name string) error {
 		registeredTools = append(registeredTools, tool)
 	}
 
-	// Register hooks from the backend.
-	priority := sourcePriority(sk.Source)
+	priority := sourcePriority(source)
 	for phase, handler := range backend.Hooks() {
 		rt.lifecycle.Register(phase, name, priority, handler)
 	}
 
-	// Wire integrations based on skill types.
 	for _, st := range sk.Manifest.Types {
 		switch st {
 		case SkillTypeTool:
@@ -236,7 +250,6 @@ func (rt *Runtime) Activate(name string) error {
 		}
 	}
 
-	// Store the backend reference and transition to Active.
 	sk.Backend = backend
 	if err := sk.TransitionTo(SkillStateActive); err != nil {
 		return fmt.Errorf("activate skill %q: %w", name, err)

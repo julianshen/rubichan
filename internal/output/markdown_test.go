@@ -13,8 +13,8 @@ import (
 func TestMarkdownFormatterBasic(t *testing.T) {
 	f := NewMarkdownFormatter()
 	result := &RunResult{
-		Prompt:    "say hello",
-		Response:  "Hello there!",
+		Prompt:     "say hello",
+		Response:   "Hello there!",
 		TurnCount:  1,
 		DurationMs: 2000,
 		Mode:       "generic",
@@ -56,8 +56,8 @@ func TestMarkdownFormatterWithToolCalls(t *testing.T) {
 func TestMarkdownFormatterWithError(t *testing.T) {
 	f := NewMarkdownFormatter()
 	result := &RunResult{
-		Prompt:    "fail",
-		Response:  "",
+		Prompt:     "fail",
+		Response:   "",
 		TurnCount:  0,
 		DurationMs: 0,
 		Mode:       "generic",
@@ -75,8 +75,8 @@ func TestMarkdownFormatterWithError(t *testing.T) {
 func TestMarkdownFormatterNoToolCallsSection(t *testing.T) {
 	f := NewMarkdownFormatter()
 	result := &RunResult{
-		Prompt:    "hello",
-		Response:  "Hi!",
+		Prompt:     "hello",
+		Response:   "Hi!",
 		TurnCount:  1,
 		DurationMs: 1000,
 		Mode:       "generic",

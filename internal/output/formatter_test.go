@@ -10,8 +10,8 @@ import (
 
 func TestRunResultToolCallLogJSON(t *testing.T) {
 	r := RunResult{
-		Prompt:    "hello",
-		Response:  "world",
+		Prompt:     "hello",
+		Response:   "world",
 		TurnCount:  1,
 		DurationMs: 2000,
 		Mode:       "generic",

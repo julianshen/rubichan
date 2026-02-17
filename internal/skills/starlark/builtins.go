@@ -7,10 +7,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/skills"
 
 	starlib "go.starlark.net/starlark"
+)
+
+// Safety limits for Starlark builtins.
+const (
+	maxReadFileSize = 10 << 20         // 10 MB max file size for read_file.
+	execTimeout     = 30 * time.Second // 30s timeout for exec commands.
 )
 
 // resolveSandboxedPath resolves a path relative to the skill directory and
@@ -64,6 +71,15 @@ func (e *Engine) builtinReadFile(
 	resolved, err := e.resolveSandboxedPath(path)
 	if err != nil {
 		return nil, fmt.Errorf("read_file: %w", err)
+	}
+
+	// Check file size before reading to avoid OOM on large files.
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("read_file: %w", err)
+	}
+	if info.Size() > maxReadFileSize {
+		return nil, fmt.Errorf("read_file: file %q exceeds maximum size (%d bytes)", path, maxReadFileSize)
 	}
 
 	data, err := os.ReadFile(resolved)
@@ -216,7 +232,10 @@ func (e *Engine) builtinExec(
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 
-	cmd := exec.Command(command, cmdArgs...)
+	execCtx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(execCtx, command, cmdArgs...)
 	stdout, err := cmd.Output()
 
 	exitCode := 0
@@ -277,7 +296,7 @@ func (e *Engine) builtinProjectRoot(
 // Sends a prompt to the configured LLM provider and returns the response.
 // Requires the llm:call permission.
 func (e *Engine) builtinLLMComplete(
-	_ *starlib.Thread,
+	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
@@ -295,7 +314,7 @@ func (e *Engine) builtinLLMComplete(
 		return nil, fmt.Errorf("llm_complete: no LLM completer configured")
 	}
 
-	result, err := e.llmCompleter.Complete(context.Background(), prompt)
+	result, err := e.llmCompleter.Complete(threadContext(thread), prompt)
 	if err != nil {
 		return nil, fmt.Errorf("llm_complete: %w", err)
 	}
@@ -307,7 +326,7 @@ func (e *Engine) builtinLLMComplete(
 // Fetches the given URL and returns the response body as a string.
 // Requires the net:fetch permission.
 func (e *Engine) builtinFetch(
-	_ *starlib.Thread,
+	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
@@ -325,7 +344,7 @@ func (e *Engine) builtinFetch(
 		return nil, fmt.Errorf("fetch: no HTTP fetcher configured")
 	}
 
-	result, err := e.httpFetcher.Fetch(context.Background(), url)
+	result, err := e.httpFetcher.Fetch(threadContext(thread), url)
 	if err != nil {
 		return nil, fmt.Errorf("fetch: %w", err)
 	}
@@ -337,7 +356,7 @@ func (e *Engine) builtinFetch(
 // Runs git diff with the given arguments and returns the output.
 // Requires the git:read permission.
 func (e *Engine) builtinGitDiff(
-	_ *starlib.Thread,
+	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
@@ -360,7 +379,7 @@ func (e *Engine) builtinGitDiff(
 		strArgs[i] = s
 	}
 
-	result, err := e.gitRunner.Diff(context.Background(), strArgs...)
+	result, err := e.gitRunner.Diff(threadContext(thread), strArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("git_diff: %w", err)
 	}
@@ -372,7 +391,7 @@ func (e *Engine) builtinGitDiff(
 // Each dict has keys "hash", "author", "message".
 // Requires the git:read permission.
 func (e *Engine) builtinGitLog(
-	_ *starlib.Thread,
+	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
@@ -395,7 +414,7 @@ func (e *Engine) builtinGitLog(
 		strArgs[i] = s
 	}
 
-	entries, err := e.gitRunner.Log(context.Background(), strArgs...)
+	entries, err := e.gitRunner.Log(threadContext(thread), strArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("git_log: %w", err)
 	}
@@ -416,7 +435,7 @@ func (e *Engine) builtinGitLog(
 // Each dict has keys "path", "status".
 // Requires the git:read permission.
 func (e *Engine) builtinGitStatus(
-	_ *starlib.Thread,
+	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
@@ -433,7 +452,7 @@ func (e *Engine) builtinGitStatus(
 		return nil, fmt.Errorf("git_status: no git runner configured")
 	}
 
-	entries, err := e.gitRunner.Status(context.Background())
+	entries, err := e.gitRunner.Status(threadContext(thread))
 	if err != nil {
 		return nil, fmt.Errorf("git_status: %w", err)
 	}
@@ -453,7 +472,7 @@ func (e *Engine) builtinGitStatus(
 // Invokes another skill by name with the given input and returns the result.
 // Requires the skill:invoke permission.
 func (e *Engine) builtinInvokeSkill(
-	_ *starlib.Thread,
+	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
@@ -490,7 +509,7 @@ func (e *Engine) builtinInvokeSkill(
 		goInput[key] = starlarkValueToGo(item[1])
 	}
 
-	result, err := e.skillInvoker.Invoke(context.Background(), name, goInput)
+	result, err := e.skillInvoker.Invoke(threadContext(thread), name, goInput)
 	if err != nil {
 		return nil, fmt.Errorf("invoke_skill: %w", err)
 	}

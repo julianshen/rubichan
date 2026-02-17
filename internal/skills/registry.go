@@ -165,8 +165,17 @@ func (c *RegistryClient) Download(ctx context.Context, name, version, dest strin
 	return extractTarGz(io.LimitReader(resp.Body, maxDownloadBytes), dest)
 }
 
+// Tar extraction safety limits.
+const (
+	maxTarEntries   = 10000     // Maximum number of entries in a tar archive.
+	maxTarTotalSize = 500 << 20 // Maximum total extracted size (500 MB).
+	maxTarFileSize  = 50 << 20  // Maximum size of a single extracted file (50 MB).
+	safeModeMask    = os.FileMode(0o7777) &^ (os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
+)
+
 // extractTarGz reads a gzip-compressed tar archive from r and extracts its
-// contents to the dest directory.
+// contents to the dest directory. It enforces limits on entry count, total
+// extracted size, and individual file size. Setuid/setgid bits are stripped.
 func extractTarGz(r io.Reader, dest string) error {
 	gr, err := gzip.NewReader(r)
 	if err != nil {
@@ -175,6 +184,9 @@ func extractTarGz(r io.Reader, dest string) error {
 	defer gr.Close()
 
 	tr := tar.NewReader(gr)
+	var entryCount int
+	var totalSize int64
+
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -182,6 +194,11 @@ func extractTarGz(r io.Reader, dest string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("read tar header: %w", err)
+		}
+
+		entryCount++
+		if entryCount > maxTarEntries {
+			return fmt.Errorf("tar archive exceeds maximum entry count (%d)", maxTarEntries)
 		}
 
 		target := filepath.Join(dest, filepath.Clean(header.Name))
@@ -198,14 +215,26 @@ func extractTarGz(r io.Reader, dest string) error {
 				return fmt.Errorf("create directory %q: %w", target, err)
 			}
 		case tar.TypeReg:
+			if header.Size > maxTarFileSize {
+				return fmt.Errorf("tar entry %q exceeds maximum file size (%d bytes)", header.Name, maxTarFileSize)
+			}
+			totalSize += header.Size
+			if totalSize > maxTarTotalSize {
+				return fmt.Errorf("tar archive exceeds maximum total extracted size (%d bytes)", maxTarTotalSize)
+			}
+
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("create parent directory for %q: %w", target, err)
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+
+			// Strip setuid, setgid, and sticky bits from file mode.
+			mode := os.FileMode(header.Mode) & safeModeMask
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 			if err != nil {
 				return fmt.Errorf("create file %q: %w", target, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			// Use LimitReader to enforce per-file size even if header.Size is spoofed.
+			if _, err := io.Copy(f, io.LimitReader(tr, maxTarFileSize+1)); err != nil {
 				f.Close()
 				return fmt.Errorf("write file %q: %w", target, err)
 			}
@@ -218,9 +247,46 @@ func extractTarGz(r io.Reader, dest string) error {
 	return nil
 }
 
+// allowedGitSchemes lists URL schemes permitted for git clone operations.
+var allowedGitSchemes = map[string]bool{
+	"https": true,
+	"ssh":   true,
+}
+
+// validateGitURL checks that the URL uses an allowed scheme. This prevents
+// file://, ftp://, and other potentially dangerous URL schemes.
+// Local paths (no scheme) and SSH shorthand (git@host:path) are allowed.
+func validateGitURL(rawURL string) error {
+	// Handle SSH shorthand (git@host:path) — always allowed.
+	if strings.Contains(rawURL, "@") && strings.Contains(rawURL, ":") && !strings.Contains(rawURL, "://") {
+		return nil
+	}
+
+	// No scheme present — treat as a local path (used in development/testing).
+	if !strings.Contains(rawURL, "://") {
+		return nil
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid git URL %q: %w", rawURL, err)
+	}
+
+	if !allowedGitSchemes[parsed.Scheme] {
+		return fmt.Errorf("git URL scheme %q not allowed (allowed: https, ssh)", parsed.Scheme)
+	}
+
+	return nil
+}
+
 // InstallFromGit clones a git repository and validates that SKILL.yaml exists.
-func (c *RegistryClient) InstallFromGit(ctx context.Context, url, dest string) error {
-	cmd := exec.CommandContext(ctx, "git", "clone", url, dest)
+// Only https:// and ssh:// (including git@host:path shorthand) URLs are allowed.
+func (c *RegistryClient) InstallFromGit(ctx context.Context, gitURL, dest string) error {
+	if err := validateGitURL(gitURL); err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "clone", "--", gitURL, dest)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone: %s: %w", string(out), err)
 	}

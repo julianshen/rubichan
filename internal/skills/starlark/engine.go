@@ -100,10 +100,30 @@ type Engine struct {
 	skillInvoker SkillInvoker
 }
 
+// threadCtxKey is the thread-local key used to store a Go context.Context.
+const threadCtxKey = "go_ctx"
+
 // newCallThread creates a fresh Starlark thread for a single handler
 // invocation. This avoids sharing a thread across concurrent calls.
-func (e *Engine) newCallThread() *starlib.Thread {
-	return &starlib.Thread{Name: e.skillName}
+// If ctx is non-nil, it is stored in the thread's local storage so that
+// builtins can retrieve it via threadContext().
+func (e *Engine) newCallThread(ctx context.Context) *starlib.Thread {
+	t := &starlib.Thread{Name: e.skillName}
+	if ctx != nil {
+		t.SetLocal(threadCtxKey, ctx)
+	}
+	return t
+}
+
+// threadContext retrieves the Go context from a Starlark thread's local
+// storage. Returns context.Background() if none was set.
+func threadContext(t *starlib.Thread) context.Context {
+	if v := t.Local(threadCtxKey); v != nil {
+		if ctx, ok := v.(context.Context); ok {
+			return ctx
+		}
+	}
+	return context.Background()
 }
 
 // compile-time check: Engine implements skills.SkillBackend.
@@ -313,7 +333,7 @@ func (e *Engine) builtinRegisterHook(
 	capturedHandler := handler
 
 	e.hooks[phase] = func(event skills.HookEvent) (skills.HookResult, error) {
-		callThread := e.newCallThread()
+		callThread := e.newCallThread(event.Ctx)
 
 		// Convert HookEvent to a Starlark dict.
 		eventDict := starlib.NewDict(4)
@@ -390,8 +410,8 @@ func (e *Engine) builtinRegisterWorkflow(
 
 	capturedHandler := handler
 
-	e.workflows[name] = func(_ context.Context, input map[string]any) (string, error) {
-		callThread := e.newCallThread()
+	e.workflows[name] = func(ctx context.Context, input map[string]any) (string, error) {
+		callThread := e.newCallThread(ctx)
 
 		starDict, err := goMapToStarlarkDict(input)
 		if err != nil {
@@ -430,8 +450,8 @@ func (e *Engine) builtinRegisterScanner(
 
 	capturedHandler := handler
 
-	e.scanners[name] = func(_ context.Context, content string) ([]string, error) {
-		callThread := e.newCallThread()
+	e.scanners[name] = func(ctx context.Context, content string) ([]string, error) {
+		callThread := e.newCallThread(ctx)
 
 		result, err := starlib.Call(callThread, capturedHandler, starlib.Tuple{starlib.String(content)}, nil)
 		if err != nil {
@@ -495,7 +515,7 @@ func (st *starlarkTool) InputSchema() json.RawMessage {
 // is unmarshalled into a map[string]any, converted to a Starlark dict, and
 // passed as the single positional argument. The handler's return value is
 // converted to a string for the ToolResult.
-func (st *starlarkTool) Execute(_ context.Context, input json.RawMessage) (tools.ToolResult, error) {
+func (st *starlarkTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	// Unmarshal JSON input into a Go map.
 	var goMap map[string]any
 	if len(input) > 0 {
@@ -514,7 +534,7 @@ func (st *starlarkTool) Execute(_ context.Context, input json.RawMessage) (tools
 	}
 
 	// Call the Starlark handler with a fresh thread for concurrency safety.
-	callThread := st.engine.newCallThread()
+	callThread := st.engine.newCallThread(ctx)
 	result, err := starlib.Call(callThread, st.handler, starlib.Tuple{starDict}, nil)
 	if err != nil {
 		return tools.ToolResult{IsError: true, Content: err.Error()}, fmt.Errorf("call starlark handler %q: %w", st.name, err)

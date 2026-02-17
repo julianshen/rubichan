@@ -147,257 +147,257 @@ func (a *Agent) dispatchHook(event skills.HookEvent) (*skills.HookResult, error)
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
 	for ; turnCount < a.maxTurns; turnCount++ {
-	if ctx.Err() != nil {
-		ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-		ch <- TurnEvent{Type: "done"}
-		return
-	}
-
-	// Build the system prompt, injecting prompt fragments from skills.
-	systemPrompt := a.buildSystemPromptWithFragments()
-
-	req := provider.CompletionRequest{
-		Model:     a.model,
-		System:    systemPrompt,
-		Messages:  a.conversation.Messages(),
-		Tools:     a.tools.All(),
-		MaxTokens: 4096,
-	}
-
-	stream, err := a.provider.Stream(ctx, req)
-	if err != nil {
-		ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
-		ch <- TurnEvent{Type: "done"}
-		return
-	}
-
-	// Accumulate assistant content blocks and track tool calls
-	var blocks []provider.ContentBlock
-	var pendingTools []provider.ToolUseBlock
-	var currentTextBuf string
-	var currentTool *provider.ToolUseBlock
-	var toolInputBuf string
-
-	finalizeTool := func() {
-		if currentTool != nil {
-			currentTool.Input = json.RawMessage(toolInputBuf)
-			pendingTools = append(pendingTools, *currentTool)
-			blocks = append(blocks, provider.ContentBlock{
-				Type:  "tool_use",
-				ID:    currentTool.ID,
-				Name:  currentTool.Name,
-				Input: currentTool.Input,
-			})
-			currentTool = nil
-			toolInputBuf = ""
-		}
-	}
-
-	finalizeText := func() {
-		if currentTextBuf != "" {
-			blocks = append(blocks, provider.ContentBlock{
-				Type: "text",
-				Text: currentTextBuf,
-			})
-			currentTextBuf = ""
-		}
-	}
-
-	for event := range stream {
-		switch event.Type {
-		case "text_delta":
-			if currentTool != nil {
-				// Accumulating tool input JSON fragments
-				toolInputBuf += event.Text
-			} else {
-				// Regular text content
-				currentTextBuf += event.Text
-				ch <- TurnEvent{Type: "text_delta", Text: event.Text}
-			}
-
-		case "tool_use":
-			// Finalize any pending text block
-			finalizeText()
-			// Finalize any previous tool
-			finalizeTool()
-			// Start new tool accumulation
-			currentTool = &provider.ToolUseBlock{
-				ID:   event.ToolUse.ID,
-				Name: event.ToolUse.Name,
-			}
-
-		case "error":
-			ch <- TurnEvent{Type: "error", Error: event.Error}
-
-		case "stop":
-			// Will be handled after the loop
-		}
-	}
-
-	// Finalize any remaining text or tool
-	finalizeText()
-	finalizeTool()
-
-	// Add assistant message with accumulated blocks
-	if len(blocks) > 0 {
-		a.conversation.AddAssistant(blocks)
-	}
-
-	// If no pending tool calls, we're done
-	if len(pendingTools) == 0 {
-		ch <- TurnEvent{Type: "done"}
-		return
-	}
-
-	// Execute tool calls
-	for _, tc := range pendingTools {
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- TurnEvent{Type: "done"}
 			return
 		}
 
-		ch <- TurnEvent{
-			Type: "tool_call",
-			ToolCall: &ToolCallEvent{
-				ID:    tc.ID,
-				Name:  tc.Name,
-				Input: tc.Input,
-			},
+		// Build the system prompt, injecting prompt fragments from skills.
+		systemPrompt := a.buildSystemPromptWithFragments()
+
+		req := provider.CompletionRequest{
+			Model:     a.model,
+			System:    systemPrompt,
+			Messages:  a.conversation.Messages(),
+			Tools:     a.tools.All(),
+			MaxTokens: 4096,
 		}
 
-		// Dispatch HookOnBeforeToolCall hook. If cancelled, skip execution.
-		hookResult, hookErr := a.dispatchHook(skills.HookEvent{
-			Phase: skills.HookOnBeforeToolCall,
-			Data: map[string]any{
-				"tool_name": tc.Name,
-				"input":     string(tc.Input),
-			},
-			Ctx: ctx,
-		})
-		if hookErr != nil {
-			result := fmt.Sprintf("hook error: %s", hookErr)
-			a.conversation.AddToolResult(tc.ID, result, true)
+		stream, err := a.provider.Stream(ctx, req)
+		if err != nil {
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
+			ch <- TurnEvent{Type: "done"}
+			return
+		}
+
+		// Accumulate assistant content blocks and track tool calls
+		var blocks []provider.ContentBlock
+		var pendingTools []provider.ToolUseBlock
+		var currentTextBuf string
+		var currentTool *provider.ToolUseBlock
+		var toolInputBuf string
+
+		finalizeTool := func() {
+			if currentTool != nil {
+				currentTool.Input = json.RawMessage(toolInputBuf)
+				pendingTools = append(pendingTools, *currentTool)
+				blocks = append(blocks, provider.ContentBlock{
+					Type:  "tool_use",
+					ID:    currentTool.ID,
+					Name:  currentTool.Name,
+					Input: currentTool.Input,
+				})
+				currentTool = nil
+				toolInputBuf = ""
+			}
+		}
+
+		finalizeText := func() {
+			if currentTextBuf != "" {
+				blocks = append(blocks, provider.ContentBlock{
+					Type: "text",
+					Text: currentTextBuf,
+				})
+				currentTextBuf = ""
+			}
+		}
+
+		for event := range stream {
+			switch event.Type {
+			case "text_delta":
+				if currentTool != nil {
+					// Accumulating tool input JSON fragments
+					toolInputBuf += event.Text
+				} else {
+					// Regular text content
+					currentTextBuf += event.Text
+					ch <- TurnEvent{Type: "text_delta", Text: event.Text}
+				}
+
+			case "tool_use":
+				// Finalize any pending text block
+				finalizeText()
+				// Finalize any previous tool
+				finalizeTool()
+				// Start new tool accumulation
+				currentTool = &provider.ToolUseBlock{
+					ID:   event.ToolUse.ID,
+					Name: event.ToolUse.Name,
+				}
+
+			case "error":
+				ch <- TurnEvent{Type: "error", Error: event.Error}
+
+			case "stop":
+				// Will be handled after the loop
+			}
+		}
+
+		// Finalize any remaining text or tool
+		finalizeText()
+		finalizeTool()
+
+		// Add assistant message with accumulated blocks
+		if len(blocks) > 0 {
+			a.conversation.AddAssistant(blocks)
+		}
+
+		// If no pending tool calls, we're done
+		if len(pendingTools) == 0 {
+			ch <- TurnEvent{Type: "done"}
+			return
+		}
+
+		// Execute tool calls
+		for _, tc := range pendingTools {
+			if ctx.Err() != nil {
+				ch <- TurnEvent{Type: "error", Error: ctx.Err()}
+				ch <- TurnEvent{Type: "done"}
+				return
+			}
+
+			ch <- TurnEvent{
+				Type: "tool_call",
+				ToolCall: &ToolCallEvent{
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: tc.Input,
+				},
+			}
+
+			// Dispatch HookOnBeforeToolCall hook. If cancelled, skip execution.
+			hookResult, hookErr := a.dispatchHook(skills.HookEvent{
+				Phase: skills.HookOnBeforeToolCall,
+				Data: map[string]any{
+					"tool_name": tc.Name,
+					"input":     string(tc.Input),
+				},
+				Ctx: ctx,
+			})
+			if hookErr != nil {
+				result := fmt.Sprintf("hook error: %s", hookErr)
+				a.conversation.AddToolResult(tc.ID, result, true)
+				ch <- TurnEvent{
+					Type: "tool_result",
+					ToolResult: &ToolResultEvent{
+						ID:      tc.ID,
+						Name:    tc.Name,
+						Content: result,
+						IsError: true,
+					},
+				}
+				continue
+			}
+			if hookResult != nil && hookResult.Cancel {
+				result := "tool call cancelled by skill"
+				a.conversation.AddToolResult(tc.ID, result, true)
+				ch <- TurnEvent{
+					Type: "tool_result",
+					ToolResult: &ToolResultEvent{
+						ID:      tc.ID,
+						Name:    tc.Name,
+						Content: result,
+						IsError: true,
+					},
+				}
+				continue
+			}
+
+			// Check approval
+			approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
+			if approvalErr != nil {
+				result := fmt.Sprintf("approval error: %s", approvalErr)
+				a.conversation.AddToolResult(tc.ID, result, true)
+				ch <- TurnEvent{
+					Type: "tool_result",
+					ToolResult: &ToolResultEvent{
+						ID:      tc.ID,
+						Name:    tc.Name,
+						Content: result,
+						IsError: true,
+					},
+				}
+				continue
+			}
+
+			if !approved {
+				result := "tool call denied by user"
+				a.conversation.AddToolResult(tc.ID, result, true)
+				ch <- TurnEvent{
+					Type: "tool_result",
+					ToolResult: &ToolResultEvent{
+						ID:      tc.ID,
+						Name:    tc.Name,
+						Content: result,
+						IsError: true,
+					},
+				}
+				continue
+			}
+
+			// Look up and execute the tool
+			tool, found := a.tools.Get(tc.Name)
+			if !found {
+				result := fmt.Sprintf("unknown tool: %s", tc.Name)
+				a.conversation.AddToolResult(tc.ID, result, true)
+				ch <- TurnEvent{
+					Type: "tool_result",
+					ToolResult: &ToolResultEvent{
+						ID:      tc.ID,
+						Name:    tc.Name,
+						Content: result,
+						IsError: true,
+					},
+				}
+				continue
+			}
+
+			toolResult, execErr := tool.Execute(ctx, tc.Input)
+			if execErr != nil {
+				result := fmt.Sprintf("tool execution error: %s", execErr)
+				a.conversation.AddToolResult(tc.ID, result, true)
+				ch <- TurnEvent{
+					Type: "tool_result",
+					ToolResult: &ToolResultEvent{
+						ID:      tc.ID,
+						Name:    tc.Name,
+						Content: result,
+						IsError: true,
+					},
+				}
+				continue
+			}
+
+			// Dispatch HookOnAfterToolResult hook. If modified, use the new content.
+			afterResult, afterErr := a.dispatchHook(skills.HookEvent{
+				Phase: skills.HookOnAfterToolResult,
+				Data: map[string]any{
+					"tool_name": tc.Name,
+					"content":   toolResult.Content,
+					"is_error":  toolResult.IsError,
+				},
+				Ctx: ctx,
+			})
+			if afterErr == nil && afterResult != nil && afterResult.Modified != nil {
+				if modContent, ok := afterResult.Modified["content"].(string); ok {
+					toolResult.Content = modContent
+				}
+			}
+
+			a.conversation.AddToolResult(tc.ID, toolResult.Content, toolResult.IsError)
 			ch <- TurnEvent{
 				Type: "tool_result",
 				ToolResult: &ToolResultEvent{
 					ID:      tc.ID,
 					Name:    tc.Name,
-					Content: result,
-					IsError: true,
+					Content: toolResult.Content,
+					IsError: toolResult.IsError,
 				},
 			}
-			continue
-		}
-		if hookResult != nil && hookResult.Cancel {
-			result := "tool call cancelled by skill"
-			a.conversation.AddToolResult(tc.ID, result, true)
-			ch <- TurnEvent{
-				Type: "tool_result",
-				ToolResult: &ToolResultEvent{
-					ID:      tc.ID,
-					Name:    tc.Name,
-					Content: result,
-					IsError: true,
-				},
-			}
-			continue
 		}
 
-		// Check approval
-		approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
-		if approvalErr != nil {
-			result := fmt.Sprintf("approval error: %s", approvalErr)
-			a.conversation.AddToolResult(tc.ID, result, true)
-			ch <- TurnEvent{
-				Type: "tool_result",
-				ToolResult: &ToolResultEvent{
-					ID:      tc.ID,
-					Name:    tc.Name,
-					Content: result,
-					IsError: true,
-				},
-			}
-			continue
-		}
-
-		if !approved {
-			result := "tool call denied by user"
-			a.conversation.AddToolResult(tc.ID, result, true)
-			ch <- TurnEvent{
-				Type: "tool_result",
-				ToolResult: &ToolResultEvent{
-					ID:      tc.ID,
-					Name:    tc.Name,
-					Content: result,
-					IsError: true,
-				},
-			}
-			continue
-		}
-
-		// Look up and execute the tool
-		tool, found := a.tools.Get(tc.Name)
-		if !found {
-			result := fmt.Sprintf("unknown tool: %s", tc.Name)
-			a.conversation.AddToolResult(tc.ID, result, true)
-			ch <- TurnEvent{
-				Type: "tool_result",
-				ToolResult: &ToolResultEvent{
-					ID:      tc.ID,
-					Name:    tc.Name,
-					Content: result,
-					IsError: true,
-				},
-			}
-			continue
-		}
-
-		toolResult, execErr := tool.Execute(ctx, tc.Input)
-		if execErr != nil {
-			result := fmt.Sprintf("tool execution error: %s", execErr)
-			a.conversation.AddToolResult(tc.ID, result, true)
-			ch <- TurnEvent{
-				Type: "tool_result",
-				ToolResult: &ToolResultEvent{
-					ID:      tc.ID,
-					Name:    tc.Name,
-					Content: result,
-					IsError: true,
-				},
-			}
-			continue
-		}
-
-		// Dispatch HookOnAfterToolResult hook. If modified, use the new content.
-		afterResult, afterErr := a.dispatchHook(skills.HookEvent{
-			Phase: skills.HookOnAfterToolResult,
-			Data: map[string]any{
-				"tool_name": tc.Name,
-				"content":   toolResult.Content,
-				"is_error":  toolResult.IsError,
-			},
-			Ctx: ctx,
-		})
-		if afterErr == nil && afterResult != nil && afterResult.Modified != nil {
-			if modContent, ok := afterResult.Modified["content"].(string); ok {
-				toolResult.Content = modContent
-			}
-		}
-
-		a.conversation.AddToolResult(tc.ID, toolResult.Content, toolResult.IsError)
-		ch <- TurnEvent{
-			Type: "tool_result",
-			ToolResult: &ToolResultEvent{
-				ID:      tc.ID,
-				Name:    tc.Name,
-				Content: toolResult.Content,
-				IsError: toolResult.IsError,
-			},
-		}
-	}
-
-	// Continue to the next turn after tool results.
+		// Continue to the next turn after tool results.
 	}
 
 	// Reached max turns.
