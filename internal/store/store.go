@@ -183,6 +183,28 @@ func (s *Store) GetSkillState(name string) (*SkillInstallState, error) {
 	return &st, nil
 }
 
+// ListAllSkillStates returns all installed skill states, sorted by name.
+func (s *Store) ListAllSkillStates() ([]SkillInstallState, error) {
+	rows, err := s.db.Query(
+		`SELECT name, version, source, installed_at
+		 FROM skill_state ORDER BY name`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list skill states: %w", err)
+	}
+	defer rows.Close()
+
+	var states []SkillInstallState
+	for rows.Next() {
+		var st SkillInstallState
+		if err := rows.Scan(&st.Name, &st.Version, &st.Source, &st.InstalledAt); err != nil {
+			return nil, fmt.Errorf("scan skill state: %w", err)
+		}
+		states = append(states, st)
+	}
+	return states, rows.Err()
+}
+
 // CacheRegistryEntry stores a registry entry in the local cache.
 // If the entry already exists, it is replaced.
 func (s *Store) CacheRegistryEntry(entry RegistryEntry) error {

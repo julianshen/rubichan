@@ -135,6 +135,44 @@ func TestGetSkillStateNotFound(t *testing.T) {
 	assert.Nil(t, got, "should return nil for missing skill state")
 }
 
+func TestListAllSkillStates(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Empty store should return empty slice.
+	states, err := s.ListAllSkillStates()
+	require.NoError(t, err)
+	assert.Empty(t, states)
+
+	// Add some skill states.
+	require.NoError(t, s.SaveSkillState(SkillInstallState{
+		Name:    "code-review",
+		Version: "1.0.0",
+		Source:  "registry",
+	}))
+	require.NoError(t, s.SaveSkillState(SkillInstallState{
+		Name:    "formatter",
+		Version: "2.1.0",
+		Source:  "git",
+	}))
+
+	states, err = s.ListAllSkillStates()
+	require.NoError(t, err)
+	require.Len(t, states, 2)
+
+	// Results should be sorted by name.
+	assert.Equal(t, "code-review", states[0].Name)
+	assert.Equal(t, "1.0.0", states[0].Version)
+	assert.Equal(t, "registry", states[0].Source)
+	assert.False(t, states[0].InstalledAt.IsZero())
+
+	assert.Equal(t, "formatter", states[1].Name)
+	assert.Equal(t, "2.1.0", states[1].Version)
+	assert.Equal(t, "git", states[1].Source)
+	assert.False(t, states[1].InstalledAt.IsZero())
+}
+
 func TestCacheAndGetRegistryEntry(t *testing.T) {
 	s, err := NewStore(":memory:")
 	require.NoError(t, err)
