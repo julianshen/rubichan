@@ -3,6 +3,8 @@ package skills
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -73,7 +75,8 @@ func (a *SecurityRuleAdapter) UnregisterBySkill(skillName string) {
 // PromptFragment holds the prompt configuration for an active prompt skill.
 type PromptFragment struct {
 	SkillName        string
-	SystemPromptFile string
+	SystemPromptFile string // original file path from manifest
+	ResolvedPrompt   string // content read from SystemPromptFile
 	ContextFiles     []string
 	MaxContextTokens int
 }
@@ -163,7 +166,9 @@ func (wr *WorkflowRunner) Unregister(name string) {
 }
 
 // wirePromptSkill registers a HookOnBeforePromptBuild hook for a prompt skill
-// that injects the skill's prompt fragment into the event data.
+// that injects the skill's prompt fragment into the event data. It reads the
+// SystemPromptFile content at wiring time so the agent doesn't need to do
+// file I/O during prompt building.
 func wirePromptSkill(rt *Runtime, sk *Skill) {
 	fragment := PromptFragment{
 		SkillName:        sk.Manifest.Name,
@@ -171,6 +176,26 @@ func wirePromptSkill(rt *Runtime, sk *Skill) {
 		ContextFiles:     sk.Manifest.Prompt.ContextFiles,
 		MaxContextTokens: sk.Manifest.Prompt.MaxContextTokens,
 	}
+
+	// Read the system prompt file content if a file path is specified and the
+	// skill has a directory on disk. For built-in skills (Dir=""), the
+	// SystemPromptFile value is used as inline content.
+	if sk.Manifest.Prompt.SystemPromptFile != "" {
+		if sk.Dir != "" {
+			promptPath := filepath.Join(sk.Dir, sk.Manifest.Prompt.SystemPromptFile)
+			data, err := os.ReadFile(promptPath)
+			if err != nil {
+				fragment.ResolvedPrompt = fmt.Sprintf("[error reading prompt file %q: %s]", promptPath, err)
+			} else {
+				fragment.ResolvedPrompt = string(data)
+			}
+		} else {
+			// Built-in skills without a directory use SystemPromptFile as
+			// inline content (no file to read).
+			fragment.ResolvedPrompt = sk.Manifest.Prompt.SystemPromptFile
+		}
+	}
+
 	rt.promptCollector.Add(fragment)
 
 	priority := sourcePriority(sk.Source)
@@ -178,7 +203,7 @@ func wirePromptSkill(rt *Runtime, sk *Skill) {
 		func(event HookEvent) (HookResult, error) {
 			return HookResult{
 				Modified: map[string]any{
-					"prompt_fragment": fragment.SystemPromptFile,
+					"prompt_fragment": fragment.ResolvedPrompt,
 				},
 			}, nil
 		},

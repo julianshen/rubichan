@@ -289,6 +289,7 @@ func TestAgentAfterToolResultHook(t *testing.T) {
 // runtime are included in the system prompt.
 func TestAgentPromptInjection(t *testing.T) {
 	// Build a runtime with a prompt skill that contributes a fragment.
+	// For builtin skills (Dir=""), SystemPromptFile is used as inline content.
 	promptManifest := &skills.SkillManifest{
 		Name:        "prompt-skill",
 		Version:     "1.0.0",
@@ -324,7 +325,7 @@ func TestAgentPromptInjection(t *testing.T) {
 	// Verify prompt fragments are available.
 	fragments := rt.GetPromptFragments()
 	require.Len(t, fragments, 1)
-	assert.Equal(t, "You are a security expert. Always check for vulnerabilities.", fragments[0].SystemPromptFile)
+	assert.Equal(t, "You are a security expert. Always check for vulnerabilities.", fragments[0].ResolvedPrompt)
 
 	// Create a capturing provider to inspect the system prompt.
 	var capturedReq provider.CompletionRequest

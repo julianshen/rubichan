@@ -10,6 +10,25 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// sqliteDatetimeFormats are the formats that SQLite's datetime() can produce.
+// We try them in order when parsing DATETIME columns scanned as strings.
+var sqliteDatetimeFormats = []string{
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05Z",
+	"2006-01-02T15:04:05",
+	time.RFC3339,
+}
+
+// parseSQLiteDatetime parses a DATETIME string from SQLite into a time.Time.
+func parseSQLiteDatetime(s string) (time.Time, error) {
+	for _, layout := range sqliteDatetimeFormats {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("cannot parse datetime %q", s)
+}
+
 // Approval represents a persisted permission approval for a skill.
 type Approval struct {
 	Skill      string
@@ -147,9 +166,11 @@ func (s *Store) ListApprovals(skill string) ([]Approval, error) {
 	var approvals []Approval
 	for rows.Next() {
 		var a Approval
-		if err := rows.Scan(&a.Skill, &a.Permission, &a.Scope, &a.ApprovedAt); err != nil {
+		var approvedAtStr string
+		if err := rows.Scan(&a.Skill, &a.Permission, &a.Scope, &approvedAtStr); err != nil {
 			return nil, fmt.Errorf("scan approval: %w", err)
 		}
+		a.ApprovedAt, _ = parseSQLiteDatetime(approvedAtStr)
 		approvals = append(approvals, a)
 	}
 	return approvals, rows.Err()
@@ -173,16 +194,18 @@ func (s *Store) SaveSkillState(state SkillInstallState) error {
 // Returns nil if the skill is not found.
 func (s *Store) GetSkillState(name string) (*SkillInstallState, error) {
 	var st SkillInstallState
+	var installedAtStr string
 	err := s.db.QueryRow(
 		`SELECT name, version, source, installed_at
 		 FROM skill_state WHERE name = ?`, name,
-	).Scan(&st.Name, &st.Version, &st.Source, &st.InstalledAt)
+	).Scan(&st.Name, &st.Version, &st.Source, &installedAtStr)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get skill state: %w", err)
 	}
+	st.InstalledAt, _ = parseSQLiteDatetime(installedAtStr)
 	return &st, nil
 }
 
@@ -200,9 +223,11 @@ func (s *Store) ListAllSkillStates() ([]SkillInstallState, error) {
 	var states []SkillInstallState
 	for rows.Next() {
 		var st SkillInstallState
-		if err := rows.Scan(&st.Name, &st.Version, &st.Source, &st.InstalledAt); err != nil {
+		var installedAtStr string
+		if err := rows.Scan(&st.Name, &st.Version, &st.Source, &installedAtStr); err != nil {
 			return nil, fmt.Errorf("scan skill state: %w", err)
 		}
+		st.InstalledAt, _ = parseSQLiteDatetime(installedAtStr)
 		states = append(states, st)
 	}
 	return states, rows.Err()
@@ -235,15 +260,17 @@ func (s *Store) CacheRegistryEntry(entry RegistryEntry) error {
 // Returns nil if the entry is not found.
 func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {
 	var e RegistryEntry
+	var cachedAtStr string
 	err := s.db.QueryRow(
 		`SELECT name, version, description, cached_at
 		 FROM registry_cache WHERE name = ?`, name,
-	).Scan(&e.Name, &e.Version, &e.Description, &e.CachedAt)
+	).Scan(&e.Name, &e.Version, &e.Description, &cachedAtStr)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get cached registry: %w", err)
 	}
+	e.CachedAt, _ = parseSQLiteDatetime(cachedAtStr)
 	return &e, nil
 }

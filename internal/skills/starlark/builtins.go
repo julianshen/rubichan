@@ -6,11 +6,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/julianshen/rubichan/internal/skills"
 
 	starlib "go.starlark.net/starlark"
 )
+
+// resolveSandboxedPath resolves a path relative to the skill directory and
+// validates it stays within the skill directory. Returns an error if the
+// resolved path escapes the sandbox.
+func (e *Engine) resolveSandboxedPath(path string) (string, error) {
+	if e.skillDir == "" {
+		return "", fmt.Errorf("skill directory not set; cannot sandbox path")
+	}
+
+	// Resolve relative paths against the skill directory.
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(e.skillDir, path)
+	}
+
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+
+	absSkillDir, err := filepath.Abs(e.skillDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve skill dir: %w", err)
+	}
+
+	// Ensure the resolved path is within the skill directory.
+	if !strings.HasPrefix(resolved, absSkillDir+string(filepath.Separator)) && resolved != absSkillDir {
+		return "", fmt.Errorf("path %q escapes skill directory %q", path, absSkillDir)
+	}
+
+	return resolved, nil
+}
 
 // builtinReadFile implements read_file(path) -> starlark.String.
 // Requires the file:read permission.
@@ -29,7 +61,12 @@ func (e *Engine) builtinReadFile(
 		return nil, fmt.Errorf("read_file: %w", err)
 	}
 
-	data, err := os.ReadFile(path)
+	resolved, err := e.resolveSandboxedPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("read_file: %w", err)
+	}
+
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("read_file: %w", err)
 	}
@@ -55,7 +92,12 @@ func (e *Engine) builtinWriteFile(
 		return nil, fmt.Errorf("write_file: %w", err)
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	resolved, err := e.resolveSandboxedPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("write_file: %w", err)
+	}
+
+	if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
 		return nil, fmt.Errorf("write_file: %w", err)
 	}
 
@@ -79,7 +121,12 @@ func (e *Engine) builtinListDir(
 		return nil, fmt.Errorf("list_dir: %w", err)
 	}
 
-	entries, err := os.ReadDir(path)
+	resolved, err := e.resolveSandboxedPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("list_dir: %w", err)
+	}
+
+	entries, err := os.ReadDir(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("list_dir: %w", err)
 	}
@@ -109,13 +156,29 @@ func (e *Engine) builtinSearchFiles(
 		return nil, fmt.Errorf("search_files: %w", err)
 	}
 
+	// Resolve glob pattern relative to skill directory. If the pattern is
+	// not absolute, prefix it with the skill directory to confine results.
+	if !filepath.IsAbs(pattern) && e.skillDir != "" {
+		pattern = filepath.Join(e.skillDir, pattern)
+	}
+
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("search_files: %w", err)
 	}
 
-	elems := make([]starlib.Value, len(matches))
-	for i, m := range matches {
+	// Filter matches to only include paths within the skill directory.
+	absSkillDir, _ := filepath.Abs(e.skillDir)
+	var filtered []string
+	for _, m := range matches {
+		absM, _ := filepath.Abs(m)
+		if strings.HasPrefix(absM, absSkillDir+string(filepath.Separator)) || absM == absSkillDir {
+			filtered = append(filtered, m)
+		}
+	}
+
+	elems := make([]starlib.Value, len(filtered))
+	for i, m := range filtered {
 		elems[i] = starlib.String(m)
 	}
 

@@ -128,8 +128,8 @@ func (a *Agent) buildSystemPromptWithFragments() string {
 
 	result := base
 	for _, f := range fragments {
-		if f.SystemPromptFile != "" {
-			result += "\n\n" + f.SystemPromptFile
+		if f.ResolvedPrompt != "" {
+			result += "\n\n" + f.ResolvedPrompt
 		}
 	}
 	return result

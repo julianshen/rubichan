@@ -80,6 +80,10 @@ var hookPhaseNames = map[string]skills.HookPhase{
 // Engine implements skills.SkillBackend using the go.starlark.net interpreter.
 // Each Engine instance gets its own Starlark thread with a fresh global scope
 // and injected SDK builtins (register_tool, register_hook, log).
+//
+// Starlark threads are NOT safe for concurrent use. The engine creates a fresh
+// thread for each handler invocation to avoid data races when tools, hooks,
+// workflows, or scanners are called concurrently.
 type Engine struct {
 	skillName    string
 	skillDir     string
@@ -94,6 +98,12 @@ type Engine struct {
 	httpFetcher  HTTPFetcher
 	gitRunner    GitRunner
 	skillInvoker SkillInvoker
+}
+
+// newCallThread creates a fresh Starlark thread for a single handler
+// invocation. This avoids sharing a thread across concurrent calls.
+func (e *Engine) newCallThread() *starlib.Thread {
+	return &starlib.Thread{Name: e.skillName}
 }
 
 // compile-time check: Engine implements skills.SkillBackend.
@@ -266,7 +276,7 @@ func (e *Engine) builtinRegisterTool(
 		name:        name,
 		description: description,
 		handler:     handler,
-		thread:      thread,
+		engine:      e,
 	}
 
 	e.tools = append(e.tools, tool)
@@ -298,11 +308,13 @@ func (e *Engine) builtinRegisterHook(
 		return nil, fmt.Errorf("register_hook: unknown hook phase %q", phaseName)
 	}
 
-	// Capture the thread and handler in a closure that implements HookHandler.
-	capturedThread := thread
+	// Capture the handler in a closure that implements HookHandler.
+	// A fresh thread is created per call for concurrency safety.
 	capturedHandler := handler
 
 	e.hooks[phase] = func(event skills.HookEvent) (skills.HookResult, error) {
+		callThread := e.newCallThread()
+
 		// Convert HookEvent to a Starlark dict.
 		eventDict := starlib.NewDict(4)
 
@@ -316,7 +328,7 @@ func (e *Engine) builtinRegisterHook(
 		_ = eventDict.SetKey(starlib.String("data"), dataDict)
 
 		// Call the Starlark handler with the event dict.
-		result, err := starlib.Call(capturedThread, capturedHandler, starlib.Tuple{eventDict}, nil)
+		result, err := starlib.Call(callThread, capturedHandler, starlib.Tuple{eventDict}, nil)
 		if err != nil {
 			return skills.HookResult{}, fmt.Errorf("call hook handler: %w", err)
 		}
@@ -376,16 +388,17 @@ func (e *Engine) builtinRegisterWorkflow(
 		return nil, err
 	}
 
-	capturedThread := thread
 	capturedHandler := handler
 
 	e.workflows[name] = func(_ context.Context, input map[string]any) (string, error) {
+		callThread := e.newCallThread()
+
 		starDict, err := goMapToStarlarkDict(input)
 		if err != nil {
 			return "", fmt.Errorf("convert workflow input: %w", err)
 		}
 
-		result, err := starlib.Call(capturedThread, capturedHandler, starlib.Tuple{starDict}, nil)
+		result, err := starlib.Call(callThread, capturedHandler, starlib.Tuple{starDict}, nil)
 		if err != nil {
 			return "", fmt.Errorf("call workflow handler %q: %w", name, err)
 		}
@@ -415,11 +428,12 @@ func (e *Engine) builtinRegisterScanner(
 		return nil, err
 	}
 
-	capturedThread := thread
 	capturedHandler := handler
 
 	e.scanners[name] = func(_ context.Context, content string) ([]string, error) {
-		result, err := starlib.Call(capturedThread, capturedHandler, starlib.Tuple{starlib.String(content)}, nil)
+		callThread := e.newCallThread()
+
+		result, err := starlib.Call(callThread, capturedHandler, starlib.Tuple{starlib.String(content)}, nil)
 		if err != nil {
 			return nil, fmt.Errorf("call scanner handler %q: %w", name, err)
 		}
@@ -463,7 +477,7 @@ type starlarkTool struct {
 	name        string
 	description string
 	handler     starlib.Callable
-	thread      *starlib.Thread
+	engine      *Engine
 }
 
 // compile-time check: starlarkTool implements tools.Tool.
@@ -499,8 +513,9 @@ func (st *starlarkTool) Execute(_ context.Context, input json.RawMessage) (tools
 		return tools.ToolResult{IsError: true, Content: err.Error()}, fmt.Errorf("convert input to starlark: %w", err)
 	}
 
-	// Call the Starlark handler.
-	result, err := starlib.Call(st.thread, st.handler, starlib.Tuple{starDict}, nil)
+	// Call the Starlark handler with a fresh thread for concurrency safety.
+	callThread := st.engine.newCallThread()
+	result, err := starlib.Call(callThread, st.handler, starlib.Tuple{starDict}, nil)
 	if err != nil {
 		return tools.ToolResult{IsError: true, Content: err.Error()}, fmt.Errorf("call starlark handler %q: %w", st.name, err)
 	}

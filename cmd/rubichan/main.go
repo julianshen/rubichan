@@ -129,18 +129,26 @@ func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
 		return nil, nil
 	}
 
-	// Create in-memory store for skill state.
-	s, err := store.NewStore(":memory:")
-	if err != nil {
-		return nil, fmt.Errorf("creating skill store: %w", err)
-	}
-
-	// Determine user skill directory.
+	// Determine user config directory.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
-	userDir := filepath.Join(home, ".config", "rubichan", "skills")
+	configDir := filepath.Join(home, ".config", "rubichan")
+
+	// Ensure config directory exists for the database file.
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating config directory: %w", err)
+	}
+
+	// Use persistent SQLite store so skill approvals survive across sessions.
+	dbPath := filepath.Join(configDir, "skills.db")
+	s, err := store.NewStore(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("creating skill store: %w", err)
+	}
+
+	userDir := filepath.Join(configDir, "skills")
 
 	// Project-level skill directory.
 	cwd, err := os.Getwd()
@@ -190,6 +198,34 @@ func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
 	return rt, nil
 }
 
+// loadConfig resolves the config path, loads the config, and applies any
+// flag overrides. This eliminates duplication between runInteractive and
+// runHeadless.
+func loadConfig() (*config.Config, error) {
+	cfgPath := configPath
+	if cfgPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		cfgPath = filepath.Join(home, ".config", "rubichan", "config.toml")
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+
+	if modelFlag != "" {
+		cfg.Provider.Model = modelFlag
+	}
+	if providerFlag != "" {
+		cfg.Provider.Default = providerFlag
+	}
+
+	return cfg, nil
+}
+
 // noopPermissionChecker is a placeholder that approves all permissions.
 // TODO: Replace with real sandbox.New() integration.
 type noopPermissionChecker struct{}
@@ -199,28 +235,9 @@ func (n *noopPermissionChecker) CheckRateLimit(_ string) error             { ret
 func (n *noopPermissionChecker) ResetTurnLimits()                          {}
 
 func runInteractive() error {
-	// Determine config path
-	cfgPath := configPath
-	if cfgPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("cannot determine home directory: %w", err)
-		}
-		cfgPath = filepath.Join(home, ".config", "rubichan", "config.toml")
-	}
-
-	// Load config
-	cfg, err := config.Load(cfgPath)
+	cfg, err := loadConfig()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	// Apply flag overrides
-	if modelFlag != "" {
-		cfg.Provider.Model = modelFlag
-	}
-	if providerFlag != "" {
-		cfg.Provider.Default = providerFlag
+		return err
 	}
 
 	// Create provider
@@ -273,26 +290,11 @@ func runInteractive() error {
 }
 
 func runHeadless() error {
-	cfgPath := configPath
-	if cfgPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("cannot determine home directory: %w", err)
-		}
-		cfgPath = filepath.Join(home, ".config", "rubichan", "config.toml")
-	}
-
-	cfg, err := config.Load(cfgPath)
+	cfg, err := loadConfig()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
 
-	if modelFlag != "" {
-		cfg.Provider.Model = modelFlag
-	}
-	if providerFlag != "" {
-		cfg.Provider.Default = providerFlag
-	}
 	if maxTurnsFlag > 0 {
 		cfg.Agent.MaxTurns = maxTurnsFlag
 	}

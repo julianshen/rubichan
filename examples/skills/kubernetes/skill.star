@@ -1,19 +1,20 @@
 """Kubernetes management skill providing kubectl tools."""
 
-def kubectl_get(resource):
+def kubectl_get(input):
     """Get Kubernetes resources by type.
 
     Args:
-        resource: The Kubernetes resource type to get (e.g. "pods", "services", "deployments").
+        input: A dict with key "resource" — the Kubernetes resource type
+               to get (e.g. "pods", "services", "deployments").
 
     Returns:
         The output of kubectl get <resource>.
     """
-    result = shell_exec("kubectl", ["get", resource])
-    return result
+    result = exec("kubectl", "get", input["resource"])
+    return result["stdout"]
 
 register_tool(
     name = "kubectl_get",
     description = "Get Kubernetes resources by type (pods, services, deployments, etc.)",
-    fn = kubectl_get,
+    handler = kubectl_get,
 )
