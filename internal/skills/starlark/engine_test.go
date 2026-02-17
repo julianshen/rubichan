@@ -133,19 +133,151 @@ register_tool(
 	assert.NoError(t, err)
 }
 
-func TestEngineExecRegisterHook(t *testing.T) {
+func TestRegisterHook(t *testing.T) {
 	dir := t.TempDir()
-	// register_hook is a placeholder that accepts any args without error.
 	manifest := writeStarFile(t, dir, "main.star", `
-register_hook()
+def my_hook(event):
+    return {"modified": {}, "cancel": False}
+
+register_hook("OnActivate", my_hook)
 `)
 
 	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
 	err := engine.Load(manifest, &mockChecker{})
 	require.NoError(t, err)
 
-	// Hooks map is empty because register_hook is a placeholder.
-	assert.Empty(t, engine.Hooks())
+	hooks := engine.Hooks()
+	require.Len(t, hooks, 1)
+
+	// The hook should be registered under the OnActivate phase.
+	handler, ok := hooks[skills.HookOnActivate]
+	require.True(t, ok)
+	require.NotNil(t, handler)
+
+	err = engine.Unload()
+	assert.NoError(t, err)
+}
+
+func TestRegisterHookInvalidPhase(t *testing.T) {
+	dir := t.TempDir()
+	manifest := writeStarFile(t, dir, "main.star", `
+def my_hook(event):
+    return {"modified": {}, "cancel": False}
+
+register_hook("InvalidPhase", my_hook)
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown hook phase")
+}
+
+func TestRegisterWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	manifest := writeStarFile(t, dir, "main.star", `
+def my_workflow(input):
+    return "workflow result: " + input.get("name", "unknown")
+
+register_workflow("my-workflow", my_workflow)
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.NoError(t, err)
+
+	workflows := engine.Workflows()
+	require.Len(t, workflows, 1)
+
+	handler, ok := workflows["my-workflow"]
+	require.True(t, ok)
+	require.NotNil(t, handler)
+
+	// Execute the workflow handler.
+	result, err := handler(context.Background(), map[string]any{"name": "Alice"})
+	require.NoError(t, err)
+	assert.Equal(t, "workflow result: Alice", result)
+
+	err = engine.Unload()
+	assert.NoError(t, err)
+}
+
+func TestRegisterScanner(t *testing.T) {
+	dir := t.TempDir()
+	manifest := writeStarFile(t, dir, "main.star", `
+def my_scanner(content):
+    findings = []
+    if "TODO" in content:
+        findings.append("Found TODO")
+    if "FIXME" in content:
+        findings.append("Found FIXME")
+    return findings
+
+register_scanner("todo-scanner", my_scanner)
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.NoError(t, err)
+
+	scanners := engine.Scanners()
+	require.Len(t, scanners, 1)
+
+	handler, ok := scanners["todo-scanner"]
+	require.True(t, ok)
+	require.NotNil(t, handler)
+
+	// Execute the scanner handler.
+	findings, err := handler(context.Background(), "some code with TODO and FIXME markers")
+	require.NoError(t, err)
+	assert.Len(t, findings, 2)
+	assert.Contains(t, findings, "Found TODO")
+	assert.Contains(t, findings, "Found FIXME")
+
+	err = engine.Unload()
+	assert.NoError(t, err)
+}
+
+func TestHookHandlerCalled(t *testing.T) {
+	dir := t.TempDir()
+	manifest := writeStarFile(t, dir, "main.star", `
+def on_activate(event):
+    phase = event["phase"]
+    skill_name = event["skill_name"]
+    data = event["data"]
+    modified = {"activated": True, "phase": phase, "skill": skill_name}
+    if data.get("extra", "") != "":
+        modified["extra"] = data["extra"]
+    return {"modified": modified, "cancel": False}
+
+register_hook("OnActivate", on_activate)
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.NoError(t, err)
+
+	hooks := engine.Hooks()
+	handler, ok := hooks[skills.HookOnActivate]
+	require.True(t, ok)
+
+	// Dispatch a HookEvent to the handler.
+	event := skills.HookEvent{
+		Phase:     skills.HookOnActivate,
+		SkillName: "test-skill",
+		Data:      map[string]any{"extra": "hello"},
+		Ctx:       context.Background(),
+	}
+	result, err := handler(event)
+	require.NoError(t, err)
+
+	// Verify the HookResult was populated from the Starlark return value.
+	assert.False(t, result.Cancel)
+	require.NotNil(t, result.Modified)
+	assert.Equal(t, true, result.Modified["activated"])
+	assert.Equal(t, "OnActivate", result.Modified["phase"])
+	assert.Equal(t, "test-skill", result.Modified["skill"])
+	assert.Equal(t, "hello", result.Modified["extra"])
 
 	err = engine.Unload()
 	assert.NoError(t, err)

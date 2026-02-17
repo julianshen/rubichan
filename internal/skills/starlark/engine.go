@@ -56,6 +56,27 @@ type SkillInvoker interface {
 	Invoke(ctx context.Context, name string, input map[string]any) (map[string]any, error)
 }
 
+// WorkflowHandler is a function that executes a workflow with the given input
+// and returns a string result. Starlark workflow handlers are wrapped into this type.
+type WorkflowHandler func(ctx context.Context, input map[string]any) (string, error)
+
+// ScannerHandler is a function that scans content and returns a list of findings.
+// Starlark scanner handlers are wrapped into this type.
+type ScannerHandler func(ctx context.Context, content string) ([]string, error)
+
+// hookPhaseNames maps Starlark phase name strings to their HookPhase constants.
+var hookPhaseNames = map[string]skills.HookPhase{
+	"OnActivate":             skills.HookOnActivate,
+	"OnDeactivate":           skills.HookOnDeactivate,
+	"OnConversationStart":    skills.HookOnConversationStart,
+	"OnBeforePromptBuild":    skills.HookOnBeforePromptBuild,
+	"OnBeforeToolCall":       skills.HookOnBeforeToolCall,
+	"OnAfterToolResult":      skills.HookOnAfterToolResult,
+	"OnAfterResponse":        skills.HookOnAfterResponse,
+	"OnBeforeWikiSection":    skills.HookOnBeforeWikiSection,
+	"OnSecurityScanComplete": skills.HookOnSecurityScanComplete,
+}
+
 // Engine implements skills.SkillBackend using the go.starlark.net interpreter.
 // Each Engine instance gets its own Starlark thread with a fresh global scope
 // and injected SDK builtins (register_tool, register_hook, log).
@@ -67,6 +88,8 @@ type Engine struct {
 	globals      starlib.StringDict
 	tools        []tools.Tool
 	hooks        map[skills.HookPhase]skills.HookHandler
+	workflows    map[string]WorkflowHandler
+	scanners     map[string]ScannerHandler
 	llmCompleter LLMCompleter
 	httpFetcher  HTTPFetcher
 	gitRunner    GitRunner
@@ -85,6 +108,8 @@ func NewEngine(skillName, skillDir string, checker skills.PermissionChecker) *En
 		skillDir:  skillDir,
 		checker:   checker,
 		hooks:     make(map[skills.HookPhase]skills.HookHandler),
+		workflows: make(map[string]WorkflowHandler),
+		scanners:  make(map[string]ScannerHandler),
 	}
 }
 
@@ -123,22 +148,24 @@ func (e *Engine) Load(manifest skills.SkillManifest, checker skills.PermissionCh
 
 	// Build the predeclared builtins available to all .star files.
 	predeclared := starlib.StringDict{
-		"register_tool": starlib.NewBuiltin("register_tool", e.builtinRegisterTool),
-		"register_hook": starlib.NewBuiltin("register_hook", e.builtinRegisterHook),
-		"log":           starlib.NewBuiltin("log", e.builtinLog),
-		"read_file":     starlib.NewBuiltin("read_file", e.builtinReadFile),
-		"write_file":    starlib.NewBuiltin("write_file", e.builtinWriteFile),
-		"list_dir":      starlib.NewBuiltin("list_dir", e.builtinListDir),
-		"search_files":  starlib.NewBuiltin("search_files", e.builtinSearchFiles),
-		"exec":          starlib.NewBuiltin("exec", e.builtinExec),
-		"env":           starlib.NewBuiltin("env", e.builtinEnv),
-		"project_root":  starlib.NewBuiltin("project_root", e.builtinProjectRoot),
-		"llm_complete":  starlib.NewBuiltin("llm_complete", e.builtinLLMComplete),
-		"fetch":         starlib.NewBuiltin("fetch", e.builtinFetch),
-		"git_diff":      starlib.NewBuiltin("git_diff", e.builtinGitDiff),
-		"git_log":       starlib.NewBuiltin("git_log", e.builtinGitLog),
-		"git_status":    starlib.NewBuiltin("git_status", e.builtinGitStatus),
-		"invoke_skill":  starlib.NewBuiltin("invoke_skill", e.builtinInvokeSkill),
+		"register_tool":     starlib.NewBuiltin("register_tool", e.builtinRegisterTool),
+		"register_hook":     starlib.NewBuiltin("register_hook", e.builtinRegisterHook),
+		"log":               starlib.NewBuiltin("log", e.builtinLog),
+		"read_file":         starlib.NewBuiltin("read_file", e.builtinReadFile),
+		"write_file":        starlib.NewBuiltin("write_file", e.builtinWriteFile),
+		"list_dir":          starlib.NewBuiltin("list_dir", e.builtinListDir),
+		"search_files":      starlib.NewBuiltin("search_files", e.builtinSearchFiles),
+		"exec":              starlib.NewBuiltin("exec", e.builtinExec),
+		"env":               starlib.NewBuiltin("env", e.builtinEnv),
+		"project_root":      starlib.NewBuiltin("project_root", e.builtinProjectRoot),
+		"llm_complete":      starlib.NewBuiltin("llm_complete", e.builtinLLMComplete),
+		"fetch":             starlib.NewBuiltin("fetch", e.builtinFetch),
+		"git_diff":          starlib.NewBuiltin("git_diff", e.builtinGitDiff),
+		"git_log":           starlib.NewBuiltin("git_log", e.builtinGitLog),
+		"git_status":        starlib.NewBuiltin("git_status", e.builtinGitStatus),
+		"invoke_skill":      starlib.NewBuiltin("invoke_skill", e.builtinInvokeSkill),
+		"register_workflow": starlib.NewBuiltin("register_workflow", e.builtinRegisterWorkflow),
+		"register_scanner":  starlib.NewBuiltin("register_scanner", e.builtinRegisterScanner),
 	}
 
 	globals, err := starlib.ExecFile(
@@ -164,6 +191,18 @@ func (e *Engine) Tools() []tools.Tool {
 // This is populated by register_hook() calls in the Starlark code.
 func (e *Engine) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return e.hooks
+}
+
+// Workflows returns workflow handlers registered by this skill, keyed by name.
+// This is populated by register_workflow() calls in the Starlark code.
+func (e *Engine) Workflows() map[string]WorkflowHandler {
+	return e.workflows
+}
+
+// Scanners returns scanner handlers registered by this skill, keyed by name.
+// This is populated by register_scanner() calls in the Starlark code.
+func (e *Engine) Scanners() map[string]ScannerHandler {
+	return e.scanners
 }
 
 // Checker returns the engine's permission checker. This is used by tests
@@ -198,6 +237,8 @@ func (e *Engine) Unload() error {
 	e.globals = nil
 	e.tools = nil
 	e.hooks = make(map[skills.HookPhase]skills.HookHandler)
+	e.workflows = make(map[string]WorkflowHandler)
+	e.scanners = make(map[string]ScannerHandler)
 	return nil
 }
 
@@ -232,15 +273,171 @@ func (e *Engine) builtinRegisterTool(
 	return starlib.None, nil
 }
 
-// builtinRegisterHook is a placeholder for the register_hook() builtin.
-// Full implementation comes in Task 12.
+// builtinRegisterHook implements register_hook(phase, handler). It validates
+// the phase name against known HookPhase values and wraps the Starlark callable
+// into a skills.HookHandler that converts HookEvent to Starlark args and
+// HookResult back.
 func (e *Engine) builtinRegisterHook(
 	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
 ) (starlib.Value, error) {
-	// Placeholder: Task 12 will implement hook registration.
+	var phaseName string
+	var handler starlib.Callable
+
+	if err := starlib.UnpackArgs(fn.Name(), args, kwargs,
+		"phase", &phaseName,
+		"handler", &handler,
+	); err != nil {
+		return nil, err
+	}
+
+	phase, ok := hookPhaseNames[phaseName]
+	if !ok {
+		return nil, fmt.Errorf("register_hook: unknown hook phase %q", phaseName)
+	}
+
+	// Capture the thread and handler in a closure that implements HookHandler.
+	capturedThread := thread
+	capturedHandler := handler
+
+	e.hooks[phase] = func(event skills.HookEvent) (skills.HookResult, error) {
+		// Convert HookEvent to a Starlark dict.
+		eventDict := starlib.NewDict(4)
+
+		_ = eventDict.SetKey(starlib.String("phase"), starlib.String(event.Phase.String()))
+		_ = eventDict.SetKey(starlib.String("skill_name"), starlib.String(event.SkillName))
+
+		dataDict, err := goMapToStarlarkDict(event.Data)
+		if err != nil {
+			return skills.HookResult{}, fmt.Errorf("convert hook event data: %w", err)
+		}
+		_ = eventDict.SetKey(starlib.String("data"), dataDict)
+
+		// Call the Starlark handler with the event dict.
+		result, err := starlib.Call(capturedThread, capturedHandler, starlib.Tuple{eventDict}, nil)
+		if err != nil {
+			return skills.HookResult{}, fmt.Errorf("call hook handler: %w", err)
+		}
+
+		// Convert the Starlark return value to a HookResult.
+		resultDict, ok := result.(*starlib.Dict)
+		if !ok {
+			return skills.HookResult{}, fmt.Errorf("hook handler must return a dict, got %s", result.Type())
+		}
+
+		hookResult := skills.HookResult{}
+
+		// Extract "modified" field.
+		if modVal, found, _ := resultDict.Get(starlib.String("modified")); found {
+			if modDict, ok := modVal.(*starlib.Dict); ok {
+				goMap := make(map[string]any)
+				for _, item := range modDict.Items() {
+					key, ok := starlib.AsString(item[0])
+					if !ok {
+						key = item[0].String()
+					}
+					goMap[key] = starlarkValueToGo(item[1])
+				}
+				hookResult.Modified = goMap
+			}
+		}
+
+		// Extract "cancel" field.
+		if cancelVal, found, _ := resultDict.Get(starlib.String("cancel")); found {
+			if b, ok := cancelVal.(starlib.Bool); ok {
+				hookResult.Cancel = bool(b)
+			}
+		}
+
+		return hookResult, nil
+	}
+
+	return starlib.None, nil
+}
+
+// builtinRegisterWorkflow implements register_workflow(name, handler). It stores
+// the Starlark callable, exposed via the Workflows() method. The handler receives
+// an input dict and returns a string result.
+func (e *Engine) builtinRegisterWorkflow(
+	thread *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	var name string
+	var handler starlib.Callable
+
+	if err := starlib.UnpackArgs(fn.Name(), args, kwargs,
+		"name", &name,
+		"handler", &handler,
+	); err != nil {
+		return nil, err
+	}
+
+	capturedThread := thread
+	capturedHandler := handler
+
+	e.workflows[name] = func(_ context.Context, input map[string]any) (string, error) {
+		starDict, err := goMapToStarlarkDict(input)
+		if err != nil {
+			return "", fmt.Errorf("convert workflow input: %w", err)
+		}
+
+		result, err := starlib.Call(capturedThread, capturedHandler, starlib.Tuple{starDict}, nil)
+		if err != nil {
+			return "", fmt.Errorf("call workflow handler %q: %w", name, err)
+		}
+
+		return starlarkValueToString(result), nil
+	}
+
+	return starlib.None, nil
+}
+
+// builtinRegisterScanner implements register_scanner(name, handler). It stores
+// the Starlark callable, exposed via the Scanners() method. The handler receives
+// a content string and returns a list of finding strings.
+func (e *Engine) builtinRegisterScanner(
+	thread *starlib.Thread,
+	fn *starlib.Builtin,
+	args starlib.Tuple,
+	kwargs []starlib.Tuple,
+) (starlib.Value, error) {
+	var name string
+	var handler starlib.Callable
+
+	if err := starlib.UnpackArgs(fn.Name(), args, kwargs,
+		"name", &name,
+		"handler", &handler,
+	); err != nil {
+		return nil, err
+	}
+
+	capturedThread := thread
+	capturedHandler := handler
+
+	e.scanners[name] = func(_ context.Context, content string) ([]string, error) {
+		result, err := starlib.Call(capturedThread, capturedHandler, starlib.Tuple{starlib.String(content)}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("call scanner handler %q: %w", name, err)
+		}
+
+		// Convert the Starlark list to a Go string slice.
+		resultList, ok := result.(*starlib.List)
+		if !ok {
+			return nil, fmt.Errorf("scanner handler %q must return a list, got %s", name, result.Type())
+		}
+
+		findings := make([]string, resultList.Len())
+		for i := range resultList.Len() {
+			findings[i] = starlarkValueToString(resultList.Index(i))
+		}
+
+		return findings, nil
+	}
+
 	return starlib.None, nil
 }
 
