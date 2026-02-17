@@ -25,7 +25,7 @@ func skillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
 		Short: "Manage skills",
-		Long:  "List, inspect, search, install, remove, and add skills.",
+		Long:  "List, inspect, search, install, remove, add, create, test, and manage permissions for skills.",
 	}
 
 	cmd.AddCommand(skillListCmd())
@@ -34,6 +34,9 @@ func skillCmd() *cobra.Command {
 	cmd.AddCommand(skillInstallCmd())
 	cmd.AddCommand(skillRemoveCmd())
 	cmd.AddCommand(skillAddCmd())
+	cmd.AddCommand(skillCreateCmd())
+	cmd.AddCommand(skillTestCmd())
+	cmd.AddCommand(skillPermissionsCmd())
 
 	return cmd
 }
@@ -516,5 +519,168 @@ func skillAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("project-dir", "", "project root directory (default: current working directory)")
+	return cmd
+}
+
+// skillCreateTemplate is the template SKILL.yaml written by "skill create".
+const skillCreateTemplate = `name: %s
+version: 0.1.0
+description: "A new skill"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+`
+
+// skillStarTemplate is the template skill.star written by "skill create".
+const skillStarTemplate = `# %s - Starlark skill entrypoint
+#
+# This file is the main entrypoint for your skill.
+# Use register_tool() to expose tools to the agent.
+
+def hello(args):
+    """A simple hello-world tool."""
+    name = args.get("name", "world")
+    return {"message": "Hello, " + name + "!"}
+
+register_tool(
+    name="hello",
+    description="A simple hello-world tool",
+    fn=hello,
+)
+`
+
+func skillCreateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Scaffold a new skill directory",
+		Long:  "Create a new skill directory with a template SKILL.yaml and skill.star file.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+
+			parentDir, _ := cmd.Flags().GetString("dir")
+			if parentDir == "" {
+				var err error
+				parentDir, err = os.Getwd()
+				if err != nil {
+					return fmt.Errorf("cannot determine working directory: %w", err)
+				}
+			}
+
+			skillDir := filepath.Join(parentDir, name)
+			if err := os.MkdirAll(skillDir, 0o755); err != nil {
+				return fmt.Errorf("creating skill directory: %w", err)
+			}
+
+			// Write SKILL.yaml template.
+			manifestContent := fmt.Sprintf(skillCreateTemplate, name)
+			if err := os.WriteFile(
+				filepath.Join(skillDir, "SKILL.yaml"),
+				[]byte(manifestContent), 0o644,
+			); err != nil {
+				return fmt.Errorf("writing SKILL.yaml: %w", err)
+			}
+
+			// Write skill.star template.
+			starContent := fmt.Sprintf(skillStarTemplate, name)
+			if err := os.WriteFile(
+				filepath.Join(skillDir, "skill.star"),
+				[]byte(starContent), 0o644,
+			); err != nil {
+				return fmt.Errorf("writing skill.star: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Created skill %q in %s\n", name, skillDir)
+			return nil
+		},
+	}
+	cmd.Flags().String("dir", "", "output parent directory (default: current working directory)")
+	return cmd
+}
+
+func skillTestCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "test <path>",
+		Short: "Validate a skill manifest",
+		Long:  "Read and validate the SKILL.yaml from the given skill directory.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			skillPath := args[0]
+
+			manifestPath := filepath.Join(skillPath, "SKILL.yaml")
+			data, err := os.ReadFile(manifestPath)
+			if err != nil {
+				return fmt.Errorf("reading SKILL.yaml from %s: %w", skillPath, err)
+			}
+
+			manifest, err := skills.ParseManifest(data)
+			if err != nil {
+				return fmt.Errorf("manifest validation failed: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"Skill '%s' v%s validated successfully\n",
+				manifest.Name, manifest.Version,
+			)
+			return nil
+		},
+	}
+	return cmd
+}
+
+func skillPermissionsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "permissions <name>",
+		Short: "List or revoke permission approvals for a skill",
+		Long:  "Display permission approvals for a skill, or revoke all approvals with --revoke.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			revoke, _ := cmd.Flags().GetBool("revoke")
+
+			storePath, err := resolveStorePath(cmd)
+			if err != nil {
+				return err
+			}
+
+			s, err := store.NewStore(storePath)
+			if err != nil {
+				return fmt.Errorf("opening store: %w", err)
+			}
+			defer s.Close()
+
+			if revoke {
+				if err := s.Revoke(name); err != nil {
+					return fmt.Errorf("revoking permissions: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "All permissions revoked for skill '%s'\n", name)
+				return nil
+			}
+
+			approvals, err := s.ListApprovals(name)
+			if err != nil {
+				return fmt.Errorf("listing approvals: %w", err)
+			}
+
+			if len(approvals) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "No permission approvals for skill '%s'\n", name)
+				return nil
+			}
+
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "PERMISSION\tSCOPE\tAPPROVED_AT")
+			for _, a := range approvals {
+				fmt.Fprintf(w, "%s\t%s\t%s\n",
+					a.Permission, a.Scope,
+					a.ApprovedAt.Format(time.RFC3339),
+				)
+			}
+			return w.Flush()
+		},
+	}
+	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
+	cmd.Flags().Bool("revoke", false, "revoke all permissions for the skill")
 	return cmd
 }

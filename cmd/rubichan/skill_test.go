@@ -678,3 +678,212 @@ func TestParseNameVersion(t *testing.T) {
 	assert.Equal(t, "my-skill", name)
 	assert.Equal(t, "", version)
 }
+
+// TestSkillCreate verifies that "skill create <name>" scaffolds a directory
+// with a SKILL.yaml template and a skill.star template.
+func TestSkillCreate(t *testing.T) {
+	parentDir := t.TempDir()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"create", "my-greeter", "--dir", parentDir})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	// Verify directory was created.
+	skillDir := filepath.Join(parentDir, "my-greeter")
+	info, err := os.Stat(skillDir)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+
+	// Verify SKILL.yaml exists and parses correctly.
+	manifestPath := filepath.Join(skillDir, "SKILL.yaml")
+	data, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+
+	manifest, err := skills.ParseManifest(data)
+	require.NoError(t, err)
+	assert.Equal(t, "my-greeter", manifest.Name)
+	assert.Equal(t, "0.1.0", manifest.Version)
+	assert.Contains(t, manifest.Types, skills.SkillTypeTool)
+	assert.Equal(t, skills.BackendStarlark, manifest.Implementation.Backend)
+
+	// Verify skill.star template exists.
+	starPath := filepath.Join(skillDir, "skill.star")
+	starData, err := os.ReadFile(starPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(starData), "register_tool")
+
+	// Output should contain confirmation.
+	output := buf.String()
+	assert.Contains(t, output, "my-greeter")
+	assert.Contains(t, output, "Created skill")
+}
+
+// TestSkillTest verifies that "skill test <path>" loads and validates
+// a SKILL.yaml manifest from the given directory.
+func TestSkillTest(t *testing.T) {
+	// Create a temp dir with a valid SKILL.yaml.
+	skillDir := filepath.Join(t.TempDir(), "test-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+
+	manifestYAML := `name: test-skill
+version: 2.0.0
+description: "A test skill for validation"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: main.star
+`
+	require.NoError(t, os.WriteFile(
+		filepath.Join(skillDir, "SKILL.yaml"),
+		[]byte(manifestYAML), 0o644,
+	))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"test", skillDir})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "test-skill")
+	assert.Contains(t, output, "2.0.0")
+	assert.Contains(t, output, "validated successfully")
+}
+
+// TestSkillTestInvalidManifest verifies that "skill test <path>" reports
+// validation errors for an invalid manifest.
+func TestSkillTestInvalidManifest(t *testing.T) {
+	skillDir := filepath.Join(t.TempDir(), "bad-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+
+	// Missing required fields (description, types).
+	badYAML := `name: bad-skill
+version: 1.0.0
+`
+	require.NoError(t, os.WriteFile(
+		filepath.Join(skillDir, "SKILL.yaml"),
+		[]byte(badYAML), 0o644,
+	))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"test", skillDir})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validation")
+}
+
+// TestSkillTestMissingManifest verifies "skill test" fails when SKILL.yaml is absent.
+func TestSkillTestMissingManifest(t *testing.T) {
+	emptyDir := t.TempDir()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"test", emptyDir})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SKILL.yaml")
+}
+
+// TestSkillPermissions verifies that "skill permissions <name>" lists
+// permission approvals for a skill.
+func TestSkillPermissions(t *testing.T) {
+	// Create a store with some approvals.
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+
+	require.NoError(t, s.Approve("my-tool", "file:read", "always"))
+	require.NoError(t, s.Approve("my-tool", "shell:exec", "always"))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"permissions", "my-tool", "--store", dbPath})
+
+	err = cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	// Should contain table headers.
+	assert.Contains(t, output, "PERMISSION")
+	assert.Contains(t, output, "SCOPE")
+	assert.Contains(t, output, "APPROVED_AT")
+	// Should contain both approvals.
+	assert.Contains(t, output, "file:read")
+	assert.Contains(t, output, "shell:exec")
+	assert.Contains(t, output, "always")
+}
+
+// TestSkillPermissionsEmpty verifies the empty message when no approvals exist.
+func TestSkillPermissionsEmpty(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"permissions", "unknown-skill", "--store", dbPath})
+
+	err = cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "No permission approvals")
+	assert.Contains(t, output, "unknown-skill")
+}
+
+// TestSkillPermissionsRevoke verifies that "skill permissions <name> --revoke"
+// clears all permission approvals for a skill.
+func TestSkillPermissionsRevoke(t *testing.T) {
+	// Create a store with some approvals.
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+
+	require.NoError(t, s.Approve("my-tool", "file:read", "always"))
+	require.NoError(t, s.Approve("my-tool", "shell:exec", "always"))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"permissions", "my-tool", "--revoke", "--store", dbPath})
+
+	err = cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "All permissions revoked")
+	assert.Contains(t, output, "my-tool")
+
+	// Verify approvals are actually gone.
+	s2, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	defer s2.Close()
+
+	approvals, err := s2.ListApprovals("my-tool")
+	require.NoError(t, err)
+	assert.Empty(t, approvals)
+}
