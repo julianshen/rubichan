@@ -1,0 +1,11 @@
+name: rfc-writer
+version: 0.1.0
+description: "RFC document writer workflow"
+types:
+  - workflow
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+permissions:
+  - file:write
+  - llm:call
