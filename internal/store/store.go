@@ -47,6 +47,9 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
+	// Serialize access to prevent SQLITE_BUSY from concurrent goroutines.
+	db.SetMaxOpenConns(1)
+
 	if err := createTables(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create tables: %w", err)

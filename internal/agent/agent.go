@@ -144,10 +144,11 @@ func (a *Agent) dispatchHook(event skills.HookEvent) (*skills.HookResult, error)
 	return a.skillRuntime.DispatchHook(event)
 }
 
-// runLoop recursively processes LLM responses and tool calls.
+// runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
-	if turnCount >= a.maxTurns {
-		ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
+	for ; turnCount < a.maxTurns; turnCount++ {
+	if ctx.Err() != nil {
+		ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 		ch <- TurnEvent{Type: "done"}
 		return
 	}
@@ -396,6 +397,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		}
 	}
 
-	// Recurse for the next turn after tool results
-	a.runLoop(ctx, ch, turnCount+1)
+	// Continue to the next turn after tool results.
+	}
+
+	// Reached max turns.
+	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
+	ch <- TurnEvent{Type: "done"}
 }

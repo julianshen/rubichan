@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,12 @@ import (
 
 // Default timeout for RPC calls.
 const defaultCallTimeout = 10 * time.Second
+
+// readResult carries a line read by the dedicated reader goroutine.
+type readResult struct {
+	line string
+	ok   bool
+}
 
 // Option configures a ProcessBackend.
 type Option func(*ProcessBackend)
@@ -45,9 +52,11 @@ type ProcessBackend struct {
 	mu          sync.Mutex
 	cmd         *exec.Cmd
 	stdin       io.WriteCloser
-	scanner     *bufio.Scanner
 	callTimeout time.Duration
 	nextID      atomic.Int64
+
+	// readCh receives lines from the dedicated reader goroutine.
+	readCh chan readResult
 
 	manifest skills.SkillManifest
 	checker  skills.PermissionChecker
@@ -59,6 +68,8 @@ type ProcessBackend struct {
 	stopCh chan struct{}
 	// stopped indicates the backend has been unloaded.
 	stopped bool
+	// generation tracks restart cycles to prevent duplicate monitor goroutines.
+	generation int64
 }
 
 // compile-time check: ProcessBackend implements skills.SkillBackend.
@@ -83,6 +94,11 @@ func (b *ProcessBackend) Load(manifest skills.SkillManifest, checker skills.Perm
 		return fmt.Errorf("load process: entrypoint is required")
 	}
 
+	// Validate entrypoint is an absolute path to prevent executing arbitrary binaries.
+	if !filepath.IsAbs(manifest.Implementation.Entrypoint) {
+		return fmt.Errorf("load process: entrypoint must be an absolute path, got %q", manifest.Implementation.Entrypoint)
+	}
+
 	b.manifest = manifest
 	b.checker = checker
 	b.stopped = false
@@ -99,8 +115,8 @@ func (b *ProcessBackend) Load(manifest skills.SkillManifest, checker skills.Perm
 		return fmt.Errorf("load process %q: initialize failed: %w", manifest.Name, err)
 	}
 
-	// Start crash monitor goroutine.
-	go b.monitorProcess()
+	// Start crash monitor goroutine with initial generation.
+	go b.monitorProcess(b.generation)
 
 	return nil
 }
@@ -118,13 +134,17 @@ func (b *ProcessBackend) Tools() []tools.Tool {
 	return result
 }
 
-// Hooks implements skills.SkillBackend. Returns hook handlers registered from
-// the initialize response.
+// Hooks implements skills.SkillBackend. Returns a copy of hook handlers
+// registered from the initialize response.
 func (b *ProcessBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return b.registeredHooks
+	result := make(map[skills.HookPhase]skills.HookHandler, len(b.registeredHooks))
+	for k, v := range b.registeredHooks {
+		result[k] = v
+	}
+	return result
 }
 
 // Unload implements skills.SkillBackend. Sends a "shutdown" request and
@@ -197,22 +217,9 @@ func (b *ProcessBackend) callLocked(ctx context.Context, method string, params a
 		}
 	}
 
-	// Read response from stdout with timeout.
-	type scanResult struct {
-		line string
-		ok   bool
-	}
-	ch := make(chan scanResult, 1)
-	go func() {
-		if b.scanner.Scan() {
-			ch <- scanResult{line: b.scanner.Text(), ok: true}
-		} else {
-			ch <- scanResult{ok: false}
-		}
-	}()
-
+	// Read response from the dedicated reader goroutine's channel.
 	select {
-	case sr := <-ch:
+	case sr := <-b.readCh:
 		if !sr.ok {
 			return nil, fmt.Errorf("process closed stdout")
 		}
@@ -233,7 +240,9 @@ func (b *ProcessBackend) callLocked(ctx context.Context, method string, params a
 	}
 }
 
-// startProcess starts the child process and sets up stdin/stdout pipes.
+// startProcess starts the child process, sets up stdin/stdout pipes, and
+// spawns a dedicated reader goroutine that owns the stdout scanner for
+// the lifetime of this process instance. The reader sends lines on b.readCh.
 func (b *ProcessBackend) startProcess() error {
 	cmd := exec.Command(b.manifest.Implementation.Entrypoint)
 
@@ -253,9 +262,18 @@ func (b *ProcessBackend) startProcess() error {
 
 	b.cmd = cmd
 	b.stdin = stdin
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	b.scanner = scanner
+	b.readCh = make(chan readResult, 1)
+
+	// Dedicated reader goroutine — owns the scanner and terminates when
+	// stdout is closed (process killed or exited).
+	go func(ch chan<- readResult) {
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			ch <- readResult{line: scanner.Text(), ok: true}
+		}
+		ch <- readResult{ok: false}
+	}(b.readCh)
 
 	return nil
 }
@@ -346,13 +364,19 @@ func (b *ProcessBackend) handleHook(event skills.HookEvent, phase skills.HookPha
 }
 
 // monitorProcess watches for child process exit and restarts if unexpected.
-func (b *ProcessBackend) monitorProcess() {
-	if b.cmd == nil || b.cmd.Process == nil {
+// The gen parameter prevents stale monitors from racing with newer ones:
+// only the goroutine whose generation matches b.generation will restart.
+func (b *ProcessBackend) monitorProcess(gen int64) {
+	b.mu.Lock()
+	cmd := b.cmd
+	b.mu.Unlock()
+
+	if cmd == nil || cmd.Process == nil {
 		return
 	}
 
-	// Wait for the process to exit.
-	b.cmd.Wait() //nolint: errcheck
+	// Wait for the process to exit (does not need the lock — we captured cmd).
+	cmd.Wait() //nolint: errcheck
 
 	// Check if we were intentionally stopped.
 	select {
@@ -361,12 +385,20 @@ func (b *ProcessBackend) monitorProcess() {
 	default:
 	}
 
+	// Verify we are still the active monitor (generation hasn't changed).
+	b.mu.Lock()
+	if b.generation != gen || b.stopped {
+		b.mu.Unlock()
+		return
+	}
+	b.mu.Unlock()
+
 	// Process crashed unexpectedly -- restart with backoff.
-	b.restart()
+	b.restart(gen)
 }
 
 // restart attempts to restart the child process with exponential backoff.
-func (b *ProcessBackend) restart() {
+func (b *ProcessBackend) restart(gen int64) {
 	backoff := 50 * time.Millisecond
 	maxBackoff := 5 * time.Second
 	maxAttempts := 5
@@ -379,7 +411,7 @@ func (b *ProcessBackend) restart() {
 		}
 
 		b.mu.Lock()
-		if b.stopped {
+		if b.stopped || b.generation != gen {
 			b.mu.Unlock()
 			return
 		}
@@ -387,7 +419,7 @@ func (b *ProcessBackend) restart() {
 		// Clean up old process state.
 		b.cmd = nil
 		b.stdin = nil
-		b.scanner = nil
+		b.readCh = nil
 
 		if err := b.startProcess(); err != nil {
 			b.mu.Unlock()
@@ -402,10 +434,13 @@ func (b *ProcessBackend) restart() {
 			continue
 		}
 
+		// Bump generation so the old monitor cannot race.
+		b.generation++
+		newGen := b.generation
 		b.mu.Unlock()
 
-		// Successfully restarted. Start monitoring again.
-		go b.monitorProcess()
+		// Successfully restarted. Start monitoring again with new generation.
+		go b.monitorProcess(newGen)
 		return
 	}
 }
@@ -421,6 +456,7 @@ func (b *ProcessBackend) killProcess() {
 }
 
 // killAndCleanupLocked kills the child process. Caller must hold b.mu.
+// Killing the process closes stdout, which terminates the reader goroutine.
 func (b *ProcessBackend) killAndCleanupLocked() {
 	if b.cmd != nil && b.cmd.Process != nil {
 		b.cmd.Process.Kill() //nolint: errcheck
@@ -431,7 +467,7 @@ func (b *ProcessBackend) killAndCleanupLocked() {
 	}
 	b.cmd = nil
 	b.stdin = nil
-	b.scanner = nil
+	b.readCh = nil
 }
 
 // --- processTool ---

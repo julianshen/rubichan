@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ func NewRegistryClient(baseURL string, s *store.Store, cacheTTL time.Duration) *
 
 // Search queries the registry search endpoint and returns matching skills.
 func (c *RegistryClient) Search(ctx context.Context, query string) ([]RegistrySearchResult, error) {
-	url := fmt.Sprintf("%s/api/v1/search?q=%s", c.baseURL, query)
+	url := fmt.Sprintf("%s/api/v1/search?%s", c.baseURL, url.Values{"q": {query}}.Encode())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -64,8 +65,10 @@ func (c *RegistryClient) Search(ctx context.Context, query string) ([]RegistrySe
 		return nil, fmt.Errorf("search: unexpected status %d", resp.StatusCode)
 	}
 
+	// Limit response body to 1 MB to prevent OOM from malicious registries.
+	const maxSearchResponseBytes = 1 << 20
 	var results []RegistrySearchResult
-	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSearchResponseBytes)).Decode(&results); err != nil {
 		return nil, fmt.Errorf("decode search response: %w", err)
 	}
 
@@ -113,7 +116,9 @@ func (c *RegistryClient) GetManifest(ctx context.Context, name, version string) 
 		return nil, fmt.Errorf("get manifest: unexpected status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// Limit manifest response body to 1 MB.
+	const maxManifestBytes = 1 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read manifest body: %w", err)
 	}
@@ -155,7 +160,9 @@ func (c *RegistryClient) Download(ctx context.Context, name, version, dest strin
 		return fmt.Errorf("download: unexpected status %d", resp.StatusCode)
 	}
 
-	return extractTarGz(resp.Body, dest)
+	// Limit download body to 100 MB.
+	const maxDownloadBytes = 100 << 20
+	return extractTarGz(io.LimitReader(resp.Body, maxDownloadBytes), dest)
 }
 
 // extractTarGz reads a gzip-compressed tar archive from r and extracts its
@@ -203,6 +210,8 @@ func extractTarGz(r io.Reader, dest string) error {
 				return fmt.Errorf("write file %q: %w", target, err)
 			}
 			f.Close()
+		case tar.TypeSymlink, tar.TypeLink:
+			return fmt.Errorf("tar entry %q: symlinks and hard links are not allowed", header.Name)
 		}
 	}
 

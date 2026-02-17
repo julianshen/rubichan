@@ -596,10 +596,10 @@ func TestSkillRemoveNotInstalled(t *testing.T) {
 	cmd.SetErr(buf)
 	cmd.SetArgs([]string{"remove", "nonexistent", "--store", dbPath, "--skills-dir", skillsDir})
 
-	// remove should succeed even if the skill doesn't exist (idempotent).
+	// remove should return an error for nonexistent skills.
 	err := cmd.Execute()
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Removed skill")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not installed")
 }
 
 // TestSkillAddInvalidManifest verifies add fails when SKILL.yaml is missing.

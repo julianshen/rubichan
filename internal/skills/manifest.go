@@ -216,9 +216,21 @@ func validateManifest(m *SkillManifest) error {
 		}
 	}
 
+	// Dependency names.
+	for _, dep := range m.Dependencies {
+		if !nameRegex.MatchString(dep.Name) {
+			return fmt.Errorf("manifest validation: invalid dependency name %q (must match %s)", dep.Name, nameRegex.String())
+		}
+	}
+
 	// Backend.
 	if m.Implementation.Backend != "" && !validBackends[m.Implementation.Backend] {
 		return fmt.Errorf("manifest validation: unknown backend %q", m.Implementation.Backend)
+	}
+
+	// Backend requires an entrypoint.
+	if m.Implementation.Backend != "" && m.Implementation.Entrypoint == "" {
+		return fmt.Errorf("manifest validation: implementation.entrypoint is required when backend is specified")
 	}
 
 	// Non-prompt skill types require a backend.

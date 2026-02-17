@@ -449,21 +449,29 @@ func skillRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			// Delete the skill directory.
-			skillDir := filepath.Join(skillsDir, name)
-			if err := os.RemoveAll(skillDir); err != nil {
-				return fmt.Errorf("removing skill directory: %w", err)
-			}
-
-			// Remove from store.
+			// Verify skill exists in store before deleting anything.
 			s, err := store.NewStore(storePath)
 			if err != nil {
 				return fmt.Errorf("opening store: %w", err)
 			}
 			defer s.Close()
 
+			existing, err := s.GetSkillState(name)
+			if err != nil {
+				return fmt.Errorf("checking skill state: %w", err)
+			}
+			if existing == nil {
+				return fmt.Errorf("skill %q is not installed", name)
+			}
+
+			// Remove from store first, then delete directory.
 			if err := s.DeleteSkillState(name); err != nil {
 				return fmt.Errorf("removing skill from store: %w", err)
+			}
+
+			skillDir := filepath.Join(skillsDir, name)
+			if err := os.RemoveAll(skillDir); err != nil {
+				return fmt.Errorf("removing skill directory: %w", err)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed skill %q\n", name)
@@ -547,7 +555,7 @@ def hello(args):
 register_tool(
     name="hello",
     description="A simple hello-world tool",
-    fn=hello,
+    handler=hello,
 )
 `
 

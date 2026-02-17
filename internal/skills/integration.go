@@ -61,7 +61,7 @@ func (a *SecurityRuleAdapter) Scanners() []RegisteredScanner {
 func (a *SecurityRuleAdapter) UnregisterBySkill(skillName string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	filtered := a.scanners[:0]
+	var filtered []RegisteredScanner
 	for _, s := range a.scanners {
 		if s.SkillName != skillName {
 			filtered = append(filtered, s)
@@ -110,7 +110,7 @@ func (pc *PromptCollector) Fragments() []PromptFragment {
 func (pc *PromptCollector) RemoveBySkill(skillName string) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	filtered := pc.fragments[:0]
+	var filtered []PromptFragment
 	for _, f := range pc.fragments {
 		if f.SkillName != skillName {
 			filtered = append(filtered, f)

@@ -159,6 +159,9 @@ func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
 	}
 
 	// TODO: Wire real sandbox factory via skills/sandbox package.
+	// WARNING: This is a placeholder that approves all permissions unconditionally.
+	// All skill permission enforcement is bypassed until sandbox.New() is wired.
+	fmt.Fprintln(os.Stderr, "WARNING: skill permissions are not enforced (sandbox not yet wired)")
 	sandboxFactory := func(_ string, _ []skills.Permission) skills.PermissionChecker {
 		return &noopPermissionChecker{}
 	}

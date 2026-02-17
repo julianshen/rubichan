@@ -359,7 +359,7 @@ func TestProcessToolExecuteOnDeadProcess(t *testing.T) {
 	backend.mu.Lock()
 	backend.cmd = nil
 	backend.stdin = nil
-	backend.scanner = nil
+	backend.readCh = nil
 	backend.mu.Unlock()
 
 	// Try to execute a tool on the dead process.

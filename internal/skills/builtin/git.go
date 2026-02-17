@@ -89,7 +89,10 @@ func (t *gitDiffTool) Execute(ctx context.Context, input json.RawMessage) (tools
 
 	args := []string{"diff"}
 	if in.Range != "" {
-		args = append(args, in.Range)
+		if strings.HasPrefix(in.Range, "-") {
+			return tools.ToolResult{Content: "invalid range: must not start with '-'", IsError: true}, nil
+		}
+		args = append(args, "--", in.Range)
 	}
 
 	return runGit(ctx, t.workDir, args...)
