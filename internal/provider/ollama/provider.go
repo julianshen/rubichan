@@ -270,6 +270,8 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	defer close(ch)
 	defer body.Close()
 
+	gotDone := false
+
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	for scanner.Scan() {
@@ -329,6 +331,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 
 		// Handle done signal
 		if chunk.Done {
+			gotDone = true
 			select {
 			case ch <- provider.StreamEvent{Type: "stop"}:
 			case <-ctx.Done():
@@ -340,6 +343,15 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	if err := scanner.Err(); err != nil {
 		select {
 		case ch <- provider.StreamEvent{Type: "error", Error: err}:
+		case <-ctx.Done():
+		}
+		return
+	}
+
+	// Stream ended without a done: true chunk — connection was dropped.
+	if !gotDone {
+		select {
+		case ch <- provider.StreamEvent{Type: "error", Error: fmt.Errorf("stream ended without done signal")}:
 		case <-ctx.Done():
 		}
 	}

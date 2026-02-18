@@ -689,6 +689,44 @@ func TestStreamConnectionError(t *testing.T) {
 	assert.Contains(t, err.Error(), "sending request")
 }
 
+func TestStreamTruncatedWithoutDone(t *testing.T) {
+	// Stream ends without a done: true chunk — should produce an error event.
+	ndjsonBody := `{"model":"llama3","message":{"role":"assistant","content":"Hello"},"done":false}
+{"model":"llama3","message":{"role":"assistant","content":" world"},"done":false}
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(ndjsonBody))
+		// Server closes connection without sending done: true
+	}))
+	defer server.Close()
+
+	p := New(server.URL)
+
+	req := provider.CompletionRequest{
+		Model:     "llama3",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 512,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var events []provider.StreamEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// Should get text_delta, text_delta, error (truncated)
+	require.Len(t, events, 3)
+	assert.Equal(t, "text_delta", events[0].Type)
+	assert.Equal(t, "text_delta", events[1].Type)
+	assert.Equal(t, "error", events[2].Type)
+	assert.Contains(t, events[2].Error.Error(), "stream ended without done signal")
+}
+
 func TestStreamToolCallWithNilArguments(t *testing.T) {
 	// Tool call where arguments field is absent => nil RawMessage
 	ndjsonBody := `{"model":"llama3","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"get_time"}}]},"done":false}

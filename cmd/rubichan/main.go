@@ -131,31 +131,33 @@ func parseSkillsFlag(s string) []string {
 // createSkillRuntime creates and configures a skill runtime from the
 // --skills and --approve-skills flags. The provider and config are used to
 // create integration adapters (LLM completer, HTTP fetcher, git runner,
-// skill invoker) that get injected into skill backends. Returns nil if no
-// skills are requested.
-func createSkillRuntime(registry *tools.Registry, p provider.LLMProvider, cfg *config.Config) (*skills.Runtime, error) {
+// skill invoker) that get injected into skill backends.
+//
+// The returned io.Closer must be closed by the caller to release the SQLite
+// store. Returns (nil, nil, nil) if no skills are requested.
+func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config) (*skills.Runtime, io.Closer, error) {
 	skillNames := parseSkillsFlag(skillsFlag)
 	if len(skillNames) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Determine user config directory.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		return nil, nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	configDir := filepath.Join(home, ".config", "rubichan")
 
 	// Ensure config directory exists for the database file.
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating config directory: %w", err)
+		return nil, nil, fmt.Errorf("creating config directory: %w", err)
 	}
 
 	// Use persistent SQLite store so skill approvals survive across sessions.
 	dbPath := filepath.Join(configDir, "skills.db")
 	s, err := store.NewStore(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("creating skill store: %w", err)
+		return nil, nil, fmt.Errorf("creating skill store: %w", err)
 	}
 
 	userDir := filepath.Join(configDir, "skills")
@@ -163,7 +165,8 @@ func createSkillRuntime(registry *tools.Registry, p provider.LLMProvider, cfg *c
 	// Project-level skill directory.
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("getting working directory: %w", err)
+		s.Close()
+		return nil, nil, fmt.Errorf("getting working directory: %w", err)
 	}
 	projectDir := filepath.Join(cwd, ".rubichan", "skills")
 
@@ -180,11 +183,13 @@ func createSkillRuntime(registry *tools.Registry, p provider.LLMProvider, cfg *c
 	skillInvoker := integrations.NewSkillInvoker(nil)
 
 	// Create adapters that bridge integrations to backend-specific interfaces.
+	// Plugin adapters store the parent context so cancellation propagates
+	// through to LLM/HTTP/Git calls made from Go plugins.
 	starlarkGitAdapter := &starlarkGitRunnerAdapter{runner: gitRunner}
-	pluginLLMAdapter := &pluginLLMCompleterAdapter{completer: llmCompleter}
-	pluginHTTPAdapter := &pluginHTTPFetcherAdapter{fetcher: httpFetcher}
-	pluginGitAdapter := &pluginGitRunnerAdapter{runner: gitRunner}
-	pluginSkillAdapter := &pluginSkillInvokerAdapter{invoker: skillInvoker}
+	pluginLLMAdapter := &pluginLLMCompleterAdapter{ctx: ctx, completer: llmCompleter}
+	pluginHTTPAdapter := &pluginHTTPFetcherAdapter{ctx: ctx, fetcher: httpFetcher}
+	pluginGitAdapter := &pluginGitRunnerAdapter{ctx: ctx, runner: gitRunner}
+	pluginSkillAdapter := &pluginSkillInvokerAdapter{ctx: ctx, invoker: skillInvoker}
 
 	// Backend factory routes to real Starlark, Go plugin, or process backends
 	// with integration objects injected.
@@ -233,7 +238,8 @@ func createSkillRuntime(registry *tools.Registry, p provider.LLMProvider, cfg *c
 
 	// Discover skills from all sources.
 	if err := rt.Discover(skillNames); err != nil {
-		return nil, fmt.Errorf("discovering skills: %w", err)
+		s.Close()
+		return nil, nil, fmt.Errorf("discovering skills: %w", err)
 	}
 
 	// Evaluate triggers and activate matching skills.
@@ -241,10 +247,11 @@ func createSkillRuntime(registry *tools.Registry, p provider.LLMProvider, cfg *c
 		// TODO: Populate with actual project files, keywords, etc.
 	}
 	if err := rt.EvaluateAndActivate(triggerCtx); err != nil {
-		return nil, fmt.Errorf("activating skills: %w", err)
+		s.Close()
+		return nil, nil, fmt.Errorf("activating skills: %w", err)
 	}
 
-	return rt, nil
+	return rt, s, nil
 }
 
 // loadConfig resolves the config path, loads the config, and applies any
@@ -309,9 +316,12 @@ func runInteractive() error {
 
 	// Create skill runtime if --skills is provided.
 	var opts []agent.AgentOption
-	rt, err := createSkillRuntime(registry, p, cfg)
+	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if storeCloser != nil {
+		defer storeCloser.Close()
 	}
 	if rt != nil {
 		opts = append(opts, agent.WithSkillRuntime(rt))
@@ -403,9 +413,12 @@ func runHeadless() error {
 
 	// Create skill runtime if --skills is provided.
 	var opts []agent.AgentOption
-	rt, err := createSkillRuntime(registry, p, cfg)
+	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if storeCloser != nil {
+		defer storeCloser.Close()
 	}
 	if rt != nil {
 		opts = append(opts, agent.WithSkillRuntime(rt))
@@ -514,37 +527,41 @@ func (a *starlarkGitRunnerAdapter) Status(ctx context.Context) ([]starengine.Git
 }
 
 // pluginLLMCompleterAdapter bridges integrations.LLMCompleter to the
-// goplugin.PluginLLMCompleter interface (no context parameter).
+// goplugin.PluginLLMCompleter interface. The stored context propagates
+// cancellation from the parent (e.g. headless timeout) to LLM calls.
 type pluginLLMCompleterAdapter struct {
+	ctx       context.Context
 	completer *integrations.LLMCompleter
 }
 
 func (a *pluginLLMCompleterAdapter) Complete(prompt string) (string, error) {
-	return a.completer.Complete(context.Background(), prompt)
+	return a.completer.Complete(a.ctx, prompt)
 }
 
 // pluginHTTPFetcherAdapter bridges integrations.HTTPFetcher to the
-// goplugin.PluginHTTPFetcher interface (no context parameter).
+// goplugin.PluginHTTPFetcher interface.
 type pluginHTTPFetcherAdapter struct {
+	ctx     context.Context
 	fetcher *integrations.HTTPFetcher
 }
 
 func (a *pluginHTTPFetcherAdapter) Fetch(url string) (string, error) {
-	return a.fetcher.Fetch(context.Background(), url)
+	return a.fetcher.Fetch(a.ctx, url)
 }
 
 // pluginGitRunnerAdapter bridges integrations.GitRunner to the
-// goplugin.PluginGitRunner interface (no context, skillsdk types).
+// goplugin.PluginGitRunner interface (skillsdk types).
 type pluginGitRunnerAdapter struct {
+	ctx    context.Context
 	runner *integrations.GitRunner
 }
 
 func (a *pluginGitRunnerAdapter) Diff(args ...string) (string, error) {
-	return a.runner.Diff(context.Background(), args...)
+	return a.runner.Diff(a.ctx, args...)
 }
 
 func (a *pluginGitRunnerAdapter) Log(args ...string) ([]skillsdk.GitCommit, error) {
-	commits, err := a.runner.Log(context.Background(), args...)
+	commits, err := a.runner.Log(a.ctx, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -556,7 +573,7 @@ func (a *pluginGitRunnerAdapter) Log(args ...string) ([]skillsdk.GitCommit, erro
 }
 
 func (a *pluginGitRunnerAdapter) Status() ([]skillsdk.GitFileStatus, error) {
-	statuses, err := a.runner.Status(context.Background())
+	statuses, err := a.runner.Status(a.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -568,11 +585,12 @@ func (a *pluginGitRunnerAdapter) Status() ([]skillsdk.GitFileStatus, error) {
 }
 
 // pluginSkillInvokerAdapter bridges integrations.SkillInvoker to the
-// goplugin.PluginSkillInvoker interface (no context parameter).
+// goplugin.PluginSkillInvoker interface.
 type pluginSkillInvokerAdapter struct {
+	ctx     context.Context
 	invoker *integrations.SkillInvoker
 }
 
 func (a *pluginSkillInvokerAdapter) Invoke(name string, input map[string]any) (map[string]any, error) {
-	return a.invoker.Invoke(context.Background(), name, input)
+	return a.invoker.Invoke(a.ctx, name, input)
 }

@@ -90,8 +90,10 @@ func NewSSETransport(ctx context.Context, sseURL string) (*SSETransport, error) 
 }
 
 // readSSE reads the SSE stream, dispatching "endpoint" and "message" events.
+// Closing responseCh signals Receive that the stream has ended.
 func (t *SSETransport) readSSE(ctx context.Context, body io.ReadCloser, endpointCh chan<- string) {
 	defer close(t.done)
+	defer close(t.responseCh)
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)

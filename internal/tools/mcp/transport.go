@@ -47,11 +47,19 @@ type Transport interface {
 var _ Transport = (*StdioTransport)(nil)
 
 // StdioTransport communicates with an MCP server via stdin/stdout of a child process.
+// Lines from stdout are read in a background goroutine so that Receive respects
+// context cancellation.
 type StdioTransport struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	scanner *bufio.Scanner
-	mu      sync.Mutex
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	lineCh chan lineResult
+	mu     sync.Mutex
+}
+
+// lineResult carries a single line or error from the scanner goroutine.
+type lineResult struct {
+	data []byte
+	err  error
 }
 
 // NewStdioTransport spawns a child process and sets up JSON-RPC over stdin/stdout.
@@ -72,10 +80,25 @@ func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
 		return nil, fmt.Errorf("start process %q: %w", command, err)
 	}
 
+	lineCh := make(chan lineResult, 16)
+	go func() {
+		defer close(lineCh)
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			// Copy bytes — scanner reuses its buffer.
+			data := make([]byte, len(scanner.Bytes()))
+			copy(data, scanner.Bytes())
+			lineCh <- lineResult{data: data}
+		}
+		if err := scanner.Err(); err != nil {
+			lineCh <- lineResult{err: err}
+		}
+	}()
+
 	return &StdioTransport{
-		cmd:     cmd,
-		stdin:   stdin,
-		scanner: bufio.NewScanner(stdout),
+		cmd:    cmd,
+		stdin:  stdin,
+		lineCh: lineCh,
 	}, nil
 }
 
@@ -97,18 +120,23 @@ func (t *StdioTransport) Send(_ context.Context, msg any) error {
 }
 
 // Receive reads the next JSON line from stdout and unmarshals it.
-func (t *StdioTransport) Receive(_ context.Context, result any) error {
-	if !t.scanner.Scan() {
-		if err := t.scanner.Err(); err != nil {
-			return fmt.Errorf("read from stdout: %w", err)
+// The call is cancelled when ctx is done.
+func (t *StdioTransport) Receive(ctx context.Context, result any) error {
+	select {
+	case lr, ok := <-t.lineCh:
+		if !ok {
+			return io.EOF
 		}
-		return io.EOF
+		if lr.err != nil {
+			return fmt.Errorf("read from stdout: %w", lr.err)
+		}
+		if err := json.Unmarshal(lr.data, result); err != nil {
+			return fmt.Errorf("unmarshal response: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
-	if err := json.Unmarshal(t.scanner.Bytes(), result); err != nil {
-		return fmt.Errorf("unmarshal response: %w", err)
-	}
-	return nil
 }
 
 // Close shuts down the child process.

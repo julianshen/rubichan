@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -77,7 +78,8 @@ func TestCreateSkillRuntimeNoSkills(t *testing.T) {
 	skillsFlag = ""
 	defer func() { skillsFlag = oldFlag }()
 
-	rt, err := createSkillRuntime(nil, nil, nil)
+	rt, closer, err := createSkillRuntime(context.Background(), nil, nil, nil)
 	assert.NoError(t, err)
 	assert.Nil(t, rt)
+	assert.Nil(t, closer)
 }

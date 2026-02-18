@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -112,6 +113,35 @@ func TestSSETransportClose(t *testing.T) {
 	mu.Lock()
 	assert.True(t, sseConnected)
 	mu.Unlock()
+}
+
+func TestSSETransportReceiveEOFOnStreamDrop(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		flusher := w.(http.Flusher)
+		fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+		flusher.Flush()
+
+		// Close immediately — simulates stream drop.
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	transport, err := NewSSETransport(ctx, server.URL+"/sse")
+	require.NoError(t, err)
+	defer transport.Close()
+
+	// Receive should return io.EOF when the SSE stream drops, not block forever.
+	var resp jsonRPCResponse
+	err = transport.Receive(ctx, &resp)
+	assert.ErrorIs(t, err, io.EOF)
 }
 
 func TestSSETransportServerError(t *testing.T) {

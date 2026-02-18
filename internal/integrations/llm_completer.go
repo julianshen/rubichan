@@ -38,6 +38,9 @@ func (c *LLMCompleter) Complete(ctx context.Context, prompt string) (string, err
 		case "text_delta":
 			parts = append(parts, evt.Text)
 		case "error":
+			// Drain remaining events so the provider goroutine isn't
+			// blocked on a send and can exit cleanly.
+			go func() { for range ch {} }()
 			return "", fmt.Errorf("llm stream error: %w", evt.Error)
 		}
 	}

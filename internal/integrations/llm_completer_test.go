@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/stretchr/testify/assert"
@@ -48,4 +49,29 @@ func TestLLMCompleterStreamError(t *testing.T) {
 	completer := NewLLMCompleter(mp, "test-model")
 	_, err := completer.Complete(context.Background(), "fail")
 	require.Error(t, err)
+}
+
+// slowMockProvider sends events with a delay after the error, simulating a
+// provider goroutine that still has events to deliver after an error.
+type slowMockProvider struct{}
+
+func (m *slowMockProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		ch <- provider.StreamEvent{Type: "error", Error: assert.AnError}
+		// Remaining event after error — should be drained by consumer.
+		ch <- provider.StreamEvent{Type: "text_delta", Text: "trailing"}
+	}()
+	return ch, nil
+}
+
+func TestLLMCompleterDrainsChannelOnError(t *testing.T) {
+	completer := NewLLMCompleter(&slowMockProvider{}, "test-model")
+	_, err := completer.Complete(context.Background(), "fail")
+	require.Error(t, err)
+
+	// The goroutine sending trailing events should not be blocked.
+	// Give it a moment to finish.
+	time.Sleep(50 * time.Millisecond)
 }
