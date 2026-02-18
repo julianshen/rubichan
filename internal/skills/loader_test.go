@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -276,6 +277,30 @@ dependencies:
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 	require.Len(t, skills, 2)
+}
+
+func TestDiscoverMCPServers(t *testing.T) {
+	mcpServers := []config.MCPServerConfig{
+		{Name: "filesystem", Transport: "stdio", Command: "echo", Args: []string{"test"}},
+		{Name: "web-search", Transport: "sse", URL: "http://localhost:3001/sse"},
+	}
+
+	loader := NewLoader(t.TempDir(), t.TempDir())
+	loader.AddMCPServers(mcpServers)
+
+	discovered, _, err := loader.Discover(nil)
+	require.NoError(t, err)
+	require.Len(t, discovered, 2)
+
+	names := make(map[string]bool)
+	for _, ds := range discovered {
+		names[ds.Manifest.Name] = true
+		assert.Equal(t, SourceMCP, ds.Source)
+		assert.Contains(t, ds.Manifest.Types, SkillTypeTool)
+		assert.Equal(t, BackendMCP, ds.Manifest.Implementation.Backend)
+	}
+	assert.True(t, names["mcp-filesystem"])
+	assert.True(t, names["mcp-web-search"])
 }
 
 // indexByName builds a map of DiscoveredSkill by manifest name for test convenience.

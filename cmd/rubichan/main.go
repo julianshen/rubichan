@@ -168,6 +168,7 @@ func createSkillRuntime(registry *tools.Registry, p provider.LLMProvider, cfg *c
 	projectDir := filepath.Join(cwd, ".rubichan", "skills")
 
 	loader := skills.NewLoader(userDir, projectDir)
+	loader.AddMCPServers(cfg.MCP.Servers)
 
 	// Create integration objects shared across all skill backends.
 	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
