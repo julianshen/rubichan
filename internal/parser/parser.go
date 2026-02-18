@@ -188,6 +188,42 @@ func (t *Tree) Imports() []string {
 	return imports
 }
 
+// Match represents a single query capture result.
+type Match struct {
+	Text      string
+	StartLine int
+	EndLine   int
+}
+
+// Query runs a tree-sitter S-expression pattern against the parsed tree and
+// returns all captured matches.
+func (t *Tree) Query(pattern string) ([]Match, error) {
+	q, err := sitter.NewQuery([]byte(pattern), t.info.lang)
+	if err != nil {
+		return nil, fmt.Errorf("compile query: %w", err)
+	}
+
+	cursor := sitter.NewQueryCursor()
+	cursor.Exec(q, t.tree.RootNode())
+
+	var matches []Match
+	for {
+		m, ok := cursor.NextMatch()
+		if !ok {
+			break
+		}
+		for _, capture := range m.Captures {
+			matches = append(matches, Match{
+				Text:      capture.Node.Content(t.source),
+				StartLine: int(capture.Node.StartPoint().Row) + 1,
+				EndLine:   int(capture.Node.EndPoint().Row) + 1,
+			})
+		}
+	}
+
+	return matches, nil
+}
+
 // walk performs a depth-first traversal of the syntax tree, calling fn for each node.
 func walk(node *sitter.Node, fn func(*sitter.Node)) {
 	if node == nil {

@@ -428,3 +428,51 @@ func TestLanguageDetectionByExtension(t *testing.T) {
 		})
 	}
 }
+
+func TestQuery(t *testing.T) {
+	src := `package main
+
+func hello() {
+	println("hello")
+}
+
+func add(a, b int) int {
+	return a + b
+}
+`
+	p := NewParser()
+	tree, err := p.Parse("main.go", []byte(src))
+	require.NoError(t, err)
+
+	matches, err := tree.Query("(function_declaration name: (identifier) @name)")
+	require.NoError(t, err)
+	require.Len(t, matches, 2)
+	assert.Equal(t, "hello", matches[0].Text)
+	assert.Equal(t, "add", matches[1].Text)
+	assert.Greater(t, matches[0].StartLine, 0)
+}
+
+func TestQueryInvalidPattern(t *testing.T) {
+	src := `package main`
+	p := NewParser()
+	tree, err := p.Parse("main.go", []byte(src))
+	require.NoError(t, err)
+
+	_, err = tree.Query("(invalid_query_that_wont_compile")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "compile query")
+}
+
+func TestQueryNoMatches(t *testing.T) {
+	src := `package main
+
+var x = 42
+`
+	p := NewParser()
+	tree, err := p.Parse("main.go", []byte(src))
+	require.NoError(t, err)
+
+	matches, err := tree.Query("(function_declaration name: (identifier) @name)")
+	require.NoError(t, err)
+	assert.Empty(t, matches)
+}
