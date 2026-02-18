@@ -12,6 +12,7 @@ type Config struct {
 	Provider ProviderConfig `toml:"provider"`
 	Agent    AgentConfig    `toml:"agent"`
 	Skills   SkillsConfig   `toml:"skills"`
+	MCP      MCPConfig      `toml:"mcp"`
 }
 
 // ProviderConfig holds settings for AI provider selection and configuration.
@@ -58,6 +59,20 @@ type SkillsConfig struct {
 	MaxLLMCallsPerTurn  int      `toml:"max_llm_calls_per_turn"`
 	MaxShellExecPerTurn int      `toml:"max_shell_exec_per_turn"`
 	MaxNetFetchPerTurn  int      `toml:"max_net_fetch_per_turn"`
+}
+
+// MCPConfig holds settings for MCP (Model Context Protocol) server connections.
+type MCPConfig struct {
+	Servers []MCPServerConfig `toml:"servers"`
+}
+
+// MCPServerConfig describes a single MCP server connection.
+type MCPServerConfig struct {
+	Name      string   `toml:"name"`
+	Transport string   `toml:"transport"` // "stdio" or "sse"
+	Command   string   `toml:"command"`   // for stdio transport
+	Args      []string `toml:"args"`      // for stdio transport
+	URL       string   `toml:"url"`       // for sse transport
 }
 
 // Load reads a TOML config file from the given path and returns a Config.

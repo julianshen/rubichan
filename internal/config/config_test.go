@@ -143,6 +143,36 @@ base_url = "http://localhost:11434"
 	assert.Equal(t, "http://localhost:11434", cfg.Provider.Ollama.BaseURL)
 }
 
+func TestMCPServersConfig(t *testing.T) {
+	tomlData := `
+[[mcp.servers]]
+name = "filesystem"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[[mcp.servers]]
+name = "web-search"
+transport = "sse"
+url = "http://localhost:3001/sse"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.MCP.Servers, 2)
+
+	assert.Equal(t, "filesystem", cfg.MCP.Servers[0].Name)
+	assert.Equal(t, "stdio", cfg.MCP.Servers[0].Transport)
+	assert.Equal(t, "npx", cfg.MCP.Servers[0].Command)
+	assert.Equal(t, []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"}, cfg.MCP.Servers[0].Args)
+
+	assert.Equal(t, "web-search", cfg.MCP.Servers[1].Name)
+	assert.Equal(t, "sse", cfg.MCP.Servers[1].Transport)
+	assert.Equal(t, "http://localhost:3001/sse", cfg.MCP.Servers[1].URL)
+}
+
 func TestConfigSkillsApproved(t *testing.T) {
 	tomlContent := `
 [skills]

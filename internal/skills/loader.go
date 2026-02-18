@@ -19,6 +19,8 @@ const (
 	SourceProject Source = "project"
 	// SourceInline is a skill explicitly requested via the --skills flag.
 	SourceInline Source = "inline"
+	// SourceMCP is a skill auto-discovered from a configured MCP server.
+	SourceMCP Source = "mcp"
 )
 
 // DiscoveredSkill represents a skill that was found by the loader, together

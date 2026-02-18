@@ -33,12 +33,14 @@ const (
 	BackendStarlark BackendType = "starlark"
 	BackendPlugin   BackendType = "plugin"
 	BackendProcess  BackendType = "process"
+	BackendMCP      BackendType = "mcp"
 )
 
 var validBackends = map[BackendType]bool{
 	BackendStarlark: true,
 	BackendPlugin:   true,
 	BackendProcess:  true,
+	BackendMCP:      true,
 }
 
 // Permission represents a declared permission required by a skill.
