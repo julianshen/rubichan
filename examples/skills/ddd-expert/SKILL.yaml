@@ -1,0 +1,7 @@
+name: ddd-expert
+version: 0.1.0
+description: "Domain-Driven Design expert guidance"
+types:
+  - prompt
+prompt:
+  system_prompt_file: prompts/system.md

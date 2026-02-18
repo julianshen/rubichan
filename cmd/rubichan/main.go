@@ -20,6 +20,9 @@ import (
 	"github.com/julianshen/rubichan/internal/pipeline"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
+	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/skills/sandbox"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tui"
 
@@ -47,6 +50,9 @@ var (
 	maxTurnsFlag int
 	timeoutFlag  time.Duration
 	toolsFlag    string
+
+	skillsFlag        string
+	approveSkillsFlag bool
 )
 
 func versionString() string {
@@ -81,6 +87,8 @@ func main() {
 	rootCmd.PersistentFlags().IntVar(&maxTurnsFlag, "max-turns", 0, "override max agent turns")
 	rootCmd.PersistentFlags().DurationVar(&timeoutFlag, "timeout", 120*time.Second, "headless execution timeout")
 	rootCmd.PersistentFlags().StringVar(&toolsFlag, "tools", "", "comma-separated tool whitelist (empty = all)")
+	rootCmd.PersistentFlags().StringVar(&skillsFlag, "skills", "", "comma-separated list of skill names to activate")
+	rootCmd.PersistentFlags().BoolVar(&approveSkillsFlag, "approve-skills", false, "auto-approve skill permissions")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -91,6 +99,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(skillCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -98,29 +107,126 @@ func main() {
 	}
 }
 
-func runInteractive() error {
-	// Determine config path
+// parseSkillsFlag splits a comma-separated skills string into a slice of names.
+// Returns nil if the input is empty.
+func parseSkillsFlag(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var names []string
+	for _, name := range strings.Split(s, ",") {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			names = append(names, trimmed)
+		}
+	}
+	return names
+}
+
+// createSkillRuntime creates and configures a skill runtime from the
+// --skills and --approve-skills flags. Returns nil if no skills are requested.
+func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
+	skillNames := parseSkillsFlag(skillsFlag)
+	if len(skillNames) == 0 {
+		return nil, nil
+	}
+
+	// Determine user config directory.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	configDir := filepath.Join(home, ".config", "rubichan")
+
+	// Ensure config directory exists for the database file.
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating config directory: %w", err)
+	}
+
+	// Use persistent SQLite store so skill approvals survive across sessions.
+	dbPath := filepath.Join(configDir, "skills.db")
+	s, err := store.NewStore(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("creating skill store: %w", err)
+	}
+
+	userDir := filepath.Join(configDir, "skills")
+
+	// Project-level skill directory.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getting working directory: %w", err)
+	}
+	projectDir := filepath.Join(cwd, ".rubichan", "skills")
+
+	loader := skills.NewLoader(userDir, projectDir)
+
+	// TODO: Wire real backend factory (Starlark, Go plugin, process) based on
+	// manifest.Implementation.Backend. For now, return an error to indicate
+	// that backend creation is not yet implemented.
+	backendFactory := func(manifest skills.SkillManifest) (skills.SkillBackend, error) {
+		return nil, fmt.Errorf("backend %q not yet implemented", manifest.Implementation.Backend)
+	}
+
+	sandboxFactory := func(skillName string, declared []skills.Permission) skills.PermissionChecker {
+		return sandbox.New(s, skillName, declared, sandbox.DefaultPolicy())
+	}
+
+	// If --approve-skills is set, auto-approve all requested skills.
+	var autoApproveSkills []string
+	if approveSkillsFlag {
+		autoApproveSkills = skillNames
+	}
+
+	rt := skills.NewRuntime(loader, s, registry, autoApproveSkills, backendFactory, sandboxFactory)
+
+	// Discover skills from all sources.
+	if err := rt.Discover(skillNames); err != nil {
+		return nil, fmt.Errorf("discovering skills: %w", err)
+	}
+
+	// Evaluate triggers and activate matching skills.
+	triggerCtx := skills.TriggerContext{
+		// TODO: Populate with actual project files, keywords, etc.
+	}
+	if err := rt.EvaluateAndActivate(triggerCtx); err != nil {
+		return nil, fmt.Errorf("activating skills: %w", err)
+	}
+
+	return rt, nil
+}
+
+// loadConfig resolves the config path, loads the config, and applies any
+// flag overrides. This eliminates duplication between runInteractive and
+// runHeadless.
+func loadConfig() (*config.Config, error) {
 	cfgPath := configPath
 	if cfgPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("cannot determine home directory: %w", err)
+			return nil, fmt.Errorf("cannot determine home directory: %w", err)
 		}
 		cfgPath = filepath.Join(home, ".config", "rubichan", "config.toml")
 	}
 
-	// Load config
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	// Apply flag overrides
 	if modelFlag != "" {
 		cfg.Provider.Model = modelFlag
 	}
 	if providerFlag != "" {
 		cfg.Provider.Default = providerFlag
+	}
+
+	return cfg, nil
+}
+
+func runInteractive() error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
 	}
 
 	// Create provider
@@ -149,8 +255,18 @@ func runInteractive() error {
 		return autoApprove, nil
 	}
 
+	// Create skill runtime if --skills is provided.
+	var opts []agent.AgentOption
+	rt, err := createSkillRuntime(registry)
+	if err != nil {
+		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if rt != nil {
+		opts = append(opts, agent.WithSkillRuntime(rt))
+	}
+
 	// Create agent
-	a := agent.New(p, registry, approvalFunc, cfg)
+	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Create TUI model and run
 	model := tui.NewModel(a, "rubichan", cfg.Provider.Model)
@@ -163,26 +279,11 @@ func runInteractive() error {
 }
 
 func runHeadless() error {
-	cfgPath := configPath
-	if cfgPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("cannot determine home directory: %w", err)
-		}
-		cfgPath = filepath.Join(home, ".config", "rubichan", "config.toml")
-	}
-
-	cfg, err := config.Load(cfgPath)
+	cfg, err := loadConfig()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
 
-	if modelFlag != "" {
-		cfg.Provider.Model = modelFlag
-	}
-	if providerFlag != "" {
-		cfg.Provider.Default = providerFlag
-	}
 	if maxTurnsFlag > 0 {
 		cfg.Agent.MaxTurns = maxTurnsFlag
 	}
@@ -248,7 +349,17 @@ func runHeadless() error {
 		return true, nil
 	}
 
-	a := agent.New(p, registry, approvalFunc, cfg)
+	// Create skill runtime if --skills is provided.
+	var opts []agent.AgentOption
+	rt, err := createSkillRuntime(registry)
+	if err != nil {
+		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if rt != nil {
+		opts = append(opts, agent.WithSkillRuntime(rt))
+	}
+
+	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Run headless
 	mode := modeFlag

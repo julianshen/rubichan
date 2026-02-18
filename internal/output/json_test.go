@@ -3,19 +3,19 @@ package output
 
 import (
 	"encoding/json"
-	"testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 func TestJSONFormatterBasic(t *testing.T) {
 	f := NewJSONFormatter()
 	result := &RunResult{
-		Prompt:    "say hello",
-		Response:  "Hello!",
-		TurnCount: 1,
+		Prompt:     "say hello",
+		Response:   "Hello!",
+		TurnCount:  1,
 		DurationMs: 500,
-		Mode:      "generic",
+		Mode:       "generic",
 	}
 
 	out, err := f.Format(result)
@@ -40,9 +40,9 @@ func TestJSONFormatterWithToolCalls(t *testing.T) {
 		ToolCalls: []ToolCallLog{
 			{Name: "file", Input: json.RawMessage(`{"path":"main.go"}`), Result: "package main"},
 		},
-		TurnCount: 2,
+		TurnCount:  2,
 		DurationMs: 1000,
-		Mode:      "generic",
+		Mode:       "generic",
 	}
 
 	out, err := f.Format(result)
@@ -60,12 +60,12 @@ func TestJSONFormatterWithToolCalls(t *testing.T) {
 func TestJSONFormatterWithError(t *testing.T) {
 	f := NewJSONFormatter()
 	result := &RunResult{
-		Prompt:    "fail",
-		Response:  "",
-		TurnCount: 0,
+		Prompt:     "fail",
+		Response:   "",
+		TurnCount:  0,
 		DurationMs: 0,
-		Mode:      "generic",
-		Error:     "something went wrong",
+		Mode:       "generic",
+		Error:      "something went wrong",
 	}
 
 	out, err := f.Format(result)

@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Provider ProviderConfig `toml:"provider"`
 	Agent    AgentConfig    `toml:"agent"`
+	Skills   SkillsConfig   `toml:"skills"`
 }
 
 // ProviderConfig holds settings for AI provider selection and configuration.
@@ -41,6 +42,16 @@ type AgentConfig struct {
 	MaxTurns      int    `toml:"max_turns"`
 	ApprovalMode  string `toml:"approval_mode"`
 	ContextBudget int    `toml:"context_budget"`
+}
+
+// SkillsConfig holds settings for the skill system.
+type SkillsConfig struct {
+	RegistryURL         string   `toml:"registry_url"`
+	ApprovedSkills      []string `toml:"approved_skills"`
+	UserDir             string   `toml:"user_dir"`
+	MaxLLMCallsPerTurn  int      `toml:"max_llm_calls_per_turn"`
+	MaxShellExecPerTurn int      `toml:"max_shell_exec_per_turn"`
+	MaxNetFetchPerTurn  int      `toml:"max_net_fetch_per_turn"`
 }
 
 // Load reads a TOML config file from the given path and returns a Config.
@@ -75,6 +86,12 @@ func DefaultConfig() *Config {
 			MaxTurns:      50,
 			ApprovalMode:  "prompt",
 			ContextBudget: 100000,
+		},
+		Skills: SkillsConfig{
+			RegistryURL:         "https://registry.rubichan.dev",
+			MaxLLMCallsPerTurn:  10,
+			MaxShellExecPerTurn: 20,
+			MaxNetFetchPerTurn:  10,
 		},
 	}
 }

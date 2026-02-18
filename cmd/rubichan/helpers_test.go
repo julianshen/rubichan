@@ -44,3 +44,39 @@ func TestShouldRegisterFiltered(t *testing.T) {
 	assert.True(t, shouldRegister("file", allowed))
 	assert.False(t, shouldRegister("shell", allowed))
 }
+
+func TestParseSkillsFlagEmpty(t *testing.T) {
+	result := parseSkillsFlag("")
+	assert.Nil(t, result)
+}
+
+func TestParseSkillsFlagWhitespace(t *testing.T) {
+	result := parseSkillsFlag("   ")
+	assert.Nil(t, result)
+}
+
+func TestParseSkillsFlagSingle(t *testing.T) {
+	result := parseSkillsFlag("my-skill")
+	assert.Equal(t, []string{"my-skill"}, result)
+}
+
+func TestParseSkillsFlagMultiple(t *testing.T) {
+	result := parseSkillsFlag("skill-a,skill-b")
+	assert.Equal(t, []string{"skill-a", "skill-b"}, result)
+}
+
+func TestParseSkillsFlagWithSpaces(t *testing.T) {
+	result := parseSkillsFlag(" skill-a , skill-b ")
+	assert.Equal(t, []string{"skill-a", "skill-b"}, result)
+}
+
+func TestCreateSkillRuntimeNoSkills(t *testing.T) {
+	// When skillsFlag is empty, createSkillRuntime should return nil.
+	oldFlag := skillsFlag
+	skillsFlag = ""
+	defer func() { skillsFlag = oldFlag }()
+
+	rt, err := createSkillRuntime(nil)
+	assert.NoError(t, err)
+	assert.Nil(t, rt)
+}

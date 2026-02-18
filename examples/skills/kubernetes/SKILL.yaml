@@ -1,0 +1,10 @@
+name: kubernetes
+version: 0.1.0
+description: "Kubernetes management tools"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+permissions:
+  - shell:exec

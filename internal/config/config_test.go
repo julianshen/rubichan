@@ -91,3 +91,57 @@ func TestLoadInvalidTOML(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing config file")
 }
+
+func TestConfigWithSkillsSection(t *testing.T) {
+	tomlContent := `
+[skills]
+registry_url = "https://custom.registry.dev"
+user_dir = "/tmp/skills"
+max_llm_calls_per_turn = 5
+max_shell_exec_per_turn = 15
+max_net_fetch_per_turn = 8
+approved_skills = ["code-review", "doc-gen"]
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "https://custom.registry.dev", cfg.Skills.RegistryURL)
+	assert.Equal(t, "/tmp/skills", cfg.Skills.UserDir)
+	assert.Equal(t, 5, cfg.Skills.MaxLLMCallsPerTurn)
+	assert.Equal(t, 15, cfg.Skills.MaxShellExecPerTurn)
+	assert.Equal(t, 8, cfg.Skills.MaxNetFetchPerTurn)
+	assert.Equal(t, []string{"code-review", "doc-gen"}, cfg.Skills.ApprovedSkills)
+}
+
+func TestConfigSkillsDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Equal(t, "https://registry.rubichan.dev", cfg.Skills.RegistryURL)
+	assert.Nil(t, cfg.Skills.ApprovedSkills)
+	assert.Equal(t, "", cfg.Skills.UserDir)
+	assert.Equal(t, 10, cfg.Skills.MaxLLMCallsPerTurn)
+	assert.Equal(t, 20, cfg.Skills.MaxShellExecPerTurn)
+	assert.Equal(t, 10, cfg.Skills.MaxNetFetchPerTurn)
+}
+
+func TestConfigSkillsApproved(t *testing.T) {
+	tomlContent := `
+[skills]
+approved_skills = ["lint-fixer", "test-gen", "security-scan"]
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.Skills.ApprovedSkills, 3)
+	assert.Equal(t, "lint-fixer", cfg.Skills.ApprovedSkills[0])
+	assert.Equal(t, "test-gen", cfg.Skills.ApprovedSkills[1])
+	assert.Equal(t, "security-scan", cfg.Skills.ApprovedSkills[2])
+	// Defaults should still be set for fields not specified in TOML
+	assert.Equal(t, "https://registry.rubichan.dev", cfg.Skills.RegistryURL)
+	assert.Equal(t, 10, cfg.Skills.MaxLLMCallsPerTurn)
+	assert.Equal(t, 20, cfg.Skills.MaxShellExecPerTurn)
+	assert.Equal(t, 10, cfg.Skills.MaxNetFetchPerTurn)
+}
