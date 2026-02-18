@@ -28,6 +28,7 @@ import (
 
 	// Register providers via init() side effects.
 	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
+	_ "github.com/julianshen/rubichan/internal/provider/ollama"
 	_ "github.com/julianshen/rubichan/internal/provider/openai"
 )
 

@@ -10,6 +10,7 @@ import (
 
 	// Import sub-packages to trigger init() registration
 	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
+	_ "github.com/julianshen/rubichan/internal/provider/ollama"
 	_ "github.com/julianshen/rubichan/internal/provider/openai"
 )
 
@@ -110,6 +111,26 @@ func TestNewProviderOpenAIMissingKey(t *testing.T) {
 	_, err := provider.NewProvider(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "OPENAI_API_KEY")
+}
+
+func TestNewProviderOllama(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "ollama"
+	cfg.Provider.Ollama.BaseURL = "http://localhost:11434"
+
+	p, err := provider.NewProvider(cfg)
+	require.NoError(t, err)
+	assert.NotNil(t, p)
+}
+
+func TestNewProviderOllamaDefaultBaseURL(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "ollama"
+	// Don't set BaseURL — should default to localhost:11434
+
+	p, err := provider.NewProvider(cfg)
+	require.NoError(t, err)
+	assert.NotNil(t, p)
 }
 
 func TestNewProviderUnknown(t *testing.T) {

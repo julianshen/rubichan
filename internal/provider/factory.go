@@ -23,14 +23,16 @@ func RegisterProvider(name string, constructor ProviderConstructor) {
 }
 
 // NewProvider creates an LLMProvider based on the given configuration.
-// If the default provider is "anthropic", it creates an Anthropic provider.
-// Otherwise, it searches the OpenAI-compatible configurations for a matching name.
+// It routes to the appropriate provider constructor based on the default provider name.
 func NewProvider(cfg *config.Config) (LLMProvider, error) {
-	if cfg.Provider.Default == "anthropic" {
+	switch cfg.Provider.Default {
+	case "anthropic":
 		return newAnthropicProvider(cfg)
+	case "ollama":
+		return newOllamaProvider(cfg)
+	default:
+		return newOpenAIProvider(cfg)
 	}
-
-	return newOpenAIProvider(cfg)
 }
 
 func newAnthropicProvider(cfg *config.Config) (LLMProvider, error) {
@@ -49,6 +51,20 @@ func newAnthropicProvider(cfg *config.Config) (LLMProvider, error) {
 	}
 
 	return constructor(anthropicBaseURL, apiKey, nil), nil
+}
+
+func newOllamaProvider(cfg *config.Config) (LLMProvider, error) {
+	constructor, ok := registry["ollama"]
+	if !ok {
+		return nil, fmt.Errorf("ollama provider not registered")
+	}
+
+	baseURL := cfg.Provider.Ollama.BaseURL
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
+	return constructor(baseURL, "", nil), nil
 }
 
 func newOpenAIProvider(cfg *config.Config) (LLMProvider, error) {

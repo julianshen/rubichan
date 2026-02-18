@@ -125,6 +125,24 @@ func TestConfigSkillsDefaults(t *testing.T) {
 	assert.Equal(t, 10, cfg.Skills.MaxNetFetchPerTurn)
 }
 
+func TestOllamaConfig(t *testing.T) {
+	tomlData := `
+[provider]
+default = "ollama"
+model = "llama3"
+
+[provider.ollama]
+base_url = "http://localhost:11434"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "ollama", cfg.Provider.Default)
+	assert.Equal(t, "http://localhost:11434", cfg.Provider.Ollama.BaseURL)
+}
+
 func TestConfigSkillsApproved(t *testing.T) {
 	tomlContent := `
 [skills]
