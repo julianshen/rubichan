@@ -215,14 +215,6 @@ func extractTarGz(r io.Reader, dest string) error {
 				return fmt.Errorf("create directory %q: %w", target, err)
 			}
 		case tar.TypeReg:
-			if header.Size > maxTarFileSize {
-				return fmt.Errorf("tar entry %q exceeds maximum file size (%d bytes)", header.Name, maxTarFileSize)
-			}
-			totalSize += header.Size
-			if totalSize > maxTarTotalSize {
-				return fmt.Errorf("tar archive exceeds maximum total extracted size (%d bytes)", maxTarTotalSize)
-			}
-
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("create parent directory for %q: %w", target, err)
 			}
@@ -233,12 +225,20 @@ func extractTarGz(r io.Reader, dest string) error {
 			if err != nil {
 				return fmt.Errorf("create file %q: %w", target, err)
 			}
-			// Use LimitReader to enforce per-file size even if header.Size is spoofed.
-			if _, err := io.Copy(f, io.LimitReader(tr, maxTarFileSize+1)); err != nil {
-				f.Close()
-				return fmt.Errorf("write file %q: %w", target, err)
-			}
+			// Use LimitReader to cap reads and track actual bytes written
+			// (not header.Size which can be spoofed).
+			written, copyErr := io.Copy(f, io.LimitReader(tr, maxTarFileSize+1))
 			f.Close()
+			if copyErr != nil {
+				return fmt.Errorf("write file %q: %w", target, copyErr)
+			}
+			if written > maxTarFileSize {
+				return fmt.Errorf("tar entry %q exceeds maximum file size (%d bytes)", header.Name, maxTarFileSize)
+			}
+			totalSize += written
+			if totalSize > maxTarTotalSize {
+				return fmt.Errorf("tar archive exceeds maximum total extracted size (%d bytes)", maxTarTotalSize)
+			}
 		case tar.TypeSymlink, tar.TypeLink:
 			return fmt.Errorf("tar entry %q: symlinks and hard links are not allowed", header.Name)
 		}

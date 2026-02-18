@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/skills"
@@ -32,7 +33,9 @@ func DefaultPolicy() SandboxPolicy {
 }
 
 // Sandbox holds the state for permission enforcement within a single skill.
+// Methods that access counters are protected by a mutex for thread safety.
 type Sandbox struct {
+	mu          sync.Mutex
 	store       *store.Store
 	skill       string
 	declared    map[skills.Permission]bool
@@ -90,6 +93,9 @@ func (sb *Sandbox) CheckRateLimit(resource string) error {
 		return nil
 	}
 
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
 	sb.counters[resource]++
 	if sb.counters[resource] > limit {
 		return fmt.Errorf("rate limit exceeded for %q: %d/%d per turn", resource, sb.counters[resource], limit)
@@ -101,6 +107,9 @@ func (sb *Sandbox) CheckRateLimit(resource string) error {
 // ResetTurnLimits zeros all rate limit counters, typically called at the
 // start of a new agent turn.
 func (sb *Sandbox) ResetTurnLimits() {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
 	sb.counters = make(map[string]int)
 }
 

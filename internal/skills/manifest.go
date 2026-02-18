@@ -197,7 +197,11 @@ func validateManifest(m *SkillManifest) error {
 		return fmt.Errorf("manifest validation: types is required (at least one skill type)")
 	}
 
-	// Name format.
+	// Name format and length.
+	const maxNameLength = 128
+	if len(m.Name) > maxNameLength {
+		return fmt.Errorf("manifest validation: name exceeds maximum length (%d > %d)", len(m.Name), maxNameLength)
+	}
 	if !nameRegex.MatchString(m.Name) {
 		return fmt.Errorf("manifest validation: invalid name %q (must match %s)", m.Name, nameRegex.String())
 	}
