@@ -8,15 +8,25 @@
 package goplugin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
+
 	goplugin "plugin"
 
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
+)
+
+// Safety limits for plugin context operations.
+const (
+	maxPluginReadFileSize = 10 << 20         // 10 MB max file size for ReadFile.
+	pluginExecTimeout     = 30 * time.Second // 30s timeout for Exec commands.
 )
 
 // PluginLoader abstracts the loading of Go plugins. The real implementation
@@ -200,12 +210,48 @@ func newPluginContext(checker skills.PermissionChecker, skillDir string) *plugin
 	}
 }
 
+// resolveSandboxedPath resolves a path relative to the skill directory and
+// validates it stays within the skill directory. Returns an error if the
+// resolved path escapes the sandbox.
+func (c *pluginContext) resolveSandboxedPath(path string) (string, error) {
+	if c.skillDir == "" {
+		return "", fmt.Errorf("skill directory not set; cannot sandbox path")
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(c.skillDir, path)
+	}
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	absSkillDir, err := filepath.Abs(c.skillDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve skill dir: %w", err)
+	}
+	if !strings.HasPrefix(resolved, absSkillDir+string(filepath.Separator)) && resolved != absSkillDir {
+		return "", fmt.Errorf("path %q escapes skill directory %q", path, absSkillDir)
+	}
+	return resolved, nil
+}
+
 // ReadFile reads the contents of a file. Requires file:read permission.
+// Path is sandboxed to the skill directory and file size is limited.
 func (c *pluginContext) ReadFile(path string) (string, error) {
 	if err := c.checker.CheckPermission(skills.PermFileRead); err != nil {
 		return "", fmt.Errorf("ReadFile: %w", err)
 	}
-	data, err := os.ReadFile(path)
+	resolved, err := c.resolveSandboxedPath(path)
+	if err != nil {
+		return "", fmt.Errorf("ReadFile: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("ReadFile: %w", err)
+	}
+	if info.Size() > maxPluginReadFileSize {
+		return "", fmt.Errorf("ReadFile: file %q exceeds maximum size (%d bytes)", path, maxPluginReadFileSize)
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("ReadFile: %w", err)
 	}
@@ -213,22 +259,32 @@ func (c *pluginContext) ReadFile(path string) (string, error) {
 }
 
 // WriteFile writes content to a file. Requires file:write permission.
+// Path is sandboxed to the skill directory.
 func (c *pluginContext) WriteFile(path, content string) error {
 	if err := c.checker.CheckPermission(skills.PermFileWrite); err != nil {
 		return fmt.Errorf("WriteFile: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	resolved, err := c.resolveSandboxedPath(path)
+	if err != nil {
+		return fmt.Errorf("WriteFile: %w", err)
+	}
+	if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("WriteFile: %w", err)
 	}
 	return nil
 }
 
 // ListDir lists directory entries. Requires file:read permission.
+// Path is sandboxed to the skill directory.
 func (c *pluginContext) ListDir(path string) ([]skillsdk.FileInfo, error) {
 	if err := c.checker.CheckPermission(skills.PermFileRead); err != nil {
 		return nil, fmt.Errorf("ListDir: %w", err)
 	}
-	entries, err := os.ReadDir(path)
+	resolved, err := c.resolveSandboxedPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("ListDir: %w", err)
+	}
+	entries, err := os.ReadDir(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("ListDir: %w", err)
 	}
@@ -248,23 +304,44 @@ func (c *pluginContext) ListDir(path string) ([]skillsdk.FileInfo, error) {
 }
 
 // SearchFiles finds files matching a glob pattern. Requires file:read permission.
+// Pattern is resolved relative to the skill directory and results are filtered
+// to only include paths within the skill directory.
 func (c *pluginContext) SearchFiles(pattern string) ([]string, error) {
 	if err := c.checker.CheckPermission(skills.PermFileRead); err != nil {
 		return nil, fmt.Errorf("SearchFiles: %w", err)
+	}
+	if !filepath.IsAbs(pattern) && c.skillDir != "" {
+		pattern = filepath.Join(c.skillDir, pattern)
 	}
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("SearchFiles: %w", err)
 	}
-	return matches, nil
+	if c.skillDir == "" {
+		return matches, nil
+	}
+	absSkillDir, _ := filepath.Abs(c.skillDir)
+	var filtered []string
+	for _, m := range matches {
+		absM, _ := filepath.Abs(m)
+		if strings.HasPrefix(absM, absSkillDir+string(filepath.Separator)) || absM == absSkillDir {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered, nil
 }
 
 // Exec runs an external command. Requires shell:exec permission.
+// Enforces a timeout to prevent runaway processes.
 func (c *pluginContext) Exec(command string, args ...string) (skillsdk.ExecResult, error) {
 	if err := c.checker.CheckPermission(skills.PermShellExec); err != nil {
 		return skillsdk.ExecResult{}, fmt.Errorf("Exec: %w", err)
 	}
-	cmd := exec.Command(command, args...)
+
+	ctx, cancel := context.WithTimeout(context.Background(), pluginExecTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, command, args...)
 	stdout, err := cmd.Output()
 
 	result := skillsdk.ExecResult{}

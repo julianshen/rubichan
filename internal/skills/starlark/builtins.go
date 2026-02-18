@@ -205,7 +205,7 @@ func (e *Engine) builtinSearchFiles(
 // Uses os/exec.Command which invokes the command directly without a shell,
 // preventing shell injection. Requires the shell:exec permission.
 func (e *Engine) builtinExec(
-	_ *starlib.Thread,
+	thread *starlib.Thread,
 	fn *starlib.Builtin,
 	args starlib.Tuple,
 	kwargs []starlib.Tuple,
@@ -232,7 +232,7 @@ func (e *Engine) builtinExec(
 		return nil, fmt.Errorf("%s: %w", fn.Name(), err)
 	}
 
-	execCtx, cancel := context.WithTimeout(context.Background(), execTimeout)
+	execCtx, cancel := context.WithTimeout(threadContext(thread), execTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(execCtx, command, cmdArgs...)

@@ -284,12 +284,13 @@ func TestPluginContextAllowsWithPermission(t *testing.T) {
 	loader := &mockPluginLoader{plugin: fp}
 	checker := &mockPermissionChecker{allowAll: true}
 
-	backend := NewGoPluginBackend(WithPluginLoader(loader))
-
 	// Create a temp file to read.
 	tmpDir := t.TempDir()
 	tmpFile := tmpDir + "/test.txt"
 	require.NoError(t, writeTestFile(tmpFile, "hello"))
+
+	// Set skillDir to tmpDir so sandboxed file operations work.
+	backend := NewGoPluginBackend(WithPluginLoader(loader), WithSkillDir(tmpDir))
 
 	err := backend.Load(newTestManifest(), checker)
 	require.NoError(t, err)

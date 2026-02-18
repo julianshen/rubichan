@@ -3,6 +3,7 @@ package skills
 import (
 	"fmt"
 	"sort"
+	"sync"
 )
 
 // Priority constants for hook registration. Lower number = higher priority.
@@ -36,7 +37,9 @@ var modifyingPhases = map[HookPhase]bool{
 
 // LifecycleManager dispatches hook events to registered skill handlers.
 // Handlers are called in priority order (lower number = higher priority).
+// All methods are safe for concurrent use.
 type LifecycleManager struct {
+	mu       sync.RWMutex
 	handlers map[HookPhase][]skillHookEntry
 }
 
@@ -52,6 +55,9 @@ func NewLifecycleManager() *LifecycleManager {
 // use PriorityBuiltin (0), user skills PriorityUser (10), and project skills
 // PriorityProject (20).
 func (lm *LifecycleManager) Register(phase HookPhase, skillName string, priority int, handler HookHandler) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+
 	lm.handlers[phase] = append(lm.handlers[phase], skillHookEntry{
 		skillName: skillName,
 		priority:  priority,
@@ -61,6 +67,9 @@ func (lm *LifecycleManager) Register(phase HookPhase, skillName string, priority
 
 // Unregister removes all hook handlers for the given skill name across all phases.
 func (lm *LifecycleManager) Unregister(skillName string) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+
 	for phase, entries := range lm.handlers {
 		filtered := entries[:0]
 		for _, e := range entries {
@@ -89,14 +98,18 @@ func (lm *LifecycleManager) Unregister(skillName string) {
 //
 // Returns nil if no handlers are registered for the phase.
 func (lm *LifecycleManager) Dispatch(event HookEvent) (*HookResult, error) {
+	// Snapshot handlers under read lock, then release before calling them.
+	lm.mu.RLock()
 	entries, ok := lm.handlers[event.Phase]
 	if !ok || len(entries) == 0 {
+		lm.mu.RUnlock()
 		return nil, nil
 	}
-
-	// Sort by priority (stable sort preserves registration order for equal priorities).
 	sorted := make([]skillHookEntry, len(entries))
 	copy(sorted, entries)
+	lm.mu.RUnlock()
+
+	// Sort by priority (stable sort preserves registration order for equal priorities).
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].priority < sorted[j].priority
 	})

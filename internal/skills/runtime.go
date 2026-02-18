@@ -167,6 +167,13 @@ func (rt *Runtime) Activate(name string) error {
 		return fmt.Errorf("skill %q not found", name)
 	}
 
+	// Guard against concurrent activation: if another goroutine already
+	// activated or is activating this skill, return early.
+	if _, alreadyActive := rt.active[name]; alreadyActive {
+		rt.mu.Unlock()
+		return nil
+	}
+
 	if err := sk.TransitionTo(SkillStateActivating); err != nil {
 		rt.mu.Unlock()
 		return fmt.Errorf("activate skill %q: %w", name, err)

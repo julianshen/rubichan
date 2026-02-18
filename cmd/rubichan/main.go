@@ -21,6 +21,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/skills/sandbox"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tui"
@@ -166,12 +167,8 @@ func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
 		return nil, fmt.Errorf("backend %q not yet implemented", manifest.Implementation.Backend)
 	}
 
-	// TODO: Wire real sandbox factory via skills/sandbox package.
-	// WARNING: This is a placeholder that approves all permissions unconditionally.
-	// All skill permission enforcement is bypassed until sandbox.New() is wired.
-	fmt.Fprintln(os.Stderr, "WARNING: skill permissions are not enforced (sandbox not yet wired)")
-	sandboxFactory := func(_ string, _ []skills.Permission) skills.PermissionChecker {
-		return &noopPermissionChecker{}
+	sandboxFactory := func(skillName string, declared []skills.Permission) skills.PermissionChecker {
+		return sandbox.New(s, skillName, declared, sandbox.DefaultPolicy())
 	}
 
 	// If --approve-skills is set, auto-approve all requested skills.
@@ -225,14 +222,6 @@ func loadConfig() (*config.Config, error) {
 
 	return cfg, nil
 }
-
-// noopPermissionChecker is a placeholder that approves all permissions.
-// TODO: Replace with real sandbox.New() integration.
-type noopPermissionChecker struct{}
-
-func (n *noopPermissionChecker) CheckPermission(_ skills.Permission) error { return nil }
-func (n *noopPermissionChecker) CheckRateLimit(_ string) error             { return nil }
-func (n *noopPermissionChecker) ResetTurnLimits()                          {}
 
 func runInteractive() error {
 	cfg, err := loadConfig()
