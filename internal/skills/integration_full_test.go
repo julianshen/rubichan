@@ -159,7 +159,7 @@ register_tool(
 	registry := tools.NewRegistry()
 
 	// 5. Backend factory that routes to the real Starlark engine.
-	backendFactory := func(m skills.SkillManifest) (skills.SkillBackend, error) {
+	backendFactory := func(m skills.SkillManifest, dir string) (skills.SkillBackend, error) {
 		return starlark.NewEngine(m.Name, skillDir, &fullAutoApproveChecker{}), nil
 	}
 
@@ -255,7 +255,7 @@ permissions:
 
 	// 5. Backend factory that routes to the real process backend.
 	// Use a generous timeout to handle slow CI environments and concurrent builds.
-	backendFactory := func(m skills.SkillManifest) (skills.SkillBackend, error) {
+	backendFactory := func(m skills.SkillManifest, dir string) (skills.SkillBackend, error) {
 		return process.NewProcessBackend(process.WithCallTimeout(30 * time.Second)), nil
 	}
 
@@ -340,7 +340,7 @@ func TestHookChainEndToEnd(t *testing.T) {
 	}
 
 	// Backend factory returns the appropriate backend for each skill.
-	backendFactory := func(m skills.SkillManifest) (skills.SkillBackend, error) {
+	backendFactory := func(m skills.SkillManifest, dir string) (skills.SkillBackend, error) {
 		switch m.Name {
 		case "skill-a":
 			return hookBackendA, nil
@@ -428,7 +428,7 @@ implementation:
 // confirms the skill does not appear in the active list and that the error
 // message is appropriate.
 func TestPermissionDenialEndToEnd(t *testing.T) {
-	backendFactory := func(m skills.SkillManifest) (skills.SkillBackend, error) {
+	backendFactory := func(m skills.SkillManifest, dir string) (skills.SkillBackend, error) {
 		return &fullMockBackend{
 			tools: []tools.Tool{
 				&fullMockTool{name: m.Name + "-tool", description: "tool from " + m.Name},

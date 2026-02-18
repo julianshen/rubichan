@@ -84,7 +84,7 @@ func makeTestRuntime(t *testing.T, skillName string, manifest *skills.SkillManif
 
 	registry := tools.NewRegistry()
 
-	backendFactory := func(_ skills.SkillManifest) (skills.SkillBackend, error) {
+	backendFactory := func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
 		return &skillMockBackend{
 			backendTools: backendTools,
 			hooks:        hooks,
@@ -306,7 +306,7 @@ func TestAgentPromptInjection(t *testing.T) {
 
 	registry := tools.NewRegistry()
 
-	backendFactory := func(_ skills.SkillManifest) (skills.SkillBackend, error) {
+	backendFactory := func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
 		return &skillMockBackend{
 			hooks: map[skills.HookPhase]skills.HookHandler{},
 		}, nil
