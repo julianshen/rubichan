@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
+	"sync/atomic"
 
 	"github.com/julianshen/rubichan/internal/provider"
 )
@@ -22,8 +22,9 @@ func init() {
 
 // Provider implements the LLMProvider interface for Ollama (local LLM server).
 type Provider struct {
-	baseURL string
-	client  *http.Client
+	baseURL    string
+	client     *http.Client
+	nextToolID atomic.Int64
 }
 
 // New creates a new Ollama provider.
@@ -235,8 +236,9 @@ func (p *Provider) convertUserMessages(msg provider.Message) []apiMessage {
 		switch block.Type {
 		case "tool_result":
 			toolResults = append(toolResults, apiMessage{
-				Role:    "tool",
-				Content: block.Text,
+				Role:       "tool",
+				Content:    block.Text,
+				ToolCallID: block.ToolUseID,
 			})
 		case "text":
 			texts = append(texts, block.Text)
@@ -295,7 +297,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			case ch <- provider.StreamEvent{
 				Type: "tool_use",
 				ToolUse: &provider.ToolUseBlock{
-					ID:    fmt.Sprintf("ollama_%d", time.Now().UnixNano()),
+					ID:    fmt.Sprintf("ollama_call_%d", p.nextToolID.Add(1)),
 					Name:  tc.Function.Name,
 					Input: json.RawMessage(argsJSON),
 				},
