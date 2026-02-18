@@ -72,11 +72,12 @@ func TestParseSkillsFlagWithSpaces(t *testing.T) {
 
 func TestCreateSkillRuntimeNoSkills(t *testing.T) {
 	// When skillsFlag is empty, createSkillRuntime should return nil.
+	// The provider and config parameters are unused when no skills are requested.
 	oldFlag := skillsFlag
 	skillsFlag = ""
 	defer func() { skillsFlag = oldFlag }()
 
-	rt, err := createSkillRuntime(nil)
+	rt, err := createSkillRuntime(nil, nil, nil)
 	assert.NoError(t, err)
 	assert.Nil(t, rt)
 }

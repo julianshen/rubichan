@@ -20,6 +20,13 @@ func NewSkillInvoker(invoker WorkflowInvoker) *SkillInvoker {
 	return &SkillInvoker{invoker: invoker}
 }
 
+// SetInvoker sets the underlying WorkflowInvoker. This supports deferred wiring
+// when the runtime (which implements WorkflowInvoker) is created after the
+// SkillInvoker, breaking the circular dependency.
+func (s *SkillInvoker) SetInvoker(invoker WorkflowInvoker) {
+	s.invoker = invoker
+}
+
 // Invoke calls another skill's workflow by name.
 func (s *SkillInvoker) Invoke(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
 	if s.invoker == nil {
