@@ -131,7 +131,7 @@ Foundation for future wiki scanner and SAST — no rules or analysis logic.
 
 **Dependencies:**
 - `github.com/smacker/go-tree-sitter` + grammars for top 10 languages:
-  Go, Python, JavaScript, TypeScript, Java, Rust, Swift, C, C++, Ruby
+  Go, Python, JavaScript, TypeScript, Java, Rust, Ruby, C, C++
 
 **API:**
 - `Parser` struct with `Parse(filename, source) (*Tree, error)` — auto-detects language from file extension
@@ -159,4 +159,4 @@ These M4 spec items were completed during Milestone 3:
 - Security engine (static scanners + LLM analyzers + attack chain correlator)
 - Xcode tools + apple-dev built-in skill
 - Documentation + skill authoring guide
-- Test coverage push to >80%
+- Test coverage push to >90%

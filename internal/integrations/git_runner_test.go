@@ -62,6 +62,26 @@ func TestGitRunnerLog(t *testing.T) {
 	assert.Equal(t, "Test", commits[0].Author)
 }
 
+func TestGitRunnerLogWithPipeInMessage(t *testing.T) {
+	dir := setupGitRepo(t)
+
+	// Create a commit with pipe characters in the subject
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pipe.txt"), []byte("pipe"), 0o644))
+	cmd := exec.Command("git", "add", "pipe.txt")
+	cmd.Dir = dir
+	require.NoError(t, cmd.Run())
+
+	cmd = exec.Command("git", "commit", "-m", "fix: handle A|B|C edge case")
+	cmd.Dir = dir
+	require.NoError(t, cmd.Run())
+
+	runner := NewGitRunner(dir)
+	commits, err := runner.Log(context.Background(), "-1")
+	require.NoError(t, err)
+	require.Len(t, commits, 1)
+	assert.Equal(t, "fix: handle A|B|C edge case", commits[0].Message)
+}
+
 func TestGitRunnerStatus(t *testing.T) {
 	dir := setupGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0o644))

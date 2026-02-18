@@ -45,6 +45,13 @@ func TestClientInitialize(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "test-server", client.ServerName())
+
+	// Verify notifications/initialized was sent after handshake.
+	require.Len(t, mt.sent, 2)
+	var notification map[string]any
+	require.NoError(t, json.Unmarshal(mt.sent[1], &notification))
+	assert.Equal(t, "notifications/initialized", notification["method"])
+	assert.Nil(t, notification["id"], "notification should not have an id")
 }
 
 func TestClientListTools(t *testing.T) {

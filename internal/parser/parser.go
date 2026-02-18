@@ -95,20 +95,19 @@ var registry = map[string]langInfo{
 	},
 }
 
-// Parser wraps tree-sitter to parse source files with automatic language detection.
-type Parser struct {
-	inner *sitter.Parser
-}
+// Parser parses source files with automatic language detection.
+// It is safe for concurrent use — each call to Parse creates its own tree-sitter
+// parser instance internally.
+type Parser struct{}
 
 // NewParser creates a new Parser instance.
 func NewParser() *Parser {
-	return &Parser{
-		inner: sitter.NewParser(),
-	}
+	return &Parser{}
 }
 
 // Parse parses source code from the given filename, auto-detecting the language
 // from the file extension. Returns an error for unsupported extensions.
+// Parse is safe for concurrent use from multiple goroutines.
 func (p *Parser) Parse(filename string, source []byte) (*Tree, error) {
 	ext := filepath.Ext(filename)
 	info, ok := registry[ext]
@@ -116,8 +115,11 @@ func (p *Parser) Parse(filename string, source []byte) (*Tree, error) {
 		return nil, fmt.Errorf("unsupported file extension %q: language not in registry", ext)
 	}
 
-	p.inner.SetLanguage(info.lang)
-	sitterTree, err := p.inner.ParseCtx(context.Background(), nil, source)
+	// Create a fresh sitter.Parser per call to avoid data races — tree-sitter
+	// parsers are single-threaded and SetLanguage mutates internal state.
+	inner := sitter.NewParser()
+	inner.SetLanguage(info.lang)
+	sitterTree, err := inner.ParseCtx(context.Background(), nil, source)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", filename, err)
 	}

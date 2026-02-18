@@ -59,3 +59,22 @@ func TestWrappedToolErrorResult(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Equal(t, "file not found", result.Content)
 }
+
+func TestWrappedToolTransportError(t *testing.T) {
+	mt := &mockTransport{
+		responses: []json.RawMessage{
+			json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fs","version":"1.0"}}}`),
+			json.RawMessage(`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Invalid params"}}`),
+		},
+	}
+
+	client := NewClient("fs", mt)
+	require.NoError(t, client.Initialize(context.Background()))
+
+	wrapped := WrapTool("fs", client, MCPTool{Name: "bad_tool", Description: "Bad"})
+
+	_, err := wrapped.Execute(context.Background(), json.RawMessage(`{}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mcp call")
+	assert.Contains(t, err.Error(), "Invalid params")
+}

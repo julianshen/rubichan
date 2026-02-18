@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+
 )
 
 // Compile-time check: SSETransport implements Transport.
@@ -66,19 +68,19 @@ func NewSSETransport(ctx context.Context, sseURL string) (*SSETransport, error) 
 
 	select {
 	case endpoint := <-endpointCh:
-		// Resolve relative URL against SSE base
-		if strings.HasPrefix(endpoint, "/") {
-			// Extract scheme + host from sseURL
-			base := sseURL
-			if idx := strings.Index(base, "//"); idx != -1 {
-				if slashIdx := strings.Index(base[idx+2:], "/"); slashIdx != -1 {
-					base = base[:idx+2+slashIdx]
-				}
-			}
-			t.postURL = base + endpoint
-		} else {
-			t.postURL = endpoint
+		// Resolve endpoint URL against the SSE base URL using net/url for
+		// robust handling of relative paths, ports, userinfo, etc.
+		baseURL, err := url.Parse(sseURL)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("parse SSE base URL: %w", err)
 		}
+		ref, err := url.Parse(endpoint)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("parse endpoint URL: %w", err)
+		}
+		t.postURL = baseURL.ResolveReference(ref).String()
 	case <-ctx.Done():
 		cancel()
 		return nil, ctx.Err()

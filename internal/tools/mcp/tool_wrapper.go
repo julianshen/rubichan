@@ -53,7 +53,10 @@ func (w *wrappedTool) Execute(ctx context.Context, input json.RawMessage) (tools
 
 	result, err := w.client.CallTool(ctx, w.mcpTool.Name, args)
 	if err != nil {
-		return tools.ToolResult{IsError: true, Content: err.Error()}, nil
+		// Transport/protocol errors (JSON-RPC errors, network failures) are
+		// propagated as Go errors so the caller can retry or surface them.
+		// Only MCP tool-level failures (result.IsError) are returned as ToolResult.
+		return tools.ToolResult{}, fmt.Errorf("mcp call %q: %w", w.mcpTool.Name, err)
 	}
 
 	// Concatenate text content blocks

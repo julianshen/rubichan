@@ -439,6 +439,63 @@ func TestBuildRequestBodyWithToolResults(t *testing.T) {
 	assert.Equal(t, "call_b", toolB["tool_call_id"])
 }
 
+func TestBuildRequestBodyWithToolResultsAndText(t *testing.T) {
+	var capturedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true}` + "\n"))
+	}))
+	defer server.Close()
+
+	p := New(server.URL)
+
+	// User message containing both tool_result and text blocks
+	req := provider.CompletionRequest{
+		Model: "llama3",
+		Messages: []provider.Message{
+			{
+				Role: "user",
+				Content: []provider.ContentBlock{
+					{Type: "tool_result", ToolUseID: "call_a", Text: "result A"},
+					{Type: "text", Text: "Here are the results, please summarize."},
+				},
+			},
+		},
+		MaxTokens: 512,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	var apiReq map[string]any
+	err = json.Unmarshal(capturedBody, &apiReq)
+	require.NoError(t, err)
+
+	msgs, ok := apiReq["messages"].([]any)
+	require.True(t, ok)
+	// tool result + user text = 2 messages
+	require.Len(t, msgs, 2)
+
+	toolA := msgs[0].(map[string]any)
+	assert.Equal(t, "tool", toolA["role"])
+	assert.Equal(t, "result A", toolA["content"])
+	assert.Equal(t, "call_a", toolA["tool_call_id"])
+
+	userMsg := msgs[1].(map[string]any)
+	assert.Equal(t, "user", userMsg["role"])
+	assert.Equal(t, "Here are the results, please summarize.", userMsg["content"])
+}
+
 func TestBuildRequestBodyWithUnknownRole(t *testing.T) {
 	var capturedBody []byte
 

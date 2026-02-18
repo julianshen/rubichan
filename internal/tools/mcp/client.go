@@ -91,6 +91,16 @@ func (c *Client) Initialize(ctx context.Context) error {
 	}
 
 	c.serverName = initResult.ServerInfo.Name
+
+	// Per MCP spec, client MUST send notifications/initialized after successful handshake.
+	notification := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+	if err := c.transport.Send(ctx, notification); err != nil {
+		return fmt.Errorf("send notifications/initialized: %w", err)
+	}
+
 	return nil
 }
 
@@ -131,10 +141,13 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPTool, error) {
 func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (*ToolResult, error) {
 	id := c.nextID.Add(1)
 
-	params, _ := json.Marshal(map[string]any{
+	params, err := json.Marshal(map[string]any{
 		"name":      name,
 		"arguments": args,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tools/call params: %w", err)
+	}
 
 	req := jsonRPCRequest{
 		JSONRPC: "2.0",

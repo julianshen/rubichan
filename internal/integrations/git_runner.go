@@ -37,8 +37,11 @@ func (g *GitRunner) Diff(ctx context.Context, args ...string) (string, error) {
 }
 
 // Log runs git log and parses the output into structured commits.
+// Uses ASCII record separator (\x1e) as delimiter to avoid conflicts
+// with pipe characters that may appear in commit subjects or author names.
 func (g *GitRunner) Log(ctx context.Context, args ...string) ([]GitCommit, error) {
-	cmdArgs := append([]string{"log", "--format=%H|%an|%s"}, args...)
+	const sep = "\x1e"
+	cmdArgs := append([]string{"log", "--format=%H%x1e%an%x1e%s"}, args...)
 	out, err := g.run(ctx, cmdArgs...)
 	if err != nil {
 		return nil, err
@@ -49,7 +52,7 @@ func (g *GitRunner) Log(ctx context.Context, args ...string) ([]GitCommit, error
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 3)
+		parts := strings.SplitN(line, sep, 3)
 		if len(parts) < 3 {
 			continue
 		}
