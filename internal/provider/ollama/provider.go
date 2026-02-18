@@ -120,7 +120,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -261,6 +261,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			select {
@@ -288,9 +289,9 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 
 		// Handle tool calls
 		for _, tc := range chunk.Message.ToolCalls {
-			argsJSON, err := json.Marshal(tc.Function.Arguments)
-			if err != nil {
-				argsJSON = tc.Function.Arguments
+			argsJSON := json.RawMessage(tc.Function.Arguments)
+			if argsJSON == nil {
+				argsJSON = json.RawMessage(`{}`)
 			}
 
 			select {
