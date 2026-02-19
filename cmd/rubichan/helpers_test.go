@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,11 +73,13 @@ func TestParseSkillsFlagWithSpaces(t *testing.T) {
 
 func TestCreateSkillRuntimeNoSkills(t *testing.T) {
 	// When skillsFlag is empty, createSkillRuntime should return nil.
+	// The provider and config parameters are unused when no skills are requested.
 	oldFlag := skillsFlag
 	skillsFlag = ""
 	defer func() { skillsFlag = oldFlag }()
 
-	rt, err := createSkillRuntime(nil)
+	rt, closer, err := createSkillRuntime(context.Background(), nil, nil, nil)
 	assert.NoError(t, err)
 	assert.Nil(t, rt)
+	assert.Nil(t, closer)
 }

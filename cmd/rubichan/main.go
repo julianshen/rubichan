@@ -16,18 +16,25 @@ import (
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/pipeline"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/skills/goplugin"
+	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
+	"github.com/julianshen/rubichan/internal/skills/process"
 	"github.com/julianshen/rubichan/internal/skills/sandbox"
+	starengine "github.com/julianshen/rubichan/internal/skills/starlark"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tui"
+	"github.com/julianshen/rubichan/pkg/skillsdk"
 
 	// Register providers via init() side effects.
 	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
+	_ "github.com/julianshen/rubichan/internal/provider/ollama"
 	_ "github.com/julianshen/rubichan/internal/provider/openai"
 )
 
@@ -123,30 +130,39 @@ func parseSkillsFlag(s string) []string {
 }
 
 // createSkillRuntime creates and configures a skill runtime from the
-// --skills and --approve-skills flags. Returns nil if no skills are requested.
-func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
+// --skills and --approve-skills flags. The provider and config are used to
+// create integration adapters (LLM completer, HTTP fetcher, git runner,
+// skill invoker) that get injected into skill backends.
+//
+// The returned io.Closer must be closed by the caller to release the SQLite
+// store. Returns (nil, nil, nil) if no skills are requested.
+func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config) (*skills.Runtime, io.Closer, error) {
 	skillNames := parseSkillsFlag(skillsFlag)
 	if len(skillNames) == 0 {
-		return nil, nil
+		return nil, nil, nil
+	}
+
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("config is required for skill runtime")
 	}
 
 	// Determine user config directory.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		return nil, nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	configDir := filepath.Join(home, ".config", "rubichan")
 
 	// Ensure config directory exists for the database file.
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating config directory: %w", err)
+		return nil, nil, fmt.Errorf("creating config directory: %w", err)
 	}
 
 	// Use persistent SQLite store so skill approvals survive across sessions.
 	dbPath := filepath.Join(configDir, "skills.db")
 	s, err := store.NewStore(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("creating skill store: %w", err)
+		return nil, nil, fmt.Errorf("creating skill store: %w", err)
 	}
 
 	userDir := filepath.Join(configDir, "skills")
@@ -154,17 +170,72 @@ func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
 	// Project-level skill directory.
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("getting working directory: %w", err)
+		s.Close()
+		return nil, nil, fmt.Errorf("getting working directory: %w", err)
 	}
 	projectDir := filepath.Join(cwd, ".rubichan", "skills")
 
 	loader := skills.NewLoader(userDir, projectDir)
+	loader.AddMCPServers(cfg.MCP.Servers)
 
-	// TODO: Wire real backend factory (Starlark, Go plugin, process) based on
-	// manifest.Implementation.Backend. For now, return an error to indicate
-	// that backend creation is not yet implemented.
-	backendFactory := func(manifest skills.SkillManifest) (skills.SkillBackend, error) {
-		return nil, fmt.Errorf("backend %q not yet implemented", manifest.Implementation.Backend)
+	// Create integration objects shared across all skill backends.
+	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	httpFetcher := integrations.NewHTTPFetcher(30 * time.Second)
+	gitRunner := integrations.NewGitRunner(cwd)
+
+	// SkillInvoker needs the runtime, which we haven't created yet. Create it
+	// with nil and set the invoker after runtime creation to break the cycle.
+	skillInvoker := integrations.NewSkillInvoker(nil)
+
+	// Create adapters that bridge integrations to backend-specific interfaces.
+	// Plugin adapters store the parent context so cancellation propagates
+	// through to LLM/HTTP/Git calls made from Go plugins.
+	starlarkGitAdapter := &starlarkGitRunnerAdapter{runner: gitRunner}
+	pluginLLMAdapter := &pluginLLMCompleterAdapter{ctx: ctx, completer: llmCompleter}
+	pluginHTTPAdapter := &pluginHTTPFetcherAdapter{ctx: ctx, fetcher: httpFetcher}
+	pluginGitAdapter := &pluginGitRunnerAdapter{ctx: ctx, runner: gitRunner}
+	pluginSkillAdapter := &pluginSkillInvokerAdapter{ctx: ctx, invoker: skillInvoker}
+
+	// Backend factory routes to real Starlark, Go plugin, or process backends
+	// with integration objects injected.
+	backendFactory := func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
+		switch manifest.Implementation.Backend {
+		case skills.BackendStarlark:
+			engine := starengine.NewEngine(manifest.Name, dir, nil)
+			engine.SetLLMCompleter(llmCompleter)
+			engine.SetHTTPFetcher(httpFetcher)
+			engine.SetGitRunner(starlarkGitAdapter)
+			engine.SetSkillInvoker(skillInvoker)
+			return engine, nil
+
+		case skills.BackendPlugin:
+			return goplugin.NewGoPluginBackend(
+				goplugin.WithSkillDir(dir),
+				goplugin.WithLLMCompleter(pluginLLMAdapter),
+				goplugin.WithHTTPFetcher(pluginHTTPAdapter),
+				goplugin.WithGitRunner(pluginGitAdapter),
+				goplugin.WithSkillInvoker(pluginSkillAdapter),
+			), nil
+
+		case skills.BackendProcess:
+			return process.NewProcessBackend(), nil
+
+		case skills.BackendMCP:
+			// Derive MCP server name from manifest name by stripping the "mcp-" prefix
+			// added during discovery in loader.go.
+			mcpServerName := strings.TrimPrefix(manifest.Name, "mcp-")
+			return mcpbackend.NewMCPBackendFromConfig(
+				ctx,
+				mcpServerName,
+				manifest.Implementation.MCPTransport,
+				manifest.Implementation.MCPCommand,
+				manifest.Implementation.MCPArgs,
+				manifest.Implementation.MCPURL,
+			)
+
+		default:
+			return nil, fmt.Errorf("backend %q not implemented", manifest.Implementation.Backend)
+		}
 	}
 
 	sandboxFactory := func(skillName string, declared []skills.Permission) skills.PermissionChecker {
@@ -179,9 +250,14 @@ func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
 
 	rt := skills.NewRuntime(loader, s, registry, autoApproveSkills, backendFactory, sandboxFactory)
 
+	// Now that the runtime exists, wire the SkillInvoker to close the circular
+	// dependency. The invoker delegates to rt.InvokeWorkflow.
+	skillInvoker.SetInvoker(rt)
+
 	// Discover skills from all sources.
 	if err := rt.Discover(skillNames); err != nil {
-		return nil, fmt.Errorf("discovering skills: %w", err)
+		s.Close()
+		return nil, nil, fmt.Errorf("discovering skills: %w", err)
 	}
 
 	// Evaluate triggers and activate matching skills.
@@ -189,10 +265,11 @@ func createSkillRuntime(registry *tools.Registry) (*skills.Runtime, error) {
 		// TODO: Populate with actual project files, keywords, etc.
 	}
 	if err := rt.EvaluateAndActivate(triggerCtx); err != nil {
-		return nil, fmt.Errorf("activating skills: %w", err)
+		s.Close()
+		return nil, nil, fmt.Errorf("activating skills: %w", err)
 	}
 
-	return rt, nil
+	return rt, s, nil
 }
 
 // loadConfig resolves the config path, loads the config, and applies any
@@ -257,9 +334,12 @@ func runInteractive() error {
 
 	// Create skill runtime if --skills is provided.
 	var opts []agent.AgentOption
-	rt, err := createSkillRuntime(registry)
+	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if storeCloser != nil {
+		defer storeCloser.Close()
 	}
 	if rt != nil {
 		opts = append(opts, agent.WithSkillRuntime(rt))
@@ -351,9 +431,12 @@ func runHeadless() error {
 
 	// Create skill runtime if --skills is provided.
 	var opts []agent.AgentOption
-	rt, err := createSkillRuntime(registry)
+	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if storeCloser != nil {
+		defer storeCloser.Close()
 	}
 	if rt != nil {
 		opts = append(opts, agent.WithSkillRuntime(rt))
@@ -418,4 +501,114 @@ func shouldRegister(name string, allowed map[string]bool) bool {
 		return true
 	}
 	return allowed[name]
+}
+
+// --- Adapter types ---
+//
+// These adapters bridge the integrations package (which uses context.Context
+// and its own struct types) to the backend-specific interfaces (which may
+// omit context or use different struct types).
+
+// starlarkGitRunnerAdapter bridges integrations.GitRunner to the
+// starlark.GitRunner interface. The Diff method passes through directly;
+// Log and Status convert between struct types.
+type starlarkGitRunnerAdapter struct {
+	runner *integrations.GitRunner
+}
+
+func (a *starlarkGitRunnerAdapter) Diff(ctx context.Context, args ...string) (string, error) {
+	return a.runner.Diff(ctx, args...)
+}
+
+func (a *starlarkGitRunnerAdapter) Log(ctx context.Context, args ...string) ([]starengine.GitLogEntry, error) {
+	commits, err := a.runner.Log(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]starengine.GitLogEntry, len(commits))
+	for i, c := range commits {
+		entries[i] = starengine.GitLogEntry{Hash: c.Hash, Author: c.Author, Message: c.Message}
+	}
+	return entries, nil
+}
+
+func (a *starlarkGitRunnerAdapter) Status(ctx context.Context) ([]starengine.GitStatusEntry, error) {
+	statuses, err := a.runner.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]starengine.GitStatusEntry, len(statuses))
+	for i, s := range statuses {
+		entries[i] = starengine.GitStatusEntry{Path: s.Path, Status: s.Status}
+	}
+	return entries, nil
+}
+
+// pluginLLMCompleterAdapter bridges integrations.LLMCompleter to the
+// goplugin.PluginLLMCompleter interface. The stored context propagates
+// cancellation from the parent (e.g. headless timeout) to LLM calls.
+type pluginLLMCompleterAdapter struct {
+	ctx       context.Context
+	completer *integrations.LLMCompleter
+}
+
+func (a *pluginLLMCompleterAdapter) Complete(prompt string) (string, error) {
+	return a.completer.Complete(a.ctx, prompt)
+}
+
+// pluginHTTPFetcherAdapter bridges integrations.HTTPFetcher to the
+// goplugin.PluginHTTPFetcher interface.
+type pluginHTTPFetcherAdapter struct {
+	ctx     context.Context
+	fetcher *integrations.HTTPFetcher
+}
+
+func (a *pluginHTTPFetcherAdapter) Fetch(url string) (string, error) {
+	return a.fetcher.Fetch(a.ctx, url)
+}
+
+// pluginGitRunnerAdapter bridges integrations.GitRunner to the
+// goplugin.PluginGitRunner interface (skillsdk types).
+type pluginGitRunnerAdapter struct {
+	ctx    context.Context
+	runner *integrations.GitRunner
+}
+
+func (a *pluginGitRunnerAdapter) Diff(args ...string) (string, error) {
+	return a.runner.Diff(a.ctx, args...)
+}
+
+func (a *pluginGitRunnerAdapter) Log(args ...string) ([]skillsdk.GitCommit, error) {
+	commits, err := a.runner.Log(a.ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]skillsdk.GitCommit, len(commits))
+	for i, c := range commits {
+		entries[i] = skillsdk.GitCommit{Hash: c.Hash, Author: c.Author, Message: c.Message}
+	}
+	return entries, nil
+}
+
+func (a *pluginGitRunnerAdapter) Status() ([]skillsdk.GitFileStatus, error) {
+	statuses, err := a.runner.Status(a.ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]skillsdk.GitFileStatus, len(statuses))
+	for i, s := range statuses {
+		entries[i] = skillsdk.GitFileStatus{Path: s.Path, Status: s.Status}
+	}
+	return entries, nil
+}
+
+// pluginSkillInvokerAdapter bridges integrations.SkillInvoker to the
+// goplugin.PluginSkillInvoker interface.
+type pluginSkillInvokerAdapter struct {
+	ctx     context.Context
+	invoker *integrations.SkillInvoker
+}
+
+func (a *pluginSkillInvokerAdapter) Invoke(name string, input map[string]any) (map[string]any, error) {
+	return a.invoker.Invoke(a.ctx, name, input)
 }

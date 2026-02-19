@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -276,6 +277,64 @@ dependencies:
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 	require.Len(t, skills, 2)
+}
+
+func TestDiscoverMCPServers(t *testing.T) {
+	mcpServers := []config.MCPServerConfig{
+		{Name: "filesystem", Transport: "stdio", Command: "echo", Args: []string{"test"}},
+		{Name: "web-search", Transport: "sse", URL: "http://localhost:3001/sse"},
+	}
+
+	loader := NewLoader(t.TempDir(), t.TempDir())
+	loader.AddMCPServers(mcpServers)
+
+	discovered, _, err := loader.Discover(nil)
+	require.NoError(t, err)
+	require.Len(t, discovered, 2)
+
+	byName := indexByName(discovered)
+
+	// Verify stdio transport config is preserved.
+	fs := byName["mcp-filesystem"]
+	require.NotNil(t, fs)
+	assert.Equal(t, SourceMCP, fs.Source)
+	assert.Equal(t, BackendMCP, fs.Manifest.Implementation.Backend)
+	assert.Equal(t, "stdio", fs.Manifest.Implementation.MCPTransport)
+	assert.Equal(t, "echo", fs.Manifest.Implementation.MCPCommand)
+	assert.Equal(t, []string{"test"}, fs.Manifest.Implementation.MCPArgs)
+	// stdio transport spawns a child process — must have shell:exec permission.
+	assert.Contains(t, fs.Manifest.Permissions, PermShellExec)
+
+	// Verify SSE transport config is preserved.
+	ws := byName["mcp-web-search"]
+	require.NotNil(t, ws)
+	assert.Equal(t, SourceMCP, ws.Source)
+	assert.Equal(t, BackendMCP, ws.Manifest.Implementation.Backend)
+	assert.Equal(t, "sse", ws.Manifest.Implementation.MCPTransport)
+	assert.Equal(t, "http://localhost:3001/sse", ws.Manifest.Implementation.MCPURL)
+	// SSE transport is network-only — should NOT have shell:exec permission.
+	assert.NotContains(t, ws.Manifest.Permissions, PermShellExec)
+}
+
+func TestDiscoverMCPNameCollision(t *testing.T) {
+	userDir := t.TempDir()
+
+	// Place a user skill with the same name as an MCP server would generate.
+	writeSkillYAML(t, userDir, "mcp-filesystem", minimalManifestYAML("mcp-filesystem"))
+
+	mcpServers := []config.MCPServerConfig{
+		{Name: "filesystem", Transport: "stdio", Command: "echo"},
+	}
+
+	loader := NewLoader(userDir, t.TempDir())
+	loader.AddMCPServers(mcpServers)
+
+	discovered, _, err := loader.Discover(nil)
+	require.NoError(t, err)
+	require.Len(t, discovered, 1)
+
+	// User skill should win — MCP auto-discovery skips if name already exists.
+	assert.Equal(t, SourceUser, discovered[0].Source)
 }
 
 // indexByName builds a map of DiscoveredSkill by manifest name for test convenience.

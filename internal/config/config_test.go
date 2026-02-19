@@ -125,6 +125,122 @@ func TestConfigSkillsDefaults(t *testing.T) {
 	assert.Equal(t, 10, cfg.Skills.MaxNetFetchPerTurn)
 }
 
+func TestOllamaConfig(t *testing.T) {
+	tomlData := `
+[provider]
+default = "ollama"
+model = "llama3"
+
+[provider.ollama]
+base_url = "http://localhost:11434"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "ollama", cfg.Provider.Default)
+	assert.Equal(t, "http://localhost:11434", cfg.Provider.Ollama.BaseURL)
+}
+
+func TestMCPServersConfig(t *testing.T) {
+	tomlData := `
+[[mcp.servers]]
+name = "filesystem"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[[mcp.servers]]
+name = "web-search"
+transport = "sse"
+url = "http://localhost:3001/sse"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.MCP.Servers, 2)
+
+	assert.Equal(t, "filesystem", cfg.MCP.Servers[0].Name)
+	assert.Equal(t, "stdio", cfg.MCP.Servers[0].Transport)
+	assert.Equal(t, "npx", cfg.MCP.Servers[0].Command)
+	assert.Equal(t, []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"}, cfg.MCP.Servers[0].Args)
+
+	assert.Equal(t, "web-search", cfg.MCP.Servers[1].Name)
+	assert.Equal(t, "sse", cfg.MCP.Servers[1].Transport)
+	assert.Equal(t, "http://localhost:3001/sse", cfg.MCP.Servers[1].URL)
+}
+
+func TestMCPServerConfigValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     MCPServerConfig
+		wantErr string
+	}{
+		{
+			name:    "missing name",
+			cfg:     MCPServerConfig{Transport: "stdio", Command: "echo"},
+			wantErr: "name is required",
+		},
+		{
+			name:    "missing transport",
+			cfg:     MCPServerConfig{Name: "test"},
+			wantErr: "transport is required",
+		},
+		{
+			name:    "unknown transport",
+			cfg:     MCPServerConfig{Name: "test", Transport: "websocket"},
+			wantErr: "unknown transport",
+		},
+		{
+			name:    "stdio missing command",
+			cfg:     MCPServerConfig{Name: "test", Transport: "stdio"},
+			wantErr: "command is required",
+		},
+		{
+			name:    "sse missing url",
+			cfg:     MCPServerConfig{Name: "test", Transport: "sse"},
+			wantErr: "url is required",
+		},
+		{
+			name: "valid stdio",
+			cfg:  MCPServerConfig{Name: "test", Transport: "stdio", Command: "echo"},
+		},
+		{
+			name: "valid sse",
+			cfg:  MCPServerConfig{Name: "test", Transport: "sse", URL: "http://localhost:3001/sse"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestLoadMCPServerValidationError(t *testing.T) {
+	tomlData := `
+[[mcp.servers]]
+name = "broken"
+transport = "stdio"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	_, err := Load(tmpFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "command is required")
+}
+
 func TestConfigSkillsApproved(t *testing.T) {
 	tomlContent := `
 [skills]

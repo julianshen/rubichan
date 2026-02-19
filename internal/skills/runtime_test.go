@@ -84,7 +84,7 @@ func newTestRuntime(t *testing.T, autoApprove []string, denyPerms map[Permission
 	registry := tools.NewRegistry()
 
 	var lastBackend *mockBackend
-	backendFactory := func(manifest SkillManifest) (SkillBackend, error) {
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		mb := &mockBackend{
 			tools: []tools.Tool{
 				&runtimeMockTool{
@@ -320,7 +320,7 @@ func TestRuntimeActivateBackendFactoryError(t *testing.T) {
 	registry := tools.NewRegistry()
 	factoryErr := fmt.Errorf("factory exploded")
 
-	backendFactory := func(manifest SkillManifest) (SkillBackend, error) {
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return nil, factoryErr
 	}
 	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
@@ -347,7 +347,7 @@ func TestRuntimeActivateBackendLoadError(t *testing.T) {
 
 	registry := tools.NewRegistry()
 
-	backendFactory := func(manifest SkillManifest) (SkillBackend, error) {
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			loadErr: fmt.Errorf("load failed"),
 		}, nil
@@ -438,7 +438,7 @@ func TestRuntimeActivateToolRegistrationError(t *testing.T) {
 	preExisting := &runtimeMockTool{name: "dup-skill-tool", description: "pre-existing"}
 	require.NoError(t, registry.Register(preExisting))
 
-	backendFactory := func(manifest SkillManifest) (SkillBackend, error) {
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{
 				&runtimeMockTool{name: manifest.Name + "-tool", description: "from backend"},

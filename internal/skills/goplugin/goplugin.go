@@ -47,6 +47,36 @@ type HookRegistrar interface {
 	RegisterHook(phase skills.HookPhase, handler skills.HookHandler)
 }
 
+// PluginLLMCompleter abstracts LLM completion for the Go plugin context.
+// The method signature intentionally omits context.Context to match
+// skillsdk.Context.Complete.
+type PluginLLMCompleter interface {
+	Complete(prompt string) (string, error)
+}
+
+// PluginHTTPFetcher abstracts HTTP fetching for the Go plugin context.
+// The method signature intentionally omits context.Context to match
+// skillsdk.Context.Fetch.
+type PluginHTTPFetcher interface {
+	Fetch(url string) (string, error)
+}
+
+// PluginGitRunner abstracts git operations for the Go plugin context.
+// The method signatures intentionally omit context.Context to match
+// skillsdk.Context.GitDiff/GitLog/GitStatus.
+type PluginGitRunner interface {
+	Diff(args ...string) (string, error)
+	Log(args ...string) ([]skillsdk.GitCommit, error)
+	Status() ([]skillsdk.GitFileStatus, error)
+}
+
+// PluginSkillInvoker abstracts cross-skill invocation for the Go plugin context.
+// The method signature intentionally omits context.Context to match
+// skillsdk.Context.InvokeSkill.
+type PluginSkillInvoker interface {
+	Invoke(name string, input map[string]any) (map[string]any, error)
+}
+
 // Option configures a GoPluginBackend.
 type Option func(*GoPluginBackend)
 
@@ -64,17 +94,41 @@ func WithSkillDir(dir string) Option {
 	}
 }
 
+// WithLLMCompleter sets the LLM completer for the plugin context.
+func WithLLMCompleter(c PluginLLMCompleter) Option {
+	return func(b *GoPluginBackend) { b.llmCompleter = c }
+}
+
+// WithHTTPFetcher sets the HTTP fetcher for the plugin context.
+func WithHTTPFetcher(f PluginHTTPFetcher) Option {
+	return func(b *GoPluginBackend) { b.httpFetcher = f }
+}
+
+// WithGitRunner sets the git runner for the plugin context.
+func WithGitRunner(r PluginGitRunner) Option {
+	return func(b *GoPluginBackend) { b.gitRunner = r }
+}
+
+// WithSkillInvoker sets the skill invoker for the plugin context.
+func WithSkillInvoker(i PluginSkillInvoker) Option {
+	return func(b *GoPluginBackend) { b.skillInvoker = i }
+}
+
 // GoPluginBackend implements skills.SkillBackend for native Go plugins.
 // It uses a PluginLoader to load .so files, creates a pluginContext that
 // bridges skillsdk.Context to the permission checker, and manages the
 // plugin lifecycle (Activate/Deactivate).
 type GoPluginBackend struct {
-	loader   PluginLoader
-	plugin   skillsdk.SkillPlugin
-	tools    []tools.Tool
-	hooks    map[skills.HookPhase]skills.HookHandler
-	ctx      *pluginContext
-	skillDir string
+	loader       PluginLoader
+	plugin       skillsdk.SkillPlugin
+	tools        []tools.Tool
+	hooks        map[skills.HookPhase]skills.HookHandler
+	ctx          *pluginContext
+	skillDir     string
+	llmCompleter PluginLLMCompleter
+	httpFetcher  PluginHTTPFetcher
+	gitRunner    PluginGitRunner
+	skillInvoker PluginSkillInvoker
 }
 
 // compile-time check: GoPluginBackend implements skills.SkillBackend.
@@ -117,6 +171,10 @@ func (b *GoPluginBackend) Load(manifest skills.SkillManifest, checker skills.Per
 
 	b.plugin = plugin
 	b.ctx = newPluginContext(checker, b.skillDir)
+	b.ctx.llmCompleter = b.llmCompleter
+	b.ctx.httpFetcher = b.httpFetcher
+	b.ctx.gitRunner = b.gitRunner
+	b.ctx.skillInvoker = b.skillInvoker
 
 	if err := b.plugin.Activate(b.ctx); err != nil {
 		return fmt.Errorf("activate plugin %q: %w", manifest.Name, err)
@@ -198,8 +256,12 @@ func (s *systemPluginLoader) Load(path string) (skillsdk.SkillPlugin, error) {
 // pluginContext implements skillsdk.Context by bridging to real system operations
 // while checking permissions via the PermissionChecker.
 type pluginContext struct {
-	checker  skills.PermissionChecker
-	skillDir string
+	checker      skills.PermissionChecker
+	skillDir     string
+	llmCompleter PluginLLMCompleter
+	httpFetcher  PluginHTTPFetcher
+	gitRunner    PluginGitRunner
+	skillInvoker PluginSkillInvoker
 }
 
 // newPluginContext creates a new pluginContext with the given permission checker.
@@ -360,21 +422,25 @@ func (c *pluginContext) Exec(command string, args ...string) (skillsdk.ExecResul
 }
 
 // Complete sends a prompt to the LLM. Requires llm:call permission.
-// NOTE: LLM integration is wired in Task 18; this returns an error for now.
 func (c *pluginContext) Complete(prompt string) (string, error) {
 	if err := c.checker.CheckPermission(skills.PermLLMCall); err != nil {
 		return "", fmt.Errorf("Complete: %w", err)
 	}
-	return "", fmt.Errorf("Complete: LLM completer not configured (wired in Task 18)")
+	if c.llmCompleter == nil {
+		return "", fmt.Errorf("Complete: LLM completer not configured")
+	}
+	return c.llmCompleter.Complete(prompt)
 }
 
 // Fetch retrieves a URL's content. Requires net:fetch permission.
-// NOTE: HTTP integration is wired in Task 18; this returns an error for now.
 func (c *pluginContext) Fetch(url string) (string, error) {
 	if err := c.checker.CheckPermission(skills.PermNetFetch); err != nil {
 		return "", fmt.Errorf("Fetch: %w", err)
 	}
-	return "", fmt.Errorf("Fetch: HTTP fetcher not configured (wired in Task 18)")
+	if c.httpFetcher == nil {
+		return "", fmt.Errorf("Fetch: HTTP fetcher not configured")
+	}
+	return c.httpFetcher.Fetch(url)
 }
 
 // GitDiff runs git diff. Requires git:read permission.
@@ -382,7 +448,10 @@ func (c *pluginContext) GitDiff(args ...string) (string, error) {
 	if err := c.checker.CheckPermission(skills.PermGitRead); err != nil {
 		return "", fmt.Errorf("GitDiff: %w", err)
 	}
-	return "", fmt.Errorf("GitDiff: git runner not configured (wired in Task 18)")
+	if c.gitRunner == nil {
+		return "", fmt.Errorf("GitDiff: git runner not configured")
+	}
+	return c.gitRunner.Diff(args...)
 }
 
 // GitLog runs git log. Requires git:read permission.
@@ -390,7 +459,10 @@ func (c *pluginContext) GitLog(args ...string) ([]skillsdk.GitCommit, error) {
 	if err := c.checker.CheckPermission(skills.PermGitRead); err != nil {
 		return nil, fmt.Errorf("GitLog: %w", err)
 	}
-	return nil, fmt.Errorf("GitLog: git runner not configured (wired in Task 18)")
+	if c.gitRunner == nil {
+		return nil, fmt.Errorf("GitLog: git runner not configured")
+	}
+	return c.gitRunner.Log(args...)
 }
 
 // GitStatus returns git working tree status. Requires git:read permission.
@@ -398,7 +470,10 @@ func (c *pluginContext) GitStatus() ([]skillsdk.GitFileStatus, error) {
 	if err := c.checker.CheckPermission(skills.PermGitRead); err != nil {
 		return nil, fmt.Errorf("GitStatus: %w", err)
 	}
-	return nil, fmt.Errorf("GitStatus: git runner not configured (wired in Task 18)")
+	if c.gitRunner == nil {
+		return nil, fmt.Errorf("GitStatus: git runner not configured")
+	}
+	return c.gitRunner.Status()
 }
 
 // GetEnv returns an environment variable. Requires env:read permission.
@@ -415,12 +490,14 @@ func (c *pluginContext) ProjectRoot() string {
 }
 
 // InvokeSkill calls another skill by name. Requires skill:invoke permission.
-// NOTE: Cross-skill invocation is wired in Task 18; this returns an error for now.
 func (c *pluginContext) InvokeSkill(name string, input map[string]any) (map[string]any, error) {
 	if err := c.checker.CheckPermission(skills.PermSkillInvoke); err != nil {
 		return nil, fmt.Errorf("InvokeSkill: %w", err)
 	}
-	return nil, fmt.Errorf("InvokeSkill: skill invoker not configured (wired in Task 18)")
+	if c.skillInvoker == nil {
+		return nil, fmt.Errorf("InvokeSkill: skill invoker not configured")
+	}
+	return c.skillInvoker.Invoke(name, input)
 }
 
 // writeFileHelper is a helper for tests to write files.

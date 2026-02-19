@@ -52,7 +52,7 @@ func TestToolSkillRegistersTools(t *testing.T) {
 	toolA := &integrationMockTool{name: "alpha-tool", description: "alpha"}
 	toolB := &integrationMockTool{name: "beta-tool", description: "beta"}
 
-	bf := func(manifest SkillManifest) (SkillBackend, error) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{toolA, toolB},
 			hooks: map[HookPhase]HookHandler{},
@@ -95,7 +95,7 @@ func TestToolSkillRegistersTools(t *testing.T) {
 // registers a HookOnBeforePromptBuild hook that injects the prompt fragment
 // into the event data.
 func TestPromptSkillInjectsFragment(t *testing.T) {
-	bf := func(manifest SkillManifest) (SkillBackend, error) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{},
 			hooks: map[HookPhase]HookHandler{},
@@ -146,7 +146,7 @@ func TestPromptSkillInjectsFragment(t *testing.T) {
 func TestWorkflowSkillInvokable(t *testing.T) {
 	workflowCalled := false
 
-	bf := func(manifest SkillManifest) (SkillBackend, error) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{},
 			hooks: map[HookPhase]HookHandler{
@@ -198,7 +198,7 @@ func TestWorkflowSkillInvokable(t *testing.T) {
 func TestSecurityRuleSkillRegisters(t *testing.T) {
 	scannerCalled := false
 
-	bf := func(manifest SkillManifest) (SkillBackend, error) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{},
 			hooks: map[HookPhase]HookHandler{},
@@ -250,7 +250,7 @@ func TestSecurityRuleSkillRegisters(t *testing.T) {
 // TestTransformSkillModifiesOutput verifies that a skill with type "transform"
 // registers an OnAfterResponse hook that modifies the response.
 func TestTransformSkillModifiesOutput(t *testing.T) {
-	bf := func(manifest SkillManifest) (SkillBackend, error) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{},
 			hooks: map[HookPhase]HookHandler{
@@ -300,7 +300,7 @@ func TestTransformSkillModifiesOutput(t *testing.T) {
 func TestMultiTypeSkill(t *testing.T) {
 	myTool := &integrationMockTool{name: "multi-tool", description: "multi"}
 
-	bf := func(manifest SkillManifest) (SkillBackend, error) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{myTool},
 			hooks: map[HookPhase]HookHandler{},
@@ -359,7 +359,7 @@ func TestMultiTypeSkill(t *testing.T) {
 // prompt, workflow, and security-rule types properly cleans up all integration
 // state (prompt fragments, workflow handlers, and scanners).
 func TestDeactivateCleanupIntegrations(t *testing.T) {
-	bf := func(manifest SkillManifest) (SkillBackend, error) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		return &mockBackend{
 			tools: []tools.Tool{},
 			hooks: map[HookPhase]HookHandler{},

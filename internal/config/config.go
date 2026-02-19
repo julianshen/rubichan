@@ -12,6 +12,7 @@ type Config struct {
 	Provider ProviderConfig `toml:"provider"`
 	Agent    AgentConfig    `toml:"agent"`
 	Skills   SkillsConfig   `toml:"skills"`
+	MCP      MCPConfig      `toml:"mcp"`
 }
 
 // ProviderConfig holds settings for AI provider selection and configuration.
@@ -20,6 +21,7 @@ type ProviderConfig struct {
 	Model     string                   `toml:"model"`
 	Anthropic AnthropicProviderConfig  `toml:"anthropic"`
 	OpenAI    []OpenAICompatibleConfig `toml:"openai_compatible"`
+	Ollama    OllamaProviderConfig     `toml:"ollama"`
 }
 
 // AnthropicProviderConfig holds Anthropic-specific provider settings.
@@ -35,6 +37,11 @@ type OpenAICompatibleConfig struct {
 	APIKeySource string            `toml:"api_key_source"`
 	APIKey       string            `toml:"api_key"`
 	ExtraHeaders map[string]string `toml:"extra_headers"`
+}
+
+// OllamaProviderConfig holds Ollama-specific provider settings.
+type OllamaProviderConfig struct {
+	BaseURL string `toml:"base_url"`
 }
 
 // AgentConfig holds settings for the agent behavior.
@@ -54,6 +61,42 @@ type SkillsConfig struct {
 	MaxNetFetchPerTurn  int      `toml:"max_net_fetch_per_turn"`
 }
 
+// MCPConfig holds settings for MCP (Model Context Protocol) server connections.
+type MCPConfig struct {
+	Servers []MCPServerConfig `toml:"servers"`
+}
+
+// MCPServerConfig describes a single MCP server connection.
+type MCPServerConfig struct {
+	Name      string   `toml:"name"`
+	Transport string   `toml:"transport"` // "stdio" or "sse"
+	Command   string   `toml:"command"`   // for stdio transport
+	Args      []string `toml:"args"`      // for stdio transport
+	URL       string   `toml:"url"`       // for sse transport
+}
+
+// Validate checks that the MCPServerConfig fields are consistent.
+func (c MCPServerConfig) Validate() error {
+	if c.Name == "" {
+		return fmt.Errorf("mcp server: name is required")
+	}
+	switch c.Transport {
+	case "stdio":
+		if c.Command == "" {
+			return fmt.Errorf("mcp server %q: command is required for stdio transport", c.Name)
+		}
+	case "sse":
+		if c.URL == "" {
+			return fmt.Errorf("mcp server %q: url is required for sse transport", c.Name)
+		}
+	case "":
+		return fmt.Errorf("mcp server %q: transport is required (stdio or sse)", c.Name)
+	default:
+		return fmt.Errorf("mcp server %q: unknown transport %q (must be stdio or sse)", c.Name, c.Transport)
+	}
+	return nil
+}
+
 // Load reads a TOML config file from the given path and returns a Config.
 // The returned Config starts with default values and is overridden by values
 // found in the file.
@@ -69,6 +112,14 @@ func Load(path string) (*Config, error) {
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
+
+	// Validate MCP server configs.
+	for _, srv := range cfg.MCP.Servers {
+		if err := srv.Validate(); err != nil {
+			return nil, err
+		}
+	}
+
 	return cfg, nil
 }
 

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/julianshen/rubichan/internal/config"
 )
 
 // Source indicates where a discovered skill was loaded from.
@@ -19,6 +21,8 @@ const (
 	SourceProject Source = "project"
 	// SourceInline is a skill explicitly requested via the --skills flag.
 	SourceInline Source = "inline"
+	// SourceMCP is a skill auto-discovered from a configured MCP server.
+	SourceMCP Source = "mcp"
 )
 
 // DiscoveredSkill represents a skill that was found by the loader, together
@@ -30,11 +34,12 @@ type DiscoveredSkill struct {
 }
 
 // Loader discovers skills from multiple sources: built-in registrations,
-// a user-level directory, and a project-level directory.
+// a user-level directory, a project-level directory, and MCP server configs.
 type Loader struct {
 	userDir    string
 	projectDir string
 	builtins   map[string]*SkillManifest
+	mcpServers []config.MCPServerConfig
 }
 
 // NewLoader creates a Loader that scans the given user and project directories.
@@ -50,6 +55,12 @@ func NewLoader(userDir, projectDir string) *Loader {
 // the highest priority and override any user or project skill with the same name.
 func (l *Loader) RegisterBuiltin(m *SkillManifest) {
 	l.builtins[m.Name] = m
+}
+
+// AddMCPServers registers MCP server configs for auto-discovery. Each server
+// becomes a synthetic skill with BackendMCP and SourceMCP.
+func (l *Loader) AddMCPServers(servers []config.MCPServerConfig) {
+	l.mcpServers = servers
 }
 
 // Discover finds all available skills and returns them in a deduplicated list.
@@ -94,6 +105,38 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 			Manifest: m,
 			Dir:      "",
 			Source:   SourceBuiltin,
+		}
+	}
+
+	// 3.5. MCP servers from config become synthetic skills.
+	for _, srv := range l.mcpServers {
+		name := "mcp-" + srv.Name
+		// Skip if a higher-priority skill already has this name.
+		if _, exists := byName[name]; exists {
+			continue
+		}
+		// Only stdio transport spawns a child process — grant shell:exec accordingly.
+		var perms []Permission
+		if srv.Transport == "stdio" {
+			perms = []Permission{PermShellExec}
+		}
+		byName[name] = DiscoveredSkill{
+			Manifest: &SkillManifest{
+				Name:        name,
+				Version:     "0.0.0",
+				Description: fmt.Sprintf("MCP server: %s", srv.Name),
+				Types:       []SkillType{SkillTypeTool},
+				Permissions: perms,
+				Implementation: ImplementationConfig{
+					Backend:      BackendMCP,
+					MCPTransport: srv.Transport,
+					MCPCommand:   srv.Command,
+					MCPArgs:      srv.Args,
+					MCPURL:       srv.URL,
+				},
+			},
+			Dir:    "",
+			Source: SourceMCP,
 		}
 	}
 

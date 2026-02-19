@@ -359,3 +359,24 @@ prompt:
 	assert.Equal(t, []SkillType{SkillTypePrompt}, m.Types)
 	assert.Equal(t, BackendType(""), m.Implementation.Backend)
 }
+
+func TestParseManifestMCPBackendNoEntrypoint(t *testing.T) {
+	// MCP backends are exempt from the entrypoint requirement since their
+	// config comes from MCPServerConfig, not from a file path.
+	yaml := []byte(`
+name: mcp-filesystem
+version: 0.0.0
+description: "MCP server"
+types:
+  - tool
+permissions:
+  - shell:exec
+implementation:
+  backend: mcp
+`)
+	m, err := ParseManifest(yaml)
+	require.NoError(t, err)
+	require.NotNil(t, m)
+	assert.Equal(t, BackendMCP, m.Implementation.Backend)
+	assert.Empty(t, m.Implementation.Entrypoint)
+}

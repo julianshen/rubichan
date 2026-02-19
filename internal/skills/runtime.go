@@ -11,9 +11,11 @@ import (
 
 // BackendFactory creates a SkillBackend from a manifest. Implementations
 // choose the correct backend type (Starlark, Go plugin, process) based on the
-// manifest's Implementation.Backend field. The real factory is wired up
+// manifest's Implementation.Backend field. The dir parameter is the skill's
+// directory on disk, needed by backends like Starlark (to locate .star files)
+// and Go plugin (to sandbox file operations). The real factory is wired up
 // during agent integration; tests supply a mock.
-type BackendFactory func(manifest SkillManifest) (SkillBackend, error)
+type BackendFactory func(manifest SkillManifest, dir string) (SkillBackend, error)
 
 // SandboxFactory creates a PermissionChecker for a skill. This abstraction
 // avoids a circular import between the skills and sandbox packages. The real
@@ -27,7 +29,7 @@ func sourcePriority(src Source) int {
 		return PriorityBuiltin
 	case SourceUser, SourceInline:
 		return PriorityUser
-	case SourceProject:
+	case SourceProject, SourceMCP:
 		return PriorityProject
 	default:
 		return PriorityProject
@@ -183,6 +185,7 @@ func (rt *Runtime) Activate(name string) error {
 	manifest := *sk.Manifest
 	permissions := sk.Manifest.Permissions
 	source := sk.Source
+	skillDir := sk.Dir
 	autoApproved := rt.isAutoApproved(name)
 	sandboxFactory := rt.sandboxFactory
 	backendFactory := rt.backendFactory
@@ -203,7 +206,7 @@ func (rt *Runtime) Activate(name string) error {
 		}
 	}
 
-	backend, err := backendFactory(manifest)
+	backend, err := backendFactory(manifest, skillDir)
 	if err != nil {
 		rt.mu.Lock()
 		_ = sk.TransitionTo(SkillStateError)
@@ -219,6 +222,15 @@ func (rt *Runtime) Activate(name string) error {
 		rt.mu.Unlock()
 		return fmt.Errorf("load skill %q: %w", name, err)
 	}
+
+	// After a successful Load, any error must call backend.Unload() to release
+	// resources (e.g. MCP child processes, network connections).
+	var activated bool
+	defer func() {
+		if !activated {
+			_ = backend.Unload()
+		}
+	}()
 
 	// Phase 3: Register tools, hooks, and integrations under lock.
 	rt.mu.Lock()
@@ -263,6 +275,7 @@ func (rt *Runtime) Activate(name string) error {
 	}
 
 	rt.active[name] = sk
+	activated = true
 	return nil
 }
 
