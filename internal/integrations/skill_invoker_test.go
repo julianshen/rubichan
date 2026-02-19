@@ -40,3 +40,37 @@ func TestSkillInvokerNilInvoker(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not configured")
 }
+
+func TestSetInvokerReplaces(t *testing.T) {
+	// Start with nil invoker — should fail.
+	invoker := NewSkillInvoker(nil)
+	_, err := invoker.Invoke(context.Background(), "test", nil)
+	require.Error(t, err)
+
+	// Wire a real invoker — should succeed.
+	mock := &mockWorkflowInvoker{
+		result: map[string]any{"status": "ok"},
+	}
+	invoker.SetInvoker(mock)
+	result, err := invoker.Invoke(context.Background(), "test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result["status"])
+}
+
+func TestSetInvokerConcurrent(t *testing.T) {
+	invoker := NewSkillInvoker(nil)
+	mock := &mockWorkflowInvoker{
+		result: map[string]any{"v": "1"},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		invoker.SetInvoker(mock)
+	}()
+	<-done
+
+	result, err := invoker.Invoke(context.Background(), "test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "1", result["v"])
+}

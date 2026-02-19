@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-
 )
 
 // Compile-time check: SSETransport implements Transport.

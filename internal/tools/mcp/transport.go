@@ -51,10 +51,12 @@ var _ Transport = (*StdioTransport)(nil)
 // Lines from stdout are read in a background goroutine so that Receive respects
 // context cancellation.
 type StdioTransport struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	lineCh chan lineResult
-	mu     sync.Mutex
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	lineCh    chan lineResult
+	mu        sync.Mutex
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // lineResult carries a single line or error from the scanner goroutine.
@@ -82,6 +84,7 @@ func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
 	}
 
 	lineCh := make(chan lineResult, 16)
+	done := make(chan struct{})
 	go func() {
 		defer close(lineCh)
 		scanner := bufio.NewScanner(stdout)
@@ -92,10 +95,17 @@ func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
 			// Copy bytes — scanner reuses its buffer.
 			data := make([]byte, len(scanner.Bytes()))
 			copy(data, scanner.Bytes())
-			lineCh <- lineResult{data: data}
+			select {
+			case lineCh <- lineResult{data: data}:
+			case <-done:
+				return
+			}
 		}
 		if err := scanner.Err(); err != nil {
-			lineCh <- lineResult{err: err}
+			select {
+			case lineCh <- lineResult{err: err}:
+			case <-done:
+			}
 		}
 	}()
 
@@ -103,24 +113,37 @@ func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
 		cmd:    cmd,
 		stdin:  stdin,
 		lineCh: lineCh,
+		done:   done,
 	}, nil
 }
 
 // Send marshals the message as JSON and writes it as a single line to stdin.
-func (t *StdioTransport) Send(_ context.Context, msg any) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+// The write is performed in a goroutine so the call respects context cancellation.
+func (t *StdioTransport) Send(ctx context.Context, msg any) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
-
 	data = append(data, '\n')
-	if _, err := t.stdin.Write(data); err != nil {
-		return fmt.Errorf("write to stdin: %w", err)
+
+	type writeResult struct{ err error }
+	ch := make(chan writeResult, 1)
+	go func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		_, werr := t.stdin.Write(data)
+		ch <- writeResult{err: werr}
+	}()
+
+	select {
+	case wr := <-ch:
+		if wr.err != nil {
+			return fmt.Errorf("write to stdin: %w", wr.err)
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
 }
 
 // Receive reads the next JSON line from stdout and unmarshals it.
@@ -143,19 +166,26 @@ func (t *StdioTransport) Receive(ctx context.Context, result any) error {
 	}
 }
 
-// Close shuts down the child process. It closes stdin and waits up to 5 seconds
-// for the process to exit. If the process doesn't exit in time, it is killed.
+// Close shuts down the child process. It closes stdin, signals the scanner
+// goroutine to exit, and waits up to 5 seconds for the process to exit.
+// If the process doesn't exit in time, it is killed. Close is safe to call
+// multiple times.
 func (t *StdioTransport) Close() error {
-	t.stdin.Close()
+	var closeErr error
+	t.closeOnce.Do(func() {
+		close(t.done)
+		t.stdin.Close()
 
-	done := make(chan error, 1)
-	go func() { done <- t.cmd.Wait() }()
+		waitCh := make(chan error, 1)
+		go func() { waitCh <- t.cmd.Wait() }()
 
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(5 * time.Second):
-		_ = t.cmd.Process.Kill()
-		return <-done
-	}
+		select {
+		case err := <-waitCh:
+			closeErr = err
+		case <-time.After(5 * time.Second):
+			_ = t.cmd.Process.Kill()
+			closeErr = <-waitCh
+		}
+	})
+	return closeErr
 }

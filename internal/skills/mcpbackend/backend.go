@@ -34,7 +34,7 @@ func NewMCPBackend(serverName string, transport mcpclient.Transport) *MCPBackend
 // NewMCPBackendFromConfig creates an MCP backend by constructing the appropriate
 // transport from config fields. This is the factory used by the backendFactory
 // in main.go to wire BackendMCP skills discovered from MCPServerConfig.
-func NewMCPBackendFromConfig(ctx context.Context, transport, command string, args []string, sseURL string) (*MCPBackend, error) {
+func NewMCPBackendFromConfig(ctx context.Context, serverName, transport, command string, args []string, sseURL string) (*MCPBackend, error) {
 	var t mcpclient.Transport
 	var err error
 
@@ -62,16 +62,16 @@ func NewMCPBackendFromConfig(ctx context.Context, transport, command string, arg
 	}
 
 	return &MCPBackend{
-		serverName: "rubichan",
+		serverName: serverName,
 		transport:  t,
 	}, nil
 }
 
-// Load connects to the MCP server and discovers its tools.
-func (b *MCPBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error {
+// LoadWithContext connects to the MCP server and discovers its tools using the
+// provided context. This allows callers to cancel or timeout the initialization.
+func (b *MCPBackend) LoadWithContext(ctx context.Context) error {
 	b.client = mcpclient.NewClient(b.serverName, b.transport)
 
-	ctx := context.Background()
 	if err := b.client.Initialize(ctx); err != nil {
 		return fmt.Errorf("initialize MCP server %q: %w", b.serverName, err)
 	}
@@ -87,6 +87,12 @@ func (b *MCPBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) er
 	}
 
 	return nil
+}
+
+// Load connects to the MCP server and discovers its tools.
+// It delegates to LoadWithContext with a background context.
+func (b *MCPBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error {
+	return b.LoadWithContext(context.Background())
 }
 
 // Tools returns the wrapped MCP tools.

@@ -29,7 +29,7 @@ func sourcePriority(src Source) int {
 		return PriorityBuiltin
 	case SourceUser, SourceInline:
 		return PriorityUser
-	case SourceProject:
+	case SourceProject, SourceMCP:
 		return PriorityProject
 	default:
 		return PriorityProject

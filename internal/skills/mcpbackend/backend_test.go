@@ -120,19 +120,19 @@ func (m *mockTransport) Receive(_ context.Context, result any) error {
 func (m *mockTransport) Close() error { return nil }
 
 func TestNewMCPBackendFromConfigUnsupportedTransport(t *testing.T) {
-	_, err := NewMCPBackendFromConfig(context.Background(), "websocket", "", nil, "")
+	_, err := NewMCPBackendFromConfig(context.Background(), "test-server", "websocket", "", nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported transport")
 }
 
 func TestNewMCPBackendFromConfigStdioRequiresCommand(t *testing.T) {
-	_, err := NewMCPBackendFromConfig(context.Background(), "stdio", "", nil, "")
+	_, err := NewMCPBackendFromConfig(context.Background(), "test-server", "stdio", "", nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires a command")
 }
 
 func TestNewMCPBackendFromConfigSSERequiresURL(t *testing.T) {
-	_, err := NewMCPBackendFromConfig(context.Background(), "sse", "", nil, "")
+	_, err := NewMCPBackendFromConfig(context.Background(), "test-server", "sse", "", nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires a url")
 }

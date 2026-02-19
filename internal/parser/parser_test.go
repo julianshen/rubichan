@@ -19,6 +19,7 @@ func main() {
 `)
 	tree, err := p.Parse("main.go", source)
 	require.NoError(t, err)
+	defer tree.Close()
 	assert.NotNil(t, tree)
 	assert.NotNil(t, tree.RootNode())
 }
@@ -33,6 +34,7 @@ def world():
 `)
 	tree, err := p.Parse("hello.py", source)
 	require.NoError(t, err)
+	defer tree.Close()
 	assert.NotNil(t, tree)
 	assert.NotNil(t, tree.RootNode())
 }
@@ -60,6 +62,7 @@ func world(name string) string {
 `)
 	tree, err := p.Parse("main.go", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 2)
@@ -89,6 +92,7 @@ func main() {
 `)
 	tree, err := p.Parse("main.go", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	imports := tree.Imports()
 	require.Len(t, imports, 3)
@@ -107,6 +111,7 @@ def farewell():
 `)
 	tree, err := p.Parse("script.py", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 2)
@@ -125,6 +130,7 @@ def main():
 `)
 	tree, err := p.Parse("script.py", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	imports := tree.Imports()
 	assert.Contains(t, imports, "os")
@@ -144,6 +150,7 @@ function world(name) {
 `)
 	tree, err := p.Parse("app.js", source)
 	require.NoError(t, err)
+	defer tree.Close()
 	assert.NotNil(t, tree)
 
 	funcs := tree.Functions()
@@ -160,6 +167,7 @@ func TestParseTypeScriptFile(t *testing.T) {
 `)
 	tree, err := p.Parse("app.ts", source)
 	require.NoError(t, err)
+	defer tree.Close()
 	assert.NotNil(t, tree)
 
 	funcs := tree.Functions()
@@ -182,6 +190,7 @@ func (f *Foo) Baz(x int) int {
 `)
 	tree, err := p.Parse("foo.go", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 2)
@@ -201,6 +210,7 @@ func main() {
 `)
 	tree, err := p.Parse("main.go", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	imports := tree.Imports()
 	require.Len(t, imports, 1)
@@ -222,6 +232,7 @@ fn add(a: i32, b: i32) -> i32 {
 `)
 	tree, err := p.Parse("lib.rs", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 2)
@@ -250,6 +261,7 @@ void greet(const char *name) {
 `)
 	tree, err := p.Parse("main.c", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 2)
@@ -273,6 +285,7 @@ int main() {
 `)
 	tree, err := p.Parse("main.cpp", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 1)
@@ -298,6 +311,7 @@ end
 `)
 	tree, err := p.Parse("script.rb", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 2)
@@ -325,6 +339,7 @@ public class Main {
 `)
 	tree, err := p.Parse("Main.java", source)
 	require.NoError(t, err)
+	defer tree.Close()
 
 	funcs := tree.Functions()
 	require.Len(t, funcs, 2)
@@ -419,11 +434,14 @@ func TestLanguageDetectionByExtension(t *testing.T) {
 
 	for _, tc := range extensions {
 		t.Run(tc.filename, func(t *testing.T) {
-			_, err := p.Parse(tc.filename, []byte(""))
+			tree, err := p.Parse(tc.filename, []byte(""))
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
+				if tree != nil {
+					tree.Close()
+				}
 			}
 		})
 	}
@@ -443,6 +461,7 @@ func add(a, b int) int {
 	p := NewParser()
 	tree, err := p.Parse("main.go", []byte(src))
 	require.NoError(t, err)
+	defer tree.Close()
 
 	matches, err := tree.Query("(function_declaration name: (identifier) @name)")
 	require.NoError(t, err)
@@ -457,6 +476,7 @@ func TestQueryInvalidPattern(t *testing.T) {
 	p := NewParser()
 	tree, err := p.Parse("main.go", []byte(src))
 	require.NoError(t, err)
+	defer tree.Close()
 
 	_, err = tree.Query("(invalid_query_that_wont_compile")
 	assert.Error(t, err)
@@ -471,6 +491,7 @@ var x = 42
 	p := NewParser()
 	tree, err := p.Parse("main.go", []byte(src))
 	require.NoError(t, err)
+	defer tree.Close()
 
 	matches, err := tree.Query("(function_declaration name: (identifier) @name)")
 	require.NoError(t, err)

@@ -221,8 +221,12 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 			return process.NewProcessBackend(), nil
 
 		case skills.BackendMCP:
+			// Derive MCP server name from manifest name by stripping the "mcp-" prefix
+			// added during discovery in loader.go.
+			mcpServerName := strings.TrimPrefix(manifest.Name, "mcp-")
 			return mcpbackend.NewMCPBackendFromConfig(
 				ctx,
+				mcpServerName,
 				manifest.Implementation.MCPTransport,
 				manifest.Implementation.MCPCommand,
 				manifest.Implementation.MCPArgs,

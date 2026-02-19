@@ -45,11 +45,17 @@ func (c *LLMCompleter) Complete(ctx context.Context, prompt string) (string, err
 			case "error":
 				// Drain remaining events so the provider goroutine isn't
 				// blocked on a send and can exit cleanly.
-				go func() { for range ch {} }()
+				go func() {
+					for range ch {
+					}
+				}()
 				return "", fmt.Errorf("llm stream error: %w", evt.Error)
 			}
 		case <-ctx.Done():
-			go func() { for range ch {} }()
+			go func() {
+				for range ch {
+				}
+			}()
 			return "", fmt.Errorf("llm complete: %w", ctx.Err())
 		}
 	}

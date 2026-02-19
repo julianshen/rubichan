@@ -141,6 +141,11 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPTool, error) {
 func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (*ToolResult, error) {
 	id := c.nextID.Add(1)
 
+	// MCP spec requires "arguments" to be an object, never null.
+	if args == nil {
+		args = map[string]any{}
+	}
+
 	params, err := json.Marshal(map[string]any{
 		"name":      name,
 		"arguments": args,
@@ -180,6 +185,11 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 // receiveResponse reads from the transport, skipping server-sent notifications
 // (messages without an ID), and returns the first response whose ID matches
 // the expected request ID.
+//
+// This method is NOT safe for concurrent use. The Client serializes requests
+// through its public API methods (Initialize, ListTools, CallTool), and each
+// waits for its response before returning. Do not call receiveResponse from
+// multiple goroutines.
 func (c *Client) receiveResponse(ctx context.Context, expectedID int64) (*jsonRPCResponse, error) {
 	for {
 		var resp jsonRPCResponse

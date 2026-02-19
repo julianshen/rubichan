@@ -3,7 +3,6 @@ package integrations
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/stretchr/testify/assert"
@@ -53,12 +52,21 @@ func TestLLMCompleterStreamError(t *testing.T) {
 
 // slowMockProvider sends events with a delay after the error, simulating a
 // provider goroutine that still has events to deliver after an error.
-type slowMockProvider struct{}
+// The done channel is closed when the producer goroutine has finished,
+// allowing tests to synchronize without time.Sleep.
+type slowMockProvider struct {
+	done chan struct{}
+}
+
+func newSlowMockProvider() *slowMockProvider {
+	return &slowMockProvider{done: make(chan struct{})}
+}
 
 func (m *slowMockProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
 	ch := make(chan provider.StreamEvent)
 	go func() {
 		defer close(ch)
+		defer close(m.done)
 		ch <- provider.StreamEvent{Type: "error", Error: assert.AnError}
 		// Remaining event after error — should be drained by consumer.
 		ch <- provider.StreamEvent{Type: "text_delta", Text: "trailing"}
@@ -67,13 +75,15 @@ func (m *slowMockProvider) Stream(_ context.Context, _ provider.CompletionReques
 }
 
 func TestLLMCompleterDrainsChannelOnError(t *testing.T) {
-	completer := NewLLMCompleter(&slowMockProvider{}, "test-model")
+	sp := newSlowMockProvider()
+	completer := NewLLMCompleter(sp, "test-model")
 	_, err := completer.Complete(context.Background(), "fail")
 	require.Error(t, err)
 
-	// The goroutine sending trailing events should not be blocked.
-	// Give it a moment to finish.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the producer goroutine to finish. If the drain goroutine
+	// doesn't consume the trailing event, this will block and the test
+	// will be killed by the test timeout.
+	<-sp.done
 }
 
 // blockingProvider never closes the channel, simulating a hang.
