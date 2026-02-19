@@ -159,6 +159,49 @@ function world(name) {
 	assert.Equal(t, "world", funcs[1].Name)
 }
 
+func TestParseJSModernPatterns(t *testing.T) {
+	p := NewParser()
+	source := []byte(`const greet = (name) => {
+  console.log(name);
+};
+
+const add = function(a, b) {
+  return a + b;
+};
+
+class Calculator {
+  multiply(a, b) {
+    return a * b;
+  }
+}
+`)
+	tree, err := p.Parse("modern.js", source)
+	require.NoError(t, err)
+	defer tree.Close()
+
+	funcs := tree.Functions()
+	require.Len(t, funcs, 3)
+	assert.Equal(t, "greet", funcs[0].Name)
+	assert.Equal(t, "add", funcs[1].Name)
+	assert.Equal(t, "multiply", funcs[2].Name)
+}
+
+func TestParseJSSideEffectImport(t *testing.T) {
+	p := NewParser()
+	source := []byte(`import 'side-effect-module';
+import "polyfill";
+import { useState } from 'react';
+`)
+	tree, err := p.Parse("imports.js", source)
+	require.NoError(t, err)
+	defer tree.Close()
+
+	imports := tree.Imports()
+	assert.Contains(t, imports, "side-effect-module")
+	assert.Contains(t, imports, "polyfill")
+	assert.Contains(t, imports, "react")
+}
+
 func TestParseTypeScriptFile(t *testing.T) {
 	p := NewParser()
 	source := []byte(`function greet(name: string): void {
@@ -435,13 +478,13 @@ func TestLanguageDetectionByExtension(t *testing.T) {
 	for _, tc := range extensions {
 		t.Run(tc.filename, func(t *testing.T) {
 			tree, err := p.Parse(tc.filename, []byte(""))
+			if tree != nil {
+				defer tree.Close()
+			}
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-				if tree != nil {
-					tree.Close()
-				}
 			}
 		})
 	}

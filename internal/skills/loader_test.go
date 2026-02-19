@@ -302,6 +302,8 @@ func TestDiscoverMCPServers(t *testing.T) {
 	assert.Equal(t, "stdio", fs.Manifest.Implementation.MCPTransport)
 	assert.Equal(t, "echo", fs.Manifest.Implementation.MCPCommand)
 	assert.Equal(t, []string{"test"}, fs.Manifest.Implementation.MCPArgs)
+	// stdio transport spawns a child process — must have shell:exec permission.
+	assert.Contains(t, fs.Manifest.Permissions, PermShellExec)
 
 	// Verify SSE transport config is preserved.
 	ws := byName["mcp-web-search"]
@@ -310,6 +312,8 @@ func TestDiscoverMCPServers(t *testing.T) {
 	assert.Equal(t, BackendMCP, ws.Manifest.Implementation.Backend)
 	assert.Equal(t, "sse", ws.Manifest.Implementation.MCPTransport)
 	assert.Equal(t, "http://localhost:3001/sse", ws.Manifest.Implementation.MCPURL)
+	// SSE transport is network-only — should NOT have shell:exec permission.
+	assert.NotContains(t, ws.Manifest.Permissions, PermShellExec)
 }
 
 func TestDiscoverMCPNameCollision(t *testing.T) {

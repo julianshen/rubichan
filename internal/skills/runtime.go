@@ -223,6 +223,15 @@ func (rt *Runtime) Activate(name string) error {
 		return fmt.Errorf("load skill %q: %w", name, err)
 	}
 
+	// After a successful Load, any error must call backend.Unload() to release
+	// resources (e.g. MCP child processes, network connections).
+	var activated bool
+	defer func() {
+		if !activated {
+			_ = backend.Unload()
+		}
+	}()
+
 	// Phase 3: Register tools, hooks, and integrations under lock.
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -266,6 +275,7 @@ func (rt *Runtime) Activate(name string) error {
 	}
 
 	rt.active[name] = sk
+	activated = true
 	return nil
 }
 

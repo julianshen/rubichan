@@ -115,13 +115,18 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 		if _, exists := byName[name]; exists {
 			continue
 		}
+		// Only stdio transport spawns a child process — grant shell:exec accordingly.
+		var perms []Permission
+		if srv.Transport == "stdio" {
+			perms = []Permission{PermShellExec}
+		}
 		byName[name] = DiscoveredSkill{
 			Manifest: &SkillManifest{
 				Name:        name,
 				Version:     "0.0.0",
 				Description: fmt.Sprintf("MCP server: %s", srv.Name),
 				Types:       []SkillType{SkillTypeTool},
-				Permissions: []Permission{PermShellExec},
+				Permissions: perms,
 				Implementation: ImplementationConfig{
 					Backend:      BackendMCP,
 					MCPTransport: srv.Transport,

@@ -49,13 +49,25 @@ var registry = map[string]langInfo{
 		importNodeType: []string{"import_statement", "import_from_statement"},
 	},
 	".js": {
-		lang:           javascript.GetLanguage(),
-		funcNodeTypes:  []string{"function_declaration"},
+		lang: javascript.GetLanguage(),
+		funcNodeTypes: []string{
+			"function_declaration",
+			"generator_function_declaration",
+			"method_definition",
+			"arrow_function",
+			"function_expression",
+		},
 		importNodeType: []string{"import_statement"},
 	},
 	".ts": {
-		lang:           typescript.GetLanguage(),
-		funcNodeTypes:  []string{"function_declaration"},
+		lang: typescript.GetLanguage(),
+		funcNodeTypes: []string{
+			"function_declaration",
+			"generator_function_declaration",
+			"method_definition",
+			"arrow_function",
+			"function_expression",
+		},
 		importNodeType: []string{"import_statement"},
 	},
 	".java": {
@@ -253,7 +265,8 @@ func walk(node *sitter.Node, fn func(*sitter.Node)) {
 
 // extractFuncName finds the name identifier within a function/method node.
 // It checks "name" field first (Go, Python, JS, TS, Java, Rust, Ruby),
-// then checks "declarator" field for C/C++ function_definition nodes.
+// then checks "declarator" field for C/C++ function_definition nodes,
+// then walks up to a parent variable_declarator for arrow_function / function_expression.
 func extractFuncName(node *sitter.Node, source []byte) string {
 	// Try the "name" field first — works for Go, Python, JS, TS, Java, Rust, Ruby
 	nameNode := node.ChildByFieldName("name")
@@ -267,6 +280,14 @@ func extractFuncName(node *sitter.Node, source []byte) string {
 		innerName := declNode.ChildByFieldName("declarator")
 		if innerName != nil {
 			return innerName.Content(source)
+		}
+	}
+
+	// arrow_function / function_expression: name comes from the enclosing
+	// variable_declarator (e.g. const foo = () => {}).
+	if parent := node.Parent(); parent != nil && parent.Type() == "variable_declarator" {
+		if nameNode := parent.ChildByFieldName("name"); nameNode != nil {
+			return nameNode.Content(source)
 		}
 	}
 
@@ -348,6 +369,7 @@ func extractGenericImport(text string) []string {
 	}
 
 	// Python: import os, sys
+	// Also handles JS side-effect imports like import 'module'
 	text = strings.TrimPrefix(text, "import ")
 	text = strings.TrimSpace(text)
 	parts := strings.Split(text, ",")
@@ -359,6 +381,8 @@ func extractGenericImport(text string) []string {
 			p = p[:idx]
 		}
 		p = strings.TrimSpace(p)
+		// Strip quotes for JS side-effect imports like import 'x'
+		p = extractImportPath(p)
 		if p != "" {
 			result = append(result, p)
 		}
