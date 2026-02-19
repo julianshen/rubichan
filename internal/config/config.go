@@ -75,6 +75,28 @@ type MCPServerConfig struct {
 	URL       string   `toml:"url"`       // for sse transport
 }
 
+// Validate checks that the MCPServerConfig fields are consistent.
+func (c MCPServerConfig) Validate() error {
+	if c.Name == "" {
+		return fmt.Errorf("mcp server: name is required")
+	}
+	switch c.Transport {
+	case "stdio":
+		if c.Command == "" {
+			return fmt.Errorf("mcp server %q: command is required for stdio transport", c.Name)
+		}
+	case "sse":
+		if c.URL == "" {
+			return fmt.Errorf("mcp server %q: url is required for sse transport", c.Name)
+		}
+	case "":
+		return fmt.Errorf("mcp server %q: transport is required (stdio or sse)", c.Name)
+	default:
+		return fmt.Errorf("mcp server %q: unknown transport %q (must be stdio or sse)", c.Name, c.Transport)
+	}
+	return nil
+}
+
 // Load reads a TOML config file from the given path and returns a Config.
 // The returned Config starts with default values and is overridden by values
 // found in the file.
@@ -90,6 +112,14 @@ func Load(path string) (*Config, error) {
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
+
+	// Validate MCP server configs.
+	for _, srv := range cfg.MCP.Servers {
+		if err := srv.Validate(); err != nil {
+			return nil, err
+		}
+	}
+
 	return cfg, nil
 }
 

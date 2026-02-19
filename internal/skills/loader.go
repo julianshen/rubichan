@@ -111,6 +111,10 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	// 3.5. MCP servers from config become synthetic skills.
 	for _, srv := range l.mcpServers {
 		name := "mcp-" + srv.Name
+		// Skip if a higher-priority skill already has this name.
+		if _, exists := byName[name]; exists {
+			continue
+		}
 		byName[name] = DiscoveredSkill{
 			Manifest: &SkillManifest{
 				Name:        name,
@@ -119,7 +123,11 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 				Types:       []SkillType{SkillTypeTool},
 				Permissions: []Permission{PermShellExec},
 				Implementation: ImplementationConfig{
-					Backend: BackendMCP,
+					Backend:      BackendMCP,
+					MCPTransport: srv.Transport,
+					MCPCommand:   srv.Command,
+					MCPArgs:      srv.Args,
+					MCPURL:       srv.URL,
 				},
 			},
 			Dir:    "",

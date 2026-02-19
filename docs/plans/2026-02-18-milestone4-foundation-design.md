@@ -130,7 +130,7 @@ MCP servers from config.toml are automatically discovered as skills.
 Foundation for future wiki scanner and SAST — no rules or analysis logic.
 
 **Dependencies:**
-- `github.com/smacker/go-tree-sitter` + grammars for top 10 languages:
+- `github.com/smacker/go-tree-sitter` + grammars for top 9 languages:
   Go, Python, JavaScript, TypeScript, Java, Rust, Ruby, C, C++
 
 **API:**

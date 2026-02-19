@@ -108,6 +108,13 @@ type TriggerConfig struct {
 type ImplementationConfig struct {
 	Backend    BackendType `yaml:"backend"`
 	Entrypoint string      `yaml:"entrypoint"`
+
+	// MCP transport fields — populated programmatically for BackendMCP skills
+	// discovered from config.MCPServerConfig. Not set via YAML.
+	MCPTransport string   `yaml:"-" json:"-"`
+	MCPCommand   string   `yaml:"-" json:"-"`
+	MCPArgs      []string `yaml:"-" json:"-"`
+	MCPURL       string   `yaml:"-" json:"-"`
 }
 
 // Dependency represents a dependency on another skill.
@@ -234,8 +241,8 @@ func validateManifest(m *SkillManifest) error {
 		return fmt.Errorf("manifest validation: unknown backend %q", m.Implementation.Backend)
 	}
 
-	// Backend requires an entrypoint.
-	if m.Implementation.Backend != "" && m.Implementation.Entrypoint == "" {
+	// Backend requires an entrypoint (except MCP, which gets transport config programmatically).
+	if m.Implementation.Backend != "" && m.Implementation.Backend != BackendMCP && m.Implementation.Entrypoint == "" {
 		return fmt.Errorf("manifest validation: implementation.entrypoint is required when backend is specified")
 	}
 

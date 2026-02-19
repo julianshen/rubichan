@@ -81,6 +81,10 @@ func NewSSETransport(ctx context.Context, sseURL string) (*SSETransport, error) 
 			return nil, fmt.Errorf("parse endpoint URL: %w", err)
 		}
 		t.postURL = baseURL.ResolveReference(ref).String()
+	case <-t.done:
+		// Stream closed before sending endpoint event.
+		cancel()
+		return nil, fmt.Errorf("SSE stream closed before endpoint event")
 	case <-ctx.Done():
 		cancel()
 		return nil, ctx.Err()
@@ -97,6 +101,8 @@ func (t *SSETransport) readSSE(ctx context.Context, body io.ReadCloser, endpoint
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
+	// SSE data lines can carry large MCP responses. Use 1MB buffer.
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	var eventType string
 
 	for scanner.Scan() {

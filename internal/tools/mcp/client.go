@@ -71,8 +71,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return fmt.Errorf("send initialize: %w", err)
 	}
 
-	var resp jsonRPCResponse
-	if err := c.transport.Receive(ctx, &resp); err != nil {
+	resp, err := c.receiveResponse(ctx, id)
+	if err != nil {
 		return fmt.Errorf("receive initialize response: %w", err)
 	}
 
@@ -118,8 +118,8 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPTool, error) {
 		return nil, fmt.Errorf("send tools/list: %w", err)
 	}
 
-	var resp jsonRPCResponse
-	if err := c.transport.Receive(ctx, &resp); err != nil {
+	resp, err := c.receiveResponse(ctx, id)
+	if err != nil {
 		return nil, fmt.Errorf("receive tools/list response: %w", err)
 	}
 
@@ -160,8 +160,8 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 		return nil, fmt.Errorf("send tools/call: %w", err)
 	}
 
-	var resp jsonRPCResponse
-	if err := c.transport.Receive(ctx, &resp); err != nil {
+	resp, err := c.receiveResponse(ctx, id)
+	if err != nil {
 		return nil, fmt.Errorf("receive tools/call response: %w", err)
 	}
 
@@ -175,6 +175,31 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 	}
 
 	return &result, nil
+}
+
+// receiveResponse reads from the transport, skipping server-sent notifications
+// (messages without an ID), and returns the first response whose ID matches
+// the expected request ID.
+func (c *Client) receiveResponse(ctx context.Context, expectedID int64) (*jsonRPCResponse, error) {
+	for {
+		var resp jsonRPCResponse
+		if err := c.transport.Receive(ctx, &resp); err != nil {
+			return nil, err
+		}
+
+		// Notifications have no ID — skip them.
+		if resp.ID == nil {
+			continue
+		}
+
+		// JSON numbers unmarshal as float64. Compare via float64 for robustness.
+		if id, ok := resp.ID.(float64); ok && int64(id) == expectedID {
+			return &resp, nil
+		}
+
+		// Non-matching ID — skip (could be a stale or out-of-order response).
+		continue
+	}
 }
 
 // Close shuts down the client and its transport.

@@ -90,6 +90,28 @@ func TestClientCallTool(t *testing.T) {
 	assert.Equal(t, "file contents here", result.Content[0].Text)
 }
 
+func TestClientSkipsNotifications(t *testing.T) {
+	// A notification (no ID) arrives between the request and the response.
+	mt := &mockTransport{
+		responses: []json.RawMessage{
+			// Initialize response
+			json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"test","version":"1.0"}}}`),
+			// Server-sent notification (no ID) — should be skipped
+			json.RawMessage(`{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":50}}`),
+			// Actual tools/list response
+			json.RawMessage(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"my_tool","description":"A tool","inputSchema":{"type":"object"}}]}}`),
+		},
+	}
+
+	client := NewClient("test", mt)
+	require.NoError(t, client.Initialize(context.Background()))
+
+	tools, err := client.ListTools(context.Background())
+	require.NoError(t, err)
+	require.Len(t, tools, 1)
+	assert.Equal(t, "my_tool", tools[0].Name)
+}
+
 func TestClientCallToolError(t *testing.T) {
 	mt := &mockTransport{
 		responses: []json.RawMessage{

@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 // WorkflowInvoker is the subset of skills.Runtime that SkillInvoker needs.
@@ -11,7 +12,10 @@ type WorkflowInvoker interface {
 }
 
 // SkillInvoker bridges cross-skill invocation for Starlark and Go plugin backends.
+// SetInvoker and Invoke may be called from different goroutines, so access to the
+// invoker field is protected by a mutex.
 type SkillInvoker struct {
+	mu      sync.RWMutex
 	invoker WorkflowInvoker
 }
 
@@ -24,13 +28,19 @@ func NewSkillInvoker(invoker WorkflowInvoker) *SkillInvoker {
 // when the runtime (which implements WorkflowInvoker) is created after the
 // SkillInvoker, breaking the circular dependency.
 func (s *SkillInvoker) SetInvoker(invoker WorkflowInvoker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.invoker = invoker
 }
 
 // Invoke calls another skill's workflow by name.
 func (s *SkillInvoker) Invoke(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	if s.invoker == nil {
+	s.mu.RLock()
+	inv := s.invoker
+	s.mu.RUnlock()
+
+	if inv == nil {
 		return nil, fmt.Errorf("skill invoker not configured")
 	}
-	return s.invoker.InvokeWorkflow(ctx, name, input)
+	return inv.InvokeWorkflow(ctx, name, input)
 }

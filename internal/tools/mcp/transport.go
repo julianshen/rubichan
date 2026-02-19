@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 // jsonRPCRequest is a JSON-RPC 2.0 request.
@@ -84,6 +85,9 @@ func NewStdioTransport(command string, args []string) (*StdioTransport, error) {
 	go func() {
 		defer close(lineCh)
 		scanner := bufio.NewScanner(stdout)
+		// MCP responses (especially tool results with large file contents)
+		// can exceed the default 64KB buffer. Use 1MB.
+		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 		for scanner.Scan() {
 			// Copy bytes — scanner reuses its buffer.
 			data := make([]byte, len(scanner.Bytes()))
@@ -139,8 +143,19 @@ func (t *StdioTransport) Receive(ctx context.Context, result any) error {
 	}
 }
 
-// Close shuts down the child process.
+// Close shuts down the child process. It closes stdin and waits up to 5 seconds
+// for the process to exit. If the process doesn't exit in time, it is killed.
 func (t *StdioTransport) Close() error {
 	t.stdin.Close()
-	return t.cmd.Wait()
+
+	done := make(chan error, 1)
+	go func() { done <- t.cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		_ = t.cmd.Process.Kill()
+		return <-done
+	}
 }

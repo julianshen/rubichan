@@ -118,6 +118,7 @@ func (p *Parser) Parse(filename string, source []byte) (*Tree, error) {
 	// Create a fresh sitter.Parser per call to avoid data races — tree-sitter
 	// parsers are single-threaded and SetLanguage mutates internal state.
 	inner := sitter.NewParser()
+	defer inner.Close()
 	inner.SetLanguage(info.lang)
 	sitterTree, err := inner.ParseCtx(context.Background(), nil, source)
 	if err != nil {
@@ -137,6 +138,14 @@ type Tree struct {
 	tree   *sitter.Tree
 	source []byte
 	info   langInfo
+}
+
+// Close releases the C memory held by the underlying tree-sitter tree.
+// Callers should defer Close() after a successful Parse.
+func (t *Tree) Close() {
+	if t.tree != nil {
+		t.tree.Close()
+	}
 }
 
 // RootNode returns the root node of the parsed syntax tree.
@@ -204,8 +213,10 @@ func (t *Tree) Query(pattern string) ([]Match, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compile query: %w", err)
 	}
+	defer q.Close()
 
 	cursor := sitter.NewQueryCursor()
+	defer cursor.Close()
 	cursor.Exec(q, t.tree.RootNode())
 
 	var matches []Match

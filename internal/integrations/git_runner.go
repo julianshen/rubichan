@@ -83,6 +83,14 @@ func (g *GitRunner) Status(ctx context.Context) ([]GitFileStatus, error) {
 		}
 		status := strings.TrimSpace(line[:2])
 		path := strings.TrimSpace(line[3:])
+
+		// Handle renames: "R  old.go -> new.go" — use the new path.
+		if strings.HasPrefix(status, "R") {
+			if idx := strings.Index(path, " -> "); idx >= 0 {
+				path = path[idx+4:]
+			}
+		}
+
 		statuses = append(statuses, GitFileStatus{
 			Path:   path,
 			Status: status,
@@ -93,6 +101,9 @@ func (g *GitRunner) Status(ctx context.Context) ([]GitFileStatus, error) {
 }
 
 func (g *GitRunner) run(ctx context.Context, args ...string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("git: no subcommand provided")
+	}
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = g.workDir
 	out, err := cmd.Output()

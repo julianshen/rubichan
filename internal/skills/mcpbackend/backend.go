@@ -3,6 +3,7 @@ package mcpbackend
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -22,12 +23,48 @@ type MCPBackend struct {
 // compile-time check: MCPBackend implements skills.SkillBackend.
 var _ skills.SkillBackend = (*MCPBackend)(nil)
 
-// NewMCPBackend creates a new MCP-backed skill backend.
+// NewMCPBackend creates a new MCP-backed skill backend from an existing transport.
 func NewMCPBackend(serverName string, transport mcpclient.Transport) *MCPBackend {
 	return &MCPBackend{
 		serverName: serverName,
 		transport:  transport,
 	}
+}
+
+// NewMCPBackendFromConfig creates an MCP backend by constructing the appropriate
+// transport from config fields. This is the factory used by the backendFactory
+// in main.go to wire BackendMCP skills discovered from MCPServerConfig.
+func NewMCPBackendFromConfig(ctx context.Context, transport, command string, args []string, sseURL string) (*MCPBackend, error) {
+	var t mcpclient.Transport
+	var err error
+
+	switch transport {
+	case "stdio":
+		if command == "" {
+			return nil, fmt.Errorf("mcp backend: stdio transport requires a command")
+		}
+		t, err = mcpclient.NewStdioTransport(command, args)
+		if err != nil {
+			return nil, fmt.Errorf("mcp backend: create stdio transport: %w", err)
+		}
+	case "sse":
+		if sseURL == "" {
+			return nil, fmt.Errorf("mcp backend: sse transport requires a url")
+		}
+		initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		t, err = mcpclient.NewSSETransport(initCtx, sseURL)
+		if err != nil {
+			return nil, fmt.Errorf("mcp backend: create sse transport: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("mcp backend: unsupported transport %q", transport)
+	}
+
+	return &MCPBackend{
+		serverName: "rubichan",
+		transport:  t,
+	}, nil
 }
 
 // Load connects to the MCP server and discovers its tools.

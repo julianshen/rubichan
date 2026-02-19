@@ -23,6 +23,7 @@ import (
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
+	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
 	"github.com/julianshen/rubichan/internal/skills/process"
 	"github.com/julianshen/rubichan/internal/skills/sandbox"
 	starengine "github.com/julianshen/rubichan/internal/skills/starlark"
@@ -141,6 +142,10 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 		return nil, nil, nil
 	}
 
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("config is required for skill runtime")
+	}
+
 	// Determine user config directory.
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -214,6 +219,15 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 
 		case skills.BackendProcess:
 			return process.NewProcessBackend(), nil
+
+		case skills.BackendMCP:
+			return mcpbackend.NewMCPBackendFromConfig(
+				ctx,
+				manifest.Implementation.MCPTransport,
+				manifest.Implementation.MCPCommand,
+				manifest.Implementation.MCPArgs,
+				manifest.Implementation.MCPURL,
+			)
 
 		default:
 			return nil, fmt.Errorf("backend %q not implemented", manifest.Implementation.Backend)

@@ -119,6 +119,24 @@ func (m *mockTransport) Receive(_ context.Context, result any) error {
 
 func (m *mockTransport) Close() error { return nil }
 
+func TestNewMCPBackendFromConfigUnsupportedTransport(t *testing.T) {
+	_, err := NewMCPBackendFromConfig(context.Background(), "websocket", "", nil, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported transport")
+}
+
+func TestNewMCPBackendFromConfigStdioRequiresCommand(t *testing.T) {
+	_, err := NewMCPBackendFromConfig(context.Background(), "stdio", "", nil, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires a command")
+}
+
+func TestNewMCPBackendFromConfigSSERequiresURL(t *testing.T) {
+	_, err := NewMCPBackendFromConfig(context.Background(), "sse", "", nil, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires a url")
+}
+
 type noopChecker struct{}
 
 func (n *noopChecker) CheckPermission(_ skills.Permission) error { return nil }

@@ -93,3 +93,19 @@ func TestGitRunnerStatus(t *testing.T) {
 	assert.Equal(t, "new.txt", statuses[0].Path)
 	assert.Equal(t, "??", statuses[0].Status)
 }
+
+func TestGitRunnerStatusRename(t *testing.T) {
+	dir := setupGitRepo(t)
+
+	// Rename a file via git mv and stage it.
+	cmd := exec.Command("git", "mv", "hello.txt", "renamed.txt")
+	cmd.Dir = dir
+	require.NoError(t, cmd.Run())
+
+	runner := NewGitRunner(dir)
+	statuses, err := runner.Status(context.Background())
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	assert.Equal(t, "renamed.txt", statuses[0].Path)
+	assert.Equal(t, "R", statuses[0].Status)
+}

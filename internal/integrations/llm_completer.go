@@ -33,17 +33,24 @@ func (c *LLMCompleter) Complete(ctx context.Context, prompt string) (string, err
 	}
 
 	var parts []string
-	for evt := range ch {
-		switch evt.Type {
-		case "text_delta":
-			parts = append(parts, evt.Text)
-		case "error":
-			// Drain remaining events so the provider goroutine isn't
-			// blocked on a send and can exit cleanly.
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				return strings.Join(parts, ""), nil
+			}
+			switch evt.Type {
+			case "text_delta":
+				parts = append(parts, evt.Text)
+			case "error":
+				// Drain remaining events so the provider goroutine isn't
+				// blocked on a send and can exit cleanly.
+				go func() { for range ch {} }()
+				return "", fmt.Errorf("llm stream error: %w", evt.Error)
+			}
+		case <-ctx.Done():
 			go func() { for range ch {} }()
-			return "", fmt.Errorf("llm stream error: %w", evt.Error)
+			return "", fmt.Errorf("llm complete: %w", ctx.Err())
 		}
 	}
-
-	return strings.Join(parts, ""), nil
 }

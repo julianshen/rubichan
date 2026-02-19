@@ -75,3 +75,27 @@ func TestLLMCompleterDrainsChannelOnError(t *testing.T) {
 	// Give it a moment to finish.
 	time.Sleep(50 * time.Millisecond)
 }
+
+// blockingProvider never closes the channel, simulating a hang.
+type blockingProvider struct {
+	ch chan provider.StreamEvent
+}
+
+func (m *blockingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	return m.ch, nil
+}
+
+func TestLLMCompleterRespectsContext(t *testing.T) {
+	bp := &blockingProvider{ch: make(chan provider.StreamEvent)}
+	completer := NewLLMCompleter(bp, "test-model")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := completer.Complete(ctx, "should timeout")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+
+	// Close the channel so drain goroutine finishes.
+	close(bp.ch)
+}
