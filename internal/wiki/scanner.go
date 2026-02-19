@@ -15,19 +15,19 @@ import (
 
 // langExtensions maps file extensions to language names.
 var langExtensions = map[string]string{
-	".go":  "go",
-	".py":  "python",
-	".js":  "javascript",
-	".ts":  "typescript",
-	".tsx": "typescript",
-	".jsx": "javascript",
+	".go":   "go",
+	".py":   "python",
+	".js":   "javascript",
+	".ts":   "typescript",
+	".tsx":  "typescript",
+	".jsx":  "javascript",
 	".java": "java",
-	".rs":  "rust",
-	".rb":  "ruby",
-	".c":   "c",
-	".h":   "c",
-	".cc":  "cpp",
-	".cpp": "cpp",
+	".rs":   "rust",
+	".rb":   "ruby",
+	".c":    "c",
+	".h":    "c",
+	".cc":   "cpp",
+	".cpp":  "cpp",
 }
 
 // skipDirs contains directory names that should be excluded from scanning.
