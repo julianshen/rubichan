@@ -232,7 +232,7 @@ func parseArchitectureResponse(response string) (architecture, keyAbstractions s
 }
 
 // generateSuggestions runs pass 3: improvement suggestions.
-// On LLM failure, returns fallback text instead of failing.
+// On LLM failure, returns nil instead of failing the pipeline.
 func generateSuggestions(ctx context.Context, architecture, summaries string, llm LLMCompleter) []string {
 	var buf bytes.Buffer
 	err := suggestionsTmpl.Execute(&buf, struct {
@@ -244,13 +244,13 @@ func generateSuggestions(ctx context.Context, architecture, summaries string, ll
 	})
 	if err != nil {
 		log.Printf("WARNING: suggestions prompt rendering failed: %v", err)
-		return []string{"Suggestions generation unavailable."}
+		return nil
 	}
 
 	response, err := llm.Complete(ctx, buf.String())
 	if err != nil {
 		log.Printf("WARNING: suggestions generation failed: %v", err)
-		return []string{"Suggestions generation unavailable."}
+		return nil
 	}
 
 	return parseSuggestions(response)
@@ -264,9 +264,6 @@ func parseSuggestions(response string) []string {
 		if line != "" {
 			suggestions = append(suggestions, line)
 		}
-	}
-	if len(suggestions) == 0 {
-		return []string{"No suggestions generated."}
 	}
 	return suggestions
 }

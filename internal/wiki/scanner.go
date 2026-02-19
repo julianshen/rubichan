@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,7 +126,8 @@ func walkFiles(dir string) ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			log.Printf("wiki scanner: skipping path %q: %v", path, err)
+			return nil
 		}
 		if d.IsDir() {
 			if skipDirs[d.Name()] {
