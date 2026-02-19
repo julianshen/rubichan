@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"strings"
 	"testing"
 
 	sitter "github.com/smacker/go-tree-sitter"
@@ -44,8 +43,7 @@ func TestParseUnknownExtension(t *testing.T) {
 	source := []byte(`some content`)
 	_, err := p.Parse("file.xyz", source)
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "unsupported"),
-		"error should contain 'unsupported', got: %s", err.Error())
+	assert.Contains(t, err.Error(), "unsupported")
 }
 
 func TestFunctionsExtraction(t *testing.T) {
@@ -471,6 +469,8 @@ func TestLanguageDetectionByExtension(t *testing.T) {
 		{"main.cc", false},
 		{"main.cpp", false},
 		{"header.h", false},
+		{"component.tsx", false},
+		{"component.jsx", false},
 		{"file.xyz", true},
 		{"noext", true},
 	}

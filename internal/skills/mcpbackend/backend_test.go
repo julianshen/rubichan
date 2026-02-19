@@ -3,6 +3,7 @@ package mcpbackend
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/skills"
@@ -110,7 +111,7 @@ func (m *mockTransport) Send(_ context.Context, _ any) error { return nil }
 
 func (m *mockTransport) Receive(_ context.Context, result any) error {
 	if m.idx >= len(m.responses) {
-		return nil
+		return io.EOF
 	}
 	resp := m.responses[m.idx]
 	m.idx++

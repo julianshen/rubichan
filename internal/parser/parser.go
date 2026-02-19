@@ -70,6 +70,28 @@ var registry = map[string]langInfo{
 		},
 		importNodeType: []string{"import_statement"},
 	},
+	".tsx": {
+		lang: typescript.GetLanguage(),
+		funcNodeTypes: []string{
+			"function_declaration",
+			"generator_function_declaration",
+			"method_definition",
+			"arrow_function",
+			"function_expression",
+		},
+		importNodeType: []string{"import_statement"},
+	},
+	".jsx": {
+		lang: javascript.GetLanguage(),
+		funcNodeTypes: []string{
+			"function_declaration",
+			"generator_function_declaration",
+			"method_definition",
+			"arrow_function",
+			"function_expression",
+		},
+		importNodeType: []string{"import_statement"},
+	},
 	".java": {
 		lang:           java.GetLanguage(),
 		funcNodeTypes:  []string{"method_declaration", "constructor_declaration"},

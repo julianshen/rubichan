@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ func (m *mockTransport) Send(_ context.Context, msg any) error {
 
 func (m *mockTransport) Receive(_ context.Context, result any) error {
 	if m.idx >= len(m.responses) {
-		return nil
+		return io.EOF
 	}
 	resp := m.responses[m.idx]
 	m.idx++
@@ -126,4 +127,29 @@ func TestClientCallToolError(t *testing.T) {
 	_, err := client.CallTool(context.Background(), "bad_tool", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Invalid params")
+}
+
+func TestClientClose(t *testing.T) {
+	mt := &mockTransport{}
+	client := NewClient("test", mt)
+	err := client.Close()
+	assert.NoError(t, err)
+}
+
+func TestClientReceiveResponseEOF(t *testing.T) {
+	// When the transport returns io.EOF (no more responses), receiveResponse
+	// should propagate the error rather than looping forever.
+	mt := &mockTransport{
+		responses: []json.RawMessage{
+			json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"test","version":"1.0"}}}`),
+			// No response for the ListTools call — Receive returns io.EOF.
+		},
+	}
+
+	client := NewClient("test", mt)
+	require.NoError(t, client.Initialize(context.Background()))
+
+	_, err := client.ListTools(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, io.EOF)
 }

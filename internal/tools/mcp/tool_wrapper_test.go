@@ -78,3 +78,62 @@ func TestWrappedToolTransportError(t *testing.T) {
 	assert.Contains(t, err.Error(), "mcp call")
 	assert.Contains(t, err.Error(), "Invalid params")
 }
+
+func TestWrappedToolInputSchemaFallback(t *testing.T) {
+	// When InputSchema is empty, a default {"type":"object"} should be returned.
+	wrapped := WrapTool("fs", nil, MCPTool{
+		Name:        "no_schema_tool",
+		Description: "Tool without schema",
+		InputSchema: nil,
+	})
+
+	schema := wrapped.InputSchema()
+	assert.JSONEq(t, `{"type":"object"}`, string(schema))
+}
+
+func TestWrappedToolInputSchemaProvided(t *testing.T) {
+	customSchema := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`)
+	wrapped := WrapTool("fs", nil, MCPTool{
+		Name:        "schema_tool",
+		Description: "Tool with schema",
+		InputSchema: customSchema,
+	})
+
+	schema := wrapped.InputSchema()
+	assert.JSONEq(t, string(customSchema), string(schema))
+}
+
+func TestWrappedToolExecuteInvalidJSON(t *testing.T) {
+	mt := &mockTransport{
+		responses: []json.RawMessage{
+			json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fs","version":"1.0"}}}`),
+		},
+	}
+
+	client := NewClient("fs", mt)
+	require.NoError(t, client.Initialize(context.Background()))
+
+	wrapped := WrapTool("fs", client, MCPTool{Name: "tool", Description: "A tool"})
+
+	result, err := wrapped.Execute(context.Background(), json.RawMessage(`{invalid json`))
+	require.NoError(t, err) // Invalid JSON returns ToolResult with IsError, not Go error
+	assert.True(t, result.IsError)
+}
+
+func TestWrappedToolExecuteEmptyInput(t *testing.T) {
+	mt := &mockTransport{
+		responses: []json.RawMessage{
+			json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fs","version":"1.0"}}}`),
+			json.RawMessage(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"ok"}]}}`),
+		},
+	}
+
+	client := NewClient("fs", mt)
+	require.NoError(t, client.Initialize(context.Background()))
+
+	wrapped := WrapTool("fs", client, MCPTool{Name: "tool", Description: "A tool"})
+
+	result, err := wrapped.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result.Content)
+}
