@@ -66,6 +66,50 @@ func TestConversationAddToolResultError(t *testing.T) {
 	assert.True(t, msgs[0].Content[0].IsError)
 }
 
+func TestConversationLoadFromStored(t *testing.T) {
+	conv := NewConversation("system prompt")
+	conv.AddUser("existing message")
+
+	storedMsgs := []provider.Message{
+		{
+			Role: "user",
+			Content: []provider.ContentBlock{
+				{Type: "text", Text: "Hello from history"},
+			},
+		},
+		{
+			Role: "assistant",
+			Content: []provider.ContentBlock{
+				{Type: "text", Text: "Hi there!"},
+			},
+		},
+		{
+			Role: "user",
+			Content: []provider.ContentBlock{
+				{Type: "tool_result", ToolUseID: "t1", Text: "file content"},
+			},
+		},
+	}
+
+	conv.LoadFromMessages(storedMsgs)
+
+	msgs := conv.Messages()
+	require.Len(t, msgs, 3, "should replace existing messages with stored ones")
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "Hello from history", msgs[0].Content[0].Text)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Equal(t, "Hi there!", msgs[1].Content[0].Text)
+	assert.Equal(t, "system prompt", conv.SystemPrompt(), "system prompt should be preserved")
+}
+
+func TestConversationLoadFromStoredEmpty(t *testing.T) {
+	conv := NewConversation("system")
+	conv.AddUser("will be replaced")
+
+	conv.LoadFromMessages(nil)
+	assert.Empty(t, conv.Messages())
+}
+
 func TestConversationClear(t *testing.T) {
 	conv := NewConversation("my system prompt")
 	conv.AddUser("hello")
