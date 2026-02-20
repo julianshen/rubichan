@@ -200,6 +200,36 @@ func TestCacheAndGetRegistryEntry(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestForeignKeyEnforcement(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	_, err = s.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content) VALUES (?, ?, ?, ?)`,
+		"nonexistent-session", 0, "user", `[{"type":"text","text":"hi"}]`,
+	)
+	require.Error(t, err, "foreign key constraint should reject orphan message")
+}
+
+func TestSessionAndMessageTablesExist(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	_, err = s.db.Exec(
+		`INSERT INTO sessions (id, model) VALUES (?, ?)`,
+		"test-id", "gpt-4",
+	)
+	require.NoError(t, err, "sessions table should exist")
+
+	_, err = s.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content) VALUES (?, ?, ?, ?)`,
+		"test-id", 0, "user", `[]`,
+	)
+	require.NoError(t, err, "messages table should exist and accept valid FK")
+}
+
 func TestDeleteSkillState(t *testing.T) {
 	s, err := NewStore(":memory:")
 	require.NoError(t, err)

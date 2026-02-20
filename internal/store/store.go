@@ -108,6 +108,26 @@ func createTables(db *sql.DB) error {
 			description TEXT NOT NULL,
 			cached_at   DATETIME NOT NULL DEFAULT (datetime('now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id            TEXT PRIMARY KEY,
+			title         TEXT NOT NULL DEFAULT '',
+			model         TEXT NOT NULL,
+			working_dir   TEXT NOT NULL DEFAULT '',
+			system_prompt TEXT NOT NULL DEFAULT '',
+			created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+			updated_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+			token_count   INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS messages (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+			seq        INTEGER NOT NULL,
+			role       TEXT NOT NULL,
+			content    TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(session_id, seq)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
