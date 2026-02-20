@@ -107,6 +107,7 @@ func main() {
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(skillCmd())
+	rootCmd.AddCommand(wikiCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
