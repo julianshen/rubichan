@@ -69,6 +69,11 @@ func NewStore(dbPath string) (*Store, error) {
 	// Serialize access to prevent SQLITE_BUSY from concurrent goroutines.
 	db.SetMaxOpenConns(1)
 
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+
 	if err := createTables(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create tables: %w", err)
