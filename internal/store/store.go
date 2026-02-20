@@ -337,6 +337,27 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	return &sess, nil
 }
 
+// UpdateSession updates a session's title, token count, and updated_at timestamp.
+// Returns an error if the session does not exist.
+func (s *Store) UpdateSession(sess Session) error {
+	result, err := s.db.Exec(
+		`UPDATE sessions SET title = ?, token_count = ?, updated_at = datetime('now')
+		 WHERE id = ?`,
+		sess.Title, sess.TokenCount, sess.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update session: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update session rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("update session: session %q not found", sess.ID)
+	}
+	return nil
+}
+
 // GetCachedRegistry retrieves a cached registry entry by name.
 // Returns nil if the entry is not found.
 func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {

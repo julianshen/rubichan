@@ -328,3 +328,32 @@ func TestCreateSessionDuplicateID(t *testing.T) {
 	err = s.CreateSession(sess)
 	require.Error(t, err, "duplicate session ID should error")
 }
+
+func TestUpdateSession(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	sess := Session{ID: "sess-upd", Model: "gpt-4", Title: "Original"}
+	require.NoError(t, s.CreateSession(sess))
+
+	sess.Title = "Updated Title"
+	sess.TokenCount = 5000
+	err = s.UpdateSession(sess)
+	require.NoError(t, err)
+
+	got, err := s.GetSession("sess-upd")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "Updated Title", got.Title)
+	assert.Equal(t, 5000, got.TokenCount)
+}
+
+func TestUpdateSessionNotFound(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.UpdateSession(Session{ID: "nonexistent", Model: "gpt-4"})
+	require.Error(t, err, "updating non-existent session should error")
+}
