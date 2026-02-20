@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/provider"
 	_ "modernc.org/sqlite"
 )
 
@@ -51,6 +52,28 @@ type RegistryEntry struct {
 	Version     string
 	Description string
 	CachedAt    time.Time
+}
+
+// Session represents a persisted agent session.
+type Session struct {
+	ID           string
+	Title        string
+	Model        string
+	WorkingDir   string
+	SystemPrompt string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	TokenCount   int
+}
+
+// StoredMessage represents a persisted message within a session.
+type StoredMessage struct {
+	ID        int64
+	SessionID string
+	Seq       int
+	Role      string
+	Content   []provider.ContentBlock
+	CreatedAt time.Time
 }
 
 // Store wraps a SQLite database for skill system persistence.

@@ -260,3 +260,20 @@ func TestDeleteSkillState(t *testing.T) {
 	err = s.DeleteSkillState("nonexistent")
 	assert.NoError(t, err)
 }
+
+func TestSessionTypeZeroValue(t *testing.T) {
+	var s Session
+	assert.Empty(t, s.ID)
+	assert.Empty(t, s.Title)
+	assert.Empty(t, s.Model)
+	assert.True(t, s.CreatedAt.IsZero())
+	assert.Equal(t, 0, s.TokenCount)
+}
+
+func TestStoredMessageTypeZeroValue(t *testing.T) {
+	var m StoredMessage
+	assert.Empty(t, m.SessionID)
+	assert.Empty(t, m.Role)
+	assert.Nil(t, m.Content)
+	assert.Equal(t, 0, m.Seq)
+}
