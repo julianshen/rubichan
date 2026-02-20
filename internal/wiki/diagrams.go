@@ -170,8 +170,9 @@ func escapeMermaid(s string) string {
 	return s
 }
 
+var mermaidIDReplacer = strings.NewReplacer("/", "_", ".", "_", "-", "_", " ", "_")
+
 // sanitizeID converts a string into a safe Mermaid node identifier.
 func sanitizeID(s string) string {
-	r := strings.NewReplacer("/", "_", ".", "_", "-", "_", " ", "_")
-	return r.Replace(s)
+	return mermaidIDReplacer.Replace(s)
 }
