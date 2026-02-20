@@ -304,6 +304,39 @@ func (s *Store) CacheRegistryEntry(entry RegistryEntry) error {
 	return nil
 }
 
+// CreateSession inserts a new session. The ID must be unique.
+func (s *Store) CreateSession(sess Session) error {
+	_, err := s.db.Exec(
+		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		sess.ID, sess.Title, sess.Model, sess.WorkingDir, sess.SystemPrompt, sess.TokenCount,
+	)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+	return nil
+}
+
+// GetSession retrieves a session by ID. Returns nil if not found.
+func (s *Store) GetSession(id string) (*Session, error) {
+	var sess Session
+	var createdStr, updatedStr string
+	err := s.db.QueryRow(
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		 FROM sessions WHERE id = ?`, id,
+	).Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir, &sess.SystemPrompt,
+		&createdStr, &updatedStr, &sess.TokenCount)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	sess.CreatedAt, _ = parseSQLiteDatetime(createdStr)
+	sess.UpdatedAt, _ = parseSQLiteDatetime(updatedStr)
+	return &sess, nil
+}
+
 // GetCachedRegistry retrieves a cached registry entry by name.
 // Returns nil if the entry is not found.
 func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {

@@ -277,3 +277,54 @@ func TestStoredMessageTypeZeroValue(t *testing.T) {
 	assert.Nil(t, m.Content)
 	assert.Equal(t, 0, m.Seq)
 }
+
+func TestCreateAndGetSession(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	sess := Session{
+		ID:           "sess-001",
+		Title:        "My first session",
+		Model:        "claude-3-opus",
+		WorkingDir:   "/home/user/project",
+		SystemPrompt: "You are helpful.",
+		TokenCount:   0,
+	}
+	err = s.CreateSession(sess)
+	require.NoError(t, err)
+
+	got, err := s.GetSession("sess-001")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "sess-001", got.ID)
+	assert.Equal(t, "My first session", got.Title)
+	assert.Equal(t, "claude-3-opus", got.Model)
+	assert.Equal(t, "/home/user/project", got.WorkingDir)
+	assert.Equal(t, "You are helpful.", got.SystemPrompt)
+	assert.Equal(t, 0, got.TokenCount)
+	assert.False(t, got.CreatedAt.IsZero())
+	assert.False(t, got.UpdatedAt.IsZero())
+}
+
+func TestGetSessionNotFound(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	got, err := s.GetSession("nonexistent")
+	require.NoError(t, err)
+	assert.Nil(t, got, "should return nil for missing session")
+}
+
+func TestCreateSessionDuplicateID(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	sess := Session{ID: "dup-id", Model: "gpt-4"}
+	require.NoError(t, s.CreateSession(sess))
+
+	err = s.CreateSession(sess)
+	require.Error(t, err, "duplicate session ID should error")
+}
