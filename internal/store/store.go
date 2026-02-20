@@ -4,6 +4,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -410,4 +411,50 @@ func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {
 	}
 	e.CachedAt, _ = parseSQLiteDatetime(cachedAtStr)
 	return &e, nil
+}
+
+// AppendMessage adds a message to a session, auto-incrementing the sequence number.
+// The content blocks are serialized to JSON for storage.
+func (s *Store) AppendMessage(sessionID, role string, content []provider.ContentBlock) error {
+	contentJSON, err := json.Marshal(content)
+	if err != nil {
+		return fmt.Errorf("marshal content: %w", err)
+	}
+
+	_, err = s.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at)
+		 VALUES (?, COALESCE((SELECT MAX(seq) FROM messages WHERE session_id = ?), -1) + 1, ?, ?, datetime('now'))`,
+		sessionID, sessionID, role, string(contentJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("append message: %w", err)
+	}
+	return nil
+}
+
+// GetMessages retrieves all messages for a session, ordered by sequence number.
+func (s *Store) GetMessages(sessionID string) ([]StoredMessage, error) {
+	rows, err := s.db.Query(
+		`SELECT id, session_id, seq, role, content, created_at
+		 FROM messages WHERE session_id = ? ORDER BY seq`, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get messages: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []StoredMessage
+	for rows.Next() {
+		var m StoredMessage
+		var contentJSON, createdStr string
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Seq, &m.Role, &contentJSON, &createdStr); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		if err := json.Unmarshal([]byte(contentJSON), &m.Content); err != nil {
+			return nil, fmt.Errorf("unmarshal content: %w", err)
+		}
+		m.CreatedAt, _ = parseSQLiteDatetime(createdStr)
+		messages = append(messages, m)
+	}
+	return messages, rows.Err()
 }

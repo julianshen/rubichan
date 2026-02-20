@@ -1,8 +1,11 @@
 package store
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -427,4 +430,90 @@ func TestListSessions(t *testing.T) {
 	require.Len(t, sessions, 2)
 	assert.Equal(t, "s3", sessions[0].ID)
 	assert.Equal(t, "s2", sessions[1].ID)
+}
+
+func TestAppendAndGetMessages(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	sess := Session{ID: "sess-msg", Model: "gpt-4"}
+	require.NoError(t, s.CreateSession(sess))
+
+	userContent := []provider.ContentBlock{
+		{Type: "text", Text: "Hello!"},
+	}
+	err = s.AppendMessage("sess-msg", "user", userContent)
+	require.NoError(t, err)
+
+	assistantContent := []provider.ContentBlock{
+		{Type: "text", Text: "Let me check."},
+		{Type: "tool_use", ID: "t1", Name: "file", Input: json.RawMessage(`{"op":"read"}`)},
+	}
+	err = s.AppendMessage("sess-msg", "assistant", assistantContent)
+	require.NoError(t, err)
+
+	msgs, err := s.GetMessages("sess-msg")
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+
+	assert.Equal(t, "sess-msg", msgs[0].SessionID)
+	assert.Equal(t, 0, msgs[0].Seq)
+	assert.Equal(t, "user", msgs[0].Role)
+	require.Len(t, msgs[0].Content, 1)
+	assert.Equal(t, "text", msgs[0].Content[0].Type)
+	assert.Equal(t, "Hello!", msgs[0].Content[0].Text)
+	assert.False(t, msgs[0].CreatedAt.IsZero())
+
+	assert.Equal(t, 1, msgs[1].Seq)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	require.Len(t, msgs[1].Content, 2)
+	assert.Equal(t, "text", msgs[1].Content[0].Type)
+	assert.Equal(t, "tool_use", msgs[1].Content[1].Type)
+	assert.Equal(t, "t1", msgs[1].Content[1].ID)
+}
+
+func TestAppendMessageAutoSequence(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "seq-test", Model: "m"}))
+
+	for i := 0; i < 5; i++ {
+		err := s.AppendMessage("seq-test", "user", []provider.ContentBlock{
+			{Type: "text", Text: fmt.Sprintf("msg %d", i)},
+		})
+		require.NoError(t, err)
+	}
+
+	msgs, err := s.GetMessages("seq-test")
+	require.NoError(t, err)
+	require.Len(t, msgs, 5)
+	for i, m := range msgs {
+		assert.Equal(t, i, m.Seq, "seq should auto-increment")
+	}
+}
+
+func TestAppendMessageInvalidSession(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.AppendMessage("nonexistent", "user", []provider.ContentBlock{
+		{Type: "text", Text: "orphan"},
+	})
+	require.Error(t, err, "should reject message for non-existent session")
+}
+
+func TestGetMessagesEmpty(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "empty", Model: "m"}))
+
+	msgs, err := s.GetMessages("empty")
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
 }
