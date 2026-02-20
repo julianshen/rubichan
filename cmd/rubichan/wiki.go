@@ -56,7 +56,7 @@ architecture diagrams, module documentation, and improvement suggestions.`,
 	}
 
 	cmd.Flags().StringVar(&formatFlag, "format", "raw-md", "output format: raw-md, hugo, docusaurus")
-	cmd.Flags().StringVar(&outputFlag, "output", "docs/wiki", "output directory")
+	cmd.Flags().StringVar(&outputFlag, "outdir", "docs/wiki", "output directory")
 	cmd.Flags().StringVar(&diagramsFlag, "diagrams", "mermaid", "diagram format (only mermaid supported)")
 	cmd.Flags().IntVar(&concurrencyFlag, "concurrency", 5, "max parallel LLM calls")
 

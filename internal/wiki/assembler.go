@@ -2,6 +2,7 @@ package wiki
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -253,7 +254,14 @@ func writeMermaidBlock(b *strings.Builder, d Diagram) {
 	b.WriteString("```\n\n")
 }
 
-// titleSlug converts a title to a URL-friendly slug: lowercased with spaces replaced by hyphens.
+// titleSlug converts a title to a URL-friendly slug: lowercased, spaces to hyphens,
+// non-alphanumeric characters (except hyphens) stripped.
 func titleSlug(title string) string {
-	return strings.ReplaceAll(strings.ToLower(title), " ", "-")
+	slug := strings.ReplaceAll(strings.ToLower(title), " ", "-")
+	re := regexp.MustCompile(`[^a-z0-9-]`)
+	slug = re.ReplaceAllString(slug, "")
+	// Collapse multiple consecutive hyphens.
+	re2 := regexp.MustCompile(`-{2,}`)
+	slug = re2.ReplaceAllString(slug, "-")
+	return strings.Trim(slug, "-")
 }

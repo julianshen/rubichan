@@ -85,7 +85,7 @@ func renderDocusaurus(documents []Document, cfg RendererConfig) error {
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Project Wiki',
-  url: 'https://example.com',
+  url: 'https://your-project-url.example.com',
   baseUrl: '/',
   themes: ['@docusaurus/theme-mermaid'],
   markdown: {

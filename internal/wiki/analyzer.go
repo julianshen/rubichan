@@ -5,11 +5,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
 
-	"golang.org/x/sync/errgroup"
+	"github.com/sourcegraph/conc/pool"
 )
 
 // LLMCompleter abstracts LLM completion for testability.
@@ -98,36 +99,38 @@ func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg Analyzer
 }
 
 // analyzeModules runs pass 1: concurrent per-module summarization.
+// Results are sorted by module name for deterministic output.
 func analyzeModules(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg AnalyzerConfig) ([]ModuleAnalysis, error) {
 	concurrency := cfg.Concurrency
 	if concurrency <= 0 {
 		concurrency = 5
 	}
 
+	p := pool.New().WithMaxGoroutines(concurrency)
+
 	var mu sync.Mutex
 	var results []ModuleAnalysis
 
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(concurrency)
-
 	for _, chunk := range chunks {
 		chunk := chunk // capture loop variable
-		g.Go(func() error {
+		p.Go(func() {
 			analysis, err := analyzeModule(ctx, chunk, llm)
 			if err != nil {
 				log.Printf("WARNING: module %q analysis failed: %v", chunk.Module, err)
-				return nil // non-fatal: skip this module
+				return // non-fatal: skip this module
 			}
 			mu.Lock()
 			results = append(results, analysis)
 			mu.Unlock()
-			return nil
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
+	p.Wait()
+
+	// Sort for deterministic output regardless of goroutine scheduling.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Module < results[j].Module
+	})
 
 	return results, nil
 }

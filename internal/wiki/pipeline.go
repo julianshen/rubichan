@@ -58,7 +58,11 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 
 	// Stage 4: Diagrams
 	fmt.Fprintf(os.Stderr, "wiki: generating diagrams...\n")
-	diagrams, err := GenerateDiagrams(ctx, files, analysis, llm, DiagramConfig{Format: cfg.DiagramFmt})
+	diagramFmt := cfg.DiagramFmt
+	if diagramFmt == "" {
+		diagramFmt = "mermaid"
+	}
+	diagrams, err := GenerateDiagrams(ctx, files, analysis, llm, DiagramConfig{Format: diagramFmt})
 	if err != nil {
 		return fmt.Errorf("diagrams: %w", err)
 	}

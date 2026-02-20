@@ -20,8 +20,8 @@ func TestWikiCmdDefaultFlags(t *testing.T) {
 	format, _ := cmd.Flags().GetString("format")
 	assert.Equal(t, "raw-md", format)
 
-	output, _ := cmd.Flags().GetString("output")
-	assert.Equal(t, "docs/wiki", output)
+	outdir, _ := cmd.Flags().GetString("outdir")
+	assert.Equal(t, "docs/wiki", outdir)
 
 	diagrams, _ := cmd.Flags().GetString("diagrams")
 	assert.Equal(t, "mermaid", diagrams)

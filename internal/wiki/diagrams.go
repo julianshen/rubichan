@@ -59,11 +59,8 @@ func generateArchitectureDiagram(modules []ModuleAnalysis) Diagram {
 
 	for _, m := range modules {
 		id := sanitizeID(m.Module)
-		summary := m.Summary
-		if len(summary) > 40 {
-			summary = summary[:40]
-		}
-		fmt.Fprintf(&b, "    %s[\"%s\\n%s\"]\n", id, m.Module, summary)
+		summary := truncateUTF8(m.Summary, 40)
+		fmt.Fprintf(&b, "    %s[\"%s\\n%s\"]\n", id, escapeMermaid(m.Module), escapeMermaid(summary))
 	}
 
 	return Diagram{
@@ -122,7 +119,7 @@ func generateDataFlowDiagram(modules []ModuleAnalysis) Diagram {
 
 	for i, m := range modules {
 		id := sanitizeID(m.Module)
-		fmt.Fprintf(&b, "    %s[\"%s\"]\n", id, m.Module)
+		fmt.Fprintf(&b, "    %s[\"%s\"]\n", id, escapeMermaid(m.Module))
 		if i > 0 {
 			prevID := sanitizeID(modules[i-1].Module)
 			fmt.Fprintf(&b, "    %s --> %s\n", prevID, id)
@@ -155,6 +152,22 @@ Respond with ONLY the Mermaid diagram code starting with "sequenceDiagram".`, ar
 		Type:    "sequence",
 		Content: strings.TrimSpace(response),
 	}, nil
+}
+
+// truncateUTF8 truncates s to at most maxRunes Unicode code points,
+// avoiding corruption of multi-byte characters.
+func truncateUTF8(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes])
+	}
+	return s
+}
+
+// escapeMermaid replaces characters that would break Mermaid label syntax.
+func escapeMermaid(s string) string {
+	s = strings.ReplaceAll(s, "\"", "#quot;")
+	return s
 }
 
 // sanitizeID converts a string into a safe Mermaid node identifier.
