@@ -357,3 +357,74 @@ func TestUpdateSessionNotFound(t *testing.T) {
 	err = s.UpdateSession(Session{ID: "nonexistent", Model: "gpt-4"})
 	require.Error(t, err, "updating non-existent session should error")
 }
+
+func TestDeleteSession(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	sess := Session{ID: "sess-del", Model: "gpt-4"}
+	require.NoError(t, s.CreateSession(sess))
+
+	err = s.DeleteSession("sess-del")
+	require.NoError(t, err)
+
+	got, err := s.GetSession("sess-del")
+	require.NoError(t, err)
+	assert.Nil(t, got, "deleted session should not be found")
+
+	err = s.DeleteSession("nonexistent")
+	assert.NoError(t, err)
+}
+
+func TestDeleteSessionCascadesMessages(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	sess := Session{ID: "sess-cascade", Model: "gpt-4"}
+	require.NoError(t, s.CreateSession(sess))
+
+	_, err = s.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content) VALUES (?, ?, ?, ?)`,
+		"sess-cascade", 0, "user", `[{"type":"text","text":"hi"}]`,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, s.DeleteSession("sess-cascade"))
+
+	var count int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE session_id = ?`, "sess-cascade").Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "messages should be cascade-deleted")
+}
+
+func TestListSessions(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	sessions, err := s.ListSessions(10)
+	require.NoError(t, err)
+	assert.Empty(t, sessions)
+
+	_, err = s.db.Exec(
+		`INSERT INTO sessions (id, title, model, created_at, updated_at) VALUES
+		 ('s1', 'First', 'gpt-4', datetime('now', '-2 minutes'), datetime('now', '-2 minutes')),
+		 ('s2', 'Second', 'gpt-4', datetime('now', '-1 minute'), datetime('now', '-1 minute')),
+		 ('s3', 'Third', 'gpt-4', datetime('now'), datetime('now'))`)
+	require.NoError(t, err)
+
+	sessions, err = s.ListSessions(10)
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, "s3", sessions[0].ID)
+	assert.Equal(t, "s2", sessions[1].ID)
+	assert.Equal(t, "s1", sessions[2].ID)
+
+	sessions, err = s.ListSessions(2)
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+	assert.Equal(t, "s3", sessions[0].ID)
+	assert.Equal(t, "s2", sessions[1].ID)
+}

@@ -358,6 +358,41 @@ func (s *Store) UpdateSession(sess Session) error {
 	return nil
 }
 
+// DeleteSession removes a session and its messages (via CASCADE).
+func (s *Store) DeleteSession(id string) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+// ListSessions returns the most recently updated sessions, limited to n.
+func (s *Store) ListSessions(limit int) ([]Session, error) {
+	rows, err := s.db.Query(
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		 FROM sessions ORDER BY updated_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []Session
+	for rows.Next() {
+		var sess Session
+		var createdStr, updatedStr string
+		if err := rows.Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir,
+			&sess.SystemPrompt, &createdStr, &updatedStr, &sess.TokenCount); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		sess.CreatedAt, _ = parseSQLiteDatetime(createdStr)
+		sess.UpdatedAt, _ = parseSQLiteDatetime(updatedStr)
+		sessions = append(sessions, sess)
+	}
+	return sessions, rows.Err()
+}
+
 // GetCachedRegistry retrieves a cached registry entry by name.
 // Returns nil if the entry is not found.
 func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {
