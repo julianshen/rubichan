@@ -338,7 +338,9 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	return &sess, nil
 }
 
-// UpdateSession updates a session's title, token count, and updated_at timestamp.
+// UpdateSession updates a session's title, token_count, and updated_at timestamp.
+// Only Title and TokenCount from the Session struct are written; other fields
+// (Model, WorkingDir, SystemPrompt) are immutable after creation.
 // Returns an error if the session does not exist.
 func (s *Store) UpdateSession(sess Session) error {
 	result, err := s.db.Exec(
@@ -421,6 +423,10 @@ func (s *Store) AppendMessage(sessionID, role string, content []provider.Content
 		return fmt.Errorf("marshal content: %w", err)
 	}
 
+	// The COALESCE subquery computes the next sequence number. This is safe
+	// because MaxOpenConns(1) serializes all database access, preventing
+	// concurrent callers from computing the same MAX(seq). Do not increase
+	// MaxOpenConns without wrapping this in an explicit transaction.
 	_, err = s.db.Exec(
 		`INSERT INTO messages (session_id, seq, role, content, created_at)
 		 VALUES (?, COALESCE((SELECT MAX(seq) FROM messages WHERE session_id = ?), -1) + 1, ?, ?, datetime('now'))`,

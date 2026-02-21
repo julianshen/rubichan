@@ -163,6 +163,13 @@ func (a *Agent) SetModel(model string) {
 	a.model = model
 }
 
+// persistToolResult saves a tool result message to the store.
+func (a *Agent) persistToolResult(toolUseID, content string, isError bool) {
+	a.persistMessage("user", []provider.ContentBlock{
+		{Type: "tool_result", ToolUseID: toolUseID, Text: content, IsError: isError},
+	})
+}
+
 // persistMessage saves a message to the store. Errors are logged but non-fatal.
 func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 	if a.store == nil {
@@ -354,7 +361,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			if hookErr != nil {
 				result := fmt.Sprintf("hook error: %s", hookErr)
 				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistMessage("user", []provider.ContentBlock{{Type: "tool_result", ToolUseID: tc.ID, Text: result, IsError: true}})
+				a.persistToolResult(tc.ID, result, true)
 				ch <- TurnEvent{
 					Type: "tool_result",
 					ToolResult: &ToolResultEvent{
@@ -369,7 +376,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			if hookResult != nil && hookResult.Cancel {
 				result := "tool call cancelled by skill"
 				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistMessage("user", []provider.ContentBlock{{Type: "tool_result", ToolUseID: tc.ID, Text: result, IsError: true}})
+				a.persistToolResult(tc.ID, result, true)
 				ch <- TurnEvent{
 					Type: "tool_result",
 					ToolResult: &ToolResultEvent{
@@ -387,7 +394,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			if approvalErr != nil {
 				result := fmt.Sprintf("approval error: %s", approvalErr)
 				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistMessage("user", []provider.ContentBlock{{Type: "tool_result", ToolUseID: tc.ID, Text: result, IsError: true}})
+				a.persistToolResult(tc.ID, result, true)
 				ch <- TurnEvent{
 					Type: "tool_result",
 					ToolResult: &ToolResultEvent{
@@ -403,7 +410,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			if !approved {
 				result := "tool call denied by user"
 				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistMessage("user", []provider.ContentBlock{{Type: "tool_result", ToolUseID: tc.ID, Text: result, IsError: true}})
+				a.persistToolResult(tc.ID, result, true)
 				ch <- TurnEvent{
 					Type: "tool_result",
 					ToolResult: &ToolResultEvent{
@@ -421,7 +428,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			if !found {
 				result := fmt.Sprintf("unknown tool: %s", tc.Name)
 				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistMessage("user", []provider.ContentBlock{{Type: "tool_result", ToolUseID: tc.ID, Text: result, IsError: true}})
+				a.persistToolResult(tc.ID, result, true)
 				ch <- TurnEvent{
 					Type: "tool_result",
 					ToolResult: &ToolResultEvent{
@@ -438,7 +445,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			if execErr != nil {
 				result := fmt.Sprintf("tool execution error: %s", execErr)
 				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistMessage("user", []provider.ContentBlock{{Type: "tool_result", ToolUseID: tc.ID, Text: result, IsError: true}})
+				a.persistToolResult(tc.ID, result, true)
 				ch <- TurnEvent{
 					Type: "tool_result",
 					ToolResult: &ToolResultEvent{
@@ -468,7 +475,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			}
 
 			a.conversation.AddToolResult(tc.ID, toolResult.Content, toolResult.IsError)
-			a.persistMessage("user", []provider.ContentBlock{{Type: "tool_result", ToolUseID: tc.ID, Text: toolResult.Content, IsError: toolResult.IsError}})
+			a.persistToolResult(tc.ID, toolResult.Content, toolResult.IsError)
 			ch <- TurnEvent{
 				Type: "tool_result",
 				ToolResult: &ToolResultEvent{
