@@ -126,6 +126,10 @@ func (c *Correlator) deduplicate(findings []Finding) []Finding {
 	return result
 }
 
+// proximityThreshold is the maximum line distance between two findings
+// for them to be considered proximate when function names are unavailable.
+const proximityThreshold = 20
+
 // proximate checks whether two findings are close enough to form an attack chain.
 // Two findings are proximate if they share the same file AND either share the
 // same function or have overlapping/adjacent line ranges (within 20 lines).
@@ -135,23 +139,36 @@ func proximate(a, b Finding, sameFunc bool) bool {
 	}
 
 	if sameFunc {
-		// Must share the same function
-		if a.Location.Function != "" && b.Location.Function != "" &&
-			a.Location.Function == b.Location.Function {
-			return true
+		// Prefer function-name match when both are available.
+		if a.Location.Function != "" && b.Location.Function != "" {
+			return a.Location.Function == b.Location.Function
 		}
-		// Also accept overlapping/adjacent line ranges within same function context
-		if a.Location.Function != "" && b.Location.Function != "" &&
-			a.Location.Function == b.Location.Function {
-			return true
-		}
-		// If either has no function, fall back to line proximity check within same file
-		// but only if sameFunc is required, we need function match
-		return false
+		// Fall back to line proximity when function names are unavailable
+		// (e.g., findings from static scanners that don't use tree-sitter).
+		return linesClose(a.Location, b.Location, proximityThreshold)
 	}
 
-	// Same file is sufficient for non-sameFunc patterns
+	// Same file is sufficient for non-sameFunc patterns.
 	return true
+}
+
+// linesClose returns true if the two locations overlap or are within
+// threshold lines of each other.
+func linesClose(a, b Location, threshold int) bool {
+	// Need valid line numbers to compare.
+	if a.StartLine == 0 || b.StartLine == 0 {
+		return false
+	}
+	aEnd := a.EndLine
+	if aEnd == 0 {
+		aEnd = a.StartLine
+	}
+	bEnd := b.EndLine
+	if bEnd == 0 {
+		bEnd = b.StartLine
+	}
+	// Check if ranges overlap or are within threshold.
+	return a.StartLine <= bEnd+threshold && b.StartLine <= aEnd+threshold
 }
 
 // detectChains scans deduplicated findings for known attack chain patterns.

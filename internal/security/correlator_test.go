@@ -379,3 +379,83 @@ func TestCorrelatorMultipleChains(t *testing.T) {
 	assert.True(t, titles["Unauthenticated Injection"])
 	assert.True(t, titles["Recoverable Secret"])
 }
+
+func TestLinesClose(t *testing.T) {
+	tests := []struct {
+		name      string
+		a, b      Location
+		threshold int
+		want      bool
+	}{
+		{
+			name:      "overlapping ranges",
+			a:         Location{StartLine: 10, EndLine: 20},
+			b:         Location{StartLine: 15, EndLine: 25},
+			threshold: 20,
+			want:      true,
+		},
+		{
+			name:      "adjacent within threshold",
+			a:         Location{StartLine: 10, EndLine: 15},
+			b:         Location{StartLine: 30, EndLine: 35},
+			threshold: 20,
+			want:      true,
+		},
+		{
+			name:      "too far apart",
+			a:         Location{StartLine: 10, EndLine: 15},
+			b:         Location{StartLine: 50, EndLine: 55},
+			threshold: 20,
+			want:      false,
+		},
+		{
+			name:      "single-line findings close together",
+			a:         Location{StartLine: 10},
+			b:         Location{StartLine: 12},
+			threshold: 20,
+			want:      true,
+		},
+		{
+			name:      "zero start line returns false",
+			a:         Location{StartLine: 0},
+			b:         Location{StartLine: 10},
+			threshold: 20,
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, linesClose(tt.a, tt.b, tt.threshold))
+		})
+	}
+}
+
+func TestProximateLinesFallbackWhenNoFunction(t *testing.T) {
+	// When sameFunc is required but function names are empty,
+	// should fall back to line proximity.
+	a := Finding{
+		Location: Location{File: "handler.go", StartLine: 10, EndLine: 15},
+	}
+	b := Finding{
+		Location: Location{File: "handler.go", StartLine: 20, EndLine: 25},
+	}
+	assert.True(t, proximate(a, b, true), "close lines without function names should be proximate")
+
+	// Too far apart should not match.
+	c := Finding{
+		Location: Location{File: "handler.go", StartLine: 100, EndLine: 105},
+	}
+	assert.False(t, proximate(a, c, true), "distant lines without function names should not be proximate")
+}
+
+func TestProximateFunctionMatchOverridesLineDistance(t *testing.T) {
+	// When both have function names, function match is authoritative.
+	a := Finding{
+		Location: Location{File: "handler.go", StartLine: 10, Function: "A"},
+	}
+	b := Finding{
+		Location: Location{File: "handler.go", StartLine: 12, Function: "B"},
+	}
+	assert.False(t, proximate(a, b, true), "different function names should not match even if close")
+}
