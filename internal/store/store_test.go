@@ -350,6 +350,7 @@ func TestUpdateSession(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "Updated Title", got.Title)
 	assert.Equal(t, 5000, got.TokenCount)
+	assert.False(t, got.UpdatedAt.Before(got.CreatedAt), "updated_at should be at or after created_at")
 }
 
 func TestUpdateSessionNotFound(t *testing.T) {
@@ -516,4 +517,72 @@ func TestGetMessagesEmpty(t *testing.T) {
 	msgs, err := s.GetMessages("empty")
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
+}
+
+func TestGetMessagesWithMalformedJSON(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "bad-json", Model: "m"}))
+
+	// Insert a message with malformed JSON content directly.
+	_, err = s.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content) VALUES (?, ?, ?, ?)`,
+		"bad-json", 0, "user", `not-valid-json`,
+	)
+	require.NoError(t, err)
+
+	_, err = s.GetMessages("bad-json")
+	require.Error(t, err, "should fail on malformed JSON content")
+	assert.Contains(t, err.Error(), "unmarshal content")
+}
+
+func TestAppendMessageMarshalError(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "marshal-test", Model: "m"}))
+
+	// Normal content should work fine.
+	err = s.AppendMessage("marshal-test", "user", []provider.ContentBlock{
+		{Type: "text", Text: "hello"},
+	})
+	require.NoError(t, err)
+
+	// Verify it was stored.
+	msgs, err := s.GetMessages("marshal-test")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+}
+
+func TestStoreOperationsAfterClose(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+
+	// Close the store.
+	require.NoError(t, s.Close())
+
+	// All operations should return errors.
+	err = s.CreateSession(Session{ID: "x", Model: "m"})
+	assert.Error(t, err, "CreateSession after close should fail")
+
+	_, err = s.GetSession("x")
+	assert.Error(t, err, "GetSession after close should fail")
+
+	_, err = s.ListSessions(10)
+	assert.Error(t, err, "ListSessions after close should fail")
+
+	err = s.UpdateSession(Session{ID: "x"})
+	assert.Error(t, err, "UpdateSession after close should fail")
+
+	err = s.DeleteSession("x")
+	assert.Error(t, err, "DeleteSession after close should fail")
+
+	err = s.AppendMessage("x", "user", nil)
+	assert.Error(t, err, "AppendMessage after close should fail")
+
+	_, err = s.GetMessages("x")
+	assert.Error(t, err, "GetMessages after close should fail")
 }

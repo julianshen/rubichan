@@ -666,3 +666,44 @@ func TestAgentWithoutStoreStillWorks(t *testing.T) {
 	}
 	// Should work fine without store
 }
+
+func TestAgentPersistMessageErrorIsNonFatal(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Still works!"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	require.NotEmpty(t, a.sessionID)
+
+	// Close the store to force persistence errors.
+	s.Close()
+
+	// Turn should still work — persistence errors are non-fatal.
+	ch, err := a.Turn(context.Background(), "Hello after close")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should complete normally despite persistence failure.
+	assert.Equal(t, "done", events[len(events)-1].Type)
+
+	var hasText bool
+	for _, ev := range events {
+		if ev.Type == "text_delta" {
+			hasText = true
+		}
+	}
+	assert.True(t, hasText, "should still get text from LLM")
+}
