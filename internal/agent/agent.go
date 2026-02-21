@@ -62,18 +62,27 @@ func WithStore(st *store.Store) AgentOption {
 	}
 }
 
+// WithResumeSession configures the agent to resume an existing session
+// instead of creating a new one.
+func WithResumeSession(sessionID string) AgentOption {
+	return func(a *Agent) {
+		a.resumeSessionID = sessionID
+	}
+}
+
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider     provider.LLMProvider
-	tools        *tools.Registry
-	conversation *Conversation
-	context      *ContextManager
-	approve      ApprovalFunc
-	model        string
-	maxTurns     int
-	skillRuntime *skills.Runtime
-	store        *store.Store
-	sessionID    string
+	provider        provider.LLMProvider
+	tools           *tools.Registry
+	conversation    *Conversation
+	context         *ContextManager
+	approve         ApprovalFunc
+	model           string
+	maxTurns        int
+	skillRuntime    *skills.Runtime
+	store           *store.Store
+	sessionID       string
+	resumeSessionID string
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -94,17 +103,44 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		opt(a)
 	}
 	if a.store != nil {
-		a.sessionID = uuid.New().String()
-		wd, _ := os.Getwd()
-		sess := store.Session{
-			ID:           a.sessionID,
-			Model:        a.model,
-			WorkingDir:   wd,
-			SystemPrompt: a.conversation.SystemPrompt(),
+		if a.resumeSessionID != "" {
+			// Resume existing session.
+			sess, err := a.store.GetSession(a.resumeSessionID)
+			if err != nil || sess == nil {
+				log.Printf("warning: failed to resume session %s: %v", a.resumeSessionID, err)
+			} else {
+				a.sessionID = sess.ID
+				a.conversation = NewConversation(sess.SystemPrompt)
+				msgs, err := a.store.GetMessages(sess.ID)
+				if err != nil {
+					log.Printf("warning: failed to load messages: %v", err)
+				} else {
+					providerMsgs := make([]provider.Message, len(msgs))
+					for i, m := range msgs {
+						providerMsgs[i] = provider.Message{
+							Role:    m.Role,
+							Content: m.Content,
+						}
+					}
+					a.conversation.LoadFromMessages(providerMsgs)
+				}
+			}
 		}
-		if err := a.store.CreateSession(sess); err != nil {
-			log.Printf("warning: failed to create session: %v", err)
-			a.store = nil // disable persistence for this session
+
+		if a.sessionID == "" {
+			// Create new session (either no resume requested, or resume failed).
+			a.sessionID = uuid.New().String()
+			wd, _ := os.Getwd()
+			sess := store.Session{
+				ID:           a.sessionID,
+				Model:        a.model,
+				WorkingDir:   wd,
+				SystemPrompt: a.conversation.SystemPrompt(),
+			}
+			if err := a.store.CreateSession(sess); err != nil {
+				log.Printf("warning: failed to create session: %v", err)
+				a.store = nil // disable persistence for this session
+			}
 		}
 	}
 	return a
