@@ -181,9 +181,7 @@ func countFiles(target ScanTarget) int {
 	if len(target.Files) > 0 {
 		return len(target.Files)
 	}
-	// Use the prioritizer's file collection to count files.
-	p := NewPrioritizer(PrioritizerConfig{})
-	files, err := p.collectFiles(target)
+	files, err := CollectFiles(target, nil)
 	if err != nil {
 		return 0
 	}

@@ -54,7 +54,7 @@ func (s *SASTScanner) Scan(ctx context.Context, target security.ScanTarget) ([]s
 		return nil, fmt.Errorf("sast scanner cancelled: %w", err)
 	}
 
-	files, err := s.collectFiles(target)
+	files, err := security.CollectFiles(target, []string{".go", ".py", ".js", ".ts", ".tsx", ".jsx"})
 	if err != nil {
 		return nil, fmt.Errorf("collecting files: %w", err)
 	}
@@ -81,42 +81,6 @@ var supportedExtensions = map[string]string{
 	".ts":  "typescript",
 	".tsx": "typescript",
 	".jsx": "javascript",
-}
-
-// collectFiles builds the list of relative file paths to scan, filtering to
-// only supported languages.
-func (s *SASTScanner) collectFiles(target security.ScanTarget) ([]string, error) {
-	if len(target.Files) > 0 {
-		var supported []string
-		for _, f := range target.Files {
-			ext := filepath.Ext(f)
-			if _, ok := supportedExtensions[ext]; ok {
-				supported = append(supported, f)
-			}
-		}
-		return supported, nil
-	}
-
-	var files []string
-	err := filepath.Walk(target.RootDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			return nil
-		}
-		ext := filepath.Ext(path)
-		if _, ok := supportedExtensions[ext]; !ok {
-			return nil
-		}
-		relPath, err := filepath.Rel(target.RootDir, path)
-		if err != nil {
-			return nil
-		}
-		files = append(files, relPath)
-		return nil
-	})
-	return files, err
 }
 
 // scanFile parses a single source file and applies SAST patterns to its function bodies.

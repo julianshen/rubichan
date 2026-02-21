@@ -321,3 +321,52 @@ const awsKey = "AKIAIOSFODNN7EXAMPLE"
 	_, err := s.Scan(ctx, security.ScanTarget{RootDir: dir})
 	assert.Error(t, err)
 }
+
+func TestSecretScannerMaskSecretShortValue(t *testing.T) {
+	// Values <= 4 chars should be fully masked.
+	result := maskSecret("abc", "test-rule")
+	assert.Equal(t, "***", result)
+
+	result = maskSecret("abcd", "test-rule")
+	assert.Equal(t, "****", result)
+}
+
+func TestSecretScannerMaskSecretLongValue(t *testing.T) {
+	result := maskSecret("AKIAIOSFODNN7REALKEY1", "aws-key")
+	assert.Contains(t, result, "AKIA")
+	assert.Contains(t, result, "aws-key")
+	assert.NotContains(t, result, "AKIAIOSFODNN7REALKEY1")
+}
+
+func TestSecretScannerShannonEntropyEmptyString(t *testing.T) {
+	result := shannonEntropy("")
+	assert.Equal(t, 0.0, result)
+}
+
+func TestSecretScannerShannonEntropyLowEntropy(t *testing.T) {
+	// Repeating character has zero entropy.
+	result := shannonEntropy("aaaaaaaaaa")
+	assert.Equal(t, 0.0, result)
+}
+
+func TestSecretScannerShannonEntropyHighEntropy(t *testing.T) {
+	result := shannonEntropy("aB3$xZ9kL7wQ2mN5pR8v")
+	assert.Greater(t, result, 4.0)
+}
+
+func TestSecretScannerUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", `package a
+const key = "AKIAIOSFODNN7REALKEY1"
+`)
+
+	// Also create a non-existent file path reference via Files.
+	s := NewSecretScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{
+		RootDir: dir,
+		Files:   []string{"nonexistent.go"},
+	})
+	require.NoError(t, err)
+	// The unreadable file should be skipped, not cause an error.
+	assert.Empty(t, findings)
+}

@@ -119,6 +119,100 @@ func main() {}
 	assert.True(t, found, "expected a license header finding")
 }
 
+func TestLicenseScannerContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "LICENSE", "MIT License\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s := NewLicenseScanner()
+	_, err := s.Scan(ctx, security.ScanTarget{RootDir: dir})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cancelled")
+}
+
+func TestLicenseScannerUnknownLicense(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "LICENSE", `This is a custom proprietary license.
+All rights reserved.
+No permission granted.
+`)
+
+	s := NewLicenseScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	// Unknown license should not trigger copyleft finding but shouldn't trigger
+	// "missing license" either since the file exists.
+	for _, f := range findings {
+		assert.NotContains(t, f.Title, "Copyleft")
+		assert.NotEqual(t, "Missing LICENSE file", f.Title)
+	}
+}
+
+func TestLicenseScannerNoHeaderInFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "LICENSE", "MIT License\n")
+	writeFile(t, dir, "main.go", `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hello")
+}
+`)
+
+	s := NewLicenseScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	// No header finding expected since there's no copyright/license text.
+	for _, f := range findings {
+		assert.NotEqual(t, "License header found in source file", f.Title)
+	}
+}
+
+func TestLicenseScannerHeaderContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "LICENSE", "MIT License\n")
+	writeFile(t, dir, "main.go", `// Copyright 2026 Example Corp
+package main
+func main() {}
+`)
+
+	// Cancel context after license file check but source header scan may still cancel.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s := NewLicenseScanner()
+	_, err := s.Scan(ctx, security.ScanTarget{RootDir: dir})
+	assert.Error(t, err)
+}
+
+func TestLicenseScannerIdentifyLicenseNilForUnknown(t *testing.T) {
+	lt := identifyLicense("Some custom text without any license keywords")
+	assert.Nil(t, lt)
+}
+
+func TestLicenseScannerDetectsLGPL(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "LICENCE.txt", `GNU LESSER GENERAL PUBLIC LICENSE
+Version 2.1, February 1999
+`)
+
+	s := NewLicenseScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+
+	found := false
+	for _, f := range findings {
+		if f.Title == "Copyleft license detected: LGPL" {
+			found = true
+			assert.Equal(t, security.SeverityMedium, f.Severity)
+		}
+	}
+	assert.True(t, found, "expected an LGPL copyleft finding")
+}
+
 func TestLicenseScannerDetectsAGPL(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "COPYING", `GNU AFFERO GENERAL PUBLIC LICENSE

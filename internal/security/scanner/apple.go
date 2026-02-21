@@ -96,31 +96,7 @@ func (s *AppleScanner) Scan(ctx context.Context, target security.ScanTarget) ([]
 
 // collectFiles builds the list of relevant files.
 func (s *AppleScanner) collectFiles(target security.ScanTarget) ([]string, error) {
-	if len(target.Files) > 0 {
-		return target.Files, nil
-	}
-
-	var files []string
-	err := filepath.Walk(target.RootDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			return nil
-		}
-		relPath, relErr := filepath.Rel(target.RootDir, path)
-		if relErr != nil {
-			return nil
-		}
-
-		ext := filepath.Ext(path)
-		base := filepath.Base(path)
-		if base == "Info.plist" || ext == ".entitlements" || ext == ".swift" {
-			files = append(files, relPath)
-		}
-		return nil
-	})
-	return files, err
+	return security.CollectFiles(target, []string{".plist", ".entitlements", ".swift"})
 }
 
 // ─── Plist parsing ──────────────────────────────────────────────────────────

@@ -37,7 +37,7 @@ func (s *ConfigScanner) Scan(ctx context.Context, target security.ScanTarget) ([
 		return nil, fmt.Errorf("config scanner cancelled: %w", err)
 	}
 
-	files, err := s.collectFiles(target)
+	files, err := security.CollectFiles(target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("collecting files: %w", err)
 	}
@@ -54,31 +54,6 @@ func (s *ConfigScanner) Scan(ctx context.Context, target security.ScanTarget) ([
 	}
 
 	return findings, nil
-}
-
-// collectFiles builds the list of relative file paths to scan.
-func (s *ConfigScanner) collectFiles(target security.ScanTarget) ([]string, error) {
-	if len(target.Files) > 0 {
-		return target.Files, nil
-	}
-
-	var files []string
-	err := filepath.Walk(target.RootDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(target.RootDir, path)
-		if err != nil {
-			return nil
-		}
-		files = append(files, relPath)
-		return nil
-	})
-	return files, err
 }
 
 // scanFile dispatches to the appropriate checker based on file type.
