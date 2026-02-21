@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -221,7 +222,7 @@ func auth() {
 	chunks, err := p.Prioritize(context.Background(), target, nil)
 	require.NoError(t, err)
 	for _, c := range chunks {
-		assert.False(t, filepath.HasPrefix(c.File, "vendor/"),
+		assert.False(t, strings.HasPrefix(c.File, "vendor/"),
 			"vendor files should be excluded")
 	}
 }
