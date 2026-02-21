@@ -80,6 +80,59 @@ func TestSkillListCommandEmpty(t *testing.T) {
 	assert.Contains(t, output, "No skills installed")
 }
 
+func TestSkillListAvailable(t *testing.T) {
+	results := []skills.RegistrySearchResult{
+		{Name: "code-review", Version: "1.0.0", Description: "Automated code review"},
+		{Name: "formatter", Version: "2.1.0", Description: "Code formatting skill"},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/search", r.URL.Path)
+		assert.Equal(t, "", r.URL.Query().Get("q"))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list", "--available", "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "NAME")
+	assert.Contains(t, output, "VERSION")
+	assert.Contains(t, output, "DESCRIPTION")
+	assert.Contains(t, output, "code-review")
+	assert.Contains(t, output, "1.0.0")
+	assert.Contains(t, output, "Automated code review")
+	assert.Contains(t, output, "formatter")
+}
+
+func TestSkillListAvailableNoResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list", "--available", "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "No skills available")
+}
+
 func TestSkillInfoCommand(t *testing.T) {
 	// Create a temp directory with a SKILL.yaml.
 	skillDir := filepath.Join(t.TempDir(), "skills", "my-tool")
