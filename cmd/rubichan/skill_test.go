@@ -822,6 +822,60 @@ func TestParseNameVersion(t *testing.T) {
 	assert.Equal(t, "", version)
 }
 
+// TestValidateSkillName verifies skill name validation rejects path traversal.
+func TestValidateSkillName(t *testing.T) {
+	// Valid names.
+	assert.NoError(t, validateSkillName("my-skill"))
+	assert.NoError(t, validateSkillName("code_review"))
+	assert.NoError(t, validateSkillName("kubernetes"))
+	assert.NoError(t, validateSkillName("skill123"))
+
+	// Invalid names.
+	assert.Error(t, validateSkillName("../../admin"))
+	assert.Error(t, validateSkillName("my skill"))
+	assert.Error(t, validateSkillName("my/skill"))
+	assert.Error(t, validateSkillName(""))
+	assert.Error(t, validateSkillName("-starts-with-dash"))
+	assert.Error(t, validateSkillName("_starts-with-underscore"))
+}
+
+// TestSkillInstallInvalidName verifies install rejects invalid skill names
+// that would be routed through installFromRegistry (not isLocalPath).
+func TestSkillInstallInvalidName(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// Use name@version syntax with an invalid name containing a space.
+	// parseNameVersion splits on @ so name="bad name", which fails validation.
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "bad name@1.0.0", "--store", dbPath, "--skills-dir", skillsDir})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid skill name")
+}
+
+// TestSkillListAvailableError verifies --available handles registry errors.
+func TestSkillListAvailableError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list", "--available", "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetching available skills")
+}
+
 // TestSkillCreate verifies that "skill create <name>" scaffolds a directory
 // with a SKILL.yaml template and a skill.star template.
 func TestSkillCreate(t *testing.T) {

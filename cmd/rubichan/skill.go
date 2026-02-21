@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -295,6 +296,20 @@ func parseNameVersion(source string) (name, version string) {
 	return source, "latest"
 }
 
+// validSkillNamePattern matches only safe skill names: alphanumeric, hyphens,
+// and underscores. This prevents path traversal (e.g., "../../admin") when
+// skill names are interpolated into URL paths or filesystem paths.
+var validSkillNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// validateSkillName returns an error if the name contains characters that
+// could cause path traversal or URL injection.
+func validateSkillName(name string) error {
+	if !validSkillNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid skill name %q: must contain only letters, digits, hyphens, and underscores", name)
+	}
+	return nil
+}
+
 // copyDir recursively copies a directory tree from src to dst. Files are
 // copied with their original permissions.
 func copyDir(src, dst string) error {
@@ -425,6 +440,10 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 // versions before downloading.
 func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string) error {
 	name, version := parseNameVersion(source)
+
+	if err := validateSkillName(name); err != nil {
+		return err
+	}
 
 	registryURL, _ := cmd.Flags().GetString("registry")
 	if registryURL == "" {
