@@ -45,6 +45,13 @@ func (c *Conversation) AddToolResult(toolUseID, content string, isError bool) {
 	c.messages = append(c.messages, provider.NewToolResultMessage(toolUseID, content, isError))
 }
 
+// LoadFromMessages replaces the current message history with the given messages.
+// The system prompt is preserved. This is used when resuming a saved session.
+func (c *Conversation) LoadFromMessages(msgs []provider.Message) {
+	c.messages = make([]provider.Message, len(msgs))
+	copy(c.messages, msgs)
+}
+
 // Clear removes all messages but preserves the system prompt.
 func (c *Conversation) Clear() {
 	c.messages = nil

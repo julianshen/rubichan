@@ -10,6 +10,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -522,4 +523,187 @@ func TestSetModel(t *testing.T) {
 
 	agent.SetModel("claude-opus-4")
 	assert.Equal(t, "claude-opus-4", agent.model)
+}
+
+func TestWithStoreOption(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Hello"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	assert.NotEmpty(t, a.sessionID, "session should be auto-created")
+
+	// Verify session was persisted.
+	sess, err := s.GetSession(a.sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, sess)
+	assert.Equal(t, "test-model", sess.Model)
+}
+
+func TestAgentWithStorePersistsMessages(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "I am well!"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	ch, err := a.Turn(context.Background(), "How are you?")
+	require.NoError(t, err)
+
+	for range ch {
+	}
+
+	msgs, err := s.GetMessages(a.sessionID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2, "should have user + assistant messages")
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
+}
+
+func TestWithResumeSession(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Create a session with history.
+	require.NoError(t, s.CreateSession(store.Session{
+		ID:           "resume-me",
+		Model:        "gpt-4",
+		SystemPrompt: "You are helpful.",
+	}))
+	require.NoError(t, s.AppendMessage("resume-me", "user", []provider.ContentBlock{
+		{Type: "text", Text: "Hello"},
+	}))
+	require.NoError(t, s.AppendMessage("resume-me", "assistant", []provider.ContentBlock{
+		{Type: "text", Text: "Hi there!"},
+	}))
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "gpt-4"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Welcome back!"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s), WithResumeSession("resume-me"))
+
+	assert.Equal(t, "resume-me", a.sessionID)
+
+	// Conversation should have been hydrated.
+	msgs := a.conversation.Messages()
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "Hello", msgs[0].Content[0].Text)
+	assert.Equal(t, "Hi there!", msgs[1].Content[0].Text)
+
+	// System prompt should come from the stored session.
+	assert.Equal(t, "You are helpful.", a.conversation.SystemPrompt())
+}
+
+func TestWithResumeSessionNotFound(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "gpt-4"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Fresh start"},
+		{Type: "stop"},
+	}}
+
+	// Resume a nonexistent session — should gracefully fall back to new session.
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s), WithResumeSession("nonexistent"))
+
+	// Should have created a new session (not "nonexistent").
+	assert.NotEqual(t, "nonexistent", a.sessionID)
+	assert.NotEmpty(t, a.sessionID)
+
+	// New session should be in store.
+	sess, err := s.GetSession(a.sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, sess)
+}
+
+func TestAgentWithoutStoreStillWorks(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Hi"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+	assert.Empty(t, a.sessionID)
+	assert.Nil(t, a.store)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+	for range ch {
+	}
+	// Should work fine without store
+}
+
+func TestAgentPersistMessageErrorIsNonFatal(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Still works!"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	require.NotEmpty(t, a.sessionID)
+
+	// Close the store to force persistence errors.
+	s.Close()
+
+	// Turn should still work — persistence errors are non-fatal.
+	ch, err := a.Turn(context.Background(), "Hello after close")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should complete normally despite persistence failure.
+	assert.Equal(t, "done", events[len(events)-1].Type)
+
+	var hasText bool
+	for _, ev := range events {
+		if ev.Type == "text_delta" {
+			hasText = true
+		}
+	}
+	assert.True(t, hasText, "should still get text from LLM")
 }

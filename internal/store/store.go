@@ -4,9 +4,11 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/provider"
 	_ "modernc.org/sqlite"
 )
 
@@ -53,6 +55,28 @@ type RegistryEntry struct {
 	CachedAt    time.Time
 }
 
+// Session represents a persisted agent session.
+type Session struct {
+	ID           string
+	Title        string
+	Model        string
+	WorkingDir   string
+	SystemPrompt string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	TokenCount   int
+}
+
+// StoredMessage represents a persisted message within a session.
+type StoredMessage struct {
+	ID        int64
+	SessionID string
+	Seq       int
+	Role      string
+	Content   []provider.ContentBlock
+	CreatedAt time.Time
+}
+
 // Store wraps a SQLite database for skill system persistence.
 type Store struct {
 	db *sql.DB
@@ -68,6 +92,11 @@ func NewStore(dbPath string) (*Store, error) {
 
 	// Serialize access to prevent SQLITE_BUSY from concurrent goroutines.
 	db.SetMaxOpenConns(1)
+
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
 
 	if err := createTables(db); err != nil {
 		db.Close()
@@ -103,6 +132,26 @@ func createTables(db *sql.DB) error {
 			description TEXT NOT NULL,
 			cached_at   DATETIME NOT NULL DEFAULT (datetime('now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id            TEXT PRIMARY KEY,
+			title         TEXT NOT NULL DEFAULT '',
+			model         TEXT NOT NULL,
+			working_dir   TEXT NOT NULL DEFAULT '',
+			system_prompt TEXT NOT NULL DEFAULT '',
+			created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+			updated_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+			token_count   INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS messages (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+			seq        INTEGER NOT NULL,
+			role       TEXT NOT NULL,
+			content    TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(session_id, seq)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -256,6 +305,97 @@ func (s *Store) CacheRegistryEntry(entry RegistryEntry) error {
 	return nil
 }
 
+// CreateSession inserts a new session. The ID must be unique.
+func (s *Store) CreateSession(sess Session) error {
+	_, err := s.db.Exec(
+		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		sess.ID, sess.Title, sess.Model, sess.WorkingDir, sess.SystemPrompt, sess.TokenCount,
+	)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+	return nil
+}
+
+// GetSession retrieves a session by ID. Returns nil if not found.
+func (s *Store) GetSession(id string) (*Session, error) {
+	var sess Session
+	var createdStr, updatedStr string
+	err := s.db.QueryRow(
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		 FROM sessions WHERE id = ?`, id,
+	).Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir, &sess.SystemPrompt,
+		&createdStr, &updatedStr, &sess.TokenCount)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	sess.CreatedAt, _ = parseSQLiteDatetime(createdStr)
+	sess.UpdatedAt, _ = parseSQLiteDatetime(updatedStr)
+	return &sess, nil
+}
+
+// UpdateSession updates a session's title, token_count, and updated_at timestamp.
+// Only Title and TokenCount from the Session struct are written; other fields
+// (Model, WorkingDir, SystemPrompt) are immutable after creation.
+// Returns an error if the session does not exist.
+func (s *Store) UpdateSession(sess Session) error {
+	result, err := s.db.Exec(
+		`UPDATE sessions SET title = ?, token_count = ?, updated_at = datetime('now')
+		 WHERE id = ?`,
+		sess.Title, sess.TokenCount, sess.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update session: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update session rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("update session: session %q not found", sess.ID)
+	}
+	return nil
+}
+
+// DeleteSession removes a session and its messages (via CASCADE).
+func (s *Store) DeleteSession(id string) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+// ListSessions returns the most recently updated sessions, limited to n.
+func (s *Store) ListSessions(limit int) ([]Session, error) {
+	rows, err := s.db.Query(
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		 FROM sessions ORDER BY updated_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []Session
+	for rows.Next() {
+		var sess Session
+		var createdStr, updatedStr string
+		if err := rows.Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir,
+			&sess.SystemPrompt, &createdStr, &updatedStr, &sess.TokenCount); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		sess.CreatedAt, _ = parseSQLiteDatetime(createdStr)
+		sess.UpdatedAt, _ = parseSQLiteDatetime(updatedStr)
+		sessions = append(sessions, sess)
+	}
+	return sessions, rows.Err()
+}
+
 // GetCachedRegistry retrieves a cached registry entry by name.
 // Returns nil if the entry is not found.
 func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {
@@ -273,4 +413,54 @@ func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {
 	}
 	e.CachedAt, _ = parseSQLiteDatetime(cachedAtStr)
 	return &e, nil
+}
+
+// AppendMessage adds a message to a session, auto-incrementing the sequence number.
+// The content blocks are serialized to JSON for storage.
+func (s *Store) AppendMessage(sessionID, role string, content []provider.ContentBlock) error {
+	contentJSON, err := json.Marshal(content)
+	if err != nil {
+		return fmt.Errorf("marshal content: %w", err)
+	}
+
+	// The COALESCE subquery computes the next sequence number. This is safe
+	// because MaxOpenConns(1) serializes all database access, preventing
+	// concurrent callers from computing the same MAX(seq). Do not increase
+	// MaxOpenConns without wrapping this in an explicit transaction.
+	_, err = s.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at)
+		 VALUES (?, COALESCE((SELECT MAX(seq) FROM messages WHERE session_id = ?), -1) + 1, ?, ?, datetime('now'))`,
+		sessionID, sessionID, role, string(contentJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("append message: %w", err)
+	}
+	return nil
+}
+
+// GetMessages retrieves all messages for a session, ordered by sequence number.
+func (s *Store) GetMessages(sessionID string) ([]StoredMessage, error) {
+	rows, err := s.db.Query(
+		`SELECT id, session_id, seq, role, content, created_at
+		 FROM messages WHERE session_id = ? ORDER BY seq`, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get messages: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []StoredMessage
+	for rows.Next() {
+		var m StoredMessage
+		var contentJSON, createdStr string
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Seq, &m.Role, &contentJSON, &createdStr); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		if err := json.Unmarshal([]byte(contentJSON), &m.Content); err != nil {
+			return nil, fmt.Errorf("unmarshal content: %w", err)
+		}
+		m.CreatedAt, _ = parseSQLiteDatetime(createdStr)
+		messages = append(messages, m)
+	}
+	return messages, rows.Err()
 }
