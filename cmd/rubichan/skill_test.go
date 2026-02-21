@@ -501,6 +501,96 @@ implementation:
 	assert.Equal(t, "2.3.0", state.Version)
 }
 
+// TestSkillInstallSemVerRange verifies that "skill install name@^1.0.0"
+// resolves the version range against the registry and installs the best match.
+func TestSkillInstallSemVerRange(t *testing.T) {
+	// The registry has versions 1.0.0, 1.2.0, 2.0.0. ^1.0.0 should resolve to 1.2.0.
+	manifestResolved := `name: my-tool
+version: 1.2.0
+description: "A versioned tool skill"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: main.star
+`
+	tarData := makeTarGz(t, map[string]string{
+		"SKILL.yaml": manifestResolved,
+		"main.star":  "print('v1.2')",
+	})
+
+	var downloadedVersion string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/skills/my-tool/versions":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]string{"1.0.0", "1.2.0", "2.0.0"})
+		case r.URL.Path == "/api/v1/skills/my-tool/1.2.0/download":
+			downloadedVersion = "1.2.0"
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Write(tarData)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "installed-skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@^1.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	// The server should have resolved ^1.0.0 to 1.2.0.
+	assert.Equal(t, "1.2.0", downloadedVersion)
+
+	// Verify state shows the resolved version.
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	state, err := s.GetSkillState("my-tool")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	assert.Equal(t, "1.2.0", state.Version)
+
+	// Output should mention the resolved version.
+	assert.Contains(t, buf.String(), "1.2.0")
+}
+
+// TestSkillInstallSemVerRangeNoMatch verifies error when no version matches the range.
+func TestSkillInstallSemVerRangeNoMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/skills/my-tool/versions":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]string{"1.0.0", "1.1.0"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "installed-skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@^3.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolving version")
+}
+
 // TestSkillRemove verifies that "skill remove <name>" deletes the skill
 // directory and removes its entry from the store.
 func TestSkillRemove(t *testing.T) {

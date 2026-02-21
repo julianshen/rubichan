@@ -420,7 +420,9 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 }
 
 // installFromRegistry downloads a skill from the remote registry, validates
-// its manifest, and saves install state.
+// its manifest, and saves install state. If the version is a SemVer range
+// (e.g., "^1.0.0", "~1.2"), it resolves the constraint against available
+// versions before downloading.
 func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string) error {
 	name, version := parseNameVersion(source)
 
@@ -434,6 +436,19 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	// Resolve SemVer ranges by fetching available versions from the registry.
+	if skills.IsSemVerRange(version) {
+		available, err := client.ListVersions(ctx, name)
+		if err != nil {
+			return fmt.Errorf("listing versions: %w", err)
+		}
+		resolved, err := skills.ResolveVersion(version, available)
+		if err != nil {
+			return fmt.Errorf("resolving version %q: %w", version, err)
+		}
+		version = resolved
 	}
 
 	dest := filepath.Join(skillsDir, name)
