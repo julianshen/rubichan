@@ -157,46 +157,14 @@ func (s *LicenseScanner) scanHeaders(ctx context.Context, target security.ScanTa
 	return findings, nil
 }
 
-// sourceExtensions lists extensions considered for header scanning.
-var sourceExtensions = map[string]bool{
-	".go": true, ".py": true, ".js": true, ".ts": true,
-	".java": true, ".rs": true, ".c": true, ".cpp": true,
-	".h": true, ".rb": true, ".swift": true,
+// sourceFileExtensions is the list of extensions used for header scanning.
+var sourceFileExtensions = []string{
+	".go", ".py", ".js", ".ts", ".java", ".rs", ".c", ".cpp", ".h", ".rb", ".swift",
 }
 
 // collectSourceFiles returns source files from the target.
 func (s *LicenseScanner) collectSourceFiles(target security.ScanTarget) ([]string, error) {
-	if len(target.Files) > 0 {
-		var result []string
-		for _, f := range target.Files {
-			ext := filepath.Ext(f)
-			if sourceExtensions[ext] {
-				result = append(result, f)
-			}
-		}
-		return result, nil
-	}
-
-	var files []string
-	err := filepath.Walk(target.RootDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			return nil
-		}
-		ext := filepath.Ext(path)
-		if !sourceExtensions[ext] {
-			return nil
-		}
-		relPath, relErr := filepath.Rel(target.RootDir, path)
-		if relErr != nil {
-			return nil
-		}
-		files = append(files, relPath)
-		return nil
-	})
-	return files, err
+	return security.CollectFiles(target, sourceFileExtensions)
 }
 
 // checkHeader reads the first 10 lines of a file looking for Copyright or License text.
