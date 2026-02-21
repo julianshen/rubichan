@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/skills"
@@ -837,6 +838,14 @@ func TestValidateSkillName(t *testing.T) {
 	assert.Error(t, validateSkillName(""))
 	assert.Error(t, validateSkillName("-starts-with-dash"))
 	assert.Error(t, validateSkillName("_starts-with-underscore"))
+	assert.Error(t, validateSkillName("."))
+	assert.Error(t, validateSkillName(".."))
+	assert.Error(t, validateSkillName(".hidden"))
+
+	// Max length.
+	longName := strings.Repeat("a", 129)
+	assert.Error(t, validateSkillName(longName))
+	assert.NoError(t, validateSkillName(longName[:128]))
 }
 
 // TestSkillInstallInvalidName verifies install rejects invalid skill names

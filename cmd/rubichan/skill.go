@@ -304,6 +304,10 @@ var validSkillNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 // validateSkillName returns an error if the name contains characters that
 // could cause path traversal or URL injection.
 func validateSkillName(name string) error {
+	const maxSkillNameLength = 128
+	if len(name) > maxSkillNameLength {
+		return fmt.Errorf("invalid skill name %q: exceeds maximum length of %d characters", name, maxSkillNameLength)
+	}
 	if !validSkillNamePattern.MatchString(name) {
 		return fmt.Errorf("invalid skill name %q: must contain only letters, digits, hyphens, and underscores", name)
 	}

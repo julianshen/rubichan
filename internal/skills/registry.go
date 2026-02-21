@@ -99,7 +99,7 @@ func (c *RegistryClient) GetManifest(ctx context.Context, name, version string) 
 	}
 
 	// Fetch from server.
-	url := fmt.Sprintf("%s/api/v1/skills/%s/%s/manifest", c.baseURL, name, version)
+	url := fmt.Sprintf("%s/api/v1/skills/%s/%s/manifest", c.baseURL, url.PathEscape(name), url.PathEscape(version))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -143,7 +143,7 @@ func (c *RegistryClient) GetManifest(ctx context.Context, name, version string) 
 
 // ListVersions returns all available versions for a skill from the registry.
 func (c *RegistryClient) ListVersions(ctx context.Context, name string) ([]string, error) {
-	url := fmt.Sprintf("%s/api/v1/skills/%s/versions", c.baseURL, name)
+	url := fmt.Sprintf("%s/api/v1/skills/%s/versions", c.baseURL, url.PathEscape(name))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -171,7 +171,7 @@ func (c *RegistryClient) ListVersions(ctx context.Context, name string) ([]strin
 
 // Download fetches a skill tarball from the registry and extracts it to dest.
 func (c *RegistryClient) Download(ctx context.Context, name, version, dest string) error {
-	url := fmt.Sprintf("%s/api/v1/skills/%s/%s/download", c.baseURL, name, version)
+	url := fmt.Sprintf("%s/api/v1/skills/%s/%s/download", c.baseURL, url.PathEscape(name), url.PathEscape(version))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
