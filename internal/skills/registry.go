@@ -141,6 +141,34 @@ func (c *RegistryClient) GetManifest(ctx context.Context, name, version string) 
 	return manifest, nil
 }
 
+// ListVersions returns all available versions for a skill from the registry.
+func (c *RegistryClient) ListVersions(ctx context.Context, name string) ([]string, error) {
+	url := fmt.Sprintf("%s/api/v1/skills/%s/versions", c.baseURL, name)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create versions request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("versions request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list versions: unexpected status %d", resp.StatusCode)
+	}
+
+	const maxVersionsBytes = 1 << 20
+	var versions []string
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxVersionsBytes)).Decode(&versions); err != nil {
+		return nil, fmt.Errorf("decode versions response: %w", err)
+	}
+
+	return versions, nil
+}
+
 // Download fetches a skill tarball from the registry and extracts it to dest.
 func (c *RegistryClient) Download(ctx context.Context, name, version, dest string) error {
 	url := fmt.Sprintf("%s/api/v1/skills/%s/%s/download", c.baseURL, name, version)
