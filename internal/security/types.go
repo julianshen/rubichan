@@ -218,6 +218,14 @@ type LLMAnalyzer interface {
 	Analyze(ctx context.Context, chunks []AnalysisChunk) ([]Finding, error)
 }
 
+// EngineConfig controls the behavior of the security engine.
+type EngineConfig struct {
+	MaxLLMChunks    int      // maximum number of chunks to send to LLM analyzers
+	MinRiskScore    int      // minimum risk score for a chunk to be analyzed
+	ExcludePatterns []string // file patterns to exclude from scanning
+	Concurrency     int      // maximum concurrent scanner/analyzer goroutines
+}
+
 // OutputFormatter is the interface for rendering a security report into a
 // specific output format (e.g., JSON, SARIF, Markdown).
 type OutputFormatter interface {
