@@ -61,7 +61,7 @@ func (p *Prioritizer) Prioritize(ctx context.Context, target ScanTarget, staticF
 		return nil, fmt.Errorf("prioritizer cancelled: %w", err)
 	}
 
-	files, err := p.collectFiles(target)
+	files, err := CollectFiles(target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("collecting files: %w", err)
 	}
@@ -99,53 +99,6 @@ func (p *Prioritizer) Prioritize(ctx context.Context, target ScanTarget, staticF
 	chunks = p.capChunks(chunks)
 
 	return chunks, nil
-}
-
-// collectFiles builds the list of relative file paths to process.
-func (p *Prioritizer) collectFiles(target ScanTarget) ([]string, error) {
-	if len(target.Files) > 0 {
-		return target.Files, nil
-	}
-
-	var files []string
-	err := filepath.Walk(target.RootDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(target.RootDir, path)
-		if err != nil {
-			return nil
-		}
-
-		if isExcluded(relPath, target.ExcludePatterns) {
-			return nil
-		}
-
-		files = append(files, relPath)
-		return nil
-	})
-	return files, err
-}
-
-// isExcluded returns true if the relative path matches any exclude pattern.
-func isExcluded(relPath string, patterns []string) bool {
-	for _, pattern := range patterns {
-		matched, err := filepath.Match(pattern, relPath)
-		if err == nil && matched {
-			return true
-		}
-		if strings.Contains(pattern, "**") {
-			prefix := strings.TrimSuffix(pattern, "/**")
-			if strings.HasPrefix(relPath, prefix+"/") || relPath == prefix {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // scoreFile calculates the aggregate risk score for a file based on keyword signals.
