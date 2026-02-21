@@ -183,3 +183,194 @@ func TestSASTEmptyDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, findings)
 }
+
+func TestSASTContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "main.go", `package main
+func main() {}
+`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s := NewSASTScanner()
+	_, err := s.Scan(ctx, security.ScanTarget{RootDir: dir})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cancelled")
+}
+
+func TestSASTDetectsGoPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "files.go", `package files
+
+import "os"
+
+func ReadUserFile(path string) {
+	os.Open(path)
+}
+`)
+
+	s := NewSASTScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	require.NotEmpty(t, findings)
+
+	found := false
+	for _, f := range findings {
+		if f.CWE == "CWE-22" {
+			found = true
+			assert.Equal(t, security.SeverityMedium, f.Severity)
+			assert.Equal(t, security.CategoryInputValidation, f.Category)
+			assert.Equal(t, "ReadUserFile", f.Location.Function)
+		}
+	}
+	assert.True(t, found, "expected a path traversal finding")
+}
+
+func TestSASTDetectsPythonCommandInjection(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "run.py", `import os
+import subprocess
+
+def run_command(cmd):
+    os.system(cmd)
+
+def run_shell(cmd):
+    subprocess.call(cmd, shell=True)
+`)
+
+	s := NewSASTScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	require.NotEmpty(t, findings)
+
+	found := false
+	for _, f := range findings {
+		if f.CWE == "CWE-78" {
+			found = true
+			assert.Equal(t, security.SeverityHigh, f.Severity)
+			assert.Equal(t, security.CategoryInjection, f.Category)
+		}
+	}
+	assert.True(t, found, "expected a Python command injection finding")
+}
+
+func TestSASTDetectsTSXXSS(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "component.tsx", `function renderContent(userInput: string) {
+    const div = document.getElementById("output");
+    div.innerHTML = userInput;
+}
+`)
+
+	s := NewSASTScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	require.NotEmpty(t, findings)
+
+	found := false
+	for _, f := range findings {
+		if f.CWE == "CWE-79" {
+			found = true
+			assert.Equal(t, security.SeverityHigh, f.Severity)
+		}
+	}
+	assert.True(t, found, "expected a TSX XSS finding")
+}
+
+func TestSASTDetectsJSXXSS(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "component.jsx", `function renderContent(userInput) {
+    const div = document.getElementById("output");
+    div.innerHTML = userInput;
+}
+`)
+
+	s := NewSASTScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	require.NotEmpty(t, findings)
+
+	found := false
+	for _, f := range findings {
+		if f.CWE == "CWE-79" {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected a JSX XSS finding")
+}
+
+func TestSASTDetectsJSSQLInjection(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "db.js", `function getUser(name) {
+    const result = db.query("SELECT * FROM users WHERE name = '" + name + "'");
+    return result;
+}
+`)
+
+	s := NewSASTScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	require.NotEmpty(t, findings)
+
+	found := false
+	for _, f := range findings {
+		if f.CWE == "CWE-89" {
+			found = true
+			assert.Equal(t, security.SeverityHigh, f.Severity)
+		}
+	}
+	assert.True(t, found, "expected a JS SQL injection finding")
+}
+
+func TestSASTDetectsTSSQLInjection(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "db.ts", `function getUser(name: string) {
+    const result = db.query("SELECT * FROM users WHERE name = '" + name + "'");
+    return result;
+}
+`)
+
+	s := NewSASTScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	require.NotEmpty(t, findings)
+
+	found := false
+	for _, f := range findings {
+		if f.CWE == "CWE-89" {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected a TS SQL injection finding")
+}
+
+func TestSASTScannerUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+
+	s := NewSASTScanner()
+	// Point to a non-existent Go file via Files.
+	findings, err := s.Scan(context.Background(), security.ScanTarget{
+		RootDir: dir,
+		Files:   []string{"nonexistent.go"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, findings, "unreadable file should be skipped")
+}
+
+func TestSASTScannerCleanGoFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "clean.go", `package clean
+
+import "fmt"
+
+func Hello() {
+	fmt.Println("Hello, World!")
+}
+`)
+
+	s := NewSASTScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	assert.Empty(t, findings, "clean file should produce no findings")
+}

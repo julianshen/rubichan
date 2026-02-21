@@ -373,3 +373,106 @@ func TestDepScannerContextCancellation(t *testing.T) {
 	_, err := s.Scan(ctx, security.ScanTarget{RootDir: dir})
 	assert.Error(t, err)
 }
+
+func TestDepScannerClassifyOSVSeverityAllRanges(t *testing.T) {
+	tests := []struct {
+		name     string
+		score    string
+		expected security.Severity
+	}{
+		{"critical", "9.8", security.SeverityCritical},
+		{"critical_exact", "9.0", security.SeverityCritical},
+		{"high", "7.5", security.SeverityHigh},
+		{"high_exact", "7.0", security.SeverityHigh},
+		{"medium", "5.0", security.SeverityMedium},
+		{"medium_exact", "4.0", security.SeverityMedium},
+		{"low", "3.9", security.SeverityLow},
+		{"low_zero", "0.0", security.SeverityLow},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vuln := osvVuln{
+				Severity: []osvSeverity{{Type: "CVSS_V3", Score: tc.score}},
+			}
+			assert.Equal(t, tc.expected, classifyOSVSeverity(vuln))
+		})
+	}
+}
+
+func TestDepScannerClassifyOSVSeverityNoCVSS(t *testing.T) {
+	// No severity entries at all -> default to Medium.
+	vuln := osvVuln{}
+	assert.Equal(t, security.SeverityMedium, classifyOSVSeverity(vuln))
+
+	// Non-CVSS_V3 severity type -> should not match, default to Medium.
+	vuln2 := osvVuln{
+		Severity: []osvSeverity{{Type: "CVSS_V2", Score: "9.0"}},
+	}
+	assert.Equal(t, security.SeverityMedium, classifyOSVSeverity(vuln2))
+}
+
+func TestDepScannerUnquoteTOMLVariants(t *testing.T) {
+	// Quoted value.
+	assert.Equal(t, "serde", unquoteTOML(`"serde"`))
+	// Unquoted value (no surrounding quotes).
+	assert.Equal(t, "serde", unquoteTOML("serde"))
+	// With whitespace.
+	assert.Equal(t, "tokio", unquoteTOML(`  "tokio"  `))
+	// Empty string.
+	assert.Equal(t, "", unquoteTOML(`""`))
+	// Single char (not enough for quotes).
+	assert.Equal(t, "x", unquoteTOML("x"))
+}
+
+func TestDepScannerGoSumEdgeCases(t *testing.T) {
+	// Test with empty lines, short lines, duplicates.
+	data := []byte(`
+golang.org/x/text v0.3.7 h1:abc=
+
+short
+golang.org/x/text v0.3.7 h1:abc=
+golang.org/x/net v0.1.0 h1:xyz=
+`)
+	deps, err := parseGoSum(data)
+	require.NoError(t, err)
+	// Should have 2 unique deps (text and net), with text deduplicated.
+	assert.Len(t, deps, 2)
+}
+
+func TestDepScannerQueryOSVInvalidJSON(t *testing.T) {
+	// Mock server that returns invalid JSON body.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not valid json"))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeFile(t, dir, "go.sum", `golang.org/x/text v0.3.7 h1:abc=
+`)
+
+	s := NewDepScanner(srv.Client())
+	s.OSVBaseURL = srv.URL
+
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	// Should get an info finding about OSV API error.
+	require.NotEmpty(t, findings)
+	assert.Contains(t, findings[0].Title, "OSV API unavailable")
+}
+
+func TestDepScannerPackageLockEmptyVersion(t *testing.T) {
+	// Test that packages with empty version are skipped.
+	data := []byte(`{
+		"packages": {
+			"": {"version": ""},
+			"node_modules/express": {"version": "4.18.2"},
+			"node_modules/empty": {"version": ""}
+		}
+	}`)
+	deps, err := parsePackageLock(data)
+	require.NoError(t, err)
+	assert.Len(t, deps, 1)
+	assert.Equal(t, "express", deps[0].Name)
+}

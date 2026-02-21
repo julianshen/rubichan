@@ -245,6 +245,193 @@ func TestConfigScannerPermissiveCORS(t *testing.T) {
 	assert.True(t, found, "expected a permissive CORS finding")
 }
 
+func TestConfigScannerContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Dockerfile", "FROM ubuntu:22.04\nUSER root\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s := NewConfigScanner()
+	_, err := s.Scan(ctx, security.ScanTarget{RootDir: dir})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cancelled")
+}
+
+func TestConfigScannerK8sHostPID(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "pod.yaml", `apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+spec:
+  hostPID: true
+  containers:
+  - name: app
+    image: myapp:latest
+`)
+
+	s := NewConfigScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+
+	found := false
+	for _, f := range findings {
+		if f.Title == "Kubernetes pod uses host PID namespace" {
+			found = true
+			assert.Equal(t, security.SeverityMedium, f.Severity)
+		}
+	}
+	assert.True(t, found, "expected a hostPID finding")
+}
+
+func TestConfigScannerK8sRunAsRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "deploy.yaml", `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        securityContext:
+          runAsUser: 0
+`)
+
+	s := NewConfigScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+
+	found := false
+	for _, f := range findings {
+		if f.Title == "Kubernetes container runs as root" {
+			found = true
+			assert.Equal(t, security.SeverityMedium, f.Severity)
+			assert.Equal(t, "CWE-250", f.CWE)
+		}
+	}
+	assert.True(t, found, "expected a runAsUser:0 finding")
+}
+
+func TestConfigScannerGitLabCIConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".gitlab-ci.yml", `stages:
+  - build
+build:
+  script:
+    - echo "building"
+  variables:
+    API_KEY: my_super_secret_key_12345
+`)
+
+	s := NewConfigScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+
+	found := false
+	for _, f := range findings {
+		if f.Title == "Potential secret in CI configuration" {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected a CI secrets finding for .gitlab-ci.yml")
+}
+
+func TestConfigScannerCircleCIConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".circleci/config.yml", `version: 2.1
+jobs:
+  build:
+    docker:
+      - image: circleci/node:14
+    environment:
+      token: abc123def456ghi789jkl
+    steps:
+      - checkout
+`)
+
+	s := NewConfigScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+
+	found := false
+	for _, f := range findings {
+		if f.Title == "Potential secret in CI configuration" {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected a CI secrets finding for .circleci/config.yml")
+}
+
+func TestConfigScannerExtractConfigValueEquals(t *testing.T) {
+	dir := t.TempDir()
+	// Use a GitHub Actions workflow to trigger CI config scanning,
+	// with key=value format that exercises the equals path.
+	writeFile(t, dir, ".github/workflows/eq.yml", `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hello
+    env:
+      password=hardcoded_secret_value_123
+`)
+
+	s := NewConfigScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+
+	found := false
+	for _, f := range findings {
+		if f.Title == "Potential secret in CI configuration" {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected secret detection with key=value format")
+}
+
+func TestConfigScannerIsConfigFileVariousExtensions(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create config files with various extensions that have debug mode.
+	extensions := map[string]string{
+		"config.toml":    "debug = true\n",
+		"settings.env":   "DEBUG = true\n",
+		"app.ini":        "debug = true\n",
+		"server.conf":    "debug = true\n",
+		"app.cfg":        "debug = true\n",
+		"app.properties": "debug = true\n",
+		".env.local":     "DEBUG = true\n",
+	}
+
+	for filename, content := range extensions {
+		writeFile(t, dir, filename, content)
+	}
+
+	s := NewConfigScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+
+	debugCount := 0
+	for _, f := range findings {
+		if f.Title == "Debug mode enabled in configuration" {
+			debugCount++
+		}
+	}
+	assert.GreaterOrEqual(t, debugCount, len(extensions),
+		"should detect debug mode in all config file extensions")
+}
+
+func TestConfigScannerFindLineNumberNoMatch(t *testing.T) {
+	// When the regex doesn't match, findLineNumber returns 1.
+	pat := dockerUserRootPat
+	result := findLineNumber("no match here", pat)
+	assert.Equal(t, 1, result)
+}
+
 func TestConfigScannerCleanFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "Dockerfile", `FROM ubuntu:22.04

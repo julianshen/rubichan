@@ -153,6 +153,190 @@ func main() {}
 	assert.Empty(t, findings, "non-Apple project should produce no findings")
 }
 
+func TestAppleScannerContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s := NewAppleScanner()
+	_, err := s.Scan(ctx, security.ScanTarget{RootDir: dir})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cancelled")
+}
+
+func TestAppleScannerPlistWithIntegerAndArray(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleVersion</key>
+	<integer>42</integer>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+`)
+
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	// No security findings expected, but the parser should handle integer and array types.
+	assert.Empty(t, findings)
+}
+
+func TestAppleScannerPlistReadError(t *testing.T) {
+	dir := t.TempDir()
+	// Need at least one valid apple file so scanner doesn't return early.
+	writeFile(t, dir, "AppDelegate.swift", `import UIKit
+class AppDelegate {}
+`)
+
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{
+		RootDir: dir,
+		Files:   []string{"Missing.plist", "AppDelegate.swift"},
+	})
+	require.NoError(t, err)
+	// Missing plist is skipped, no findings from clean swift file.
+	assert.Empty(t, findings)
+}
+
+func TestAppleScannerPlistInvalidXML(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Info.plist", `not valid xml at all {{{{`)
+
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	// Invalid plist should be skipped, no findings.
+	assert.Empty(t, findings)
+}
+
+func TestAppleScannerEntitlementInvalidXML(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Bad.entitlements", `not valid xml {{{{`)
+	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+`)
+
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	// Invalid entitlements should be skipped.
+	assert.Empty(t, findings)
+}
+
+func TestAppleScannerEntitlementNotTrue(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Safe.entitlements", `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<false/>
+</dict>
+</plist>
+`)
+	// Need at least one apple file so the scanner processes the directory.
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{
+		RootDir: dir,
+		Files:   []string{"Safe.entitlements"},
+	})
+	require.NoError(t, err)
+	// Entitlement is set to false, so no findings.
+	assert.Empty(t, findings)
+}
+
+func TestAppleScannerEntitlementReadError(t *testing.T) {
+	dir := t.TempDir()
+	// Provide an entitlements file that doesn't exist alongside a real plist.
+	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+`)
+
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{
+		RootDir: dir,
+		Files:   []string{"Info.plist", "Missing.entitlements"},
+	})
+	require.NoError(t, err)
+	// The missing entitlements file should be skipped, not cause error.
+	// No ATS bypass in the plist, so no findings expected.
+	assert.Empty(t, findings)
+}
+
+func TestAppleScannerSwiftFileReadError(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+`)
+
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{
+		RootDir: dir,
+		Files:   []string{"Info.plist", "Missing.swift"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, findings)
+}
+
+func TestAppleScannerCleanSwiftFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+`)
+	writeFile(t, dir, "AppDelegate.swift", `import UIKit
+
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        return true
+    }
+}
+`)
+
+	s := NewAppleScanner()
+	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	// No sensitive UserDefaults usage, no ATS bypass.
+	assert.Empty(t, findings)
+}
+
 func TestAppleScannerDetectsUserDefaultsSensitiveData(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
