@@ -10,6 +10,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -522,4 +523,76 @@ func TestSetModel(t *testing.T) {
 
 	agent.SetModel("claude-opus-4")
 	assert.Equal(t, "claude-opus-4", agent.model)
+}
+
+func TestWithStoreOption(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Hello"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	assert.NotEmpty(t, a.sessionID, "session should be auto-created")
+
+	// Verify session was persisted.
+	sess, err := s.GetSession(a.sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, sess)
+	assert.Equal(t, "test-model", sess.Model)
+}
+
+func TestAgentWithStorePersistsMessages(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "I am well!"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	ch, err := a.Turn(context.Background(), "How are you?")
+	require.NoError(t, err)
+
+	for range ch {
+	}
+
+	msgs, err := s.GetMessages(a.sessionID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2, "should have user + assistant messages")
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
+}
+
+func TestAgentWithoutStoreStillWorks(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "Hi"},
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+	assert.Empty(t, a.sessionID)
+	assert.Nil(t, a.store)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+	for range ch {
+	}
+	// Should work fine without store
 }
