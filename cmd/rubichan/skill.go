@@ -64,7 +64,10 @@ func skillListCmd() *cobra.Command {
 
 Use --available to list skills from the remote registry instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			available, _ := cmd.Flags().GetBool("available")
+			available, err := cmd.Flags().GetBool("available")
+			if err != nil {
+				return fmt.Errorf("reading --available flag: %w", err)
+			}
 			if available {
 				return listAvailableSkills(cmd)
 			}
@@ -113,7 +116,10 @@ func listInstalledSkills(cmd *cobra.Command) error {
 
 // listAvailableSkills fetches and displays skills from the remote registry.
 func listAvailableSkills(cmd *cobra.Command) error {
-	registryURL, _ := cmd.Flags().GetString("registry")
+	registryURL, err := cmd.Flags().GetString("registry")
+	if err != nil {
+		return fmt.Errorf("reading --registry flag: %w", err)
+	}
 	if registryURL == "" {
 		registryURL = defaultRegistryURL
 	}
@@ -449,7 +455,10 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 		return err
 	}
 
-	registryURL, _ := cmd.Flags().GetString("registry")
+	registryURL, err := cmd.Flags().GetString("registry")
+	if err != nil {
+		return fmt.Errorf("reading --registry flag: %w", err)
+	}
 	if registryURL == "" {
 		registryURL = defaultRegistryURL
 	}
@@ -493,6 +502,14 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	manifest, err := skills.ParseManifest(data)
 	if err != nil {
 		return fmt.Errorf("invalid downloaded manifest: %w", err)
+	}
+
+	// Validate that the manifest matches what was requested.
+	if manifest.Name != name {
+		return fmt.Errorf("downloaded skill declares name %q but %q was requested", manifest.Name, name)
+	}
+	if version != "" && version != "latest" && manifest.Version != version {
+		return fmt.Errorf("downloaded skill declares version %q but %q was requested", manifest.Version, version)
 	}
 
 	// Save state to store.

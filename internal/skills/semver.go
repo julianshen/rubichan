@@ -29,25 +29,36 @@ func ResolveVersion(constraint string, available []string) (string, error) {
 		return "", fmt.Errorf("no versions available")
 	}
 
-	// Parse all available versions, skipping unparseable ones.
+	// Parse all available versions, tracking unparseable ones.
 	var versions []*semver.Version
+	var skipped []string
 	for _, v := range available {
 		sv, err := semver.NewVersion(v)
 		if err != nil {
+			skipped = append(skipped, v)
 			continue
 		}
 		versions = append(versions, sv)
 	}
 
 	if len(versions) == 0 {
+		if len(skipped) > 0 {
+			return "", fmt.Errorf("no valid semver versions in available list (skipped unparseable: %s)", strings.Join(skipped, ", "))
+		}
 		return "", fmt.Errorf("no valid semver versions in available list")
 	}
 
 	// Sort descending so highest version is first.
 	sort.Sort(sort.Reverse(semver.Collection(versions)))
 
-	// "latest" returns the highest version.
+	// "latest" returns the highest stable version, falling back to
+	// the highest pre-release if no stable versions exist.
 	if constraint == "latest" {
+		for _, v := range versions {
+			if v.Prerelease() == "" {
+				return v.Original(), nil
+			}
+		}
 		return versions[0].Original(), nil
 	}
 
@@ -78,5 +89,9 @@ func ResolveVersion(constraint string, available []string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no version matching %q (available: %s)", constraint, strings.Join(available, ", "))
+	msg := fmt.Sprintf("no version matching %q (available: %s)", constraint, strings.Join(available, ", "))
+	if len(skipped) > 0 {
+		msg += fmt.Sprintf("; skipped %d unparseable: %s", len(skipped), strings.Join(skipped, ", "))
+	}
+	return "", fmt.Errorf("%s", msg)
 }

@@ -94,7 +94,8 @@ func (c *RegistryClient) GetManifest(ctx context.Context, name, version string) 
 			if err == nil {
 				return m, nil
 			}
-			// If cache parse fails, fall through to fetch from server.
+			// Cache entry is corrupt — log and fall through to network fetch.
+			fmt.Fprintf(os.Stderr, "warning: cached manifest for %q failed to parse: %v\n", name, err)
 		}
 	}
 
@@ -157,7 +158,7 @@ func (c *RegistryClient) ListVersions(ctx context.Context, name string) ([]strin
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list versions: unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("list versions for %q: unexpected status %d", name, resp.StatusCode)
 	}
 
 	const maxVersionsBytes = 1 << 20

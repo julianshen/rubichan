@@ -224,6 +224,7 @@ func TestRegistryListVersionsError(t *testing.T) {
 	client := NewRegistryClient(srv.URL, nil, 0)
 	_, err := client.ListVersions(context.Background(), "nonexistent")
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nonexistent")
 	assert.Contains(t, err.Error(), "404")
 }
 

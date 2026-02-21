@@ -81,6 +81,39 @@ func TestResolveVersionPrerelease(t *testing.T) {
 	assert.Equal(t, "1.1.0", got)
 }
 
+func TestResolveVersionLatestSkipsPrerelease(t *testing.T) {
+	available := []string{"1.0.0", "2.0.0-rc.1", "1.5.0"}
+
+	got, err := ResolveVersion("latest", available)
+	require.NoError(t, err)
+	assert.Equal(t, "1.5.0", got) // highest stable, not 2.0.0-rc.1
+}
+
+func TestResolveVersionLatestFallsBackToPrerelease(t *testing.T) {
+	available := []string{"1.0.0-alpha.1", "2.0.0-rc.1"}
+
+	got, err := ResolveVersion("latest", available)
+	require.NoError(t, err)
+	assert.Equal(t, "2.0.0-rc.1", got) // no stable versions, fall back to highest
+}
+
+func TestResolveVersionAllUnparseable(t *testing.T) {
+	available := []string{"not-a-version", "also-bad", "!!!"}
+
+	_, err := ResolveVersion("^1.0.0", available)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no valid semver versions")
+	assert.Contains(t, err.Error(), "skipped unparseable")
+}
+
+func TestResolveVersionPartiallyUnparseable(t *testing.T) {
+	available := []string{"junk", "1.0.0", "bad", "1.2.0"}
+
+	got, err := ResolveVersion("^1.0.0", available)
+	require.NoError(t, err)
+	assert.Equal(t, "1.2.0", got)
+}
+
 func TestIsSemVerRange(t *testing.T) {
 	assert.True(t, IsSemVerRange("^1.0.0"))
 	assert.True(t, IsSemVerRange("~1.0.0"))
