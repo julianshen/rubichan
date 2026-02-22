@@ -3,7 +3,10 @@ package mcpbackend
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/skills"
@@ -136,6 +139,54 @@ func TestNewMCPBackendFromConfigSSERequiresURL(t *testing.T) {
 	_, err := NewMCPBackendFromConfig(context.Background(), "test-server", "sse", "", nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires a url")
+}
+
+func TestNewMCPBackendFromConfigStdioSuccess(t *testing.T) {
+	// "cat" is available on macOS/Linux and reads stdin until EOF.
+	backend, err := NewMCPBackendFromConfig(context.Background(), "stdio-server", "stdio", "cat", nil, "")
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+	assert.Equal(t, "stdio-server", backend.serverName)
+	assert.NotNil(t, backend.transport)
+
+	// Clean up the spawned process.
+	backend.transport.Close()
+}
+
+func TestNewMCPBackendFromConfigStdioBadCommand(t *testing.T) {
+	_, err := NewMCPBackendFromConfig(context.Background(), "bad", "stdio", "/nonexistent/binary/xyz", nil, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create stdio transport")
+}
+
+func TestNewMCPBackendFromConfigSSESuccess(t *testing.T) {
+	// Set up a minimal SSE server that sends the endpoint event.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "event: endpoint\ndata: /messages\n\n")
+			w.(http.Flusher).Flush()
+			// Keep connection open briefly for the transport to read.
+			<-r.Context().Done()
+		}
+	}))
+	defer srv.Close()
+
+	backend, err := NewMCPBackendFromConfig(context.Background(), "sse-server", "sse", "", nil, srv.URL)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+	assert.Equal(t, "sse-server", backend.serverName)
+	assert.NotNil(t, backend.transport)
+
+	backend.transport.Close()
+}
+
+func TestNewMCPBackendFromConfigSSEConnectionError(t *testing.T) {
+	// Use a URL that will fail to connect.
+	_, err := NewMCPBackendFromConfig(context.Background(), "bad-sse", "sse", "", nil, "http://127.0.0.1:1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create sse transport")
 }
 
 type noopChecker struct{}

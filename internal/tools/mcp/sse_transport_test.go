@@ -144,6 +144,134 @@ func TestSSETransportReceiveEOFOnStreamDrop(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 }
 
+func TestSSETransportStreamClosedBeforeEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// Close immediately without sending endpoint event.
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := NewSSETransport(ctx, server.URL+"/sse")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SSE stream closed before endpoint event")
+}
+
+func TestSSETransportContextCancelledDuringConnect(t *testing.T) {
+	// Use a server that hangs before sending the endpoint event.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		// Hang — never send endpoint event.
+		<-r.Context().Done()
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := NewSSETransport(ctx, server.URL+"/sse")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestSSETransportSendPostError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+		flusher.Flush()
+		<-r.Context().Done()
+	})
+	mux.HandleFunc("POST /message", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	transport, err := NewSSETransport(ctx, server.URL+"/sse")
+	require.NoError(t, err)
+	defer transport.Close()
+
+	err = transport.Send(ctx, jsonRPCRequest{JSONRPC: "2.0", ID: 1, Method: "test"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "POST returned 400")
+}
+
+func TestSSETransportReceiveContextDone(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+		flusher.Flush()
+		<-r.Context().Done()
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	transport, err := NewSSETransport(ctx, server.URL+"/sse")
+	require.NoError(t, err)
+	defer transport.Close()
+
+	// Cancel and then try to receive.
+	recvCtx, recvCancel := context.WithCancel(context.Background())
+	recvCancel()
+
+	var resp jsonRPCResponse
+	err = transport.Receive(recvCtx, &resp)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestSSETransportSendConnectionError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		// Point the POST URL at a port that's definitely closed.
+		fmt.Fprintf(w, "event: endpoint\ndata: http://127.0.0.1:1/message\n\n")
+		flusher.Flush()
+		<-r.Context().Done()
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	transport, err := NewSSETransport(ctx, server.URL+"/sse")
+	require.NoError(t, err)
+	defer transport.Close()
+
+	// Send should fail because POST target is unreachable.
+	err = transport.Send(ctx, jsonRPCRequest{JSONRPC: "2.0", ID: 1, Method: "test"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "send POST")
+}
+
 func TestSSETransportServerError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
@@ -159,4 +287,13 @@ func TestSSETransportServerError(t *testing.T) {
 	_, err := NewSSETransport(ctx, server.URL+"/sse")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
+}
+
+func TestSSETransportConnectError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := NewSSETransport(ctx, "http://127.0.0.1:1/sse")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connect to SSE endpoint")
 }
