@@ -492,3 +492,108 @@ register_tool(name="show-pi", description="shows pi", handler=show_pi)
 	require.NoError(t, err)
 	assert.Equal(t, "3.14", result.Content)
 }
+
+func TestEngineToolExecuteMalformedJSON(t *testing.T) {
+	dir := t.TempDir()
+	manifest := writeStarFile(t, dir, "main.star", `
+def handler(input):
+    return "ok"
+
+register_tool(name="my-tool", description="a tool", handler=handler)
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.NoError(t, err)
+
+	tool := engine.Tools()[0]
+
+	// Malformed JSON input should error.
+	result, execErr := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
+	require.Error(t, execErr)
+	assert.True(t, result.IsError)
+}
+
+func TestEngineRegisterHookBadArgs(t *testing.T) {
+	dir := t.TempDir()
+	// register_hook requires name, phase, and handler.
+	manifest := writeStarFile(t, dir, "main.star", `
+register_hook(name="bad")
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.Error(t, err)
+}
+
+func TestEngineRegisterWorkflowBadArgs(t *testing.T) {
+	dir := t.TempDir()
+	// register_workflow requires name, description, and steps.
+	manifest := writeStarFile(t, dir, "main.star", `
+register_workflow(name="bad")
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.Error(t, err)
+}
+
+func TestEngineRegisterScannerBadArgs(t *testing.T) {
+	dir := t.TempDir()
+	// register_scanner requires name, description, and handler.
+	manifest := writeStarFile(t, dir, "main.star", `
+register_scanner(name="bad")
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.Error(t, err)
+}
+
+func TestEngineRegisterToolBadArgs(t *testing.T) {
+	dir := t.TempDir()
+	// register_tool requires name, description, and handler.
+	manifest := writeStarFile(t, dir, "main.star", `
+register_tool(name="bad")
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.Error(t, err)
+}
+
+func TestEngineLogBadArgs(t *testing.T) {
+	dir := t.TempDir()
+	// log() with wrong arg type.
+	manifest := writeStarFile(t, dir, "main.star", `
+log(42, "extra")
+`)
+
+	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
+	err := engine.Load(manifest, &mockChecker{})
+	require.Error(t, err)
+}
+
+func TestEngineReadFileEmptySkillDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create engine with empty skill dir but load from actual dir.
+	engine := starlark.NewEngine("test-skill", "", &mockChecker{})
+
+	starCode := `result = read_file("data.txt")`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.star"), []byte(starCode), 0o644))
+
+	manifest := skills.SkillManifest{
+		Name:        "test-skill",
+		Version:     "0.1.0",
+		Description: "test skill",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: filepath.Join(dir, "main.star"),
+		},
+	}
+	err := engine.Load(manifest, &mockChecker{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "skill directory not set")
+}

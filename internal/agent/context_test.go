@@ -73,3 +73,60 @@ func TestContextManagerSmallConversationNoTruncation(t *testing.T) {
 	cm.Truncate(conv)
 	assert.Len(t, conv.Messages(), 2, "should keep at least 2 messages")
 }
+
+func TestContextManagerTruncateSkipsLeadingToolResult(t *testing.T) {
+	cm := NewContextManager(30)
+	conv := NewConversation("s")
+
+	// Leading tool_result message — should not be removed since it would
+	// orphan it from its tool_use.
+	conv.messages = append(conv.messages, provider.Message{
+		Role: "user",
+		Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "t1", Text: "result data"},
+		},
+	})
+	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "got it"}})
+	conv.AddUser("next question which is long enough to blow the budget completely over the limit")
+	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "long answer that also contributes to exceeding the token budget significantly"}})
+
+	cm.Truncate(conv)
+
+	// Should have removed the pair after the tool_result, keeping at least 2.
+	assert.GreaterOrEqual(t, len(conv.Messages()), 2)
+}
+
+func TestContextManagerTruncateAllToolResults(t *testing.T) {
+	cm := NewContextManager(5) // Very small budget
+	conv := NewConversation("s")
+
+	// All messages are tool_results — truncation should break out
+	// rather than looping forever.
+	conv.messages = []provider.Message{
+		{Role: "user", Content: []provider.ContentBlock{{Type: "tool_result", ToolUseID: "t1", Text: "r1"}}},
+		{Role: "user", Content: []provider.ContentBlock{{Type: "tool_result", ToolUseID: "t2", Text: "r2"}}},
+		{Role: "user", Content: []provider.ContentBlock{{Type: "tool_result", ToolUseID: "t3", Text: "r3 with lots of extra text to exceed budget"}}},
+	}
+
+	// Should not infinite loop — break when remove <= 0.
+	cm.Truncate(conv)
+	assert.GreaterOrEqual(t, len(conv.Messages()), 2)
+}
+
+func TestHasToolResult(t *testing.T) {
+	msg := provider.Message{
+		Role: "user",
+		Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "t1", Text: "data"},
+		},
+	}
+	assert.True(t, hasToolResult(msg))
+
+	msg2 := provider.Message{
+		Role: "user",
+		Content: []provider.ContentBlock{
+			{Type: "text", Text: "hello"},
+		},
+	}
+	assert.False(t, hasToolResult(msg2))
+}

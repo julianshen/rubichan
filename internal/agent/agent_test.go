@@ -56,6 +56,21 @@ func (e *errorProvider) Stream(_ context.Context, _ provider.CompletionRequest) 
 	return nil, e.err
 }
 
+// mockTool implements tools.Tool for testing.
+type mockTool struct {
+	name        string
+	description string
+	inputSchema json.RawMessage
+	executeFn   func(ctx context.Context, input json.RawMessage) (tools.ToolResult, error)
+}
+
+func (m *mockTool) Name() string                 { return m.name }
+func (m *mockTool) Description() string          { return m.description }
+func (m *mockTool) InputSchema() json.RawMessage { return m.inputSchema }
+func (m *mockTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
+	return m.executeFn(ctx, input)
+}
+
 func autoApprove(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
 	return true, nil
 }
@@ -665,6 +680,102 @@ func TestAgentWithoutStoreStillWorks(t *testing.T) {
 	for range ch {
 	}
 	// Should work fine without store
+}
+
+func TestTurnContextCancelledDuringToolLoop(t *testing.T) {
+	// LLM returns a tool_use, but context is cancelled before tool execution.
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_ctx",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"x.txt"}`},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	require.NoError(t, reg.Register(tools.NewFileTool(tmpDir)))
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	ch, err := agent.Turn(ctx, "read file")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var hasError bool
+	for _, ev := range events {
+		if ev.Type == "error" {
+			hasError = true
+		}
+	}
+	assert.True(t, hasError, "should get error from cancelled context")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestTurnWithToolExecuteGoError(t *testing.T) {
+	// Register a tool that returns a Go error (not a ToolResult error).
+	errorTool := &mockTool{
+		name:        "bad_tool",
+		description: "always errors",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{}, fmt.Errorf("internal tool failure")
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_go_err",
+					Name: "bad_tool",
+				}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Noted the error."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(errorTool))
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "use bad tool")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var hasToolResult bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" {
+			hasToolResult = true
+			assert.True(t, ev.ToolResult.IsError)
+			assert.Contains(t, ev.ToolResult.Content, "tool execution error")
+		}
+	}
+	assert.True(t, hasToolResult, "should have tool_result event with execution error")
 }
 
 func TestAgentPersistMessageErrorIsNonFatal(t *testing.T) {

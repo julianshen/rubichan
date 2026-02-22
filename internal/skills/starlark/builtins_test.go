@@ -1219,3 +1219,154 @@ func TestBuiltinInvokeSkillError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invoke_skill")
 }
+
+func TestBuiltinReadFileSandboxEscape(t *testing.T) {
+	dir := t.TempDir()
+
+	engine := newTestEngine(t, dir, []skills.Permission{skills.PermFileRead})
+
+	// Attempt to read a file outside the skill directory.
+	starCode := `result = read_file("../../etc/passwd")`
+	err := os.WriteFile(filepath.Join(dir, "main.star"), []byte(starCode), 0o644)
+	require.NoError(t, err)
+
+	manifest := skills.SkillManifest{
+		Name:        "test-skill",
+		Version:     "0.1.0",
+		Description: "test skill",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: "main.star",
+		},
+	}
+	err = engine.Load(manifest, engine.Checker())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes")
+}
+
+func TestBuiltinWriteFileSandboxEscape(t *testing.T) {
+	dir := t.TempDir()
+
+	engine := newTestEngine(t, dir, []skills.Permission{skills.PermFileWrite})
+
+	starCode := `write_file("../../tmp/escape.txt", "evil")`
+	err := os.WriteFile(filepath.Join(dir, "main.star"), []byte(starCode), 0o644)
+	require.NoError(t, err)
+
+	manifest := skills.SkillManifest{
+		Name:        "test-skill",
+		Version:     "0.1.0",
+		Description: "test skill",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: "main.star",
+		},
+	}
+	err = engine.Load(manifest, engine.Checker())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes")
+}
+
+func TestBuiltinListDirSandboxEscape(t *testing.T) {
+	dir := t.TempDir()
+
+	engine := newTestEngine(t, dir, []skills.Permission{skills.PermFileRead})
+
+	starCode := `entries = list_dir("../../")`
+	err := os.WriteFile(filepath.Join(dir, "main.star"), []byte(starCode), 0o644)
+	require.NoError(t, err)
+
+	manifest := skills.SkillManifest{
+		Name:        "test-skill",
+		Version:     "0.1.0",
+		Description: "test skill",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: "main.star",
+		},
+	}
+	err = engine.Load(manifest, engine.Checker())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes")
+}
+
+func TestBuiltinReadFileRelativePath(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a file inside the skill directory using a relative path.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "data.txt"), []byte("relative data"), 0o644))
+
+	engine := newTestEngine(t, dir, []skills.Permission{skills.PermFileRead})
+	loadStar(t, engine, dir, "main.star", `
+result = read_file("data.txt")
+`)
+
+	val := engine.Global("result")
+	require.NotNil(t, val)
+	assert.Equal(t, "relative data", val)
+}
+
+func TestBuiltinLog(t *testing.T) {
+	dir := t.TempDir()
+
+	engine := newTestEngine(t, dir, []skills.Permission{})
+	loadStar(t, engine, dir, "main.star", `
+log("hello from starlark")
+x = 42
+`)
+
+	val := engine.Global("x")
+	require.NotNil(t, val)
+	assert.Equal(t, int64(42), val)
+}
+
+func TestBuiltinSearchFilesSandboxEscapeFiltered(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a file outside the skill directory.
+	outsideDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outsideDir, "outside.txt"), []byte("outside"), 0o644))
+
+	engine := newTestEngine(t, dir, []skills.Permission{skills.PermFileRead})
+
+	// search_files with path that resolves outside should return 0 matches
+	// (filtered out by sandbox).
+	pattern := filepath.Join(outsideDir, "*.txt")
+	loadStar(t, engine, dir, "main.star", `
+matches = search_files("`+pattern+`")
+count = len(matches)
+`)
+
+	val := engine.Global("count")
+	require.NotNil(t, val)
+	assert.Equal(t, int64(0), val, "matches outside skill dir should be filtered")
+}
+
+func TestBuiltinInvokeSkillNonDictInput(t *testing.T) {
+	dir := t.TempDir()
+
+	engine := newTestEngine(t, dir, []skills.Permission{skills.PermSkillInvoke})
+	engine.SetSkillInvoker(&mockSkillInvoker{result: map[string]any{"ok": true}})
+
+	// Pass a non-dict second argument — should error.
+	starCode := `result = invoke_skill("other-skill", "not-a-dict")`
+	err := os.WriteFile(filepath.Join(dir, "main.star"), []byte(starCode), 0o644)
+	require.NoError(t, err)
+
+	manifest := skills.SkillManifest{
+		Name:        "test-skill",
+		Version:     "0.1.0",
+		Description: "test skill",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: "main.star",
+		},
+	}
+	err = engine.Load(manifest, engine.Checker())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invoke_skill")
+}
