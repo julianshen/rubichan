@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -93,5 +94,5 @@ func ResolveVersion(constraint string, available []string) (string, error) {
 	if len(skipped) > 0 {
 		msg += fmt.Sprintf("; skipped %d unparseable: %s", len(skipped), strings.Join(skipped, ", "))
 	}
-	return "", fmt.Errorf("%s", msg)
+	return "", errors.New(msg)
 }

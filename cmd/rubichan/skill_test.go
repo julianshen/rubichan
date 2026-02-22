@@ -885,6 +885,75 @@ func TestSkillListAvailableError(t *testing.T) {
 	assert.Contains(t, err.Error(), "fetching available skills")
 }
 
+// TestSkillInstallSemVerRangeListVersionsError verifies that a registry error
+// during version listing propagates correctly.
+func TestSkillInstallSemVerRangeListVersionsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@^1.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing versions")
+}
+
+// TestSkillInstallVersionMismatch verifies that a registry serving a manifest
+// with a different version than requested is rejected.
+func TestSkillInstallVersionMismatch(t *testing.T) {
+	mismatchManifest := `name: my-tool
+version: 9.9.9
+description: "A test tool skill"
+types:
+  - tool
+author: tester
+license: MIT
+implementation:
+  backend: starlark
+  entrypoint: main.star
+`
+	tarData := makeTarGz(t, map[string]string{
+		"SKILL.yaml": mismatchManifest,
+		"main.star":  "print('hello')",
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/manifest"):
+			w.Header().Set("Content-Type", "application/x-yaml")
+			w.Write([]byte(mismatchManifest))
+		case strings.HasSuffix(r.URL.Path, "/download"):
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Write(tarData)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@1.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "downloaded skill declares version")
+}
+
 // TestSkillCreate verifies that "skill create <name>" scaffolds a directory
 // with a SKILL.yaml template and a skill.star template.
 func TestSkillCreate(t *testing.T) {

@@ -508,8 +508,12 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	if manifest.Name != name {
 		return fmt.Errorf("downloaded skill declares name %q but %q was requested", manifest.Name, name)
 	}
-	if version != "" && version != "latest" && manifest.Version != version {
-		return fmt.Errorf("downloaded skill declares version %q but %q was requested", manifest.Version, version)
+	if version != "" && version != "latest" {
+		if manifest.Version != version {
+			return fmt.Errorf("downloaded skill declares version %q but %q was requested", manifest.Version, version)
+		}
+	} else if manifest.Version == "" {
+		return fmt.Errorf("downloaded skill declares empty version")
 	}
 
 	// Save state to store.

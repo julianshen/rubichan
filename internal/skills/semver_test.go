@@ -114,6 +114,15 @@ func TestResolveVersionPartiallyUnparseable(t *testing.T) {
 	assert.Equal(t, "1.2.0", got)
 }
 
+func TestResolveVersionNoMatchWithSkipped(t *testing.T) {
+	available := []string{"junk", "1.0.0", "bad"}
+
+	_, err := ResolveVersion("^2.0.0", available)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no version matching")
+	assert.Contains(t, err.Error(), "skipped 2 unparseable")
+}
+
 func TestIsSemVerRange(t *testing.T) {
 	assert.True(t, IsSemVerRange("^1.0.0"))
 	assert.True(t, IsSemVerRange("~1.0.0"))

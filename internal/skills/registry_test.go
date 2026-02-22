@@ -126,6 +126,30 @@ types:
 	assert.Contains(t, string(readmeData), "dl-skill")
 }
 
+func TestRegistryDownloadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewRegistryClient(srv.URL, nil, 0)
+	err := client.Download(context.Background(), "my-tool", "1.0.0", t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected status 404")
+}
+
+func TestRegistryGetManifestError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewRegistryClient(srv.URL, nil, 0)
+	_, err := client.GetManifest(context.Background(), "my-tool", "1.0.0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected status 404")
+}
+
 func TestRegistryCachingHit(t *testing.T) {
 	manifestYAML := `name: cached-skill
 version: 2.0.0
@@ -226,6 +250,44 @@ func TestRegistryListVersionsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent")
 	assert.Contains(t, err.Error(), "404")
+}
+
+func TestRegistryListVersionsMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	client := NewRegistryClient(srv.URL, nil, 0)
+	_, err := client.ListVersions(context.Background(), "my-tool")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode versions response")
+}
+
+func TestRegistrySearchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewRegistryClient(srv.URL, nil, 0)
+	_, err := client.Search(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected status 500")
+}
+
+func TestRegistrySearchMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{invalid"))
+	}))
+	defer srv.Close()
+
+	client := NewRegistryClient(srv.URL, nil, 0)
+	_, err := client.Search(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode search response")
 }
 
 func TestRegistryGitInstall(t *testing.T) {
