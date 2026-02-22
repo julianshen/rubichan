@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"testing"
 
+	"os"
+	"path/filepath"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -589,6 +592,238 @@ func TestPluginContextWriteFileError(t *testing.T) {
 	err := ctx.WriteFile("/nonexistent/dir/xyz/file.txt", "content")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "WriteFile")
+}
+
+func TestWithOptionFunctions(t *testing.T) {
+	llm := &stubLLMCompleter{}
+	fetcher := &stubHTTPFetcher{}
+	git := &stubGitRunner{}
+	invoker := &stubSkillInvoker{}
+
+	backend := NewGoPluginBackend(
+		WithLLMCompleter(llm),
+		WithHTTPFetcher(fetcher),
+		WithGitRunner(git),
+		WithSkillInvoker(invoker),
+	)
+
+	assert.NotNil(t, backend.llmCompleter)
+	assert.NotNil(t, backend.httpFetcher)
+	assert.NotNil(t, backend.gitRunner)
+	assert.NotNil(t, backend.skillInvoker)
+}
+
+type stubLLMCompleter struct{}
+
+func (s *stubLLMCompleter) Complete(_ string) (string, error) { return "ok", nil }
+
+type stubHTTPFetcher struct{}
+
+func (s *stubHTTPFetcher) Fetch(_ string) (string, error) { return "ok", nil }
+
+type stubGitRunner struct{}
+
+func (s *stubGitRunner) Diff(_ ...string) (string, error)                  { return "ok", nil }
+func (s *stubGitRunner) Log(_ ...string) ([]skillsdk.GitCommit, error)     { return nil, nil }
+func (s *stubGitRunner) Status() ([]skillsdk.GitFileStatus, error)         { return nil, nil }
+
+type stubSkillInvoker struct{}
+
+func (s *stubSkillInvoker) Invoke(_ string, _ map[string]any) (map[string]any, error) {
+	return map[string]any{"ok": true}, nil
+}
+
+func TestPluginContextCompleteNotConfigured(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	_, err := ctx.Complete("test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
+}
+
+func TestPluginContextFetchNotConfigured(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	_, err := ctx.Fetch("http://example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
+}
+
+func TestPluginContextGitDiffNotConfigured(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	_, err := ctx.GitDiff()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
+}
+
+func TestPluginContextGitLogNotConfigured(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	_, err := ctx.GitLog()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
+}
+
+func TestPluginContextGitStatusNotConfigured(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	_, err := ctx.GitStatus()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
+}
+
+func TestPluginContextInvokeSkillNotConfigured(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	_, err := ctx.InvokeSkill("test", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
+}
+
+func TestPluginContextResolveSandboxedPathEscape(t *testing.T) {
+	dir := t.TempDir()
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+
+	_, err := ctx.resolveSandboxedPath("../../../etc/passwd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes skill directory")
+}
+
+func TestPluginContextResolveSandboxedPathAbsOutside(t *testing.T) {
+	dir := t.TempDir()
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+
+	_, err := ctx.resolveSandboxedPath("/etc/passwd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes skill directory")
+}
+
+func TestPluginContextReadFileSandboxEscape(t *testing.T) {
+	dir := t.TempDir()
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+
+	_, err := ctx.ReadFile("../../../etc/passwd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ReadFile")
+}
+
+func TestPluginContextListDirNotFound(t *testing.T) {
+	dir := t.TempDir()
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+
+	_, err := ctx.ListDir("nonexistent-subdir")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ListDir")
+}
+
+func TestPluginContextSearchFilesNoMatch(t *testing.T) {
+	dir := t.TempDir()
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+
+	results, err := ctx.SearchFiles("*.xyz")
+	require.NoError(t, err)
+	assert.Empty(t, results)
+}
+
+func TestPluginContextGetEnvDenied(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: false}, t.TempDir())
+	result := ctx.GetEnv("HOME")
+	assert.Equal(t, "", result)
+}
+
+func TestPluginContextCompleteWithProvider(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	ctx.llmCompleter = &stubLLMCompleter{}
+	result, err := ctx.Complete("test prompt")
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result)
+}
+
+func TestPluginContextFetchWithProvider(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	ctx.httpFetcher = &stubHTTPFetcher{}
+	result, err := ctx.Fetch("http://example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result)
+}
+
+func TestPluginContextGitDiffWithProvider(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	ctx.gitRunner = &stubGitRunner{}
+	result, err := ctx.GitDiff("HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result)
+}
+
+func TestPluginContextGitLogWithProvider(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	ctx.gitRunner = &stubGitRunner{}
+	_, err := ctx.GitLog("-n", "5")
+	require.NoError(t, err)
+}
+
+func TestPluginContextGitStatusWithProvider(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	ctx.gitRunner = &stubGitRunner{}
+	_, err := ctx.GitStatus()
+	require.NoError(t, err)
+}
+
+func TestPluginContextInvokeSkillWithProvider(t *testing.T) {
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, t.TempDir())
+	ctx.skillInvoker = &stubSkillInvoker{}
+	result, err := ctx.InvokeSkill("test-skill", map[string]any{"key": "val"})
+	require.NoError(t, err)
+	assert.Equal(t, true, result["ok"])
+}
+
+func TestPluginContextReadFileNonExistent(t *testing.T) {
+	dir := t.TempDir()
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+	_, err := ctx.ReadFile("missing.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ReadFile")
+}
+
+func TestPluginContextWriteFileSandboxEscape(t *testing.T) {
+	dir := t.TempDir()
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+	err := ctx.WriteFile("../../../tmp/escape.txt", "bad")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "WriteFile")
+}
+
+func TestPluginContextSearchFilesWithMatch(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "test.go"), []byte("package test"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644))
+
+	ctx := newPluginContext(&mockPermissionChecker{allowAll: true}, dir)
+	results, err := ctx.SearchFiles("*.go")
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+}
+
+func TestPluginContextLoadWithIntegrations(t *testing.T) {
+	loader := &mockPluginLoader{plugin: &fakePlugin{}}
+	backend := NewGoPluginBackend(
+		WithSkillDir(t.TempDir()),
+		WithLLMCompleter(&stubLLMCompleter{}),
+		WithHTTPFetcher(&stubHTTPFetcher{}),
+		WithGitRunner(&stubGitRunner{}),
+		WithSkillInvoker(&stubSkillInvoker{}),
+	)
+	backend.loader = loader
+
+	manifest := skills.SkillManifest{
+		Name: "test-plugin", Version: "1.0.0",
+		Types:          []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{Entrypoint: "plugin.so"},
+	}
+
+	err := backend.Load(manifest, &mockPermissionChecker{allowAll: true})
+	require.NoError(t, err)
+
+	// Verify that the integrations were wired through to the context.
+	assert.NotNil(t, backend.ctx.llmCompleter)
+	assert.NotNil(t, backend.ctx.httpFetcher)
+	assert.NotNil(t, backend.ctx.gitRunner)
+	assert.NotNil(t, backend.ctx.skillInvoker)
 }
 
 // --- Additional fake plugin types for error testing ---
