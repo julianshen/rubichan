@@ -516,9 +516,9 @@ register_tool(name="my-tool", description="a tool", handler=handler)
 
 func TestEngineRegisterHookBadArgs(t *testing.T) {
 	dir := t.TempDir()
-	// register_hook requires name, phase, and handler.
+	// register_hook requires phase and handler; passing only phase triggers missing-arg error.
 	manifest := writeStarFile(t, dir, "main.star", `
-register_hook(name="bad")
+register_hook("OnActivate")
 `)
 
 	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
@@ -528,9 +528,9 @@ register_hook(name="bad")
 
 func TestEngineRegisterWorkflowBadArgs(t *testing.T) {
 	dir := t.TempDir()
-	// register_workflow requires name, description, and steps.
+	// register_workflow requires name and handler; passing only name triggers missing-arg error.
 	manifest := writeStarFile(t, dir, "main.star", `
-register_workflow(name="bad")
+register_workflow("my-workflow")
 `)
 
 	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
@@ -540,9 +540,9 @@ register_workflow(name="bad")
 
 func TestEngineRegisterScannerBadArgs(t *testing.T) {
 	dir := t.TempDir()
-	// register_scanner requires name, description, and handler.
+	// register_scanner requires name and handler; passing only name triggers missing-arg error.
 	manifest := writeStarFile(t, dir, "main.star", `
-register_scanner(name="bad")
+register_scanner("my-scanner")
 `)
 
 	engine := starlark.NewEngine("test-skill", dir, &mockChecker{})
@@ -552,7 +552,7 @@ register_scanner(name="bad")
 
 func TestEngineRegisterToolBadArgs(t *testing.T) {
 	dir := t.TempDir()
-	// register_tool requires name, description, and handler.
+	// register_tool requires name, description, and handler; passing only name triggers missing-arg error.
 	manifest := writeStarFile(t, dir, "main.star", `
 register_tool(name="bad")
 `)

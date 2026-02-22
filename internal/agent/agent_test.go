@@ -694,6 +694,11 @@ func TestTurnContextCancelledDuringToolLoop(t *testing.T) {
 				{Type: "text_delta", Text: `{"operation":"read","path":"x.txt"}`},
 				{Type: "stop"},
 			},
+			// Fallback — should never be reached if context cancellation is honoured.
+			{
+				{Type: "text_delta", Text: "unexpected second turn"},
+				{Type: "stop"},
+			},
 		},
 	}
 

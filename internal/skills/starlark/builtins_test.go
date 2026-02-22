@@ -1335,10 +1335,10 @@ func TestBuiltinSearchFilesSandboxEscapeFiltered(t *testing.T) {
 	// search_files with path that resolves outside should return 0 matches
 	// (filtered out by sandbox).
 	pattern := filepath.Join(outsideDir, "*.txt")
-	loadStar(t, engine, dir, "main.star", `
-matches = search_files("`+pattern+`")
+	loadStar(t, engine, dir, "main.star", fmt.Sprintf(`
+matches = search_files(%q)
 count = len(matches)
-`)
+`, pattern))
 
 	val := engine.Global("count")
 	require.NotNil(t, val)
