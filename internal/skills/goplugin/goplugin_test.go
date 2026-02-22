@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"testing"
-
 	"os"
 	"path/filepath"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -623,9 +622,9 @@ func (s *stubHTTPFetcher) Fetch(_ string) (string, error) { return "ok", nil }
 
 type stubGitRunner struct{}
 
-func (s *stubGitRunner) Diff(_ ...string) (string, error)                  { return "ok", nil }
-func (s *stubGitRunner) Log(_ ...string) ([]skillsdk.GitCommit, error)     { return nil, nil }
-func (s *stubGitRunner) Status() ([]skillsdk.GitFileStatus, error)         { return nil, nil }
+func (s *stubGitRunner) Diff(_ ...string) (string, error)              { return "ok", nil }
+func (s *stubGitRunner) Log(_ ...string) ([]skillsdk.GitCommit, error) { return nil, nil }
+func (s *stubGitRunner) Status() ([]skillsdk.GitFileStatus, error)     { return nil, nil }
 
 type stubSkillInvoker struct{}
 

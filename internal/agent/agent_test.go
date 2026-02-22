@@ -37,6 +37,9 @@ type dynamicMockProvider struct {
 }
 
 func (d *dynamicMockProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	if d.callIdx >= len(d.responses) {
+		return nil, fmt.Errorf("dynamicMockProvider: no more responses (call #%d, have %d)", d.callIdx, len(d.responses))
+	}
 	events := d.responses[d.callIdx]
 	d.callIdx++
 	ch := make(chan provider.StreamEvent, len(events))

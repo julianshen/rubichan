@@ -335,9 +335,9 @@ type errorTransport struct {
 	sendErr error
 }
 
-func (e *errorTransport) Send(_ context.Context, _ any) error       { return e.sendErr }
-func (e *errorTransport) Receive(_ context.Context, _ any) error    { return io.EOF }
-func (e *errorTransport) Close() error                              { return nil }
+func (e *errorTransport) Send(_ context.Context, _ any) error    { return e.sendErr }
+func (e *errorTransport) Receive(_ context.Context, _ any) error { return io.EOF }
+func (e *errorTransport) Close() error                           { return nil }
 
 // countingErrorTransport succeeds for the first N sends, then fails.
 type countingErrorTransport struct {
