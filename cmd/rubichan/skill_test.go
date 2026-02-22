@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/skills"
@@ -78,6 +79,59 @@ func TestSkillListCommandEmpty(t *testing.T) {
 
 	output := buf.String()
 	assert.Contains(t, output, "No skills installed")
+}
+
+func TestSkillListAvailable(t *testing.T) {
+	results := []skills.RegistrySearchResult{
+		{Name: "code-review", Version: "1.0.0", Description: "Automated code review"},
+		{Name: "formatter", Version: "2.1.0", Description: "Code formatting skill"},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/search", r.URL.Path)
+		assert.Equal(t, "", r.URL.Query().Get("q"))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list", "--available", "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "NAME")
+	assert.Contains(t, output, "VERSION")
+	assert.Contains(t, output, "DESCRIPTION")
+	assert.Contains(t, output, "code-review")
+	assert.Contains(t, output, "1.0.0")
+	assert.Contains(t, output, "Automated code review")
+	assert.Contains(t, output, "formatter")
+}
+
+func TestSkillListAvailableNoResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list", "--available", "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "No skills available")
 }
 
 func TestSkillInfoCommand(t *testing.T) {
@@ -448,6 +502,96 @@ implementation:
 	assert.Equal(t, "2.3.0", state.Version)
 }
 
+// TestSkillInstallSemVerRange verifies that "skill install name@^1.0.0"
+// resolves the version range against the registry and installs the best match.
+func TestSkillInstallSemVerRange(t *testing.T) {
+	// The registry has versions 1.0.0, 1.2.0, 2.0.0. ^1.0.0 should resolve to 1.2.0.
+	manifestResolved := `name: my-tool
+version: 1.2.0
+description: "A versioned tool skill"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: main.star
+`
+	tarData := makeTarGz(t, map[string]string{
+		"SKILL.yaml": manifestResolved,
+		"main.star":  "print('v1.2')",
+	})
+
+	var downloadedVersion string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/skills/my-tool/versions":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]string{"1.0.0", "1.2.0", "2.0.0"})
+		case r.URL.Path == "/api/v1/skills/my-tool/1.2.0/download":
+			downloadedVersion = "1.2.0"
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Write(tarData)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "installed-skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@^1.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	// The server should have resolved ^1.0.0 to 1.2.0.
+	assert.Equal(t, "1.2.0", downloadedVersion)
+
+	// Verify state shows the resolved version.
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	state, err := s.GetSkillState("my-tool")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	assert.Equal(t, "1.2.0", state.Version)
+
+	// Output should mention the resolved version.
+	assert.Contains(t, buf.String(), "1.2.0")
+}
+
+// TestSkillInstallSemVerRangeNoMatch verifies error when no version matches the range.
+func TestSkillInstallSemVerRangeNoMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/skills/my-tool/versions":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]string{"1.0.0", "1.1.0"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "installed-skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@^3.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolving version")
+}
+
 // TestSkillRemove verifies that "skill remove <name>" deletes the skill
 // directory and removes its entry from the store.
 func TestSkillRemove(t *testing.T) {
@@ -677,6 +821,137 @@ func TestParseNameVersion(t *testing.T) {
 	name, version = parseNameVersion("my-skill@")
 	assert.Equal(t, "my-skill", name)
 	assert.Equal(t, "", version)
+}
+
+// TestValidateSkillName verifies skill name validation rejects path traversal.
+func TestValidateSkillName(t *testing.T) {
+	// Valid names.
+	assert.NoError(t, validateSkillName("my-skill"))
+	assert.NoError(t, validateSkillName("code_review"))
+	assert.NoError(t, validateSkillName("kubernetes"))
+	assert.NoError(t, validateSkillName("skill123"))
+
+	// Invalid names.
+	assert.Error(t, validateSkillName("../../admin"))
+	assert.Error(t, validateSkillName("my skill"))
+	assert.Error(t, validateSkillName("my/skill"))
+	assert.Error(t, validateSkillName(""))
+	assert.Error(t, validateSkillName("-starts-with-dash"))
+	assert.Error(t, validateSkillName("_starts-with-underscore"))
+	assert.Error(t, validateSkillName("."))
+	assert.Error(t, validateSkillName(".."))
+	assert.Error(t, validateSkillName(".hidden"))
+
+	// Max length.
+	longName := strings.Repeat("a", 129)
+	assert.Error(t, validateSkillName(longName))
+	assert.NoError(t, validateSkillName(longName[:128]))
+}
+
+// TestSkillInstallInvalidName verifies install rejects invalid skill names
+// that would be routed through installFromRegistry (not isLocalPath).
+func TestSkillInstallInvalidName(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// Use name@version syntax with an invalid name containing a space.
+	// parseNameVersion splits on @ so name="bad name", which fails validation.
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "bad name@1.0.0", "--store", dbPath, "--skills-dir", skillsDir})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid skill name")
+}
+
+// TestSkillListAvailableError verifies --available handles registry errors.
+func TestSkillListAvailableError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list", "--available", "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetching available skills")
+}
+
+// TestSkillInstallSemVerRangeListVersionsError verifies that a registry error
+// during version listing propagates correctly.
+func TestSkillInstallSemVerRangeListVersionsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@^1.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing versions")
+}
+
+// TestSkillInstallVersionMismatch verifies that a registry serving a manifest
+// with a different version than requested is rejected.
+func TestSkillInstallVersionMismatch(t *testing.T) {
+	mismatchManifest := `name: my-tool
+version: 9.9.9
+description: "A test tool skill"
+types:
+  - tool
+author: tester
+license: MIT
+implementation:
+  backend: starlark
+  entrypoint: main.star
+`
+	tarData := makeTarGz(t, map[string]string{
+		"SKILL.yaml": mismatchManifest,
+		"main.star":  "print('hello')",
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/manifest"):
+			w.Header().Set("Content-Type", "application/x-yaml")
+			w.Write([]byte(mismatchManifest))
+		case strings.HasSuffix(r.URL.Path, "/download"):
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Write(tarData)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "my-tool@1.0.0", "--store", dbPath, "--skills-dir", skillsDir, "--registry", srv.URL})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "downloaded skill declares version")
 }
 
 // TestSkillCreate verifies that "skill create <name>" scaffolds a directory

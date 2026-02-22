@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -59,42 +60,93 @@ func skillListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List installed skills",
-		Long:  "Display a table of all installed skills with their name, version, and source.",
+		Long: `Display a table of all installed skills with their name, version, and source.
+
+Use --available to list skills from the remote registry instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			storePath, err := resolveStorePath(cmd)
+			available, err := cmd.Flags().GetBool("available")
 			if err != nil {
-				return err
+				return fmt.Errorf("reading --available flag: %w", err)
 			}
-
-			s, err := store.NewStore(storePath)
-			if err != nil {
-				return fmt.Errorf("opening store: %w", err)
+			if available {
+				return listAvailableSkills(cmd)
 			}
-			defer s.Close()
-
-			states, err := s.ListAllSkillStates()
-			if err != nil {
-				return fmt.Errorf("listing skills: %w", err)
-			}
-
-			if len(states) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No skills installed.")
-				return nil
-			}
-
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tVERSION\tSOURCE\tINSTALLED")
-			for _, st := range states {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-					st.Name, st.Version, st.Source,
-					st.InstalledAt.Format(time.RFC3339),
-				)
-			}
-			return w.Flush()
+			return listInstalledSkills(cmd)
 		},
 	}
 	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
+	cmd.Flags().Bool("available", false, "list skills from the remote registry")
+	cmd.Flags().String("registry", "", "registry URL (default: "+defaultRegistryURL+")")
 	return cmd
+}
+
+// listInstalledSkills displays locally installed skills from the store.
+func listInstalledSkills(cmd *cobra.Command) error {
+	storePath, err := resolveStorePath(cmd)
+	if err != nil {
+		return err
+	}
+
+	s, err := store.NewStore(storePath)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+
+	states, err := s.ListAllSkillStates()
+	if err != nil {
+		return fmt.Errorf("listing skills: %w", err)
+	}
+
+	if len(states) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No skills installed.")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tSOURCE\tINSTALLED")
+	for _, st := range states {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			st.Name, st.Version, st.Source,
+			st.InstalledAt.Format(time.RFC3339),
+		)
+	}
+	return w.Flush()
+}
+
+// listAvailableSkills fetches and displays skills from the remote registry.
+func listAvailableSkills(cmd *cobra.Command) error {
+	registryURL, err := cmd.Flags().GetString("registry")
+	if err != nil {
+		return fmt.Errorf("reading --registry flag: %w", err)
+	}
+	if registryURL == "" {
+		registryURL = defaultRegistryURL
+	}
+
+	client := skills.NewRegistryClient(registryURL, nil, 0)
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	results, err := client.Search(ctx, "")
+	if err != nil {
+		return fmt.Errorf("fetching available skills: %w", err)
+	}
+
+	if len(results) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No skills available in the registry.")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION")
+	for _, r := range results {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, r.Version, r.Description)
+	}
+	return w.Flush()
 }
 
 func skillInfoCmd() *cobra.Command {
@@ -250,6 +302,24 @@ func parseNameVersion(source string) (name, version string) {
 	return source, "latest"
 }
 
+// validSkillNamePattern matches only safe skill names: alphanumeric, hyphens,
+// and underscores. This prevents path traversal (e.g., "../../admin") when
+// skill names are interpolated into URL paths or filesystem paths.
+var validSkillNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// validateSkillName returns an error if the name contains characters that
+// could cause path traversal or URL injection.
+func validateSkillName(name string) error {
+	const maxSkillNameLength = 128
+	if len(name) > maxSkillNameLength {
+		return fmt.Errorf("invalid skill name %q: exceeds maximum length of %d characters", name, maxSkillNameLength)
+	}
+	if !validSkillNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid skill name %q: must contain only letters, digits, hyphens, and underscores", name)
+	}
+	return nil
+}
+
 // copyDir recursively copies a directory tree from src to dst. Files are
 // copied with their original permissions.
 func copyDir(src, dst string) error {
@@ -375,11 +445,20 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 }
 
 // installFromRegistry downloads a skill from the remote registry, validates
-// its manifest, and saves install state.
+// its manifest, and saves install state. If the version is a SemVer range
+// (e.g., "^1.0.0", "~1.2"), it resolves the constraint against available
+// versions before downloading.
 func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string) error {
 	name, version := parseNameVersion(source)
 
-	registryURL, _ := cmd.Flags().GetString("registry")
+	if err := validateSkillName(name); err != nil {
+		return err
+	}
+
+	registryURL, err := cmd.Flags().GetString("registry")
+	if err != nil {
+		return fmt.Errorf("reading --registry flag: %w", err)
+	}
 	if registryURL == "" {
 		registryURL = defaultRegistryURL
 	}
@@ -389,6 +468,19 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	// Resolve SemVer ranges by fetching available versions from the registry.
+	if skills.IsSemVerRange(version) {
+		available, err := client.ListVersions(ctx, name)
+		if err != nil {
+			return fmt.Errorf("listing versions: %w", err)
+		}
+		resolved, err := skills.ResolveVersion(version, available)
+		if err != nil {
+			return fmt.Errorf("resolving version %q: %w", version, err)
+		}
+		version = resolved
 	}
 
 	dest := filepath.Join(skillsDir, name)
@@ -410,6 +502,18 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	manifest, err := skills.ParseManifest(data)
 	if err != nil {
 		return fmt.Errorf("invalid downloaded manifest: %w", err)
+	}
+
+	// Validate that the manifest matches what was requested.
+	if manifest.Name != name {
+		return fmt.Errorf("downloaded skill declares name %q but %q was requested", manifest.Name, name)
+	}
+	if version != "" && version != "latest" {
+		if manifest.Version != version {
+			return fmt.Errorf("downloaded skill declares version %q but %q was requested", manifest.Version, version)
+		}
+	} else if manifest.Version == "" {
+		return fmt.Errorf("downloaded skill declares empty version")
 	}
 
 	// Save state to store.
