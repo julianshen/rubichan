@@ -201,3 +201,93 @@ func TestFileToolInvalidJSON(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "invalid")
 }
+
+func TestFileToolPatchEmptyOldString(t *testing.T) {
+	dir := t.TempDir()
+	ft := NewFileTool(dir)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation":  "patch",
+		"path":       "test.txt",
+		"old_string": "",
+		"new_string": "replacement",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "old_string must not be empty")
+}
+
+func TestFileToolPatchNonexistentFile(t *testing.T) {
+	dir := t.TempDir()
+	ft := NewFileTool(dir)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation":  "patch",
+		"path":       "missing.txt",
+		"old_string": "foo",
+		"new_string": "bar",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "no such file")
+}
+
+func TestFileToolWriteToNewDir(t *testing.T) {
+	dir := t.TempDir()
+	ft := NewFileTool(dir)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "a/b/c/deep.txt",
+		"content":   "nested write",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	data, err := os.ReadFile(filepath.Join(dir, "a", "b", "c", "deep.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "nested write", string(data))
+}
+
+func TestFileToolWriteToNonexistentNewFile(t *testing.T) {
+	dir := t.TempDir()
+	ft := NewFileTool(dir)
+
+	// Write to a file that doesn't exist yet (path resolution uses resolveNearestAncestor)
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "brand_new.txt",
+		"content":   "created",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	data, err := os.ReadFile(filepath.Join(dir, "brand_new.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "created", string(data))
+}
+
+func TestFileToolSymlinkWriteTraversal(t *testing.T) {
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	// Create a symlink dir inside rootDir pointing outside
+	symlink := filepath.Join(dir, "escape")
+	require.NoError(t, os.Symlink(outsideDir, symlink))
+
+	ft := NewFileTool(dir)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "escape/evil.txt",
+		"content":   "should be denied",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "path traversal")
+}

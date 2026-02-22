@@ -94,6 +94,41 @@ func TestGitRunnerStatus(t *testing.T) {
 	assert.Equal(t, "??", statuses[0].Status)
 }
 
+func TestGitRunnerLogEmptyRepo(t *testing.T) {
+	dir := t.TempDir()
+
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		require.NoError(t, cmd.Run())
+	}
+
+	runner := NewGitRunner(dir)
+	// Empty repo — git log exits with error.
+	_, err := runner.Log(context.Background(), "-1")
+	require.Error(t, err)
+}
+
+func TestGitRunnerRunBadDir(t *testing.T) {
+	runner := NewGitRunner("/nonexistent/dir/xyz")
+	_, err := runner.Diff(context.Background())
+	require.Error(t, err)
+}
+
+func TestGitRunnerStatusEmpty(t *testing.T) {
+	dir := setupGitRepo(t)
+	// No changes — clean working tree.
+	runner := NewGitRunner(dir)
+	statuses, err := runner.Status(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, statuses)
+}
+
 func TestGitRunnerStatusRename(t *testing.T) {
 	dir := setupGitRepo(t)
 

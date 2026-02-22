@@ -54,3 +54,46 @@ func TestStdioTransportClose(t *testing.T) {
 	err = transport.Close()
 	assert.NoError(t, err)
 }
+
+func TestStdioTransportBadCommand(t *testing.T) {
+	_, err := NewStdioTransport("/nonexistent/binary/xyz", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "start process")
+}
+
+func TestStdioTransportSendContextCancellation(t *testing.T) {
+	// Use "sleep" so stdin blocks on write.
+	transport, err := NewStdioTransport("sleep", []string{"60"})
+	require.NoError(t, err)
+	defer transport.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = transport.Send(ctx, jsonRPCRequest{JSONRPC: "2.0", ID: 1, Method: "test"})
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestStdioTransportReceiveUnmarshalError(t *testing.T) {
+	// Use "echo" to write a non-JSON line to stdout.
+	transport, err := NewStdioTransport("echo", []string{"not json"})
+	require.NoError(t, err)
+	defer transport.Close()
+
+	var resp json.RawMessage
+	err = transport.Receive(context.Background(), &resp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal response")
+}
+
+func TestStdioTransportCloseIdempotent(t *testing.T) {
+	transport, err := NewStdioTransport("cat", nil)
+	require.NoError(t, err)
+
+	err = transport.Close()
+	assert.NoError(t, err)
+
+	// Second close should not panic or error.
+	err = transport.Close()
+	assert.NoError(t, err)
+}

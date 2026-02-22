@@ -69,6 +69,38 @@ func TestRegistryGetMissing(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestRegistryRegisterNil(t *testing.T) {
+	reg := NewRegistry()
+	err := reg.Register(nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot register nil tool")
+}
+
+func TestRegistryUnregister(t *testing.T) {
+	reg := NewRegistry()
+	tool := newMockTool("removable", "Will be removed")
+	require.NoError(t, reg.Register(tool))
+
+	// Tool exists.
+	_, ok := reg.Get("removable")
+	assert.True(t, ok)
+
+	// Unregister it.
+	err := reg.Unregister("removable")
+	require.NoError(t, err)
+
+	// No longer exists.
+	_, ok = reg.Get("removable")
+	assert.False(t, ok)
+}
+
+func TestRegistryUnregisterMissing(t *testing.T) {
+	reg := NewRegistry()
+	err := reg.Unregister("nonexistent")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tool not registered: nonexistent")
+}
+
 func TestRegistryAll(t *testing.T) {
 	reg := NewRegistry()
 	tool1 := newMockTool("tool_a", "Tool A")

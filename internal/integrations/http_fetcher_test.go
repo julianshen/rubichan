@@ -39,6 +39,13 @@ func TestHTTPFetcherResponseSizeLimit(t *testing.T) {
 	assert.Len(t, body, 1<<20)
 }
 
+func TestHTTPFetcherConnectionError(t *testing.T) {
+	fetcher := NewHTTPFetcher(2 * time.Second)
+	_, err := fetcher.Fetch(context.Background(), "http://127.0.0.1:1/unreachable")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetch")
+}
+
 func TestHTTPFetcherHTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
