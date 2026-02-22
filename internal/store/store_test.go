@@ -564,7 +564,7 @@ func TestStoreOperationsAfterClose(t *testing.T) {
 	// Close the store.
 	require.NoError(t, s.Close())
 
-	// All operations should return errors.
+	// Session/message operations should return errors.
 	err = s.CreateSession(Session{ID: "x", Model: "m"})
 	assert.Error(t, err, "CreateSession after close should fail")
 
@@ -585,4 +585,58 @@ func TestStoreOperationsAfterClose(t *testing.T) {
 
 	_, err = s.GetMessages("x")
 	assert.Error(t, err, "GetMessages after close should fail")
+
+	// Approval operations should return errors.
+	_, err = s.IsApproved("sk", "perm")
+	assert.Error(t, err, "IsApproved after close should fail")
+
+	err = s.Approve("sk", "perm", "always")
+	assert.Error(t, err, "Approve after close should fail")
+
+	err = s.Revoke("sk")
+	assert.Error(t, err, "Revoke after close should fail")
+
+	_, err = s.ListApprovals("sk")
+	assert.Error(t, err, "ListApprovals after close should fail")
+
+	// Skill state operations should return errors.
+	err = s.SaveSkillState(SkillInstallState{Name: "x", Version: "1", Source: "s"})
+	assert.Error(t, err, "SaveSkillState after close should fail")
+
+	_, err = s.GetSkillState("x")
+	assert.Error(t, err, "GetSkillState after close should fail")
+
+	_, err = s.ListAllSkillStates()
+	assert.Error(t, err, "ListAllSkillStates after close should fail")
+
+	err = s.DeleteSkillState("x")
+	assert.Error(t, err, "DeleteSkillState after close should fail")
+
+	// Registry cache operations should return errors.
+	err = s.CacheRegistryEntry(RegistryEntry{Name: "x", Version: "1", Description: "d"})
+	assert.Error(t, err, "CacheRegistryEntry after close should fail")
+
+	_, err = s.GetCachedRegistry("x")
+	assert.Error(t, err, "GetCachedRegistry after close should fail")
+}
+
+func TestParseSQLiteDatetimeError(t *testing.T) {
+	_, err := parseSQLiteDatetime("not-a-date")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot parse datetime")
+}
+
+func TestNewStoreBadPath(t *testing.T) {
+	_, err := NewStore("/nonexistent/dir/xyz/test.db")
+	require.Error(t, err)
+}
+
+func TestListApprovalsEmpty(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	approvals, err := s.ListApprovals("no-such-skill")
+	require.NoError(t, err)
+	assert.Empty(t, approvals)
 }
