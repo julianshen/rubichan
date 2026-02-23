@@ -60,6 +60,8 @@ var (
 
 	skillsFlag        string
 	approveSkillsFlag bool
+
+	resumeFlag string
 )
 
 func versionString() string {
@@ -96,6 +98,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&toolsFlag, "tools", "", "comma-separated tool whitelist (empty = all)")
 	rootCmd.PersistentFlags().StringVar(&skillsFlag, "skills", "", "comma-separated list of skill names to activate")
 	rootCmd.PersistentFlags().BoolVar(&approveSkillsFlag, "approve-skills", false, "auto-approve skill permissions")
+	rootCmd.PersistentFlags().StringVar(&resumeFlag, "resume", "", "resume a previous session by ID")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -273,6 +276,25 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	return rt, s, nil
 }
 
+// openStore opens (or creates) the conversation persistence database in the
+// given config directory. It creates the directory if it doesn't exist.
+func openStore(configDir string) (*store.Store, error) {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating config directory: %w", err)
+	}
+	dbPath := filepath.Join(configDir, "rubichan.db")
+	return store.NewStore(dbPath)
+}
+
+// configDir returns the resolved rubichan config directory (~/.config/rubichan).
+func configDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "rubichan"), nil
+}
+
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -333,8 +355,23 @@ func runInteractive() error {
 		return autoApprove, nil
 	}
 
-	// Create skill runtime if --skills is provided.
+	// Wire conversation persistence.
 	var opts []agent.AgentOption
+	cfgDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	s, err := openStore(cfgDir)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+	opts = append(opts, agent.WithStore(s))
+	if resumeFlag != "" {
+		opts = append(opts, agent.WithResumeSession(resumeFlag))
+	}
+
+	// Create skill runtime if --skills is provided.
 	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
@@ -430,8 +467,23 @@ func runHeadless() error {
 		return true, nil
 	}
 
-	// Create skill runtime if --skills is provided.
+	// Wire conversation persistence.
 	var opts []agent.AgentOption
+	cfgDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	s, err := openStore(cfgDir)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+	opts = append(opts, agent.WithStore(s))
+	if resumeFlag != "" {
+		opts = append(opts, agent.WithResumeSession(resumeFlag))
+	}
+
+	// Create skill runtime if --skills is provided.
 	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
