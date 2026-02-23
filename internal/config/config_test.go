@@ -241,6 +241,33 @@ transport = "stdio"
 	assert.Contains(t, err.Error(), "command is required")
 }
 
+func TestSecurityConfigDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Equal(t, "high", cfg.Security.FailOn)
+	assert.False(t, cfg.Security.EnableLLMAnalysis)
+	assert.Equal(t, 10, cfg.Security.MaxLLMCalls)
+	assert.Nil(t, cfg.Security.ExcludePatterns)
+}
+
+func TestSecurityConfigFromTOML(t *testing.T) {
+	tomlContent := `
+[security]
+fail_on = "critical"
+enable_llm_analysis = true
+max_llm_calls = 5
+exclude_patterns = ["vendor/**", "testdata/**"]
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "critical", cfg.Security.FailOn)
+	assert.True(t, cfg.Security.EnableLLMAnalysis)
+	assert.Equal(t, 5, cfg.Security.MaxLLMCalls)
+	assert.Equal(t, []string{"vendor/**", "testdata/**"}, cfg.Security.ExcludePatterns)
+}
+
 func TestConfigSkillsApproved(t *testing.T) {
 	tomlContent := `
 [skills]

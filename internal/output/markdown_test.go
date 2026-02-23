@@ -72,6 +72,50 @@ func TestMarkdownFormatterWithError(t *testing.T) {
 	assert.Contains(t, s, "timeout exceeded")
 }
 
+func TestMarkdownFormatterWithSecurityFindings(t *testing.T) {
+	f := NewMarkdownFormatter()
+	result := &RunResult{
+		Prompt:     "review code",
+		Response:   "Code looks good overall.",
+		TurnCount:  2,
+		DurationMs: 3000,
+		Mode:       "code-review",
+		SecurityFindings: []SecurityFinding{
+			{ID: "SEC-001", Scanner: "secrets", Severity: "high", Title: "Hardcoded API key", File: "config.go", Line: 42},
+			{ID: "SEC-002", Scanner: "sast", Severity: "medium", Title: "SQL injection risk", File: "db.go", Line: 15},
+		},
+		SecuritySummary: &SecuritySummaryData{High: 1, Medium: 1},
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	s := string(out)
+	assert.Contains(t, s, "Security Findings")
+	assert.Contains(t, s, "Hardcoded API key")
+	assert.Contains(t, s, "config.go:42")
+	assert.Contains(t, s, "SQL injection risk")
+	assert.Contains(t, s, "1 high")
+	assert.Contains(t, s, "1 medium")
+}
+
+func TestMarkdownFormatterNoSecuritySection(t *testing.T) {
+	f := NewMarkdownFormatter()
+	result := &RunResult{
+		Prompt:     "hello",
+		Response:   "Hi!",
+		TurnCount:  1,
+		DurationMs: 1000,
+		Mode:       "generic",
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	s := string(out)
+	assert.False(t, strings.Contains(s, "Security Findings"))
+}
+
 func TestMarkdownFormatterNoToolCallsSection(t *testing.T) {
 	f := NewMarkdownFormatter()
 	result := &RunResult{

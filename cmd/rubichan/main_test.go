@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/security"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,4 +54,9 @@ func TestOpenStore_CreatesMissingDirs(t *testing.T) {
 
 func TestResumeFlagDefaults(t *testing.T) {
 	assert.Empty(t, resumeFlag, "resume flag must default to empty")
+}
+
+func TestNewDefaultSecurityEngine(t *testing.T) {
+	engine := newDefaultSecurityEngine(security.EngineConfig{Concurrency: 4})
+	require.NotNil(t, engine)
 }

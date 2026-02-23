@@ -13,6 +13,15 @@ type Config struct {
 	Agent    AgentConfig    `toml:"agent"`
 	Skills   SkillsConfig   `toml:"skills"`
 	MCP      MCPConfig      `toml:"mcp"`
+	Security SecurityConfig `toml:"security"`
+}
+
+// SecurityConfig holds settings for the security scanning engine.
+type SecurityConfig struct {
+	FailOn            string   `toml:"fail_on"`
+	EnableLLMAnalysis bool     `toml:"enable_llm_analysis"`
+	MaxLLMCalls       int      `toml:"max_llm_calls"`
+	ExcludePatterns   []string `toml:"exclude_patterns"`
 }
 
 // ProviderConfig holds settings for AI provider selection and configuration.
@@ -143,6 +152,10 @@ func DefaultConfig() *Config {
 			MaxLLMCallsPerTurn:  10,
 			MaxShellExecPerTurn: 20,
 			MaxNetFetchPerTurn:  10,
+		},
+		Security: SecurityConfig{
+			FailOn:      "high",
+			MaxLLMCalls: 10,
 		},
 	}
 }
