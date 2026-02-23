@@ -1,9 +1,21 @@
 package runner
 
 import (
+	"fmt"
+
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/security"
 )
+
+// ExitError is returned when headless mode should exit with a non-zero code.
+// Using a typed error instead of os.Exit ensures deferred cleanup runs.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("exit code %d", e.Code)
+}
 
 // ExitCodeFromFindings returns 1 if any finding has severity at or above
 // the failOn threshold, 0 otherwise. An empty failOn disables gating.

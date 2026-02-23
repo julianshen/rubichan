@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -117,6 +118,10 @@ func main() {
 	rootCmd.AddCommand(wikiCmd())
 
 	if err := rootCmd.Execute(); err != nil {
+		var exitErr *runner.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -558,7 +563,7 @@ func runHeadless() error {
 		failOn = cfg.Security.FailOn
 	}
 	if exitCode := runner.ExitCodeFromFindings(result.SecurityFindings, failOn); exitCode != 0 {
-		os.Exit(exitCode)
+		return &runner.ExitError{Code: exitCode}
 	}
 
 	return nil
