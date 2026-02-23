@@ -14,6 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
+	"github.com/sourcegraph/conc"
+
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/integrations"
@@ -467,13 +469,11 @@ func runHeadless() error {
 		mode = "generic"
 	}
 
+	// Run LLM review and security scan concurrently for code-review mode.
 	hr := runner.NewHeadlessRunner(a.Turn)
-	result, err := hr.Run(ctx, promptText, mode)
-	if err != nil {
-		return err
-	}
+	var result *output.RunResult
+	var secReport *security.Report
 
-	// Run security scan concurrently for code-review mode.
 	if mode == "code-review" {
 		engineCfg := security.EngineConfig{
 			Concurrency:     4,
@@ -481,26 +481,51 @@ func runHeadless() error {
 			ExcludePatterns: cfg.Security.ExcludePatterns,
 		}
 		engine := newDefaultSecurityEngine(engineCfg)
-		report, scanErr := engine.Run(ctx, security.ScanTarget{RootDir: cwd})
-		if scanErr == nil && report != nil {
-			for _, f := range report.Findings {
-				result.SecurityFindings = append(result.SecurityFindings, output.SecurityFinding{
-					ID:       f.ID,
-					Scanner:  f.Scanner,
-					Severity: string(f.Severity),
-					Title:    f.Title,
-					File:     f.Location.File,
-					Line:     f.Location.StartLine,
-				})
+
+		var wg conc.WaitGroup
+		wg.Go(func() {
+			var runErr error
+			result, runErr = hr.Run(ctx, promptText, mode)
+			if runErr != nil {
+				result = &output.RunResult{Error: runErr.Error(), Mode: mode}
 			}
-			summary := report.Summary()
-			result.SecuritySummary = &output.SecuritySummaryData{
-				Critical: summary.Critical,
-				High:     summary.High,
-				Medium:   summary.Medium,
-				Low:      summary.Low,
-				Info:     summary.Info,
+		})
+		wg.Go(func() {
+			report, scanErr := engine.Run(ctx, security.ScanTarget{RootDir: cwd})
+			if scanErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: security scan failed: %v\n", scanErr)
+				return
 			}
+			secReport = report
+		})
+		wg.Wait()
+	} else {
+		var runErr error
+		result, runErr = hr.Run(ctx, promptText, mode)
+		if runErr != nil {
+			return runErr
+		}
+	}
+
+	// Merge security findings into result.
+	if secReport != nil {
+		for _, finding := range secReport.Findings {
+			result.SecurityFindings = append(result.SecurityFindings, output.SecurityFinding{
+				ID:       finding.ID,
+				Scanner:  finding.Scanner,
+				Severity: string(finding.Severity),
+				Title:    finding.Title,
+				File:     finding.Location.File,
+				Line:     finding.Location.StartLine,
+			})
+		}
+		summary := secReport.Summary()
+		result.SecuritySummary = &output.SecuritySummaryData{
+			Critical: summary.Critical,
+			High:     summary.High,
+			Medium:   summary.Medium,
+			Low:      summary.Low,
+			Info:     summary.Info,
 		}
 	}
 
