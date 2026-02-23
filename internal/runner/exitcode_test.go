@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/output"
@@ -62,4 +63,23 @@ func TestExitCodeFromFindings_EmptyFailOn(t *testing.T) {
 	// Empty failOn should default to no gating (exit 0).
 	code := ExitCodeFromFindings(findings, "")
 	assert.Equal(t, 0, code)
+}
+
+func TestExitCodeFromFindings_InvalidThreshold(t *testing.T) {
+	findings := []output.SecurityFinding{
+		{Severity: "critical", Title: "critical issue"},
+	}
+	// Invalid failOn value disables gating (SeverityRank returns 0).
+	code := ExitCodeFromFindings(findings, "banana")
+	assert.Equal(t, 0, code)
+}
+
+func TestExitError(t *testing.T) {
+	err := &ExitError{Code: 1}
+	assert.Equal(t, "exit code 1", err.Error())
+
+	// Verify errors.As works for type matching.
+	var exitErr *ExitError
+	assert.True(t, errors.As(err, &exitErr))
+	assert.Equal(t, 1, exitErr.Code)
 }
