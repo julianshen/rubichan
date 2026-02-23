@@ -567,6 +567,15 @@ func runHeadless() error {
 		}
 		engine := newDefaultSecurityEngine(engineCfg)
 
+		// Load .security.yaml for custom rules.
+		projectCfg, projectCfgErr := security.LoadProjectConfig(cwd)
+		if projectCfgErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: loading .security.yaml: %v\n", projectCfgErr)
+		}
+		if projectCfg != nil && len(projectCfg.Rules) > 0 {
+			engine.AddScanner(scanner.NewCustomRuleScanner(projectCfg.Rules))
+		}
+
 		var wg conc.WaitGroup
 		wg.Go(func() {
 			var runErr error
@@ -584,6 +593,11 @@ func runHeadless() error {
 			secReport = report
 		})
 		wg.Wait()
+
+		// Apply severity overrides from .security.yaml after scan completes.
+		if secReport != nil && projectCfg != nil && len(projectCfg.Overrides) > 0 {
+			security.ApplyOverrides(secReport.Findings, projectCfg.Overrides)
+		}
 	} else {
 		var runErr error
 		result, runErr = hr.Run(ctx, promptText, mode)
