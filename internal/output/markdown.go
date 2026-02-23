@@ -41,12 +41,12 @@ func (f *MarkdownFormatter) Format(result *RunResult) ([]byte, error) {
 
 	if len(result.SecurityFindings) > 0 {
 		b.WriteString("\n## Security Findings\n\n")
-		for i, f := range result.SecurityFindings {
-			location := f.File
-			if f.Line > 0 {
-				location = fmt.Sprintf("%s:%d", f.File, f.Line)
+		for i, finding := range result.SecurityFindings {
+			location := finding.File
+			if finding.Line > 0 {
+				location = fmt.Sprintf("%s:%d", finding.File, finding.Line)
 			}
-			b.WriteString(fmt.Sprintf("%d. **[%s]** %s", i+1, f.Severity, f.Title))
+			b.WriteString(fmt.Sprintf("%d. **[%s]** %s", i+1, finding.Severity, finding.Title))
 			if location != "" {
 				b.WriteString(fmt.Sprintf(" — `%s`", location))
 			}
