@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,6 +67,7 @@ var (
 	approveSkillsFlag bool
 
 	resumeFlag string
+	failOnFlag string
 )
 
 func versionString() string {
@@ -103,6 +105,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&skillsFlag, "skills", "", "comma-separated list of skill names to activate")
 	rootCmd.PersistentFlags().BoolVar(&approveSkillsFlag, "approve-skills", false, "auto-approve skill permissions")
 	rootCmd.PersistentFlags().StringVar(&resumeFlag, "resume", "", "resume a previous session by ID")
+	rootCmd.PersistentFlags().StringVar(&failOnFlag, "fail-on", "", "exit non-zero if findings at/above severity (critical, high, medium, low)")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -117,6 +120,10 @@ func main() {
 	rootCmd.AddCommand(wikiCmd())
 
 	if err := rootCmd.Execute(); err != nil {
+		var exitErr *runner.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -625,6 +632,15 @@ func runHeadless() error {
 
 	if result.Error != "" {
 		return fmt.Errorf("agent run failed: %s", result.Error)
+	}
+
+	// Compute exit code from security findings.
+	failOn := failOnFlag
+	if failOn == "" {
+		failOn = cfg.Security.FailOn
+	}
+	if exitCode := runner.ExitCodeFromFindings(result.SecurityFindings, failOn); exitCode != 0 {
+		return &runner.ExitError{Code: exitCode}
 	}
 
 	return nil
