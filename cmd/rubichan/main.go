@@ -348,6 +348,9 @@ func runInteractive() error {
 	if err := registry.Register(tools.NewShellTool(cwd, 120*time.Second)); err != nil {
 		return fmt.Errorf("registering shell tool: %w", err)
 	}
+	if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
+		return fmt.Errorf("registering search tool: %w", err)
+	}
 
 	// Deny tool calls by default; require explicit --auto-approve flag to skip approval.
 	// TODO: replace with TUI-based interactive approval prompt.
@@ -459,6 +462,11 @@ func runHeadless() error {
 	if shouldRegister("shell", allowed) {
 		if err := registry.Register(tools.NewShellTool(cwd, timeoutFlag)); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
+		}
+	}
+	if shouldRegister("search", allowed) {
+		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
+			return fmt.Errorf("registering search tool: %w", err)
 		}
 	}
 
