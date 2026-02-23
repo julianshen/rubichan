@@ -70,6 +70,13 @@ func WithResumeSession(sessionID string) AgentOption {
 	}
 }
 
+// WithAgentMD injects project-level AGENT.md content into the system prompt.
+func WithAgentMD(content string) AgentOption {
+	return func(a *Agent) {
+		a.agentMD = content
+	}
+}
+
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
 	provider        provider.LLMProvider
@@ -83,6 +90,7 @@ type Agent struct {
 	store           *store.Store
 	sessionID       string
 	resumeSessionID string
+	agentMD         string
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -101,6 +109,12 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	}
 	for _, opt := range opts {
 		opt(a)
+	}
+	// Rebuild system prompt if AGENT.md content was provided.
+	if a.agentMD != "" {
+		prompt := a.conversation.SystemPrompt() +
+			"\n\n## Project Guidelines (from AGENT.md)\n\n" + a.agentMD
+		a.conversation = NewConversation(prompt)
 	}
 	if a.store != nil {
 		if a.resumeSessionID != "" {
