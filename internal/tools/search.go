@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // searchInput represents the input for the search tool.
@@ -106,7 +107,18 @@ func (s *SearchTool) Execute(ctx context.Context, input json.RawMessage) (ToolRe
 		if !strings.HasPrefix(abs, s.rootDir+string(filepath.Separator)) && abs != s.rootDir {
 			return ToolResult{Content: "path traversal denied: path escapes root directory", IsError: true}, nil
 		}
-		searchDir = abs
+		// Resolve symlinks to prevent symlink traversal attacks.
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ToolResult{Content: fmt.Sprintf("path not found: %s", in.Path), IsError: true}, nil
+			}
+			return ToolResult{Content: fmt.Sprintf("path traversal denied: %s", err), IsError: true}, nil
+		}
+		if !strings.HasPrefix(resolved, s.rootDir+string(filepath.Separator)) && resolved != s.rootDir {
+			return ToolResult{Content: "path traversal denied: path escapes root directory via symlink", IsError: true}, nil
+		}
+		searchDir = resolved
 	}
 
 	if in.MaxResults <= 0 {
@@ -122,7 +134,7 @@ func (s *SearchTool) Execute(ctx context.Context, input json.RawMessage) (ToolRe
 	if rgPath, lookErr := exec.LookPath("rg"); lookErr == nil {
 		result, err = s.searchWithRipgrep(ctx, rgPath, searchDir, in)
 	} else {
-		result, err = s.searchGoNative(searchDir, in)
+		result, err = s.searchGoNative(ctx, searchDir, in)
 	}
 
 	if err != nil {
@@ -151,9 +163,6 @@ func (s *SearchTool) searchWithRipgrep(ctx context.Context, rgPath, searchDir st
 	if in.ContextLines > 0 {
 		args = append(args, fmt.Sprintf("-C%d", in.ContextLines))
 	}
-	if in.MaxResults > 0 {
-		args = append(args, fmt.Sprintf("--max-count=%d", in.MaxResults))
-	}
 	if in.FilePattern != "" {
 		args = append(args, "--glob", in.FilePattern)
 	}
@@ -167,17 +176,51 @@ func (s *SearchTool) searchWithRipgrep(ctx context.Context, rgPath, searchDir st
 		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == 1 {
 			return "", nil
 		}
-		// Exit code 2 means an actual error.
-		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == 2 {
-			return "", fmt.Errorf("ripgrep error: %s", strings.TrimSpace(string(out)))
-		}
+		// Exit code 2 means an actual error. Any other non-zero exit is also an error.
+		return "", fmt.Errorf("ripgrep error (exit %d): %s",
+			cmd.ProcessState.ExitCode(), strings.TrimSpace(string(out)))
 	}
 
-	// Make paths relative to rootDir for cleaner output.
-	return s.relativizePaths(string(out)), nil
+	result := s.relativizePaths(string(out))
+
+	// Enforce global max_results cap (ripgrep's --max-count is per-file).
+	if in.MaxResults > 0 {
+		result = enforceMaxResults(result, in.MaxResults, in.ContextLines > 0)
+	}
+
+	return result, nil
 }
 
-func (s *SearchTool) searchGoNative(searchDir string, in searchInput) (string, error) {
+// enforceMaxResults truncates ripgrep output to at most maxResults match blocks.
+// When context lines are used, matches are separated by "--" lines.
+func enforceMaxResults(output string, maxResults int, hasContext bool) string {
+	if !hasContext {
+		// No context: each line is one match.
+		lines := strings.SplitN(output, "\n", maxResults+2)
+		if len(lines) <= maxResults+1 {
+			return output
+		}
+		return strings.Join(lines[:maxResults], "\n") + "\n"
+	}
+
+	// With context: match blocks are separated by "--" lines.
+	var buf strings.Builder
+	matchCount := 0
+	for _, line := range strings.Split(output, "\n") {
+		if line == "--" {
+			matchCount++
+			if matchCount >= maxResults {
+				break
+			}
+			buf.WriteString(line + "\n")
+			continue
+		}
+		buf.WriteString(line + "\n")
+	}
+	return buf.String()
+}
+
+func (s *SearchTool) searchGoNative(ctx context.Context, searchDir string, in searchInput) (string, error) {
 	re, err := regexp.Compile(in.Pattern)
 	if err != nil {
 		return "", err
@@ -187,6 +230,9 @@ func (s *SearchTool) searchGoNative(searchDir string, in searchInput) (string, e
 	matchCount := 0
 
 	err = filepath.WalkDir(searchDir, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return nil // skip unreadable entries
 		}
@@ -204,6 +250,11 @@ func (s *SearchTool) searchGoNative(searchDir string, in searchInput) (string, e
 			if matchErr != nil || !matched {
 				return nil
 			}
+		}
+
+		// Skip binary files by checking the first 512 bytes for null bytes.
+		if isBinaryFile(path) {
+			return nil
 		}
 
 		relPath, _ := filepath.Rel(s.rootDir, path)
@@ -252,6 +303,32 @@ func (s *SearchTool) searchGoNative(searchDir string, in searchInput) (string, e
 	})
 
 	return buf.String(), err
+}
+
+// isBinaryFile checks if a file is likely binary by looking for null bytes
+// in the first 512 bytes.
+func isBinaryFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return false
+	}
+	// Check for null bytes — a reliable indicator of binary content.
+	if !utf8.Valid(buf[:n]) {
+		return true
+	}
+	for _, b := range buf[:n] {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // relativizePaths makes absolute paths in ripgrep output relative to rootDir.
