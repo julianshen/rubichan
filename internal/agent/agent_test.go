@@ -110,6 +110,30 @@ func TestNewAgentSystemPrompt(t *testing.T) {
 	assert.NotEmpty(t, agent.conversation.SystemPrompt())
 }
 
+func TestWithAgentMD(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	agentMDContent := "## Project Rules\nAlways use TDD."
+	a := New(mp, reg, autoApprove, cfg, WithAgentMD(agentMDContent))
+
+	prompt := a.conversation.SystemPrompt()
+	assert.Contains(t, prompt, "Project Guidelines")
+	assert.Contains(t, prompt, agentMDContent)
+}
+
+func TestWithAgentMD_Empty(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg, WithAgentMD(""))
+
+	prompt := a.conversation.SystemPrompt()
+	assert.NotContains(t, prompt, "Project Guidelines")
+}
+
 func TestTurnTextOnly(t *testing.T) {
 	mp := &mockProvider{
 		events: []provider.StreamEvent{

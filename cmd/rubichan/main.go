@@ -374,6 +374,15 @@ func runInteractive() error {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
 	}
 
+	// Inject project-level AGENT.md into system prompt.
+	agentMD, agentMDErr := config.LoadAgentMD(cwd)
+	if agentMDErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load AGENT.md: %v\n", agentMDErr)
+	}
+	if agentMD != "" {
+		opts = append(opts, agent.WithAgentMD(agentMD))
+	}
+
 	// Create skill runtime if --skills is provided.
 	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg)
 	if err != nil {
@@ -489,6 +498,15 @@ func runHeadless() error {
 	opts = append(opts, agent.WithStore(s))
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
+	}
+
+	// Inject project-level AGENT.md into system prompt.
+	agentMD, agentMDErr := config.LoadAgentMD(cwd)
+	if agentMDErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load AGENT.md: %v\n", agentMDErr)
+	}
+	if agentMD != "" {
+		opts = append(opts, agent.WithAgentMD(agentMD))
 	}
 
 	// Create skill runtime if --skills is provided.
