@@ -21,6 +21,8 @@ import (
 	"github.com/julianshen/rubichan/internal/pipeline"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
+	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
 	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
@@ -273,6 +275,20 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	return rt, s, nil
 }
 
+// newDefaultSecurityEngine creates a security engine pre-configured with all
+// built-in static scanners. This lives in main.go to avoid an import cycle
+// between security/ and security/scanner/.
+func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
+	e := security.NewEngine(cfg)
+	e.AddScanner(scanner.NewSecretScanner())
+	e.AddScanner(scanner.NewSASTScanner())
+	e.AddScanner(scanner.NewConfigScanner())
+	e.AddScanner(scanner.NewDepScanner(nil))
+	e.AddScanner(scanner.NewLicenseScanner())
+	e.AddScanner(scanner.NewAppleScanner())
+	return e
+}
+
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -455,6 +471,37 @@ func runHeadless() error {
 	result, err := hr.Run(ctx, promptText, mode)
 	if err != nil {
 		return err
+	}
+
+	// Run security scan concurrently for code-review mode.
+	if mode == "code-review" {
+		engineCfg := security.EngineConfig{
+			Concurrency:     4,
+			MaxLLMChunks:    cfg.Security.MaxLLMCalls,
+			ExcludePatterns: cfg.Security.ExcludePatterns,
+		}
+		engine := newDefaultSecurityEngine(engineCfg)
+		report, scanErr := engine.Run(ctx, security.ScanTarget{RootDir: cwd})
+		if scanErr == nil && report != nil {
+			for _, f := range report.Findings {
+				result.SecurityFindings = append(result.SecurityFindings, output.SecurityFinding{
+					ID:       f.ID,
+					Scanner:  f.Scanner,
+					Severity: string(f.Severity),
+					Title:    f.Title,
+					File:     f.Location.File,
+					Line:     f.Location.StartLine,
+				})
+			}
+			summary := report.Summary()
+			result.SecuritySummary = &output.SecuritySummaryData{
+				Critical: summary.Critical,
+				High:     summary.High,
+				Medium:   summary.Medium,
+				Low:      summary.Low,
+				Info:     summary.Info,
+			}
+		}
 	}
 
 	// Format output
