@@ -64,6 +64,8 @@ var (
 
 	skillsFlag        string
 	approveSkillsFlag bool
+
+	failOnFlag string
 )
 
 func versionString() string {
@@ -100,6 +102,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&toolsFlag, "tools", "", "comma-separated tool whitelist (empty = all)")
 	rootCmd.PersistentFlags().StringVar(&skillsFlag, "skills", "", "comma-separated list of skill names to activate")
 	rootCmd.PersistentFlags().BoolVar(&approveSkillsFlag, "approve-skills", false, "auto-approve skill permissions")
+	rootCmd.PersistentFlags().StringVar(&failOnFlag, "fail-on", "", "exit non-zero if findings at/above severity (critical, high, medium, low)")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -547,6 +550,15 @@ func runHeadless() error {
 
 	if result.Error != "" {
 		return fmt.Errorf("agent run failed: %s", result.Error)
+	}
+
+	// Compute exit code from security findings.
+	failOn := failOnFlag
+	if failOn == "" {
+		failOn = cfg.Security.FailOn
+	}
+	if exitCode := runner.ExitCodeFromFindings(result.SecurityFindings, failOn); exitCode != 0 {
+		os.Exit(exitCode)
 	}
 
 	return nil
