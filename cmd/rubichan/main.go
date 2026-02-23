@@ -14,6 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
+	"github.com/sourcegraph/conc"
+
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/integrations"
@@ -21,6 +23,8 @@ import (
 	"github.com/julianshen/rubichan/internal/pipeline"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
+	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
 	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
@@ -295,6 +299,20 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".config", "rubichan"), nil
 }
 
+// newDefaultSecurityEngine creates a security engine pre-configured with all
+// built-in static scanners. This lives in main.go to avoid an import cycle
+// between security/ and security/scanner/.
+func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
+	e := security.NewEngine(cfg)
+	e.AddScanner(scanner.NewSecretScanner())
+	e.AddScanner(scanner.NewSASTScanner())
+	e.AddScanner(scanner.NewConfigScanner())
+	e.AddScanner(scanner.NewDepScanner(nil))
+	e.AddScanner(scanner.NewLicenseScanner())
+	e.AddScanner(scanner.NewAppleScanner())
+	return e
+}
+
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -529,10 +547,64 @@ func runHeadless() error {
 		mode = "generic"
 	}
 
+	// Run LLM review and security scan concurrently for code-review mode.
 	hr := runner.NewHeadlessRunner(a.Turn)
-	result, err := hr.Run(ctx, promptText, mode)
-	if err != nil {
-		return err
+	var result *output.RunResult
+	var secReport *security.Report
+
+	if mode == "code-review" {
+		engineCfg := security.EngineConfig{
+			Concurrency:     4,
+			MaxLLMChunks:    cfg.Security.MaxLLMCalls,
+			ExcludePatterns: cfg.Security.ExcludePatterns,
+		}
+		engine := newDefaultSecurityEngine(engineCfg)
+
+		var wg conc.WaitGroup
+		wg.Go(func() {
+			var runErr error
+			result, runErr = hr.Run(ctx, promptText, mode)
+			if runErr != nil {
+				result = &output.RunResult{Error: runErr.Error(), Mode: mode}
+			}
+		})
+		wg.Go(func() {
+			report, scanErr := engine.Run(ctx, security.ScanTarget{RootDir: cwd})
+			if scanErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: security scan failed: %v\n", scanErr)
+				return
+			}
+			secReport = report
+		})
+		wg.Wait()
+	} else {
+		var runErr error
+		result, runErr = hr.Run(ctx, promptText, mode)
+		if runErr != nil {
+			return runErr
+		}
+	}
+
+	// Merge security findings into result.
+	if secReport != nil {
+		for _, finding := range secReport.Findings {
+			result.SecurityFindings = append(result.SecurityFindings, output.SecurityFinding{
+				ID:       finding.ID,
+				Scanner:  finding.Scanner,
+				Severity: string(finding.Severity),
+				Title:    finding.Title,
+				File:     finding.Location.File,
+				Line:     finding.Location.StartLine,
+			})
+		}
+		summary := secReport.Summary()
+		result.SecuritySummary = &output.SecuritySummaryData{
+			Critical: summary.Critical,
+			High:     summary.High,
+			Medium:   summary.Medium,
+			Low:      summary.Low,
+			Info:     summary.Info,
+		}
 	}
 
 	// Format output

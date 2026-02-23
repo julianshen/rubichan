@@ -77,3 +77,54 @@ func TestJSONFormatterWithError(t *testing.T) {
 
 	assert.Equal(t, "something went wrong", decoded["error"])
 }
+
+func TestJSONFormatterWithSecurityFindings(t *testing.T) {
+	f := NewJSONFormatter()
+	result := &RunResult{
+		Prompt:     "review",
+		Response:   "reviewed",
+		TurnCount:  1,
+		DurationMs: 1000,
+		Mode:       "code-review",
+		SecurityFindings: []SecurityFinding{
+			{ID: "SEC-001", Scanner: "secrets", Severity: "high", Title: "API key exposed", File: "config.go", Line: 10},
+		},
+		SecuritySummary: &SecuritySummaryData{High: 1},
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(out, &decoded))
+
+	findings, ok := decoded["security_findings"].([]any)
+	require.True(t, ok)
+	assert.Len(t, findings, 1)
+
+	summary, ok := decoded["security_summary"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, float64(1), summary["high"])
+}
+
+func TestJSONFormatterNoSecurityFields(t *testing.T) {
+	f := NewJSONFormatter()
+	result := &RunResult{
+		Prompt:     "hello",
+		Response:   "Hi!",
+		TurnCount:  1,
+		DurationMs: 500,
+		Mode:       "generic",
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(out, &decoded))
+
+	_, hasFindings := decoded["security_findings"]
+	assert.False(t, hasFindings, "should omit empty security_findings")
+	_, hasSummary := decoded["security_summary"]
+	assert.False(t, hasSummary, "should omit nil security_summary")
+}

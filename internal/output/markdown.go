@@ -39,6 +39,26 @@ func (f *MarkdownFormatter) Format(result *RunResult) ([]byte, error) {
 		}
 	}
 
+	if len(result.SecurityFindings) > 0 {
+		b.WriteString("\n## Security Findings\n\n")
+		for i, finding := range result.SecurityFindings {
+			location := finding.File
+			if finding.Line > 0 {
+				location = fmt.Sprintf("%s:%d", finding.File, finding.Line)
+			}
+			b.WriteString(fmt.Sprintf("%d. **[%s]** %s", i+1, finding.Severity, finding.Title))
+			if location != "" {
+				b.WriteString(fmt.Sprintf(" — `%s`", location))
+			}
+			b.WriteString("\n")
+		}
+		if result.SecuritySummary != nil {
+			s := result.SecuritySummary
+			b.WriteString(fmt.Sprintf("\n**Summary:** %d critical, %d high, %d medium, %d low, %d info\n",
+				s.Critical, s.High, s.Medium, s.Low, s.Info))
+		}
+	}
+
 	turnLabel := "turns"
 	if result.TurnCount == 1 {
 		turnLabel = "turn"
