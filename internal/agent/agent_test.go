@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -121,6 +122,60 @@ func TestWithAgentMD(t *testing.T) {
 	prompt := a.conversation.SystemPrompt()
 	assert.Contains(t, prompt, "Project Guidelines")
 	assert.Contains(t, prompt, agentMDContent)
+}
+
+func TestWithExtraSystemPrompt(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg,
+		WithExtraSystemPrompt("Apple Platform Expertise", "You are an expert in iOS development."),
+	)
+
+	prompt := a.conversation.SystemPrompt()
+	assert.Contains(t, prompt, "## Apple Platform Expertise")
+	assert.Contains(t, prompt, "You are an expert in iOS development.")
+}
+
+func TestWithExtraSystemPromptMultiple(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg,
+		WithExtraSystemPrompt("Section A", "Content A"),
+		WithExtraSystemPrompt("Section B", "Content B"),
+	)
+
+	prompt := a.conversation.SystemPrompt()
+	assert.Contains(t, prompt, "## Section A")
+	assert.Contains(t, prompt, "Content A")
+	assert.Contains(t, prompt, "## Section B")
+	assert.Contains(t, prompt, "Content B")
+}
+
+func TestWithExtraSystemPromptAfterAgentMD(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg,
+		WithAgentMD("Project rules here"),
+		WithExtraSystemPrompt("Extra Section", "Extra content"),
+	)
+
+	prompt := a.conversation.SystemPrompt()
+	// Both should be present.
+	assert.Contains(t, prompt, "Project Guidelines")
+	assert.Contains(t, prompt, "Project rules here")
+	assert.Contains(t, prompt, "## Extra Section")
+	assert.Contains(t, prompt, "Extra content")
+
+	// Extra section should come after AGENT.md section.
+	agentMDIdx := strings.Index(prompt, "Project Guidelines")
+	extraIdx := strings.Index(prompt, "Extra Section")
+	assert.Greater(t, extraIdx, agentMDIdx, "extra prompt should appear after AGENT.md")
 }
 
 func TestWithAgentMD_Empty(t *testing.T) {
