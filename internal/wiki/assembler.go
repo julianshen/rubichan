@@ -4,18 +4,21 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/julianshen/rubichan/internal/security"
 )
 
-// Assemble combines analysis results, diagrams, and skill sections into a set
-// of wiki documents. It always produces at least the _index.md page.
-func Assemble(analysis *AnalysisResult, diagrams []Diagram, skillSections []SkillWikiSection) ([]Document, error) {
+// Assemble combines analysis results, diagrams, skill sections, and security
+// findings into a set of wiki documents. It always produces at least the
+// _index.md page.
+func Assemble(analysis *AnalysisResult, diagrams []Diagram, skillSections []SkillWikiSection, findings []security.Finding) ([]Document, error) {
 	var docs []Document
 
 	docs = append(docs, buildIndexPage(analysis))
 	docs = append(docs, buildArchitecturePages(analysis, diagrams)...)
 	docs = append(docs, buildModulePages(analysis)...)
 	docs = append(docs, buildCodeStructurePage(analysis))
-	docs = append(docs, buildSecurityPage())
+	docs = append(docs, buildSecurityPage(findings))
 
 	if len(analysis.Suggestions) > 0 {
 		docs = append(docs, buildSuggestionsPage(analysis.Suggestions))
@@ -193,12 +196,66 @@ func buildCodeStructurePage(analysis *AnalysisResult) Document {
 	}
 }
 
-// buildSecurityPage creates security/overview.md with placeholder text.
-func buildSecurityPage() Document {
+// buildSecurityPage creates security/overview.md. When findings are provided,
+// it renders a severity summary table and per-finding details. Otherwise it
+// shows placeholder text.
+func buildSecurityPage(findings []security.Finding) Document {
+	if len(findings) == 0 {
+		return Document{
+			Path:    "security/overview.md",
+			Title:   "Security",
+			Content: "# Security\n\nSecurity analysis pending...\n",
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("# Security\n\n")
+
+	// Severity summary counts.
+	counts := map[security.Severity]int{}
+	for _, f := range findings {
+		counts[f.Severity]++
+	}
+
+	b.WriteString("## Summary\n\n")
+	b.WriteString("| Severity | Count |\n")
+	b.WriteString("|----------|-------|\n")
+	for _, sev := range []security.Severity{
+		security.SeverityCritical,
+		security.SeverityHigh,
+		security.SeverityMedium,
+		security.SeverityLow,
+		security.SeverityInfo,
+	} {
+		if c, ok := counts[sev]; ok && c > 0 {
+			fmt.Fprintf(&b, "| %s | %d |\n", sev, c)
+		}
+	}
+	fmt.Fprintf(&b, "| **Total** | **%d** |\n\n", len(findings))
+
+	// Per-finding details.
+	b.WriteString("## Findings\n\n")
+	for _, f := range findings {
+		fmt.Fprintf(&b, "### %s\n\n", f.Title)
+		fmt.Fprintf(&b, "- **Severity**: %s\n", f.Severity)
+		fmt.Fprintf(&b, "- **Scanner**: %s\n", f.Scanner)
+		if f.Location.File != "" {
+			if f.Location.StartLine > 0 {
+				fmt.Fprintf(&b, "- **Location**: `%s:%d`\n", f.Location.File, f.Location.StartLine)
+			} else {
+				fmt.Fprintf(&b, "- **Location**: `%s`\n", f.Location.File)
+			}
+		}
+		if f.Description != "" {
+			fmt.Fprintf(&b, "\n%s\n", f.Description)
+		}
+		b.WriteString("\n")
+	}
+
 	return Document{
 		Path:    "security/overview.md",
 		Title:   "Security",
-		Content: "# Security\n\nSecurity analysis pending...\n",
+		Content: b.String(),
 	}
 }
 

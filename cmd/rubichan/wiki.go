@@ -3,12 +3,15 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/spf13/cobra"
 
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/wiki"
 )
 
@@ -45,12 +48,30 @@ architecture diagrams, module documentation, and improvement suggestions.`,
 			llm := integrations.NewLLMCompleter(p, cfg.Provider.Model)
 			psr := parser.NewParser()
 
+			// Run security scanners against the project directory.
+			engine := security.NewEngine(security.EngineConfig{Concurrency: 4})
+			engine.AddScanner(scanner.NewSecretScanner())
+			engine.AddScanner(scanner.NewSASTScanner())
+			engine.AddScanner(scanner.NewConfigScanner())
+			engine.AddScanner(scanner.NewDepScanner(http.DefaultClient))
+			engine.AddScanner(scanner.NewLicenseScanner())
+			engine.AddScanner(scanner.NewAppleScanner())
+
+			var findings []security.Finding
+			report, err := engine.Run(cmd.Context(), security.ScanTarget{RootDir: dir})
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "wiki: security scan failed (continuing without findings): %v\n", err)
+			} else {
+				findings = report.Findings
+			}
+
 			return wiki.Run(cmd.Context(), wiki.Config{
-				Dir:         dir,
-				OutputDir:   outputFlag,
-				Format:      formatFlag,
-				DiagramFmt:  diagramsFlag,
-				Concurrency: concurrencyFlag,
+				Dir:              dir,
+				OutputDir:        outputFlag,
+				Format:           formatFlag,
+				DiagramFmt:       diagramsFlag,
+				Concurrency:      concurrencyFlag,
+				SecurityFindings: findings,
 			}, llm, psr)
 		},
 	}
