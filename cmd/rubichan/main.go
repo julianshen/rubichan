@@ -381,19 +381,10 @@ func runInteractive() error {
 
 	// Auto-activate apple-dev skill if Apple project detected.
 	var opts []agent.AgentOption
-	appleProject := xcode.DiscoverProject(cwd)
-	if appleProject.Type != "none" || containsSkill("apple-dev", skillsFlag) {
-		pc := xcode.NewRealPlatformChecker()
-		appleBackend := &appledev.Backend{WorkDir: cwd, Platform: pc}
-		if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
-			return fmt.Errorf("loading apple-dev skill: %w", err)
-		}
-		for _, tool := range appleBackend.Tools() {
-			if err := registry.Register(tool); err != nil {
-				return fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
-			}
-		}
-		opts = append(opts, agent.WithExtraSystemPrompt("Apple Platform Expertise", appledev.SystemPrompt()))
+	if appleOpt, err := wireAppleDev(cwd, registry, nil); err != nil {
+		return err
+	} else if appleOpt != nil {
+		opts = append(opts, appleOpt)
 	}
 
 	// Deny tool calls by default; require explicit --auto-approve flag to skip approval.
@@ -524,21 +515,10 @@ func runHeadless() error {
 
 	// Auto-activate apple-dev skill if Apple project detected.
 	var opts []agent.AgentOption
-	appleProject := xcode.DiscoverProject(cwd)
-	if appleProject.Type != "none" || containsSkill("apple-dev", skillsFlag) {
-		pc := xcode.NewRealPlatformChecker()
-		appleBackend := &appledev.Backend{WorkDir: cwd, Platform: pc}
-		if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
-			return fmt.Errorf("loading apple-dev skill: %w", err)
-		}
-		for _, tool := range appleBackend.Tools() {
-			if shouldRegister(tool.Name(), allowed) {
-				if err := registry.Register(tool); err != nil {
-					return fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
-				}
-			}
-		}
-		opts = append(opts, agent.WithExtraSystemPrompt("Apple Platform Expertise", appledev.SystemPrompt()))
+	if appleOpt, err := wireAppleDev(cwd, registry, allowed); err != nil {
+		return err
+	} else if appleOpt != nil {
+		opts = append(opts, appleOpt)
 	}
 
 	// Headless always auto-approves (tools are restricted via whitelist)
@@ -728,6 +708,29 @@ func containsSkill(name, flagValue string) bool {
 		}
 	}
 	return false
+}
+
+// wireAppleDev detects Apple projects and registers Xcode tools + system prompt.
+// The allowed map is used to filter tools in headless mode (nil means all allowed).
+// Returns an AgentOption to inject the Apple system prompt, or nil if not activated.
+func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool) (agent.AgentOption, error) {
+	appleProject := xcode.DiscoverProject(cwd)
+	if appleProject.Type == "none" && !containsSkill("apple-dev", skillsFlag) {
+		return nil, nil
+	}
+	pc := xcode.NewRealPlatformChecker()
+	appleBackend := &appledev.Backend{WorkDir: cwd, Platform: pc}
+	if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
+		return nil, fmt.Errorf("loading apple-dev skill: %w", err)
+	}
+	for _, tool := range appleBackend.Tools() {
+		if shouldRegister(tool.Name(), allowed) {
+			if err := registry.Register(tool); err != nil {
+				return nil, fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
+			}
+		}
+	}
+	return agent.WithExtraSystemPrompt("Apple Platform Expertise", appledev.SystemPrompt()), nil
 }
 
 // --- Adapter types ---
