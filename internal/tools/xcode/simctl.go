@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 
@@ -43,36 +42,37 @@ type SimctlTool struct {
 	rootDir  string
 	platform PlatformChecker
 	mode     simctlMode
+	runner   CommandRunner
 }
 
 // NewSimListTool creates a tool that lists simulator devices.
 func NewSimListTool(pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{platform: pc, mode: simctlList}
+	return &SimctlTool{platform: pc, mode: simctlList, runner: ExecRunner{}}
 }
 
 // NewSimBootTool creates a tool that boots a simulator device.
 func NewSimBootTool(pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{platform: pc, mode: simctlBoot}
+	return &SimctlTool{platform: pc, mode: simctlBoot, runner: ExecRunner{}}
 }
 
 // NewSimShutdownTool creates a tool that shuts down a simulator device.
 func NewSimShutdownTool(pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{platform: pc, mode: simctlShutdown}
+	return &SimctlTool{platform: pc, mode: simctlShutdown, runner: ExecRunner{}}
 }
 
 // NewSimInstallTool creates a tool that installs an app on a simulator.
 func NewSimInstallTool(rootDir string, pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{rootDir: rootDir, platform: pc, mode: simctlInstall}
+	return &SimctlTool{rootDir: rootDir, platform: pc, mode: simctlInstall, runner: ExecRunner{}}
 }
 
 // NewSimLaunchTool creates a tool that launches an app on a simulator.
 func NewSimLaunchTool(pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{platform: pc, mode: simctlLaunch}
+	return &SimctlTool{platform: pc, mode: simctlLaunch, runner: ExecRunner{}}
 }
 
 // NewSimScreenshotTool creates a tool that takes a screenshot of a simulator.
 func NewSimScreenshotTool(rootDir string, pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{rootDir: rootDir, platform: pc, mode: simctlScreenshot}
+	return &SimctlTool{rootDir: rootDir, platform: pc, mode: simctlScreenshot, runner: ExecRunner{}}
 }
 
 // Name returns the tool name based on the mode.
@@ -224,8 +224,7 @@ func (s *SimctlTool) validate(in simctlInput) error {
 }
 
 func (s *SimctlTool) executeList(ctx context.Context) (tools.ToolResult, error) {
-	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "list", "-j", "devices")
-	out, err := cmd.Output()
+	out, err := s.runner.Output(ctx, "", "xcrun", "simctl", "list", "-j", "devices")
 	if err != nil {
 		return tools.ToolResult{
 			Content: fmt.Sprintf("simctl list failed: %s", err),
@@ -250,8 +249,7 @@ func (s *SimctlTool) executeCommand(ctx context.Context, in simctlInput) (tools.
 		args = []string{"simctl", "io", in.Device, "screenshot", in.OutputPath}
 	}
 
-	cmd := exec.CommandContext(ctx, "xcrun", args...)
-	out, err := cmd.CombinedOutput()
+	out, err := s.runner.CombinedOutput(ctx, "", "xcrun", args...)
 	output := strings.TrimSpace(string(out))
 
 	if err != nil {

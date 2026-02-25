@@ -3,6 +3,7 @@ package xcode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -153,6 +154,140 @@ func TestSPMTool_BuildArgs(t *testing.T) {
 			"--from", "2.0.0",
 		}, args)
 	})
+}
+
+func TestSPMTool_Execute_BuildSuccess(t *testing.T) {
+	tool := NewSwiftBuildTool(t.TempDir())
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("Build complete! (0.25s)"), nil
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "Build complete")
+}
+
+func TestSPMTool_Execute_BuildSuccessEmptyOutput(t *testing.T) {
+	tool := NewSwiftBuildTool(t.TempDir())
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "swift build succeeded")
+}
+
+func TestSPMTool_Execute_BuildFailureWithOutput(t *testing.T) {
+	tool := NewSwiftBuildTool(t.TempDir())
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("error: missing argument for flag"), fmt.Errorf("exit status 1")
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "missing argument")
+}
+
+func TestSPMTool_Execute_BuildFailureNoOutput(t *testing.T) {
+	tool := NewSwiftBuildTool(t.TempDir())
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("exit status 1")
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "swift build failed")
+}
+
+func TestSPMTool_Execute_TestSuccess(t *testing.T) {
+	tool := NewSwiftTestTool(t.TempDir())
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("Test Suite 'All tests' passed at 2024-01-01.\n\t Executed 5 tests, with 0 failures"), nil
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "Executed 5 tests")
+}
+
+func TestSPMTool_Execute_ResolveSuccess(t *testing.T) {
+	tool := NewSwiftResolveTool(t.TempDir())
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("Resolving https://github.com/example/repo"), nil
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "Resolving")
+}
+
+func TestSPMTool_Execute_AddDepSuccess(t *testing.T) {
+	tool := NewSwiftAddDepTool(t.TempDir())
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("Adding dependency https://github.com/example/repo"), nil
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{URL: "https://github.com/example/repo", FromVersion: "1.0.0"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "Adding dependency")
+}
+
+func TestSPMTool_Execute_PathTraversal(t *testing.T) {
+	tool := NewSwiftBuildTool(t.TempDir())
+	tool.runner = &MockRunner{}
+
+	input, _ := json.Marshal(spmInput{PackagePath: "../../etc"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "escapes")
+}
+
+func TestSPMTool_Execute_PassesDirToRunner(t *testing.T) {
+	rootDir := t.TempDir()
+	tool := NewSwiftBuildTool(rootDir)
+
+	var capturedDir string
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			capturedDir = dir
+			return nil, nil
+		},
+	}
+
+	input, _ := json.Marshal(spmInput{})
+	_, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, rootDir, capturedDir)
 }
 
 // Verify interface compliance.

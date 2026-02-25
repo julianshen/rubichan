@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -32,26 +31,27 @@ type spmInput struct {
 type SPMTool struct {
 	rootDir string
 	mode    spmMode
+	runner  CommandRunner
 }
 
 // NewSwiftBuildTool creates a tool that runs swift build.
 func NewSwiftBuildTool(rootDir string) *SPMTool {
-	return &SPMTool{rootDir: rootDir, mode: spmBuild}
+	return &SPMTool{rootDir: rootDir, mode: spmBuild, runner: ExecRunner{}}
 }
 
 // NewSwiftTestTool creates a tool that runs swift test.
 func NewSwiftTestTool(rootDir string) *SPMTool {
-	return &SPMTool{rootDir: rootDir, mode: spmTest}
+	return &SPMTool{rootDir: rootDir, mode: spmTest, runner: ExecRunner{}}
 }
 
 // NewSwiftResolveTool creates a tool that runs swift package resolve.
 func NewSwiftResolveTool(rootDir string) *SPMTool {
-	return &SPMTool{rootDir: rootDir, mode: spmResolve}
+	return &SPMTool{rootDir: rootDir, mode: spmResolve, runner: ExecRunner{}}
 }
 
 // NewSwiftAddDepTool creates a tool that runs swift package add-dependency.
 func NewSwiftAddDepTool(rootDir string) *SPMTool {
-	return &SPMTool{rootDir: rootDir, mode: spmAddDep}
+	return &SPMTool{rootDir: rootDir, mode: spmAddDep, runner: ExecRunner{}}
 }
 
 // Name returns the tool name based on the mode.
@@ -137,10 +137,8 @@ func (s *SPMTool) Execute(ctx context.Context, input json.RawMessage) (tools.Too
 	}
 
 	args := s.buildArgs(in)
-	cmd := exec.CommandContext(ctx, "swift", args...)
-	cmd.Dir = s.rootDir
 
-	out, err := cmd.CombinedOutput()
+	out, err := s.runner.CombinedOutput(ctx, s.rootDir, "swift", args...)
 	output := strings.TrimSpace(string(out))
 
 	if err != nil {

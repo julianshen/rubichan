@@ -3,6 +3,7 @@ package xcode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -138,6 +139,146 @@ func TestXcodeBuildTool_BuildArgs(t *testing.T) {
 		args := tool.buildArgs(xcodebuildInput{Scheme: "MyApp"})
 		assert.Equal(t, []string{"-scheme", "MyApp", "build", "-quiet"}, args)
 	})
+}
+
+func TestXcodeBuildTool_Execute_BuildSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewXcodeBuildTool(t.TempDir(), pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("BUILD SUCCEEDED\n"), nil
+		},
+	}
+
+	input, _ := json.Marshal(xcodebuildInput{Scheme: "MyApp"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "Build succeeded")
+}
+
+func TestXcodeBuildTool_Execute_BuildFailure(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewXcodeBuildTool(t.TempDir(), pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("main.swift:10:5: error: use of unresolved identifier 'foo'\n"), fmt.Errorf("exit status 65")
+		},
+	}
+
+	input, _ := json.Marshal(xcodebuildInput{Scheme: "MyApp"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "Build failed")
+	assert.Contains(t, result.Content, "unresolved identifier")
+}
+
+func TestXcodeBuildTool_Execute_BuildWithWarnings(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewXcodeBuildTool(t.TempDir(), pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("main.swift:5:1: warning: unused variable 'x'\nBUILD SUCCEEDED\n"), nil
+		},
+	}
+
+	input, _ := json.Marshal(xcodebuildInput{Scheme: "MyApp"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "Build succeeded")
+	assert.Contains(t, result.Content, "WARNING")
+}
+
+func TestXcodeBuildTool_Execute_TestModeSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewXcodeTestTool(t.TempDir(), pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			log := "Test Case '-[MyTests testExample]' passed (0.001 seconds)\n" +
+				"Executed 1 test, with 0 failures\n"
+			return []byte(log), nil
+		},
+	}
+
+	input, _ := json.Marshal(xcodebuildInput{Scheme: "MyApp"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "1 total")
+	assert.Contains(t, result.Content, "PASS")
+}
+
+func TestXcodeBuildTool_Execute_TestModeFailure(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewXcodeTestTool(t.TempDir(), pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			log := "Test Case '-[MyTests testBroken]' failed (0.002 seconds)\n" +
+				"Executed 1 test, with 1 failure\n"
+			return []byte(log), fmt.Errorf("exit status 65")
+		},
+	}
+
+	input, _ := json.Marshal(xcodebuildInput{Scheme: "MyApp"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "1 failed")
+	assert.Contains(t, result.Content, "FAIL")
+}
+
+func TestXcodeBuildTool_Execute_TestModeWithBuildErrors(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewXcodeTestTool(t.TempDir(), pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			log := "main.swift:10:5: error: use of unresolved identifier 'foo'\n"
+			return []byte(log), fmt.Errorf("exit status 65")
+		},
+	}
+
+	input, _ := json.Marshal(xcodebuildInput{Scheme: "MyApp"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "unresolved identifier")
+}
+
+func TestXcodeBuildTool_Execute_PathTraversal(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	rootDir := t.TempDir()
+	tool := NewXcodeBuildTool(rootDir, pc)
+	tool.runner = &MockRunner{}
+
+	input, _ := json.Marshal(xcodebuildInput{
+		Scheme:    "MyApp",
+		Workspace: "../../etc/passwd",
+	})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "escapes")
+}
+
+func TestXcodeBuildTool_Execute_PassesDirToRunner(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	rootDir := t.TempDir()
+	tool := NewXcodeBuildTool(rootDir, pc)
+
+	var capturedDir string
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			capturedDir = dir
+			return []byte("BUILD SUCCEEDED\n"), nil
+		},
+	}
+
+	input, _ := json.Marshal(xcodebuildInput{Scheme: "MyApp"})
+	_, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, rootDir, capturedDir)
 }
 
 // Verify interface compliance.
