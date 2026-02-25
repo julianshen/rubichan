@@ -16,13 +16,13 @@ var _ tools.Tool = (*CodesignTool)(nil)
 func TestCodesignTool_Names(t *testing.T) {
 	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
 	assert.Equal(t, "codesign_info", NewCodesignInfoTool(pc).Name())
-	assert.Equal(t, "codesign_verify", NewCodesignVerifyTool(pc).Name())
+	assert.Equal(t, "codesign_verify", NewCodesignVerifyTool("/tmp", pc).Name())
 }
 
 func TestCodesignTool_Description(t *testing.T) {
 	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
 	assert.Contains(t, NewCodesignInfoTool(pc).Description(), "signing identities")
-	assert.Contains(t, NewCodesignVerifyTool(pc).Description(), "Verif")
+	assert.Contains(t, NewCodesignVerifyTool("/tmp", pc).Description(), "Verif")
 }
 
 func TestCodesignTool_NotDarwin(t *testing.T) {
@@ -38,7 +38,7 @@ func TestCodesignTool_NotDarwin(t *testing.T) {
 	})
 
 	t.Run("verify", func(t *testing.T) {
-		tool := NewCodesignVerifyTool(pc)
+		tool := NewCodesignVerifyTool("/tmp", pc)
 		input, _ := json.Marshal(codesignInput{Path: "/path/to/App.app"})
 		result, err := tool.Execute(context.Background(), input)
 		require.NoError(t, err)
@@ -49,7 +49,7 @@ func TestCodesignTool_NotDarwin(t *testing.T) {
 
 func TestCodesignTool_VerifyMissingPath(t *testing.T) {
 	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
-	tool := NewCodesignVerifyTool(pc)
+	tool := NewCodesignVerifyTool("/tmp", pc)
 
 	input, _ := json.Marshal(codesignInput{})
 	result, err := tool.Execute(context.Background(), input)
@@ -70,7 +70,7 @@ func TestCodesignTool_InvalidJSON(t *testing.T) {
 	})
 
 	t.Run("verify", func(t *testing.T) {
-		tool := NewCodesignVerifyTool(pc)
+		tool := NewCodesignVerifyTool("/tmp", pc)
 		result, err := tool.Execute(context.Background(), json.RawMessage(`{bad`))
 		require.NoError(t, err)
 		assert.True(t, result.IsError)
@@ -89,7 +89,7 @@ func TestCodesignTool_InputSchema(t *testing.T) {
 
 	t.Run("verify", func(t *testing.T) {
 		var schema map[string]any
-		require.NoError(t, json.Unmarshal(NewCodesignVerifyTool(pc).InputSchema(), &schema))
+		require.NoError(t, json.Unmarshal(NewCodesignVerifyTool("/tmp", pc).InputSchema(), &schema))
 		assert.Equal(t, "object", schema["type"])
 		// verify schema should require "path"
 		required, ok := schema["required"].([]any)

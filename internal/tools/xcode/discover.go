@@ -63,7 +63,11 @@ func (d *DiscoverTool) Execute(_ context.Context, input json.RawMessage) (tools.
 
 	scanDir := d.rootDir
 	if in.Path != "" {
-		scanDir = filepath.Join(d.rootDir, in.Path)
+		validPath, err := validatePath(d.rootDir, in.Path)
+		if err != nil {
+			return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+		}
+		scanDir = validPath
 	}
 
 	info := DiscoverProject(scanDir)

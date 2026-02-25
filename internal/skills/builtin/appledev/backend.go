@@ -27,6 +27,9 @@ type Backend struct {
 // Cross-platform tools (SPM, discover) are always registered.
 // Darwin-only tools (xcodebuild, simctl, codesign, xcrun) are only registered on macOS.
 func (b *Backend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error {
+	// Reset to prevent duplicate registration on repeated Load calls.
+	b.tools = nil
+
 	// Cross-platform tools (always registered)
 	b.tools = append(b.tools, xcode.NewDiscoverTool(b.WorkDir))
 	b.tools = append(b.tools, xcode.NewSwiftBuildTool(b.WorkDir))
@@ -35,7 +38,7 @@ func (b *Backend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error
 	b.tools = append(b.tools, xcode.NewSwiftAddDepTool(b.WorkDir))
 
 	// Darwin-only tools
-	if b.Platform.IsDarwin() {
+	if b.Platform != nil && b.Platform.IsDarwin() {
 		b.tools = append(b.tools, xcode.NewXcodeBuildTool(b.WorkDir, b.Platform))
 		b.tools = append(b.tools, xcode.NewXcodeTestTool(b.WorkDir, b.Platform))
 		b.tools = append(b.tools, xcode.NewXcodeArchiveTool(b.WorkDir, b.Platform))
@@ -43,11 +46,11 @@ func (b *Backend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error
 		b.tools = append(b.tools, xcode.NewSimListTool(b.Platform))
 		b.tools = append(b.tools, xcode.NewSimBootTool(b.Platform))
 		b.tools = append(b.tools, xcode.NewSimShutdownTool(b.Platform))
-		b.tools = append(b.tools, xcode.NewSimInstallTool(b.Platform))
+		b.tools = append(b.tools, xcode.NewSimInstallTool(b.WorkDir, b.Platform))
 		b.tools = append(b.tools, xcode.NewSimLaunchTool(b.Platform))
-		b.tools = append(b.tools, xcode.NewSimScreenshotTool(b.Platform))
+		b.tools = append(b.tools, xcode.NewSimScreenshotTool(b.WorkDir, b.Platform))
 		b.tools = append(b.tools, xcode.NewCodesignInfoTool(b.Platform))
-		b.tools = append(b.tools, xcode.NewCodesignVerifyTool(b.Platform))
+		b.tools = append(b.tools, xcode.NewCodesignVerifyTool(b.WorkDir, b.Platform))
 		b.tools = append(b.tools, xcode.NewXcrunTool(b.Platform))
 	}
 	return nil

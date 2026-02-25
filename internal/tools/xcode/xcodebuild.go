@@ -107,6 +107,15 @@ func (x *XcodeBuildTool) Execute(ctx context.Context, input json.RawMessage) (to
 		return tools.ToolResult{Content: "scheme is required", IsError: true}, nil
 	}
 
+	// Validate path inputs stay within project directory.
+	for _, p := range []string{in.Workspace, in.Project, in.ArchivePath} {
+		if p != "" {
+			if _, err := validatePath(x.rootDir, p); err != nil {
+				return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+			}
+		}
+	}
+
 	args := x.buildArgs(in)
 	cmd := exec.CommandContext(ctx, "xcodebuild", args...)
 	cmd.Dir = x.rootDir

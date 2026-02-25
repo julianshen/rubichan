@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -101,10 +102,8 @@ func TestAppleDevAutoActivation_WithPackageSwift(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify that xcode.DiscoverProject detects SPM project.
-	// We import indirectly via the main package using the same discover logic.
-	// Since we can't easily call runInteractive in a unit test, we verify the
-	// building blocks: DiscoverProject + containsSkill.
-	assert.True(t, containsSkill("apple-dev", "apple-dev"))
+	info := xcode.DiscoverProject(dir)
+	assert.Equal(t, "spm", info.Type)
 }
 
 func TestContainsSkill_SkillsFlagActivation(t *testing.T) {

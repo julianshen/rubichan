@@ -15,9 +15,9 @@ func TestSimctlTool_Names(t *testing.T) {
 	assert.Equal(t, "sim_list", NewSimListTool(pc).Name())
 	assert.Equal(t, "sim_boot", NewSimBootTool(pc).Name())
 	assert.Equal(t, "sim_shutdown", NewSimShutdownTool(pc).Name())
-	assert.Equal(t, "sim_install", NewSimInstallTool(pc).Name())
+	assert.Equal(t, "sim_install", NewSimInstallTool("/tmp", pc).Name())
 	assert.Equal(t, "sim_launch", NewSimLaunchTool(pc).Name())
-	assert.Equal(t, "sim_screenshot", NewSimScreenshotTool(pc).Name())
+	assert.Equal(t, "sim_screenshot", NewSimScreenshotTool("/tmp", pc).Name())
 }
 
 func TestSimctlTool_NotDarwin(t *testing.T) {
@@ -55,7 +55,7 @@ func TestSimctlTool_ShutdownMissingDevice(t *testing.T) {
 
 func TestSimctlTool_InstallMissingDevice(t *testing.T) {
 	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
-	tool := NewSimInstallTool(pc)
+	tool := NewSimInstallTool(t.TempDir(), pc)
 
 	input, _ := json.Marshal(simctlInput{AppPath: "/path/to/app"})
 	result, err := tool.Execute(context.Background(), input)
@@ -66,7 +66,7 @@ func TestSimctlTool_InstallMissingDevice(t *testing.T) {
 
 func TestSimctlTool_InstallMissingAppPath(t *testing.T) {
 	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
-	tool := NewSimInstallTool(pc)
+	tool := NewSimInstallTool(t.TempDir(), pc)
 
 	input, _ := json.Marshal(simctlInput{Device: "iPhone 15"})
 	result, err := tool.Execute(context.Background(), input)
@@ -99,7 +99,7 @@ func TestSimctlTool_LaunchMissingBundleID(t *testing.T) {
 
 func TestSimctlTool_ScreenshotMissingDevice(t *testing.T) {
 	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
-	tool := NewSimScreenshotTool(pc)
+	tool := NewSimScreenshotTool(t.TempDir(), pc)
 
 	input, _ := json.Marshal(simctlInput{OutputPath: "/tmp/screenshot.png"})
 	result, err := tool.Execute(context.Background(), input)
@@ -110,7 +110,7 @@ func TestSimctlTool_ScreenshotMissingDevice(t *testing.T) {
 
 func TestSimctlTool_ScreenshotMissingOutputPath(t *testing.T) {
 	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
-	tool := NewSimScreenshotTool(pc)
+	tool := NewSimScreenshotTool(t.TempDir(), pc)
 
 	input, _ := json.Marshal(simctlInput{Device: "iPhone 15"})
 	result, err := tool.Execute(context.Background(), input)
@@ -139,9 +139,9 @@ func TestSimctlTool_NotDarwinAllModes(t *testing.T) {
 	}{
 		{"boot", NewSimBootTool(pc)},
 		{"shutdown", NewSimShutdownTool(pc)},
-		{"install", NewSimInstallTool(pc)},
+		{"install", NewSimInstallTool(t.TempDir(), pc)},
 		{"launch", NewSimLaunchTool(pc)},
-		{"screenshot", NewSimScreenshotTool(pc)},
+		{"screenshot", NewSimScreenshotTool(t.TempDir(), pc)},
 	}
 
 	for _, m := range modes {
@@ -209,9 +209,9 @@ func TestSimctlTool_Description(t *testing.T) {
 	assert.Contains(t, NewSimListTool(pc).Description(), "List")
 	assert.Contains(t, NewSimBootTool(pc).Description(), "Boot")
 	assert.Contains(t, NewSimShutdownTool(pc).Description(), "Shut")
-	assert.Contains(t, NewSimInstallTool(pc).Description(), "Install")
+	assert.Contains(t, NewSimInstallTool("/tmp", pc).Description(), "Install")
 	assert.Contains(t, NewSimLaunchTool(pc).Description(), "Launch")
-	assert.Contains(t, NewSimScreenshotTool(pc).Description(), "screenshot")
+	assert.Contains(t, NewSimScreenshotTool("/tmp", pc).Description(), "screenshot")
 }
 
 func TestSimctlTool_InputSchema(t *testing.T) {
@@ -221,9 +221,9 @@ func TestSimctlTool_InputSchema(t *testing.T) {
 		NewSimListTool(pc),
 		NewSimBootTool(pc),
 		NewSimShutdownTool(pc),
-		NewSimInstallTool(pc),
+		NewSimInstallTool("/tmp", pc),
 		NewSimLaunchTool(pc),
-		NewSimScreenshotTool(pc),
+		NewSimScreenshotTool("/tmp", pc),
 	}
 
 	for _, tool := range tools {

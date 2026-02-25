@@ -130,6 +130,12 @@ func (s *SPMTool) Execute(ctx context.Context, input json.RawMessage) (tools.Too
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
+	if in.PackagePath != "" {
+		if _, err := validatePath(s.rootDir, in.PackagePath); err != nil {
+			return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+		}
+	}
+
 	args := s.buildArgs(in)
 	cmd := exec.CommandContext(ctx, "swift", args...)
 	cmd.Dir = s.rootDir
@@ -141,11 +147,11 @@ func (s *SPMTool) Execute(ctx context.Context, input json.RawMessage) (tools.Too
 		if output != "" {
 			return tools.ToolResult{Content: output, IsError: true}, nil
 		}
-		return tools.ToolResult{Content: fmt.Sprintf("swift %s failed: %s", s.Name(), err), IsError: true}, nil
+		return tools.ToolResult{Content: fmt.Sprintf("swift %s failed: %s", s.mode, err), IsError: true}, nil
 	}
 
 	if output == "" {
-		return tools.ToolResult{Content: fmt.Sprintf("swift %s succeeded", s.Name())}, nil
+		return tools.ToolResult{Content: fmt.Sprintf("swift %s succeeded", s.mode)}, nil
 	}
 	return tools.ToolResult{Content: output}, nil
 }

@@ -12,7 +12,7 @@ rubichan skill create my-skill
 
 This scaffolds a directory with a `SKILL.yaml` manifest and a `skill.star` entrypoint. You can also create a minimal **prompt skill** by hand -- no backend code required:
 
-```
+```text
 my-skill/
   SKILL.yaml
   prompts/
@@ -166,7 +166,7 @@ Code or text transformation pipelines. Implemented the same way as tools but sem
 
 Starlark is Rubichan's primary skill scripting language. It is a Python-like language designed for deterministic, sandboxed execution.
 
-### Available Builtins
+### Available Built-ins
 
 **Registration functions** -- called at the top level of your `.star` file:
 
@@ -251,7 +251,7 @@ Skills must declare every permission they need in `SKILL.yaml`. The user is prom
 1. When a skill is activated, Rubichan displays the list of requested permissions.
 2. The user approves or denies each permission (or all at once).
 3. Approvals are persisted in the local SQLite store (`~/.config/rubichan/skills.db`).
-4. If a skill calls a builtin that requires a permission it was not granted, the call fails with a permission error.
+4. If a skill calls a built-in that requires a permission it was not granted, the call fails with a permission error.
 
 Manage approvals with the CLI:
 
@@ -502,5 +502,5 @@ go build -buildmode=plugin -o my-plugin.so ./
 
 - **spec.md** -- Section 4 (Skill System) for the full specification
 - **pkg/skillsdk/** -- Go plugin SDK source and godoc
-- **internal/skills/starlark/** -- Starlark engine implementation and builtins
+- **internal/skills/starlark/** -- Starlark engine implementation and built-ins
 - **internal/skills/manifest.go** -- Manifest parsing and validation logic

@@ -40,7 +40,7 @@ type TestCase struct {
 }
 
 var (
-	diagnosticRe  = regexp.MustCompile(`^(.+?):(\d+):(\d+): (error|warning): (.+)$`)
+	diagnosticRe  = regexp.MustCompile(`^\s*(.+?):(\d+):(\d+): (error|warning): (.+)$`)
 	testCaseRe    = regexp.MustCompile(`Test Case '-\[(\S+) (\S+)\]' (passed|failed) \((\d+\.\d+) seconds\)`)
 	testSummaryRe = regexp.MustCompile(`Executed (\d+) tests?, with (\d+) failures?`)
 )

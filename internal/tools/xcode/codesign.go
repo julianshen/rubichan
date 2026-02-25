@@ -23,6 +23,7 @@ type codesignInput struct {
 
 // CodesignTool wraps macOS code signing utilities for introspection.
 type CodesignTool struct {
+	rootDir  string
 	platform PlatformChecker
 	mode     codesignMode
 }
@@ -33,8 +34,8 @@ func NewCodesignInfoTool(pc PlatformChecker) *CodesignTool {
 }
 
 // NewCodesignVerifyTool creates a tool that verifies code signatures.
-func NewCodesignVerifyTool(pc PlatformChecker) *CodesignTool {
-	return &CodesignTool{platform: pc, mode: codesignVerify}
+func NewCodesignVerifyTool(rootDir string, pc PlatformChecker) *CodesignTool {
+	return &CodesignTool{rootDir: rootDir, platform: pc, mode: codesignVerify}
 }
 
 // Name returns the tool name based on the mode.
@@ -93,6 +94,11 @@ func (c *CodesignTool) Execute(ctx context.Context, input json.RawMessage) (tool
 		if in.Path == "" {
 			return tools.ToolResult{Content: "path is required", IsError: true}, nil
 		}
+		if c.rootDir != "" {
+			if _, err := validatePath(c.rootDir, in.Path); err != nil {
+				return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+			}
+		}
 		return c.executeVerify(ctx, in.Path)
 	default:
 		return tools.ToolResult{Content: "unknown codesign mode", IsError: true}, nil
@@ -118,8 +124,8 @@ func (c *CodesignTool) executeInfo(ctx context.Context) (tools.ToolResult, error
 }
 
 func (c *CodesignTool) executeVerify(ctx context.Context, path string) (tools.ToolResult, error) {
-	cmd := exec.CommandContext(ctx, "codesign", "-dv", "--verbose=4", path)
-	// codesign -dv writes to stderr, so we use CombinedOutput.
+	cmd := exec.CommandContext(ctx, "codesign", "--verify", "--deep", "--strict", "-v", path)
+	// codesign --verify writes to stderr, so we use CombinedOutput.
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 

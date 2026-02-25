@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -39,6 +40,7 @@ type SimDevice struct {
 
 // SimctlTool wraps xcrun simctl for a specific operation mode.
 type SimctlTool struct {
+	rootDir  string
 	platform PlatformChecker
 	mode     simctlMode
 }
@@ -59,8 +61,8 @@ func NewSimShutdownTool(pc PlatformChecker) *SimctlTool {
 }
 
 // NewSimInstallTool creates a tool that installs an app on a simulator.
-func NewSimInstallTool(pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{platform: pc, mode: simctlInstall}
+func NewSimInstallTool(rootDir string, pc PlatformChecker) *SimctlTool {
+	return &SimctlTool{rootDir: rootDir, platform: pc, mode: simctlInstall}
 }
 
 // NewSimLaunchTool creates a tool that launches an app on a simulator.
@@ -69,8 +71,8 @@ func NewSimLaunchTool(pc PlatformChecker) *SimctlTool {
 }
 
 // NewSimScreenshotTool creates a tool that takes a screenshot of a simulator.
-func NewSimScreenshotTool(pc PlatformChecker) *SimctlTool {
-	return &SimctlTool{platform: pc, mode: simctlScreenshot}
+func NewSimScreenshotTool(rootDir string, pc PlatformChecker) *SimctlTool {
+	return &SimctlTool{rootDir: rootDir, platform: pc, mode: simctlScreenshot}
 }
 
 // Name returns the tool name based on the mode.
@@ -159,6 +161,20 @@ func (s *SimctlTool) Execute(ctx context.Context, input json.RawMessage) (tools.
 
 	if err := s.validate(in); err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+
+	// Validate file path inputs for modes that accept host filesystem paths.
+	if s.rootDir != "" {
+		if s.mode == simctlInstall && in.AppPath != "" {
+			if _, err := validatePath(s.rootDir, in.AppPath); err != nil {
+				return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+			}
+		}
+		if s.mode == simctlScreenshot && in.OutputPath != "" {
+			if _, err := validatePath(s.rootDir, in.OutputPath); err != nil {
+				return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+			}
+		}
 	}
 
 	if s.mode == simctlList {
@@ -252,8 +268,16 @@ func ParseSimctlDevices(data []byte) []SimDevice {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
+	// Sort runtimes for deterministic output.
+	runtimes := make([]string, 0, len(raw.Devices))
+	for runtime := range raw.Devices {
+		runtimes = append(runtimes, runtime)
+	}
+	sort.Strings(runtimes)
+
 	var devices []SimDevice
-	for runtime, devs := range raw.Devices {
+	for _, runtime := range runtimes {
+		devs := raw.Devices[runtime]
 		// Extract runtime name from key like "com.apple.CoreSimulator.SimRuntime.iOS-17-0".
 		parts := strings.Split(runtime, ".")
 		runtimeName := parts[len(parts)-1]

@@ -723,12 +723,17 @@ func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool)
 	if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
 		return nil, fmt.Errorf("loading apple-dev skill: %w", err)
 	}
+	registered := 0
 	for _, tool := range appleBackend.Tools() {
 		if shouldRegister(tool.Name(), allowed) {
 			if err := registry.Register(tool); err != nil {
 				return nil, fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
 			}
+			registered++
 		}
+	}
+	if registered == 0 {
+		return nil, nil
 	}
 	return agent.WithExtraSystemPrompt("Apple Platform Expertise", appledev.SystemPrompt()), nil
 }

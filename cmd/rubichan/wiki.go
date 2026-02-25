@@ -46,7 +46,7 @@ architecture diagrams, module documentation, and improvement suggestions.`,
 			llm := integrations.NewLLMCompleter(p, cfg.Provider.Model)
 			psr := parser.NewParser()
 
-			// Run security scanners against the project directory.
+			// Populate the wiki security page; failures are non-fatal.
 			engine := newDefaultSecurityEngine(security.EngineConfig{Concurrency: 4})
 
 			var findings []security.Finding
