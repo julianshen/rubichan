@@ -3,6 +3,7 @@ package xcode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -251,6 +252,206 @@ func TestFormatDeviceTable(t *testing.T) {
 func TestFormatDeviceTable_Empty(t *testing.T) {
 	table := FormatDeviceTable(nil)
 	assert.Contains(t, table, "No simulators found")
+}
+
+func TestSimctlTool_Execute_ListSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimListTool(pc)
+	tool.runner = &MockRunner{
+		OutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte(`{
+				"devices": {
+					"com.apple.CoreSimulator.SimRuntime.iOS-17-0": [
+						{"name": "iPhone 15", "udid": "ABC-123", "state": "Shutdown", "isAvailable": true}
+					]
+				}
+			}`), nil
+		},
+	}
+
+	input, _ := json.Marshal(map[string]string{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "iPhone 15")
+	assert.Contains(t, result.Content, "ABC-123")
+}
+
+func TestSimctlTool_Execute_ListFailure(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimListTool(pc)
+	tool.runner = &MockRunner{
+		OutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("xcrun not found")
+		},
+	}
+
+	input, _ := json.Marshal(map[string]string{})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "simctl list failed")
+}
+
+func TestSimctlTool_Execute_BootSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimBootTool(pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "succeeded")
+}
+
+func TestSimctlTool_Execute_BootFailureWithOutput(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimBootTool(pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("Unable to boot device in current state: Booted"), fmt.Errorf("exit status 1")
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "Unable to boot")
+}
+
+func TestSimctlTool_Execute_BootFailureNoOutput(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimBootTool(pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("exit status 1")
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "simctl boot failed")
+}
+
+func TestSimctlTool_Execute_ShutdownSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimShutdownTool(pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "succeeded")
+}
+
+func TestSimctlTool_Execute_LaunchSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimLaunchTool(pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("com.example.app: 12345"), nil
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15", BundleID: "com.example.app"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "12345")
+}
+
+func TestSimctlTool_Execute_InstallSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	rootDir := t.TempDir()
+	tool := NewSimInstallTool(rootDir, pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, nil
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15", AppPath: "build/MyApp.app"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "succeeded")
+}
+
+func TestSimctlTool_Execute_InstallPathTraversal(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	rootDir := t.TempDir()
+	tool := NewSimInstallTool(rootDir, pc)
+	tool.runner = &MockRunner{}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15", AppPath: "../../etc/passwd"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "escapes")
+}
+
+func TestSimctlTool_Execute_ScreenshotSuccess(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	rootDir := t.TempDir()
+	tool := NewSimScreenshotTool(rootDir, pc)
+
+	var capturedArgs []string
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			capturedArgs = args
+			return nil, nil
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15", OutputPath: "screenshot.png"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	// Verify the screenshot command uses "io" subcommand format.
+	assert.Contains(t, capturedArgs, "io")
+	assert.Contains(t, capturedArgs, "screenshot")
+}
+
+func TestSimctlTool_Execute_ScreenshotPathTraversal(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	rootDir := t.TempDir()
+	tool := NewSimScreenshotTool(rootDir, pc)
+	tool.runner = &MockRunner{}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15", OutputPath: "../../tmp/s.png"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "escapes")
+}
+
+func TestSimctlTool_Execute_SuccessWithOutput(t *testing.T) {
+	pc := &MockPlatformChecker{Darwin: true, XcodeBinPath: "/dev"}
+	tool := NewSimBootTool(pc)
+	tool.runner = &MockRunner{
+		CombinedOutputFunc: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return []byte("device booted successfully"), nil
+		},
+	}
+
+	input, _ := json.Marshal(simctlInput{Device: "iPhone 15"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "device booted successfully")
 }
 
 // Verify interface compliance.
