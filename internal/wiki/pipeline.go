@@ -7,15 +7,17 @@ import (
 	"path/filepath"
 
 	"github.com/julianshen/rubichan/internal/parser"
+	"github.com/julianshen/rubichan/internal/security"
 )
 
 // Config holds all pipeline configuration.
 type Config struct {
-	Dir         string
-	OutputDir   string
-	Format      string // raw-md, hugo, docusaurus
-	DiagramFmt  string // mermaid
-	Concurrency int    // parallel LLM calls
+	Dir              string
+	OutputDir        string
+	Format           string // raw-md, hugo, docusaurus
+	DiagramFmt       string // mermaid
+	Concurrency      int    // parallel LLM calls
+	SecurityFindings []security.Finding
 }
 
 // osSourceReader reads files from the filesystem relative to a base directory.
@@ -69,7 +71,7 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 
 	// Stage 5: Assemble
 	fmt.Fprintf(os.Stderr, "wiki: assembling documents...\n")
-	documents, err := Assemble(analysis, diagrams, nil)
+	documents, err := Assemble(analysis, diagrams, nil, cfg.SecurityFindings)
 	if err != nil {
 		return fmt.Errorf("assemble: %w", err)
 	}

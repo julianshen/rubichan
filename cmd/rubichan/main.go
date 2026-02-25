@@ -27,6 +27,7 @@ import (
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
 	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
 	"github.com/julianshen/rubichan/internal/skills/process"
@@ -34,6 +35,7 @@ import (
 	starengine "github.com/julianshen/rubichan/internal/skills/starlark"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
 
@@ -377,6 +379,16 @@ func runInteractive() error {
 		return fmt.Errorf("registering search tool: %w", err)
 	}
 
+	// Auto-activate apple-dev skill if Apple project detected.
+	var opts []agent.AgentOption
+	if appleOpt, err := wireAppleDev(cwd, registry, nil); err != nil {
+		return err
+	} else if appleOpt != nil {
+		opts = append(opts, appleOpt)
+		// Prevent createSkillRuntime from trying to discover apple-dev again.
+		skillsFlag = removeSkill("apple-dev", skillsFlag)
+	}
+
 	// Deny tool calls by default; require explicit --auto-approve flag to skip approval.
 	// TODO: replace with TUI-based interactive approval prompt.
 	approvalFunc := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
@@ -384,7 +396,6 @@ func runInteractive() error {
 	}
 
 	// Wire conversation persistence.
-	var opts []agent.AgentOption
 	cfgDir, err := configDir()
 	if err != nil {
 		return err
@@ -504,13 +515,21 @@ func runHeadless() error {
 		}
 	}
 
+	// Auto-activate apple-dev skill if Apple project detected.
+	var opts []agent.AgentOption
+	if appleOpt, err := wireAppleDev(cwd, registry, allowed); err != nil {
+		return err
+	} else if appleOpt != nil {
+		opts = append(opts, appleOpt)
+		skillsFlag = removeSkill("apple-dev", skillsFlag)
+	}
+
 	// Headless always auto-approves (tools are restricted via whitelist)
 	approvalFunc := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
 		return true, nil
 	}
 
 	// Wire conversation persistence.
-	var opts []agent.AgentOption
 	cfgDir, err := configDir()
 	if err != nil {
 		return err
@@ -682,6 +701,57 @@ func shouldRegister(name string, allowed map[string]bool) bool {
 		return true
 	}
 	return allowed[name]
+}
+
+// removeSkill removes a skill name from a comma-separated flag value.
+func removeSkill(name, flagValue string) string {
+	var kept []string
+	for _, s := range strings.Split(flagValue, ",") {
+		if strings.TrimSpace(s) != name {
+			if trimmed := strings.TrimSpace(s); trimmed != "" {
+				kept = append(kept, trimmed)
+			}
+		}
+	}
+	return strings.Join(kept, ",")
+}
+
+// containsSkill returns true if name appears in the comma-separated flagValue.
+func containsSkill(name, flagValue string) bool {
+	for _, s := range strings.Split(flagValue, ",") {
+		if strings.TrimSpace(s) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// wireAppleDev detects Apple projects and registers Xcode tools + system prompt.
+// The allowed map is used to filter tools in headless mode (nil means all allowed).
+// Returns an AgentOption to inject the Apple system prompt, or nil if not activated.
+func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool) (agent.AgentOption, error) {
+	appleProject := xcode.DiscoverProject(cwd)
+	if appleProject.Type == "none" && !containsSkill("apple-dev", skillsFlag) {
+		return nil, nil
+	}
+	pc := xcode.NewRealPlatformChecker()
+	appleBackend := &appledev.Backend{WorkDir: cwd, Platform: pc}
+	if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
+		return nil, fmt.Errorf("loading apple-dev skill: %w", err)
+	}
+	registered := 0
+	for _, tool := range appleBackend.Tools() {
+		if shouldRegister(tool.Name(), allowed) {
+			if err := registry.Register(tool); err != nil {
+				return nil, fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
+			}
+			registered++
+		}
+	}
+	if registered == 0 {
+		return nil, nil
+	}
+	return agent.WithExtraSystemPrompt("Apple Platform Expertise", appledev.SystemPrompt()), nil
 }
 
 // --- Adapter types ---

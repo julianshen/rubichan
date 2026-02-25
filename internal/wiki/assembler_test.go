@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/security"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +17,7 @@ func TestAssembleCreatesIndexPage(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil)
 	require.NoError(t, err)
 
 	var indexDoc *Document
@@ -39,7 +40,7 @@ func TestAssembleCreatesModulePages(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Find modules/_index.md
@@ -96,7 +97,7 @@ func TestAssembleIncludesDiagrams(t *testing.T) {
 		{Title: "Key Sequences", Type: "sequence", Content: "sequenceDiagram\n    A->>B: call"},
 	}
 
-	docs, err := Assemble(analysis, diagrams, nil)
+	docs, err := Assemble(analysis, diagrams, nil, nil)
 	require.NoError(t, err)
 
 	var archDoc *Document
@@ -150,7 +151,7 @@ func TestAssembleIncludesSkillSections(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, skillSections)
+	docs, err := Assemble(analysis, nil, skillSections, nil)
 	require.NoError(t, err)
 
 	expectedPath := "skill-contributed/security-analysis.md"
@@ -176,7 +177,7 @@ func TestAssembleCreatesSuggestionsPage(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil)
 	require.NoError(t, err)
 
 	var suggestionsDoc *Document
@@ -197,7 +198,7 @@ func TestAssembleCreatesSuggestionsPage(t *testing.T) {
 func TestAssembleEmptyAnalysis(t *testing.T) {
 	analysis := &AnalysisResult{}
 
-	docs, err := Assemble(analysis, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, docs, "should produce at least one document")
 
@@ -237,11 +238,116 @@ func TestAssembleModulePagesUseForwardSlashes(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil)
 	require.NoError(t, err)
 
 	for _, doc := range docs {
 		assert.False(t, strings.Contains(doc.Path, "\\"),
 			"document path %q should not contain backslashes", doc.Path)
+	}
+}
+
+func TestAssembleWithSecurityFindings(t *testing.T) {
+	analysis := &AnalysisResult{}
+	findings := []security.Finding{
+		{
+			Title:    "Hardcoded API Key",
+			Scanner:  "secrets",
+			Severity: security.SeverityHigh,
+			Location: security.Location{
+				File:      "config/settings.go",
+				StartLine: 42,
+			},
+			Description: "API key found in source code.",
+		},
+		{
+			Title:    "SQL Injection Risk",
+			Scanner:  "sast",
+			Severity: security.SeverityCritical,
+			Location: security.Location{
+				File:      "internal/db/query.go",
+				StartLine: 15,
+			},
+			Description: "Unsanitized input used in SQL query.",
+		},
+	}
+
+	docs, err := Assemble(analysis, nil, nil, findings)
+	require.NoError(t, err)
+
+	var secDoc *Document
+	for i := range docs {
+		if docs[i].Path == "security/overview.md" {
+			secDoc = &docs[i]
+			break
+		}
+	}
+	require.NotNil(t, secDoc, "security/overview.md should exist")
+
+	// Finding titles are present.
+	assert.Contains(t, secDoc.Content, "Hardcoded API Key")
+	assert.Contains(t, secDoc.Content, "SQL Injection Risk")
+
+	// File:line references are present.
+	assert.Contains(t, secDoc.Content, "config/settings.go:42")
+	assert.Contains(t, secDoc.Content, "internal/db/query.go:15")
+
+	// Severity summary counts.
+	assert.Contains(t, secDoc.Content, "| critical | 1 |")
+	assert.Contains(t, secDoc.Content, "| high | 1 |")
+
+	// Must NOT contain the placeholder text.
+	assert.NotContains(t, secDoc.Content, "pending")
+}
+
+func TestAssembleWithNoSecurityFindings(t *testing.T) {
+	analysis := &AnalysisResult{}
+
+	// nil findings
+	docs, err := Assemble(analysis, nil, nil, nil)
+	require.NoError(t, err)
+
+	var secDoc *Document
+	for i := range docs {
+		if docs[i].Path == "security/overview.md" {
+			secDoc = &docs[i]
+			break
+		}
+	}
+	require.NotNil(t, secDoc, "security/overview.md should exist")
+	assert.Contains(t, secDoc.Content, "Security analysis pending...")
+
+	// empty slice findings
+	docs2, err := Assemble(analysis, nil, nil, []security.Finding{})
+	require.NoError(t, err)
+
+	var secDoc2 *Document
+	for i := range docs2 {
+		if docs2[i].Path == "security/overview.md" {
+			secDoc2 = &docs2[i]
+			break
+		}
+	}
+	require.NotNil(t, secDoc2, "security/overview.md should exist")
+	assert.Contains(t, secDoc2.Content, "Security analysis pending...")
+}
+
+func TestSanitizeMarkdown(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain text", "hello world", "hello world"},
+		{"escapes script tags", "hello <script>alert('xss')</script>", "hello &lt;script&gt;alert('xss')&lt;/script&gt;"},
+		{"escapes angle brackets", "a < b > c", "a &lt; b &gt; c"},
+		{"escapes ampersands", "a & b", "a &amp; b"},
+		{"empty string", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeMarkdown(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
 	}
 }

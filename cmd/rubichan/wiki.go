@@ -9,6 +9,7 @@ import (
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/wiki"
 )
 
@@ -45,12 +46,24 @@ architecture diagrams, module documentation, and improvement suggestions.`,
 			llm := integrations.NewLLMCompleter(p, cfg.Provider.Model)
 			psr := parser.NewParser()
 
+			// Populate the wiki security page; failures are non-fatal.
+			engine := newDefaultSecurityEngine(security.EngineConfig{Concurrency: 4})
+
+			var findings []security.Finding
+			report, err := engine.Run(cmd.Context(), security.ScanTarget{RootDir: dir})
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "wiki: security scan failed (continuing without findings): %v\n", err)
+			} else {
+				findings = report.Findings
+			}
+
 			return wiki.Run(cmd.Context(), wiki.Config{
-				Dir:         dir,
-				OutputDir:   outputFlag,
-				Format:      formatFlag,
-				DiagramFmt:  diagramsFlag,
-				Concurrency: concurrencyFlag,
+				Dir:              dir,
+				OutputDir:        outputFlag,
+				Format:           formatFlag,
+				DiagramFmt:       diagramsFlag,
+				Concurrency:      concurrencyFlag,
+				SecurityFindings: findings,
 			}, llm, psr)
 		},
 	}

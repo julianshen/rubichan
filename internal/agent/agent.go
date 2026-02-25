@@ -77,6 +77,23 @@ func WithAgentMD(content string) AgentOption {
 	}
 }
 
+// namedPrompt is a named system prompt section appended after the base prompt.
+type namedPrompt struct {
+	Name    string
+	Content string
+}
+
+// WithExtraSystemPrompt appends a named section to the system prompt.
+// Multiple calls accumulate sections. Each section appears as:
+//
+//	## {name}
+//	{content}
+func WithExtraSystemPrompt(name, content string) AgentOption {
+	return func(a *Agent) {
+		a.extraPrompts = append(a.extraPrompts, namedPrompt{Name: name, Content: content})
+	}
+}
+
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
 	provider        provider.LLMProvider
@@ -91,6 +108,7 @@ type Agent struct {
 	sessionID       string
 	resumeSessionID string
 	agentMD         string
+	extraPrompts    []namedPrompt
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -114,6 +132,14 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	if a.agentMD != "" {
 		prompt := a.conversation.SystemPrompt() +
 			"\n\n## Project Guidelines (from AGENT.md)\n\n" + a.agentMD
+		a.conversation = NewConversation(prompt)
+	}
+	// Append extra system prompt sections (e.g., from apple-dev skill).
+	if len(a.extraPrompts) > 0 {
+		prompt := a.conversation.SystemPrompt()
+		for _, ep := range a.extraPrompts {
+			prompt += "\n\n## " + ep.Name + "\n\n" + ep.Content
+		}
 		a.conversation = NewConversation(prompt)
 	}
 	if a.store != nil {
