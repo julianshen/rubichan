@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -26,16 +25,17 @@ type CodesignTool struct {
 	rootDir  string
 	platform PlatformChecker
 	mode     codesignMode
+	runner   CommandRunner
 }
 
 // NewCodesignInfoTool creates a tool that lists signing identities.
 func NewCodesignInfoTool(pc PlatformChecker) *CodesignTool {
-	return &CodesignTool{platform: pc, mode: codesignInfo}
+	return &CodesignTool{platform: pc, mode: codesignInfo, runner: ExecRunner{}}
 }
 
 // NewCodesignVerifyTool creates a tool that verifies code signatures.
 func NewCodesignVerifyTool(rootDir string, pc PlatformChecker) *CodesignTool {
-	return &CodesignTool{rootDir: rootDir, platform: pc, mode: codesignVerify}
+	return &CodesignTool{rootDir: rootDir, platform: pc, mode: codesignVerify, runner: ExecRunner{}}
 }
 
 // Name returns the tool name based on the mode.
@@ -108,8 +108,7 @@ func (c *CodesignTool) Execute(ctx context.Context, input json.RawMessage) (tool
 }
 
 func (c *CodesignTool) executeInfo(ctx context.Context) (tools.ToolResult, error) {
-	cmd := exec.CommandContext(ctx, "security", "find-identity", "-v", "-p", "codesigning")
-	out, err := cmd.CombinedOutput()
+	out, err := c.runner.CombinedOutput(ctx, "", "security", "find-identity", "-v", "-p", "codesigning")
 	output := strings.TrimSpace(string(out))
 
 	if err != nil {
@@ -126,9 +125,8 @@ func (c *CodesignTool) executeInfo(ctx context.Context) (tools.ToolResult, error
 }
 
 func (c *CodesignTool) executeVerify(ctx context.Context, path string) (tools.ToolResult, error) {
-	cmd := exec.CommandContext(ctx, "codesign", "--verify", "--deep", "--strict", "-v", path)
 	// codesign --verify writes to stderr, so we use CombinedOutput.
-	out, err := cmd.CombinedOutput()
+	out, err := c.runner.CombinedOutput(ctx, "", "codesign", "--verify", "--deep", "--strict", "-v", path)
 	output := strings.TrimSpace(string(out))
 
 	if err != nil {

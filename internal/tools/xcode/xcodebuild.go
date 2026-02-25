@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -33,26 +32,27 @@ type XcodeBuildTool struct {
 	rootDir  string
 	platform PlatformChecker
 	mode     xcodebuildMode
+	runner   CommandRunner
 }
 
 // NewXcodeBuildTool creates a tool that runs xcodebuild build.
 func NewXcodeBuildTool(rootDir string, pc PlatformChecker) *XcodeBuildTool {
-	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeBuild}
+	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeBuild, runner: ExecRunner{}}
 }
 
 // NewXcodeTestTool creates a tool that runs xcodebuild test.
 func NewXcodeTestTool(rootDir string, pc PlatformChecker) *XcodeBuildTool {
-	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeTest}
+	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeTest, runner: ExecRunner{}}
 }
 
 // NewXcodeArchiveTool creates a tool that runs xcodebuild archive.
 func NewXcodeArchiveTool(rootDir string, pc PlatformChecker) *XcodeBuildTool {
-	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeArchive}
+	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeArchive, runner: ExecRunner{}}
 }
 
 // NewXcodeCleanTool creates a tool that runs xcodebuild clean.
 func NewXcodeCleanTool(rootDir string, pc PlatformChecker) *XcodeBuildTool {
-	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeClean}
+	return &XcodeBuildTool{rootDir: rootDir, platform: pc, mode: modeClean, runner: ExecRunner{}}
 }
 
 // Name returns the tool name based on the mode.
@@ -117,10 +117,8 @@ func (x *XcodeBuildTool) Execute(ctx context.Context, input json.RawMessage) (to
 	}
 
 	args := x.buildArgs(in)
-	cmd := exec.CommandContext(ctx, "xcodebuild", args...)
-	cmd.Dir = x.rootDir
 
-	out, err := cmd.CombinedOutput()
+	out, err := x.runner.CombinedOutput(ctx, x.rootDir, "xcodebuild", args...)
 	output := string(out)
 
 	if x.mode == modeTest {

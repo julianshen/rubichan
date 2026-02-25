@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -28,11 +27,12 @@ type xcrunInput struct {
 // XcrunTool is a generic wrapper around xcrun that dispatches to allowlisted tools.
 type XcrunTool struct {
 	platform PlatformChecker
+	runner   CommandRunner
 }
 
 // NewXcrunTool creates a new XcrunTool with the given platform checker.
 func NewXcrunTool(pc PlatformChecker) *XcrunTool {
-	return &XcrunTool{platform: pc}
+	return &XcrunTool{platform: pc, runner: ExecRunner{}}
 }
 
 // Name returns the tool name.
@@ -77,8 +77,7 @@ func (x *XcrunTool) Execute(ctx context.Context, input json.RawMessage) (tools.T
 	}
 
 	args := append([]string{in.Tool}, in.Args...)
-	cmd := exec.CommandContext(ctx, "xcrun", args...)
-	out, err := cmd.CombinedOutput()
+	out, err := x.runner.CombinedOutput(ctx, "", "xcrun", args...)
 	output := strings.TrimSpace(string(out))
 
 	if err != nil {
