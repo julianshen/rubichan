@@ -77,6 +77,15 @@ func TestSwiftAddDepTool_MissingFromVersion(t *testing.T) {
 	assert.Contains(t, result.Content, "from_version is required")
 }
 
+func TestSwiftAddDepTool_NonHTTPSURL(t *testing.T) {
+	tool := NewSwiftAddDepTool("/tmp")
+	input, _ := json.Marshal(spmInput{URL: "file:///etc/passwd", FromVersion: "1.0.0"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "https://")
+}
+
 func TestSPMTool_BuildArgs(t *testing.T) {
 	t.Run("swift_build minimal", func(t *testing.T) {
 		tool := NewSwiftBuildTool("/tmp")

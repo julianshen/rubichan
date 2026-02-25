@@ -161,6 +161,9 @@ func (s *SPMTool) validate(in spmInput) error {
 		if in.URL == "" {
 			return fmt.Errorf("url is required")
 		}
+		if !strings.HasPrefix(in.URL, "https://") {
+			return fmt.Errorf("url must use https:// scheme")
+		}
 		if in.FromVersion == "" {
 			return fmt.Errorf("from_version is required")
 		}
