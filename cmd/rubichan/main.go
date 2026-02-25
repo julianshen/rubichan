@@ -385,6 +385,8 @@ func runInteractive() error {
 		return err
 	} else if appleOpt != nil {
 		opts = append(opts, appleOpt)
+		// Prevent createSkillRuntime from trying to discover apple-dev again.
+		skillsFlag = removeSkill("apple-dev", skillsFlag)
 	}
 
 	// Deny tool calls by default; require explicit --auto-approve flag to skip approval.
@@ -519,6 +521,7 @@ func runHeadless() error {
 		return err
 	} else if appleOpt != nil {
 		opts = append(opts, appleOpt)
+		skillsFlag = removeSkill("apple-dev", skillsFlag)
 	}
 
 	// Headless always auto-approves (tools are restricted via whitelist)
@@ -698,6 +701,19 @@ func shouldRegister(name string, allowed map[string]bool) bool {
 		return true
 	}
 	return allowed[name]
+}
+
+// removeSkill removes a skill name from a comma-separated flag value.
+func removeSkill(name, flagValue string) string {
+	var kept []string
+	for _, s := range strings.Split(flagValue, ",") {
+		if strings.TrimSpace(s) != name {
+			if trimmed := strings.TrimSpace(s); trimmed != "" {
+				kept = append(kept, trimmed)
+			}
+		}
+	}
+	return strings.Join(kept, ",")
 }
 
 // containsSkill returns true if name appears in the comma-separated flagValue.

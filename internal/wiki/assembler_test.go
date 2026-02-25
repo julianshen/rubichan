@@ -331,3 +331,23 @@ func TestAssembleWithNoSecurityFindings(t *testing.T) {
 	require.NotNil(t, secDoc2, "security/overview.md should exist")
 	assert.Contains(t, secDoc2.Content, "Security analysis pending...")
 }
+
+func TestSanitizeMarkdown(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain text", "hello world", "hello world"},
+		{"escapes script tags", "hello <script>alert('xss')</script>", "hello &lt;script&gt;alert('xss')&lt;/script&gt;"},
+		{"escapes angle brackets", "a < b > c", "a &lt; b &gt; c"},
+		{"escapes ampersands", "a & b", "a &amp; b"},
+		{"empty string", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeMarkdown(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

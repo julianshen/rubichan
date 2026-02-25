@@ -132,7 +132,8 @@ func (x *XcodeBuildTool) Execute(ctx context.Context, input json.RawMessage) (to
 			b.WriteString("\n")
 			b.WriteString(FormatBuildResult(buildResult))
 		}
-		return tools.ToolResult{Content: b.String(), IsError: !testResult.AllPassed()}, nil
+		isErr := !testResult.AllPassed() || (err != nil && !buildResult.Success)
+		return tools.ToolResult{Content: b.String(), IsError: isErr}, nil
 	}
 
 	buildResult := ParseBuildLog(output)

@@ -112,3 +112,24 @@ func TestContainsSkill_SkillsFlagActivation(t *testing.T) {
 	assert.True(t, containsSkill("apple-dev", "other-skill,apple-dev"))
 	assert.False(t, containsSkill("apple-dev", "other-skill"))
 }
+
+func TestRemoveSkill(t *testing.T) {
+	tests := []struct {
+		name      string
+		skill     string
+		flagValue string
+		want      string
+	}{
+		{"remove only", "apple-dev", "apple-dev", ""},
+		{"remove from list", "apple-dev", "foo,apple-dev,bar", "foo,bar"},
+		{"with spaces", "apple-dev", "foo, apple-dev , bar", "foo,bar"},
+		{"not present", "apple-dev", "foo,bar", "foo,bar"},
+		{"empty flag", "apple-dev", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := removeSkill(tt.skill, tt.flagValue)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -236,18 +236,18 @@ func buildSecurityPage(findings []security.Finding) Document {
 	// Per-finding details.
 	b.WriteString("## Findings\n\n")
 	for _, f := range findings {
-		fmt.Fprintf(&b, "### %s\n\n", f.Title)
-		fmt.Fprintf(&b, "- **Severity**: %s\n", f.Severity)
-		fmt.Fprintf(&b, "- **Scanner**: %s\n", f.Scanner)
+		fmt.Fprintf(&b, "### %s\n\n", sanitizeMarkdown(f.Title))
+		fmt.Fprintf(&b, "- **Severity**: %s\n", sanitizeMarkdown(string(f.Severity)))
+		fmt.Fprintf(&b, "- **Scanner**: %s\n", sanitizeMarkdown(f.Scanner))
 		if f.Location.File != "" {
 			if f.Location.StartLine > 0 {
-				fmt.Fprintf(&b, "- **Location**: `%s:%d`\n", f.Location.File, f.Location.StartLine)
+				fmt.Fprintf(&b, "- **Location**: `%s:%d`\n", sanitizeMarkdown(f.Location.File), f.Location.StartLine)
 			} else {
-				fmt.Fprintf(&b, "- **Location**: `%s`\n", f.Location.File)
+				fmt.Fprintf(&b, "- **Location**: `%s`\n", sanitizeMarkdown(f.Location.File))
 			}
 		}
 		if f.Description != "" {
-			fmt.Fprintf(&b, "\n%s\n", f.Description)
+			fmt.Fprintf(&b, "\n%s\n", sanitizeMarkdown(f.Description))
 		}
 		b.WriteString("\n")
 	}
@@ -315,6 +315,15 @@ var (
 	nonAlphanumRe = regexp.MustCompile(`[^a-z0-9-]`)
 	multiHyphenRe = regexp.MustCompile(`-{2,}`)
 )
+
+// sanitizeMarkdown escapes HTML-significant characters from untrusted text to
+// prevent XSS when the generated Markdown is rendered to HTML.
+func sanitizeMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
 
 // titleSlug converts a title to a URL-friendly slug: lowercased, spaces to hyphens,
 // non-alphanumeric characters (except hyphens) stripped.

@@ -154,6 +154,11 @@ func (s *SimctlTool) Execute(ctx context.Context, input json.RawMessage) (tools.
 		return tools.ToolResult{Content: "simctl requires macOS with Xcode installed", IsError: true}, nil
 	}
 
+	// List mode needs no input — short-circuit before unmarshal.
+	if s.mode == simctlList {
+		return s.executeList(ctx)
+	}
+
 	var in simctlInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
@@ -182,9 +187,6 @@ func (s *SimctlTool) Execute(ctx context.Context, input json.RawMessage) (tools.
 		}
 	}
 
-	if s.mode == simctlList {
-		return s.executeList(ctx)
-	}
 	return s.executeCommand(ctx, in)
 }
 
