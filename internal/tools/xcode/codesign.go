@@ -95,9 +95,11 @@ func (c *CodesignTool) Execute(ctx context.Context, input json.RawMessage) (tool
 			return tools.ToolResult{Content: "path is required", IsError: true}, nil
 		}
 		if c.rootDir != "" {
-			if _, err := validatePath(c.rootDir, in.Path); err != nil {
+			cleanedPath, err := validatePath(c.rootDir, in.Path)
+			if err != nil {
 				return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 			}
+			in.Path = cleanedPath
 		}
 		return c.executeVerify(ctx, in.Path)
 	default:

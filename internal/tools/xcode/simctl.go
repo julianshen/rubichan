@@ -164,16 +164,21 @@ func (s *SimctlTool) Execute(ctx context.Context, input json.RawMessage) (tools.
 	}
 
 	// Validate file path inputs for modes that accept host filesystem paths.
+	// Use the cleaned absolute path since simctl commands don't set cmd.Dir.
 	if s.rootDir != "" {
 		if s.mode == simctlInstall && in.AppPath != "" {
-			if _, err := validatePath(s.rootDir, in.AppPath); err != nil {
+			cleanedPath, err := validatePath(s.rootDir, in.AppPath)
+			if err != nil {
 				return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 			}
+			in.AppPath = cleanedPath
 		}
 		if s.mode == simctlScreenshot && in.OutputPath != "" {
-			if _, err := validatePath(s.rootDir, in.OutputPath); err != nil {
+			cleanedPath, err := validatePath(s.rootDir, in.OutputPath)
+			if err != nil {
 				return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 			}
+			in.OutputPath = cleanedPath
 		}
 	}
 
