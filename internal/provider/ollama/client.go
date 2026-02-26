@@ -30,6 +30,47 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// Version returns the Ollama server version via GET /api/version.
+func (c *Client) Version(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/version", nil)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("checking version: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checking version: HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding version: %w", err)
+	}
+	return result.Version, nil
+}
+
+// IsRunning probes the Ollama server with a short timeout.
+func (c *Client) IsRunning(ctx context.Context) bool {
+	probeClient := &http.Client{Timeout: 1 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/version", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := probeClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 // ListModels returns locally available models via GET /api/tags.
 func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/tags", nil)

@@ -72,3 +72,54 @@ func TestClient_ListModels_ConnectionError(t *testing.T) {
 	_, err := client.ListModels(context.Background())
 	require.Error(t, err)
 }
+
+func TestClient_ListModels_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`not json`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	_, err := client.ListModels(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decoding response")
+}
+
+func TestClient_Version(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/version", r.URL.Path)
+		w.Write([]byte(`{"version": "0.5.1"}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	ver, err := client.Version(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "0.5.1", ver)
+}
+
+func TestClient_Version_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	_, err := client.Version(context.Background())
+	require.Error(t, err)
+}
+
+func TestClient_IsRunning_True(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"version": "0.5.1"}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	assert.True(t, client.IsRunning(context.Background()))
+}
+
+func TestClient_IsRunning_False(t *testing.T) {
+	client := NewClient("http://localhost:1")
+	assert.False(t, client.IsRunning(context.Background()))
+}
