@@ -1,10 +1,13 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/stretchr/testify/assert"
@@ -132,4 +135,81 @@ func TestRemoveSkill(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestAutoDetectProvider_OllamaRunning(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "") // ensure env doesn't interfere
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"version": "0.5.1"}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	detected := autoDetectProvider(cfg, "", srv.URL)
+	assert.True(t, detected)
+	assert.Equal(t, "ollama", cfg.Provider.Default)
+}
+
+func TestAutoDetectProvider_OllamaNotRunning(t *testing.T) {
+	cfg := config.DefaultConfig()
+	detected := autoDetectProvider(cfg, "", "http://localhost:1")
+	assert.False(t, detected)
+	assert.Equal(t, "anthropic", cfg.Provider.Default)
+}
+
+func TestAutoDetectProvider_ExplicitProviderFlag(t *testing.T) {
+	cfg := config.DefaultConfig()
+	detected := autoDetectProvider(cfg, "openrouter", "http://localhost:11434")
+	assert.False(t, detected)
+	assert.Equal(t, "anthropic", cfg.Provider.Default)
+}
+
+func TestAutoDetectProvider_APIKeyExists(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Anthropic.APIKey = "sk-test-key"
+	detected := autoDetectProvider(cfg, "", "http://localhost:11434")
+	assert.False(t, detected)
+}
+
+func TestResolveOllamaModel_SingleModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models": [{"name": "llama3.2:latest", "size": 4294967296}]}`))
+	}))
+	defer srv.Close()
+
+	model, err := resolveOllamaModel(srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "llama3.2:latest", model)
+}
+
+func TestResolveOllamaModel_NoModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models": []}`))
+	}))
+	defer srv.Close()
+
+	_, err := resolveOllamaModel(srv.URL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no models found")
+}
+
+func TestResolveOllamaModel_MultipleModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models": [
+			{"name": "llama3.2:latest", "size": 4294967296},
+			{"name": "codellama:7b", "size": 3758096384}
+		]}`))
+	}))
+	defer srv.Close()
+
+	model, err := resolveOllamaModel(srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "llama3.2:latest", model) // returns first model
+}
+
+func TestResolveOllamaModel_ConnectionError(t *testing.T) {
+	_, err := resolveOllamaModel("http://localhost:1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing Ollama models")
 }

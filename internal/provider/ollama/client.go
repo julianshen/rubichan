@@ -1,0 +1,178 @@
+package ollama
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+// DefaultBaseURL is the default Ollama API base URL.
+const DefaultBaseURL = "http://localhost:11434"
+
+// ModelInfo describes a locally available Ollama model.
+type ModelInfo struct {
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	ModifiedAt time.Time `json:"modified_at"`
+	Digest     string    `json:"digest"`
+}
+
+// Client is a thin HTTP client for the Ollama REST API.
+type Client struct {
+	baseURL string
+	http    *http.Client
+}
+
+// NewClient creates a new Ollama API client.
+func NewClient(baseURL string) *Client {
+	return &Client{
+		baseURL: baseURL,
+		http:    &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// Version returns the Ollama server version via GET /api/version.
+func (c *Client) Version(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/version", nil)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("checking version: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checking version: HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding version: %w", err)
+	}
+	return result.Version, nil
+}
+
+// IsRunning probes the Ollama server with a 1-second timeout.
+func (c *Client) IsRunning(ctx context.Context) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+	_, err := c.Version(probeCtx)
+	return err == nil
+}
+
+// ListModels returns locally available models via GET /api/tags.
+func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/tags", nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("listing models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("listing models: HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Models []ModelInfo `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+	return result.Models, nil
+}
+
+// DeleteModel removes a model via DELETE /api/delete.
+func (c *Client) DeleteModel(ctx context.Context, name string) error {
+	body, _ := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: name})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/api/delete", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("deleting model: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("deleting model %q: HTTP %d", name, resp.StatusCode)
+	}
+	return nil
+}
+
+// PullProgress describes a single progress event during model download.
+type PullProgress struct {
+	Status    string `json:"status"`
+	Digest    string `json:"digest,omitempty"`
+	Total     int64  `json:"total,omitempty"`
+	Completed int64  `json:"completed,omitempty"`
+}
+
+// PullModel downloads a model via POST /api/pull, returning a channel of
+// progress events. The channel is closed when the pull completes or errors.
+func (c *Client) PullModel(ctx context.Context, name string) (<-chan PullProgress, error) {
+	body, _ := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: name})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Use a no-timeout client for pulls — large models can take hours.
+	pullClient := &http.Client{}
+	resp, err := pullClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("pulling model: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("pulling model %q: HTTP %d", name, resp.StatusCode)
+	}
+
+	ch := make(chan PullProgress)
+	go func() {
+		defer close(ch)
+		defer resp.Body.Close()
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(line) == 0 {
+				continue
+			}
+			var progress PullProgress
+			if err := json.Unmarshal(line, &progress); err != nil {
+				continue
+			}
+			select {
+			case ch <- progress:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return ch, nil
+}

@@ -41,7 +41,7 @@ import (
 
 	// Register providers via init() side effects.
 	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
-	_ "github.com/julianshen/rubichan/internal/provider/ollama"
+	"github.com/julianshen/rubichan/internal/provider/ollama"
 	_ "github.com/julianshen/rubichan/internal/provider/openai"
 )
 
@@ -120,6 +120,7 @@ func main() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(skillCmd())
 	rootCmd.AddCommand(wikiCmd())
+	rootCmd.AddCommand(ollamaCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *runner.ExitError
@@ -322,6 +323,55 @@ func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
 	return e
 }
 
+// autoDetectProvider checks if Ollama should be auto-selected.
+// Returns true if provider was switched to Ollama.
+func autoDetectProvider(cfg *config.Config, providerFlagValue, ollamaURL string) bool {
+	// Skip if provider explicitly set via flag.
+	if providerFlagValue != "" {
+		return false
+	}
+	// Only auto-detect when using default provider (anthropic).
+	if cfg.Provider.Default != "anthropic" {
+		return false
+	}
+	// Skip if Anthropic API key is configured.
+	if cfg.Provider.Anthropic.APIKey != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return false
+	}
+
+	client := ollama.NewClient(ollamaURL)
+	if client.IsRunning(context.Background()) {
+		cfg.Provider.Default = "ollama"
+		return true
+	}
+	return false
+}
+
+// resolveOllamaModel queries Ollama for available models and resolves which
+// model to use. With a single model it auto-selects; with zero models it
+// returns an error. The ollamaURL parameter allows testing with httptest.
+func resolveOllamaModel(ollamaURL string) (string, error) {
+	client := ollama.NewClient(ollamaURL)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("listing Ollama models: %w", err)
+	}
+
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models found; run 'rubichan ollama pull <model>' first")
+	}
+
+	if len(models) == 1 {
+		return models[0].Name, nil
+	}
+
+	// Multiple models — in interactive mode, we'd show a picker.
+	// For now, return the first model. The TUI picker integration
+	// requires running a Bubble Tea program which is complex to wire here.
+	// TODO: integrate tui.ModelPicker when running interactively.
+	return models[0].Name, nil
+}
+
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -345,6 +395,27 @@ func loadConfig() (*config.Config, error) {
 	}
 	if providerFlag != "" {
 		cfg.Provider.Default = providerFlag
+	}
+
+	// Resolve Ollama URL once for all downstream checks.
+	ollamaURL := cfg.Provider.Ollama.BaseURL
+	if ollamaURL == "" {
+		ollamaURL = ollama.DefaultBaseURL
+	}
+
+	// Auto-detect Ollama if no API key and no explicit provider.
+	if autoDetectProvider(cfg, providerFlag, ollamaURL) {
+		fmt.Fprintln(os.Stderr, "Using local Ollama (no API key configured)")
+	}
+
+	// Resolve Ollama model if provider is ollama and no model specified.
+	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
+		model, err := resolveOllamaModel(ollamaURL)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Provider.Model = model
+		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
 	}
 
 	return cfg, nil
