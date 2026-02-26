@@ -56,19 +56,12 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return result.Version, nil
 }
 
-// IsRunning probes the Ollama server with a short timeout.
+// IsRunning probes the Ollama server with a 1-second timeout.
 func (c *Client) IsRunning(ctx context.Context) bool {
-	probeClient := &http.Client{Timeout: 1 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/version", nil)
-	if err != nil {
-		return false
-	}
-	resp, err := probeClient.Do(req)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	probeCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+	_, err := c.Version(probeCtx)
+	return err == nil
 }
 
 // ListModels returns locally available models via GET /api/tags.
