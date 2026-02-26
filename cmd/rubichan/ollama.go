@@ -11,7 +11,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider/ollama"
 )
 
-const defaultOllamaBaseURL = "http://localhost:11434"
+var defaultOllamaBaseURL = ollama.DefaultBaseURL
 
 // ollamaCmd returns the top-level "ollama" command with list, pull, rm, and
 // status subcommands for managing local Ollama models.

@@ -400,7 +400,7 @@ func loadConfig() (*config.Config, error) {
 	// Auto-detect Ollama if no API key and no explicit provider.
 	ollamaURL := cfg.Provider.Ollama.BaseURL
 	if ollamaURL == "" {
-		ollamaURL = "http://localhost:11434"
+		ollamaURL = ollama.DefaultBaseURL
 	}
 	if autoDetectProvider(cfg, providerFlag, ollamaURL) {
 		fmt.Fprintln(os.Stderr, "Using local Ollama (no API key configured)")
@@ -419,7 +419,7 @@ func runInteractive() error {
 	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
 		ollamaURL := cfg.Provider.Ollama.BaseURL
 		if ollamaURL == "" {
-			ollamaURL = "http://localhost:11434"
+			ollamaURL = ollama.DefaultBaseURL
 		}
 		model, err := resolveOllamaModel(ollamaURL)
 		if err != nil {
@@ -521,6 +521,20 @@ func runHeadless() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
+	}
+
+	// Resolve Ollama model if needed (same as interactive mode).
+	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
+		ollamaURL := cfg.Provider.Ollama.BaseURL
+		if ollamaURL == "" {
+			ollamaURL = ollama.DefaultBaseURL
+		}
+		model, err := resolveOllamaModel(ollamaURL)
+		if err != nil {
+			return err
+		}
+		cfg.Provider.Model = model
+		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
 	}
 
 	if maxTurnsFlag > 0 {

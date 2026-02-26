@@ -138,6 +138,8 @@ func TestRemoveSkill(t *testing.T) {
 }
 
 func TestAutoDetectProvider_OllamaRunning(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "") // ensure env doesn't interfere
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"version": "0.5.1"}`))
 	}))

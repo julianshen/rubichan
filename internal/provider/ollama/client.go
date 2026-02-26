@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// DefaultBaseURL is the default Ollama API base URL.
+const DefaultBaseURL = "http://localhost:11434"
+
 // ModelInfo describes a locally available Ollama model.
 type ModelInfo struct {
 	Name       string    `json:"name"`
