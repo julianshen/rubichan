@@ -169,3 +169,45 @@ func TestAutoDetectProvider_APIKeyExists(t *testing.T) {
 	detected := autoDetectProvider(cfg, "", "http://localhost:11434")
 	assert.False(t, detected)
 }
+
+func TestResolveOllamaModel_SingleModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models": [{"name": "llama3.2:latest", "size": 4294967296}]}`))
+	}))
+	defer srv.Close()
+
+	model, err := resolveOllamaModel(srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "llama3.2:latest", model)
+}
+
+func TestResolveOllamaModel_NoModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models": []}`))
+	}))
+	defer srv.Close()
+
+	_, err := resolveOllamaModel(srv.URL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no models found")
+}
+
+func TestResolveOllamaModel_MultipleModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"models": [
+			{"name": "llama3.2:latest", "size": 4294967296},
+			{"name": "codellama:7b", "size": 3758096384}
+		]}`))
+	}))
+	defer srv.Close()
+
+	model, err := resolveOllamaModel(srv.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "llama3.2:latest", model) // returns first model
+}
+
+func TestResolveOllamaModel_ConnectionError(t *testing.T) {
+	_, err := resolveOllamaModel("http://localhost:1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing Ollama models")
+}

@@ -347,6 +347,31 @@ func autoDetectProvider(cfg *config.Config, providerFlagValue, ollamaURL string)
 	return false
 }
 
+// resolveOllamaModel queries Ollama for available models and resolves which
+// model to use. With a single model it auto-selects; with zero models it
+// returns an error. The ollamaURL parameter allows testing with httptest.
+func resolveOllamaModel(ollamaURL string) (string, error) {
+	client := ollama.NewClient(ollamaURL)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("listing Ollama models: %w", err)
+	}
+
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models found; run 'rubichan ollama pull <model>' first")
+	}
+
+	if len(models) == 1 {
+		return models[0].Name, nil
+	}
+
+	// Multiple models — in interactive mode, we'd show a picker.
+	// For now, return the first model. The TUI picker integration
+	// requires running a Bubble Tea program which is complex to wire here.
+	// TODO: integrate tui.ModelPicker when running interactively.
+	return models[0].Name, nil
+}
+
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -388,6 +413,20 @@ func runInteractive() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
+	}
+
+	// Resolve Ollama model if needed.
+	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
+		ollamaURL := cfg.Provider.Ollama.BaseURL
+		if ollamaURL == "" {
+			ollamaURL = "http://localhost:11434"
+		}
+		model, err := resolveOllamaModel(ollamaURL)
+		if err != nil {
+			return err
+		}
+		cfg.Provider.Model = model
+		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
 	}
 
 	// Create provider
