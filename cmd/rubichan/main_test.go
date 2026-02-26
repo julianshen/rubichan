@@ -1,10 +1,13 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/stretchr/testify/assert"
@@ -132,4 +135,37 @@ func TestRemoveSkill(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestAutoDetectProvider_OllamaRunning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"version": "0.5.1"}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	detected := autoDetectProvider(cfg, "", srv.URL)
+	assert.True(t, detected)
+	assert.Equal(t, "ollama", cfg.Provider.Default)
+}
+
+func TestAutoDetectProvider_OllamaNotRunning(t *testing.T) {
+	cfg := config.DefaultConfig()
+	detected := autoDetectProvider(cfg, "", "http://localhost:1")
+	assert.False(t, detected)
+	assert.Equal(t, "anthropic", cfg.Provider.Default)
+}
+
+func TestAutoDetectProvider_ExplicitProviderFlag(t *testing.T) {
+	cfg := config.DefaultConfig()
+	detected := autoDetectProvider(cfg, "openrouter", "http://localhost:11434")
+	assert.False(t, detected)
+	assert.Equal(t, "anthropic", cfg.Provider.Default)
+}
+
+func TestAutoDetectProvider_APIKeyExists(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Anthropic.APIKey = "sk-test-key"
+	detected := autoDetectProvider(cfg, "", "http://localhost:11434")
+	assert.False(t, detected)
 }

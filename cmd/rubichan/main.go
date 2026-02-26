@@ -41,7 +41,7 @@ import (
 
 	// Register providers via init() side effects.
 	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
-	_ "github.com/julianshen/rubichan/internal/provider/ollama"
+	"github.com/julianshen/rubichan/internal/provider/ollama"
 	_ "github.com/julianshen/rubichan/internal/provider/openai"
 )
 
@@ -323,6 +323,30 @@ func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
 	return e
 }
 
+// autoDetectProvider checks if Ollama should be auto-selected.
+// Returns true if provider was switched to Ollama.
+func autoDetectProvider(cfg *config.Config, providerFlagValue, ollamaURL string) bool {
+	// Skip if provider explicitly set via flag.
+	if providerFlagValue != "" {
+		return false
+	}
+	// Only auto-detect when using default provider (anthropic).
+	if cfg.Provider.Default != "anthropic" {
+		return false
+	}
+	// Skip if Anthropic API key is configured.
+	if cfg.Provider.Anthropic.APIKey != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return false
+	}
+
+	client := ollama.NewClient(ollamaURL)
+	if client.IsRunning(context.Background()) {
+		cfg.Provider.Default = "ollama"
+		return true
+	}
+	return false
+}
+
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -346,6 +370,15 @@ func loadConfig() (*config.Config, error) {
 	}
 	if providerFlag != "" {
 		cfg.Provider.Default = providerFlag
+	}
+
+	// Auto-detect Ollama if no API key and no explicit provider.
+	ollamaURL := cfg.Provider.Ollama.BaseURL
+	if ollamaURL == "" {
+		ollamaURL = "http://localhost:11434"
+	}
+	if autoDetectProvider(cfg, providerFlag, ollamaURL) {
+		fmt.Fprintln(os.Stderr, "Using local Ollama (no API key configured)")
 	}
 
 	return cfg, nil
