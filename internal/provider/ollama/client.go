@@ -1,6 +1,7 @@
 package ollama
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -113,4 +114,60 @@ func (c *Client) DeleteModel(ctx context.Context, name string) error {
 		return fmt.Errorf("deleting model %q: HTTP %d", name, resp.StatusCode)
 	}
 	return nil
+}
+
+// PullProgress describes a single progress event during model download.
+type PullProgress struct {
+	Status    string `json:"status"`
+	Digest    string `json:"digest,omitempty"`
+	Total     int64  `json:"total,omitempty"`
+	Completed int64  `json:"completed,omitempty"`
+}
+
+// PullModel downloads a model via POST /api/pull, returning a channel of
+// progress events. The channel is closed when the pull completes or errors.
+func (c *Client) PullModel(ctx context.Context, name string) (<-chan PullProgress, error) {
+	body, _ := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: name})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/pull", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("pulling model: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("pulling model %q: HTTP %d", name, resp.StatusCode)
+	}
+
+	ch := make(chan PullProgress)
+	go func() {
+		defer close(ch)
+		defer resp.Body.Close()
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(line) == 0 {
+				continue
+			}
+			var progress PullProgress
+			if err := json.Unmarshal(line, &progress); err != nil {
+				continue
+			}
+			select {
+			case ch <- progress:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return ch, nil
 }

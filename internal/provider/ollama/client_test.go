@@ -156,3 +156,47 @@ func TestClient_DeleteModel_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
 }
+
+func TestClient_PullModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/pull", r.URL.Path)
+		assert.Equal(t, http.MethodPost, r.Method)
+		var body struct {
+			Name string `json:"name"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "llama3.2", body.Name)
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{\"status\":\"pulling manifest\"}\n"))
+		w.Write([]byte("{\"status\":\"downloading\",\"total\":1000,\"completed\":500}\n"))
+		w.Write([]byte("{\"status\":\"success\"}\n"))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	ch, err := client.PullModel(context.Background(), "llama3.2")
+	require.NoError(t, err)
+
+	var events []PullProgress
+	for evt := range ch {
+		events = append(events, evt)
+	}
+	require.Len(t, events, 3)
+	assert.Equal(t, "pulling manifest", events[0].Status)
+	assert.Equal(t, "downloading", events[1].Status)
+	assert.Equal(t, int64(500), events[1].Completed)
+	assert.Equal(t, "success", events[2].Status)
+}
+
+func TestClient_PullModel_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	_, err := client.PullModel(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
