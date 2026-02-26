@@ -200,3 +200,41 @@ func TestClient_PullModel_Error(t *testing.T) {
 	_, err := client.PullModel(context.Background(), "nonexistent")
 	require.Error(t, err)
 }
+
+func TestClient_PullModel_ContextCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{\"status\":\"pulling manifest\"}\n"))
+		// Server would keep sending, but client cancels.
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := NewClient(srv.URL)
+	ch, err := client.PullModel(ctx, "llama3.2")
+	require.NoError(t, err)
+
+	// Read first event, then cancel.
+	evt := <-ch
+	assert.Equal(t, "pulling manifest", evt.Status)
+	cancel()
+
+	// Channel should drain and close.
+	for range ch {
+	}
+}
+
+func TestClient_DeleteModel_ConnectionError(t *testing.T) {
+	client := NewClient("http://localhost:1")
+	err := client.DeleteModel(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deleting model")
+}
+
+func TestClient_PullModel_ConnectionError(t *testing.T) {
+	client := NewClient("http://localhost:1")
+	_, err := client.PullModel(context.Background(), "test")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pulling model")
+}
