@@ -1,6 +1,7 @@
 package ollama
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -88,4 +89,28 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 	return result.Models, nil
+}
+
+// DeleteModel removes a model via DELETE /api/delete.
+func (c *Client) DeleteModel(ctx context.Context, name string) error {
+	body, _ := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: name})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/api/delete", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("deleting model: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("deleting model %q: HTTP %d", name, resp.StatusCode)
+	}
+	return nil
 }

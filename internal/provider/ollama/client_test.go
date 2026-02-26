@@ -2,6 +2,7 @@ package ollama
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -122,4 +123,36 @@ func TestClient_IsRunning_True(t *testing.T) {
 func TestClient_IsRunning_False(t *testing.T) {
 	client := NewClient("http://localhost:1")
 	assert.False(t, client.IsRunning(context.Background()))
+}
+
+func TestClient_DeleteModel(t *testing.T) {
+	var capturedName string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/delete", r.URL.Path)
+		assert.Equal(t, http.MethodDelete, r.Method)
+		var body struct {
+			Name string `json:"name"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		capturedName = body.Name
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	err := client.DeleteModel(context.Background(), "llama3.2:latest")
+	require.NoError(t, err)
+	assert.Equal(t, "llama3.2:latest", capturedName)
+}
+
+func TestClient_DeleteModel_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	err := client.DeleteModel(context.Background(), "nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "404")
 }
