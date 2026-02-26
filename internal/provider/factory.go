@@ -61,7 +61,7 @@ func newOllamaProvider(cfg *config.Config) (LLMProvider, error) {
 
 	baseURL := cfg.Provider.Ollama.BaseURL
 	if baseURL == "" {
-		baseURL = "http://localhost:11434"
+		baseURL = "http://localhost:11434" // matches ollama.DefaultBaseURL (can't import due to cycle)
 	}
 
 	return constructor(baseURL, "", nil), nil

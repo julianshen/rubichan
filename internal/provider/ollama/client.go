@@ -140,7 +140,9 @@ func (c *Client) PullModel(ctx context.Context, name string) (<-chan PullProgres
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.http.Do(req)
+	// Use a no-timeout client for pulls — large models can take hours.
+	pullClient := &http.Client{}
+	resp, err := pullClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("pulling model: %w", err)
 	}
