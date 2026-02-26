@@ -120,6 +120,7 @@ func main() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(skillCmd())
 	rootCmd.AddCommand(wikiCmd())
+	rootCmd.AddCommand(ollamaCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *runner.ExitError
