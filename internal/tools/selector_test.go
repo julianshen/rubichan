@@ -95,7 +95,7 @@ func TestSelectorAllToolsFallback(t *testing.T) {
 	result := ts.Select(messages, allTestTools())
 
 	// Should fall back to all tools
-	assert.Len(t, result, len(allTestTools()))
+	assert.ElementsMatch(t, toolNames(result), toolNames(allTestTools()))
 }
 
 func TestSelectorRecentToolUsageIncluded(t *testing.T) {
@@ -123,7 +123,7 @@ func TestSelectorEmptyMessagesReturnsAll(t *testing.T) {
 	ts := NewToolSelector()
 
 	result := ts.Select(nil, allTestTools())
-	assert.Len(t, result, len(allTestTools()))
+	assert.ElementsMatch(t, toolNames(result), toolNames(allTestTools()))
 }
 
 func TestSelectorKeywordDetection(t *testing.T) {

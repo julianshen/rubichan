@@ -32,17 +32,19 @@ func (s *LLMSummarizer) Summarize(ctx context.Context, messages []provider.Messa
 	for _, msg := range messages {
 		sb.WriteString(fmt.Sprintf("[%s] ", msg.Role))
 		for _, block := range msg.Content {
-			if block.Text != "" {
-				sb.WriteString(block.Text)
-			} else if block.Type == "tool_use" {
+			switch block.Type {
+			case "tool_use":
 				sb.WriteString(fmt.Sprintf("<tool:%s>", block.Name))
-			} else if block.Type == "tool_result" {
-				// Use truncated preview for tool results.
+			case "tool_result":
 				preview := block.Text
 				if len(preview) > 200 {
 					preview = preview[:200] + "..."
 				}
 				sb.WriteString(fmt.Sprintf("<result:%s>", preview))
+			default:
+				if block.Text != "" {
+					sb.WriteString(block.Text)
+				}
 			}
 		}
 		sb.WriteString("\n")

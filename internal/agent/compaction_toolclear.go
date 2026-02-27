@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -20,7 +21,7 @@ func NewToolResultClearingStrategy() *toolResultClearingStrategy {
 
 func (s *toolResultClearingStrategy) Name() string { return "tool_result_clearing" }
 
-func (s *toolResultClearingStrategy) Compact(messages []provider.Message, _ int) ([]provider.Message, error) {
+func (s *toolResultClearingStrategy) Compact(_ context.Context, messages []provider.Message, _ int) ([]provider.Message, error) {
 	if len(messages) == 0 {
 		return messages, nil
 	}

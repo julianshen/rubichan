@@ -153,3 +153,13 @@ func TestNotesToolInvalidJSON(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "invalid input")
 }
+
+func TestNotesToolNilScratchpad(t *testing.T) {
+	n := NewNotesTool(nil)
+
+	input, _ := json.Marshal(notesInput{Action: "set", Tag: "x", Content: "y"})
+	result, err := n.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "not initialized")
+}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -132,6 +133,26 @@ func TestSaveMemoriesExtractsAndSaves(t *testing.T) {
 
 	assert.Len(t, ms.saved, 1)
 	assert.Equal(t, "test-insight", ms.saved[0].Tag)
+}
+
+func TestSaveMemoriesReturnsStoreError(t *testing.T) {
+	cfg := testConfig()
+	reg := tools.NewRegistry()
+	ms := &mockMemoryStore{saveErr: fmt.Errorf("disk full")}
+	summarizer := &mockSummarizer{
+		summary: "TAG: insight\nCONTENT: test\n---",
+	}
+
+	a := New(nil, reg, nil, cfg, WithMemoryStore(ms), WithSummarizer(summarizer))
+	for i := 0; i < 6; i++ {
+		a.conversation.AddUser("msg")
+		a.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "resp"}})
+	}
+
+	err := a.SaveMemories(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "saving memory")
+	assert.Contains(t, err.Error(), "disk full")
 }
 
 func TestScratchpadAccessMethod(t *testing.T) {

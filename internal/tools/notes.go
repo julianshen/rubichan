@@ -62,6 +62,10 @@ type notesInput struct {
 }
 
 func (n *NotesTool) Execute(_ context.Context, input json.RawMessage) (ToolResult, error) {
+	if n.scratchpad == nil {
+		return ToolResult{Content: "notes tool not initialized", IsError: true}, nil
+	}
+
 	var in notesInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil

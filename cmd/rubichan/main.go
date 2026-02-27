@@ -659,8 +659,10 @@ func runHeadless() error {
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Register notes tool backed by agent's scratchpad.
-	if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
-		return fmt.Errorf("registering notes tool: %w", err)
+	if shouldRegister("notes", allowed) {
+		if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
+			return fmt.Errorf("registering notes tool: %w", err)
+		}
 	}
 
 	// Run headless

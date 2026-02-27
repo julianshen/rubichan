@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -18,7 +19,7 @@ type mockStrategy struct {
 
 func (m *mockStrategy) Name() string { return m.name }
 
-func (m *mockStrategy) Compact(messages []provider.Message, budget int) ([]provider.Message, error) {
+func (m *mockStrategy) Compact(_ context.Context, messages []provider.Message, budget int) ([]provider.Message, error) {
 	m.called = true
 	if m.returnErr != nil {
 		return messages, m.returnErr
@@ -50,7 +51,7 @@ func TestCompactRunsStrategiesInOrder(t *testing.T) {
 
 	require.True(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(conv)
+	cm.Compact(context.Background(), conv)
 
 	// First strategy should be called
 	assert.True(t, s1.called, "first strategy should be called")
@@ -70,7 +71,7 @@ func TestCompactFallsBackToTruncation(t *testing.T) {
 	require.True(t, cm.ExceedsBudget(conv))
 
 	// Default strategies include truncation as fallback
-	cm.Compact(conv)
+	cm.Compact(context.Background(), conv)
 
 	assert.False(t, cm.ExceedsBudget(conv), "should be within budget after compaction")
 	assert.GreaterOrEqual(t, len(conv.Messages()), 2)
@@ -88,7 +89,7 @@ func TestCompactEmptyStrategiesUsesTruncation(t *testing.T) {
 
 	require.True(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(conv)
+	cm.Compact(context.Background(), conv)
 
 	assert.False(t, cm.ExceedsBudget(conv))
 	assert.GreaterOrEqual(t, len(conv.Messages()), 2)
@@ -105,7 +106,7 @@ func TestCompactNoOpWhenWithinBudget(t *testing.T) {
 
 	require.False(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(conv)
+	cm.Compact(context.Background(), conv)
 
 	// Strategy should not be called when already within budget
 	assert.False(t, s.called, "strategy should not be called when within budget")
@@ -130,7 +131,7 @@ func TestCompactStopsWhenUnderBudget(t *testing.T) {
 		t.Skip("test requires conversation to exceed budget")
 	}
 
-	cm.Compact(conv)
+	cm.Compact(context.Background(), conv)
 
 	assert.True(t, s1.called, "first strategy should be called")
 	// If first strategy brought under budget, second should not be called
@@ -146,7 +147,7 @@ func TestTruncateStrategyPreservesMinMessages(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "hi"}}},
 	}
 
-	result, err := s.Compact(messages, 5) // Very small budget
+	result, err := s.Compact(context.Background(), messages, 5) // Very small budget
 	require.NoError(t, err)
 	assert.Len(t, result, 2, "should preserve at least 2 messages")
 }
@@ -160,7 +161,7 @@ func TestTruncateStrategyRemovesOldMessages(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "second response"}}},
 	}
 
-	result, err := s.Compact(messages, 30)
+	result, err := s.Compact(context.Background(), messages, 30)
 	require.NoError(t, err)
 	assert.Less(t, len(result), 4, "should remove some messages")
 	assert.GreaterOrEqual(t, len(result), 2, "should keep at least 2")
@@ -175,7 +176,7 @@ func TestTruncateStrategySkipsLeadingToolResults(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "long answer that contributes to exceeding budget"}}},
 	}
 
-	result, err := s.Compact(messages, 30)
+	result, err := s.Compact(context.Background(), messages, 30)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(result), 2)
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestToolResultClearingLargeResultsCleared(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "response"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	// The first message's tool_result should be cleared
@@ -45,7 +46,7 @@ func TestToolResultClearingSmallResultsPreserved(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "response"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	// Small results should be preserved
@@ -64,7 +65,7 @@ func TestToolResultClearingRecentResultsUntouched(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "got it"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	// Recent tool results should be preserved even if large
@@ -82,7 +83,7 @@ func TestToolResultClearingThresholdConfigurable(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "response"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	assert.Contains(t, result[0].Content[0].Text, "[Tool result cleared")
@@ -99,7 +100,7 @@ func TestToolResultClearingBytesCountAccurate(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "response"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	expected := fmt.Sprintf("[Tool result cleared — was %d bytes]", 500)
@@ -122,7 +123,7 @@ func TestToolResultClearingNonToolResultsUntouched(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "response"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	// Non-tool_result content should not be modified
@@ -148,7 +149,7 @@ func TestToolResultClearingIntegrationWithCompact(t *testing.T) {
 
 	require.True(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(conv)
+	cm.Compact(context.Background(), conv)
 
 	// After compaction, the large tool result should be cleared
 	assert.False(t, cm.ExceedsBudget(conv))

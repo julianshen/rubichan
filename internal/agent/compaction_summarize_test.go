@@ -28,13 +28,13 @@ func (m *mockSummarizer) Summarize(_ context.Context, messages []provider.Messag
 }
 
 func TestSummarizationStrategyName(t *testing.T) {
-	s := NewSummarizationStrategy(context.Background(), nil)
+	s := NewSummarizationStrategy(nil)
 	assert.Equal(t, "summarization", s.Name())
 }
 
 func TestSummarizationCalledWhenThresholdExceeded(t *testing.T) {
 	ms := &mockSummarizer{summary: "conversation summary"}
-	s := NewSummarizationStrategy(context.Background(), ms)
+	s := NewSummarizationStrategy(ms)
 	s.messageThreshold = 4
 
 	messages := make([]provider.Message, 6)
@@ -49,7 +49,7 @@ func TestSummarizationCalledWhenThresholdExceeded(t *testing.T) {
 		}
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 	assert.True(t, ms.called, "summarizer should be called")
 
@@ -63,7 +63,7 @@ func TestSummarizationCalledWhenThresholdExceeded(t *testing.T) {
 
 func TestSummarizationSkippedWhenBelowThreshold(t *testing.T) {
 	ms := &mockSummarizer{summary: "should not appear"}
-	s := NewSummarizationStrategy(context.Background(), ms)
+	s := NewSummarizationStrategy(ms)
 	s.messageThreshold = 20
 
 	messages := []provider.Message{
@@ -71,14 +71,14 @@ func TestSummarizationSkippedWhenBelowThreshold(t *testing.T) {
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "hi"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 	assert.False(t, ms.called, "summarizer should not be called below threshold")
 	assert.Len(t, result, 2)
 }
 
 func TestSummarizationSkippedWhenNilSummarizer(t *testing.T) {
-	s := NewSummarizationStrategy(context.Background(), nil)
+	s := NewSummarizationStrategy(nil)
 	s.messageThreshold = 2
 
 	messages := []provider.Message{
@@ -87,14 +87,14 @@ func TestSummarizationSkippedWhenNilSummarizer(t *testing.T) {
 		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "more"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 	assert.Len(t, result, 3, "should return messages unchanged with nil summarizer")
 }
 
 func TestSummarizationMessageFormat(t *testing.T) {
 	ms := &mockSummarizer{summary: "User asked about Go. Assistant explained interfaces."}
-	s := NewSummarizationStrategy(context.Background(), ms)
+	s := NewSummarizationStrategy(ms)
 	s.messageThreshold = 4
 
 	messages := make([]provider.Message, 10)
@@ -109,7 +109,7 @@ func TestSummarizationMessageFormat(t *testing.T) {
 		}
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	// Should have 6 old messages summarized (60% of 10)
@@ -120,7 +120,7 @@ func TestSummarizationMessageFormat(t *testing.T) {
 
 func TestSummarizationReceivesOldestMessages(t *testing.T) {
 	ms := &mockSummarizer{summary: "summary"}
-	s := NewSummarizationStrategy(context.Background(), ms)
+	s := NewSummarizationStrategy(ms)
 	s.messageThreshold = 4
 
 	messages := make([]provider.Message, 10)
@@ -131,7 +131,7 @@ func TestSummarizationReceivesOldestMessages(t *testing.T) {
 		}
 	}
 
-	_, err := s.Compact(messages, 100000)
+	_, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
 	// Summarizer should receive the oldest 60% (6 messages)
@@ -142,7 +142,7 @@ func TestSummarizationReceivesOldestMessages(t *testing.T) {
 
 func TestSummarizationErrorReturnsOriginal(t *testing.T) {
 	ms := &mockSummarizer{err: fmt.Errorf("API error")}
-	s := NewSummarizationStrategy(context.Background(), ms)
+	s := NewSummarizationStrategy(ms)
 	s.messageThreshold = 2
 
 	messages := []provider.Message{
@@ -151,7 +151,7 @@ func TestSummarizationErrorReturnsOriginal(t *testing.T) {
 		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "more"}}},
 	}
 
-	result, err := s.Compact(messages, 100000)
+	result, err := s.Compact(context.Background(), messages, 100000)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "summarization failed")
 	// Original messages returned on error

@@ -72,8 +72,10 @@ func WithResumeSession(sessionID string) AgentOption {
 
 // WithCompactionStrategies configures the compaction strategy chain for the
 // context manager. Strategies run in order from lightest to heaviest.
+// When set, WithSummarizer will not override the custom strategy chain.
 func WithCompactionStrategies(strategies ...CompactionStrategy) AgentOption {
 	return func(a *Agent) {
+		a.customStrategies = true
 		a.context.SetStrategies(strategies)
 	}
 }
@@ -119,22 +121,23 @@ func WithExtraSystemPrompt(name, content string) AgentOption {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider        provider.LLMProvider
-	tools           *tools.Registry
-	conversation    *Conversation
-	context         *ContextManager
-	approve         ApprovalFunc
-	model           string
-	maxTurns        int
-	skillRuntime    *skills.Runtime
-	store           *store.Store
-	sessionID       string
-	resumeSessionID string
-	agentMD         string
-	extraPrompts    []namedPrompt
-	summarizer      Summarizer
-	scratchpad      *Scratchpad
-	memoryStore     MemoryStore
+	provider         provider.LLMProvider
+	tools            *tools.Registry
+	conversation     *Conversation
+	context          *ContextManager
+	approve          ApprovalFunc
+	model            string
+	maxTurns         int
+	skillRuntime     *skills.Runtime
+	store            *store.Store
+	sessionID        string
+	resumeSessionID  string
+	agentMD          string
+	extraPrompts     []namedPrompt
+	summarizer       Summarizer
+	scratchpad       *Scratchpad
+	memoryStore      MemoryStore
+	customStrategies bool
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -184,12 +187,12 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			a.conversation = NewConversation(prompt)
 		}
 	}
-	// If a summarizer was provided, insert the summarization strategy
-	// between tool clearing and truncation in the compaction chain.
-	if a.summarizer != nil {
+	// If a summarizer was provided and the caller didn't set custom
+	// strategies, insert summarization between tool clearing and truncation.
+	if a.summarizer != nil && !a.customStrategies {
 		a.context.SetStrategies([]CompactionStrategy{
 			NewToolResultClearingStrategy(),
-			NewSummarizationStrategy(context.Background(), a.summarizer),
+			NewSummarizationStrategy(a.summarizer),
 			&truncateStrategy{},
 		})
 	}
@@ -270,7 +273,7 @@ func (a *Agent) SaveMemories(ctx context.Context) error {
 	wd, _ := os.Getwd()
 	for _, m := range memories {
 		if err := a.memoryStore.SaveMemory(wd, m.Tag, m.Content); err != nil {
-			log.Printf("warning: failed to save memory %q: %v", m.Tag, err)
+			return fmt.Errorf("saving memory %q: %w", m.Tag, err)
 		}
 	}
 	return nil
@@ -303,7 +306,7 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
-	a.context.Compact(a.conversation)
+	a.context.Compact(ctx, a.conversation)
 
 	ch := make(chan TurnEvent, 64)
 	go func() {
