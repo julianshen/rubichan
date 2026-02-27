@@ -70,6 +70,31 @@ func WithResumeSession(sessionID string) AgentOption {
 	}
 }
 
+// WithCompactionStrategies configures the compaction strategy chain for the
+// context manager. Strategies run in order from lightest to heaviest.
+// When set, WithSummarizer will not override the custom strategy chain.
+func WithCompactionStrategies(strategies ...CompactionStrategy) AgentOption {
+	return func(a *Agent) {
+		a.customStrategies = true
+		a.context.SetStrategies(strategies)
+	}
+}
+
+// WithSummarizer attaches an LLM-backed summarizer to the agent, enabling
+// the summarization compaction strategy.
+func WithSummarizer(s Summarizer) AgentOption {
+	return func(a *Agent) {
+		a.summarizer = s
+	}
+}
+
+// WithMemoryStore attaches a memory store for cross-session learning.
+func WithMemoryStore(ms MemoryStore) AgentOption {
+	return func(a *Agent) {
+		a.memoryStore = ms
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -96,19 +121,23 @@ func WithExtraSystemPrompt(name, content string) AgentOption {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider        provider.LLMProvider
-	tools           *tools.Registry
-	conversation    *Conversation
-	context         *ContextManager
-	approve         ApprovalFunc
-	model           string
-	maxTurns        int
-	skillRuntime    *skills.Runtime
-	store           *store.Store
-	sessionID       string
-	resumeSessionID string
-	agentMD         string
-	extraPrompts    []namedPrompt
+	provider         provider.LLMProvider
+	tools            *tools.Registry
+	conversation     *Conversation
+	context          *ContextManager
+	approve          ApprovalFunc
+	model            string
+	maxTurns         int
+	skillRuntime     *skills.Runtime
+	store            *store.Store
+	sessionID        string
+	resumeSessionID  string
+	agentMD          string
+	extraPrompts     []namedPrompt
+	summarizer       Summarizer
+	scratchpad       *Scratchpad
+	memoryStore      MemoryStore
+	customStrategies bool
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -124,6 +153,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		approve:      approve,
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
+		scratchpad:   NewScratchpad(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -141,6 +171,30 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			prompt += "\n\n## " + ep.Name + "\n\n" + ep.Content
 		}
 		a.conversation = NewConversation(prompt)
+	}
+	// Load cross-session memories into system prompt.
+	if a.memoryStore != nil {
+		wd, _ := os.Getwd()
+		memories, err := a.memoryStore.LoadMemories(wd)
+		if err != nil {
+			log.Printf("warning: failed to load memories: %v", err)
+		} else if len(memories) > 0 {
+			prompt := a.conversation.SystemPrompt()
+			prompt += "\n\n## Prior Session Insights\n\n"
+			for _, m := range memories {
+				prompt += fmt.Sprintf("- **%s**: %s\n", m.Tag, m.Content)
+			}
+			a.conversation = NewConversation(prompt)
+		}
+	}
+	// If a summarizer was provided and the caller didn't set custom
+	// strategies, insert summarization between tool clearing and truncation.
+	if a.summarizer != nil && !a.customStrategies {
+		a.context.SetStrategies([]CompactionStrategy{
+			NewToolResultClearingStrategy(),
+			NewSummarizationStrategy(a.summarizer),
+			&truncateStrategy{},
+		})
 	}
 	if a.store != nil {
 		if a.resumeSessionID != "" {
@@ -198,6 +252,33 @@ func (a *Agent) ClearConversation() {
 	a.conversation.Clear()
 }
 
+// ScratchpadAccess returns the agent's scratchpad for external use (e.g., by NotesTool).
+func (a *Agent) ScratchpadAccess() ScratchpadAccess {
+	return a.scratchpad
+}
+
+// SaveMemories extracts reusable insights from the conversation and persists
+// them. Call on session end for cross-session learning.
+func (a *Agent) SaveMemories(ctx context.Context) error {
+	if a.memoryStore == nil || a.summarizer == nil {
+		return nil
+	}
+
+	extractor := NewMemoryExtractor(a.summarizer)
+	memories, err := extractor.Extract(ctx, a.conversation.Messages())
+	if err != nil {
+		return fmt.Errorf("extracting memories: %w", err)
+	}
+
+	wd, _ := os.Getwd()
+	for _, m := range memories {
+		if err := a.memoryStore.SaveMemory(wd, m.Tag, m.Content); err != nil {
+			return fmt.Errorf("saving memory %q: %w", m.Tag, err)
+		}
+	}
+	return nil
+}
+
 // SetModel changes the model used for LLM completions.
 func (a *Agent) SetModel(model string) {
 	a.model = model
@@ -225,7 +306,7 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
-	a.context.Truncate(a.conversation)
+	a.context.Compact(ctx, a.conversation)
 
 	ch := make(chan TurnEvent, 64)
 	go func() {
@@ -236,19 +317,25 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 }
 
 // buildSystemPromptWithFragments returns the base system prompt with any
-// skill prompt fragments appended.
+// skill prompt fragments and scratchpad content appended.
 func (a *Agent) buildSystemPromptWithFragments() string {
 	base := a.conversation.SystemPrompt()
+
+	result := base
+
+	// Inject scratchpad notes if any exist.
+	if a.scratchpad != nil {
+		rendered := a.scratchpad.Render()
+		if rendered != "" {
+			result += "\n\n" + rendered
+		}
+	}
+
 	if a.skillRuntime == nil {
-		return base
+		return result
 	}
 
 	fragments := a.skillRuntime.GetPromptFragments()
-	if len(fragments) == 0 {
-		return base
-	}
-
-	result := base
 	for _, f := range fragments {
 		if f.ResolvedPrompt != "" {
 			result += "\n\n" + f.ResolvedPrompt
@@ -282,7 +369,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			Model:     a.model,
 			System:    systemPrompt,
 			Messages:  a.conversation.Messages(),
-			Tools:     a.tools.All(),
+			Tools:     a.tools.SelectForContext(a.conversation.Messages()),
 			MaxTokens: 4096,
 		}
 

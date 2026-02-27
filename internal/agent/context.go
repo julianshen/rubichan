@@ -1,35 +1,95 @@
 package agent
 
-import "github.com/julianshen/rubichan/internal/provider"
+import (
+	"context"
 
-// ContextManager tracks token usage and truncates conversation history
-// to stay within a configured budget.
+	"github.com/julianshen/rubichan/internal/provider"
+)
+
+// CompactionStrategy defines a strategy for reducing conversation size.
+// Strategies are run in order from lightest to heaviest; the chain stops
+// once the conversation fits within the token budget.
+type CompactionStrategy interface {
+	Name() string
+	Compact(ctx context.Context, messages []provider.Message, budget int) ([]provider.Message, error)
+}
+
+// ContextManager tracks token usage and compacts conversation history
+// to stay within a configured budget using a chain of strategies.
 type ContextManager struct {
-	budget int
+	budget     int
+	strategies []CompactionStrategy
 }
 
 // NewContextManager creates a new ContextManager with the given token budget.
+// The default strategy chain contains only truncation.
 func NewContextManager(budget int) *ContextManager {
-	return &ContextManager{budget: budget}
+	return &ContextManager{
+		budget: budget,
+		strategies: []CompactionStrategy{
+			NewToolResultClearingStrategy(),
+			&truncateStrategy{},
+		},
+	}
+}
+
+// SetStrategies replaces the compaction strategy chain. An empty or nil
+// slice restores the default chain (tool clearing + truncation).
+func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
+	if len(strategies) == 0 {
+		cm.strategies = []CompactionStrategy{
+			NewToolResultClearingStrategy(),
+			&truncateStrategy{},
+		}
+		return
+	}
+	cm.strategies = strategies
+}
+
+// Compact runs the compaction strategy chain until the conversation fits
+// within the token budget. Strategies are tried in order; the chain stops
+// as soon as the conversation is under budget.
+func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
+	if !cm.ExceedsBudget(conv) {
+		return
+	}
+	// Subtract system prompt overhead so strategies only need to fit messages.
+	systemTokens := len(conv.SystemPrompt())/4 + 10
+	messageBudget := cm.budget - systemTokens
+	if messageBudget < 0 {
+		messageBudget = 0
+	}
+	for _, s := range cm.strategies {
+		if !cm.ExceedsBudget(conv) {
+			return
+		}
+		result, err := s.Compact(ctx, conv.messages, messageBudget)
+		if err != nil {
+			continue
+		}
+		conv.messages = result
+	}
 }
 
 // EstimateTokens estimates the token count for a conversation using
 // a ~4 chars per token heuristic with +10 overhead per content block.
 func (cm *ContextManager) EstimateTokens(conv *Conversation) int {
+	total := len(conv.SystemPrompt())/4 + 10
+	total += estimateMessageTokens(conv.messages)
+	return total
+}
+
+// estimateMessageTokens estimates the token count for a slice of messages
+// using a ~4 chars per token heuristic with +10 overhead per content block.
+func estimateMessageTokens(msgs []provider.Message) int {
 	total := 0
-
-	// System prompt tokens
-	total += len(conv.SystemPrompt())/4 + 10
-
-	// Message tokens
-	for _, msg := range conv.messages {
+	for _, msg := range msgs {
 		for _, block := range msg.Content {
 			chars := len(block.Text) + len(block.ID) + len(block.Name) +
 				len(block.ToolUseID) + len(block.Input)
 			total += chars/4 + 10
 		}
 	}
-
 	return total
 }
 
@@ -39,27 +99,34 @@ func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
 }
 
 // Truncate removes the oldest messages until the conversation is within budget.
-// It removes in pairs (user+assistant) and skips leading tool_result messages
-// to avoid orphaning them from their tool_use. Always keeps at least 2 messages.
+// Deprecated: use Compact() which runs the full strategy chain.
 func (cm *ContextManager) Truncate(conv *Conversation) {
-	for cm.ExceedsBudget(conv) && len(conv.messages) > 2 {
-		// Find a safe removal boundary: skip any leading tool_result messages
-		// since removing them without their tool_use would corrupt the conversation.
+	cm.Compact(context.Background(), conv)
+}
+
+// truncateStrategy is the last-resort compaction strategy that removes
+// the oldest message pairs to fit within the token budget.
+type truncateStrategy struct{}
+
+func (s *truncateStrategy) Name() string { return "truncate" }
+
+func (s *truncateStrategy) Compact(_ context.Context, messages []provider.Message, budget int) ([]provider.Message, error) {
+	for estimateMessageTokens(messages) > budget && len(messages) > 2 {
 		start := 0
-		for start < len(conv.messages) && hasToolResult(conv.messages[start]) {
+		for start < len(messages) && hasToolResult(messages[start]) {
 			start++
 		}
 
-		// Remove 2 messages (a user+assistant pair) starting from the safe boundary.
 		remove := start + 2
-		if remove > len(conv.messages)-2 {
-			remove = len(conv.messages) - 2
+		if remove > len(messages)-2 {
+			remove = len(messages) - 2
 		}
 		if remove <= 0 {
 			break
 		}
-		conv.messages = conv.messages[remove:]
+		messages = messages[remove:]
 	}
+	return messages, nil
 }
 
 // hasToolResult returns true if any content block in the message is a tool_result.

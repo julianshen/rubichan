@@ -77,6 +77,16 @@ type StoredMessage struct {
 	CreatedAt time.Time
 }
 
+// Memory represents a persisted cross-session memory entry.
+type Memory struct {
+	ID         int64
+	WorkingDir string
+	Tag        string
+	Content    string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 // Store wraps a SQLite database for skill system persistence.
 type Store struct {
 	db *sql.DB
@@ -152,6 +162,16 @@ func createTables(db *sql.DB) error {
 			UNIQUE(session_id, seq)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq)`,
+		`CREATE TABLE IF NOT EXISTS memories (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			working_dir TEXT NOT NULL,
+			tag         TEXT NOT NULL,
+			content     TEXT NOT NULL,
+			created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+			updated_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+			UNIQUE(working_dir, tag)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_memories_dir ON memories(working_dir)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -463,4 +483,55 @@ func (s *Store) GetMessages(sessionID string) ([]StoredMessage, error) {
 		messages = append(messages, m)
 	}
 	return messages, rows.Err()
+}
+
+// SaveMemory upserts a memory entry. If a memory with the same working_dir
+// and tag exists, its content and updated_at are updated.
+func (s *Store) SaveMemory(workingDir, tag, content string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO memories (working_dir, tag, content, created_at, updated_at)
+		 VALUES (?, ?, ?, datetime('now'), datetime('now'))
+		 ON CONFLICT(working_dir, tag)
+		 DO UPDATE SET content = excluded.content, updated_at = datetime('now')`,
+		workingDir, tag, content,
+	)
+	if err != nil {
+		return fmt.Errorf("save memory: %w", err)
+	}
+	return nil
+}
+
+// LoadMemories retrieves all memories for the given working directory.
+func (s *Store) LoadMemories(workingDir string) ([]Memory, error) {
+	rows, err := s.db.Query(
+		`SELECT id, working_dir, tag, content, created_at, updated_at
+		 FROM memories WHERE working_dir = ? ORDER BY tag`,
+		workingDir,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load memories: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []Memory
+	for rows.Next() {
+		var m Memory
+		var createdStr, updatedStr string
+		if err := rows.Scan(&m.ID, &m.WorkingDir, &m.Tag, &m.Content, &createdStr, &updatedStr); err != nil {
+			return nil, fmt.Errorf("scan memory: %w", err)
+		}
+		m.CreatedAt, _ = parseSQLiteDatetime(createdStr)
+		m.UpdatedAt, _ = parseSQLiteDatetime(updatedStr)
+		memories = append(memories, m)
+	}
+	return memories, rows.Err()
+}
+
+// DeleteMemory removes a memory by ID.
+func (s *Store) DeleteMemory(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM memories WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete memory: %w", err)
+	}
+	return nil
 }

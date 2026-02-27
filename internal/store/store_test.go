@@ -640,3 +640,82 @@ func TestListApprovalsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, approvals)
 }
+
+// --- Memory persistence tests ---
+
+func TestSaveAndLoadMemories(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.SaveMemory("/project/a", "pattern", "use interfaces"))
+	require.NoError(t, s.SaveMemory("/project/a", "gotcha", "sqlite single conn"))
+
+	memories, err := s.LoadMemories("/project/a")
+	require.NoError(t, err)
+	assert.Len(t, memories, 2)
+	assert.Equal(t, "gotcha", memories[0].Tag)
+	assert.Equal(t, "sqlite single conn", memories[0].Content)
+	assert.Equal(t, "pattern", memories[1].Tag)
+}
+
+func TestMemoryWorkingDirIsolation(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.SaveMemory("/project/a", "tag1", "content-a"))
+	require.NoError(t, s.SaveMemory("/project/b", "tag1", "content-b"))
+
+	memoriesA, err := s.LoadMemories("/project/a")
+	require.NoError(t, err)
+	assert.Len(t, memoriesA, 1)
+	assert.Equal(t, "content-a", memoriesA[0].Content)
+
+	memoriesB, err := s.LoadMemories("/project/b")
+	require.NoError(t, err)
+	assert.Len(t, memoriesB, 1)
+	assert.Equal(t, "content-b", memoriesB[0].Content)
+}
+
+func TestMemoryDuplicateTagUpdates(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.SaveMemory("/project", "tag", "original"))
+	require.NoError(t, s.SaveMemory("/project", "tag", "updated"))
+
+	memories, err := s.LoadMemories("/project")
+	require.NoError(t, err)
+	assert.Len(t, memories, 1)
+	assert.Equal(t, "updated", memories[0].Content)
+}
+
+func TestDeleteMemory(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.SaveMemory("/project", "temp", "data"))
+
+	memories, err := s.LoadMemories("/project")
+	require.NoError(t, err)
+	require.Len(t, memories, 1)
+
+	require.NoError(t, s.DeleteMemory(memories[0].ID))
+
+	memories, err = s.LoadMemories("/project")
+	require.NoError(t, err)
+	assert.Empty(t, memories)
+}
+
+func TestLoadMemoriesEmpty(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	memories, err := s.LoadMemories("/no/such/dir")
+	require.NoError(t, err)
+	assert.Empty(t, memories)
+}
