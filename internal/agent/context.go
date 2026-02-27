@@ -21,8 +21,11 @@ type ContextManager struct {
 // The default strategy chain contains only truncation.
 func NewContextManager(budget int) *ContextManager {
 	return &ContextManager{
-		budget:     budget,
-		strategies: []CompactionStrategy{&truncateStrategy{}},
+		budget: budget,
+		strategies: []CompactionStrategy{
+			NewToolResultClearingStrategy(),
+			&truncateStrategy{},
+		},
 	}
 }
 
