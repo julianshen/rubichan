@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 )
@@ -130,6 +131,25 @@ func Load(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Save writes the Config to the given path as TOML. It creates parent
+// directories if they don't exist.
+func Save(path string, cfg *Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("creating config file: %w", err)
+	}
+	defer f.Close()
+
+	if err := toml.NewEncoder(f).Encode(cfg); err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	return nil
 }
 
 // DefaultConfig returns a Config populated with sensible default values.
