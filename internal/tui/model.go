@@ -22,6 +22,10 @@ const (
 	StateStreaming
 	// StateAwaitingApproval indicates the TUI is waiting for user approval of a tool call.
 	StateAwaitingApproval
+	// StateConfigOverlay indicates the TUI is showing the config overlay.
+	StateConfigOverlay
+	// StateBootstrap indicates the TUI is running the bootstrap setup wizard.
+	StateBootstrap
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.

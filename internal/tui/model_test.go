@@ -11,6 +11,21 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 )
 
+func TestUIStateConstants(t *testing.T) {
+	states := []UIState{
+		StateInput,
+		StateStreaming,
+		StateAwaitingApproval,
+		StateConfigOverlay,
+		StateBootstrap,
+	}
+	seen := make(map[UIState]bool)
+	for _, s := range states {
+		assert.False(t, seen[s], "duplicate UIState value: %d", s)
+		seen[s] = true
+	}
+}
+
 func TestNewModel(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3")
 
