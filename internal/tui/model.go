@@ -30,18 +30,22 @@ const (
 
 // Model is the Bubble Tea model for the Rubichan TUI.
 type Model struct {
-	agent     *agent.Agent
-	input     textinput.Model
-	viewport  viewport.Model
-	spinner   spinner.Model
-	content   strings.Builder
-	state     UIState
-	appName   string
-	modelName string
-	width     int
-	height    int
-	quitting  bool
-	eventCh   <-chan agent.TurnEvent
+	agent             *agent.Agent
+	input             textinput.Model
+	viewport          viewport.Model
+	spinner           spinner.Model
+	content           strings.Builder
+	rawAssistant      strings.Builder
+	mdRenderer        *MarkdownRenderer
+	toolBox           *ToolBoxRenderer
+	assistantStartIdx int
+	state             UIState
+	appName           string
+	modelName         string
+	width             int
+	height            int
+	quitting          bool
+	eventCh           <-chan agent.TurnEvent
 }
 
 // Ensure Model satisfies the tea.Model interface at compile time.
@@ -60,15 +64,17 @@ func NewModel(a *agent.Agent, appName, modelName string) *Model {
 	sp.Spinner = spinner.Dot
 
 	return &Model{
-		agent:     a,
-		input:     ti,
-		viewport:  vp,
-		spinner:   sp,
-		state:     StateInput,
-		appName:   appName,
-		modelName: modelName,
-		width:     80,
-		height:    24,
+		agent:      a,
+		input:      ti,
+		viewport:   vp,
+		spinner:    sp,
+		mdRenderer: NewMarkdownRenderer(80),
+		toolBox:    NewToolBoxRenderer(80),
+		state:      StateInput,
+		appName:    appName,
+		modelName:  modelName,
+		width:      80,
+		height:     24,
 	}
 }
 

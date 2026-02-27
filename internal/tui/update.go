@@ -23,10 +23,6 @@ type turnStartedMsg struct {
 	first agent.TurnEvent
 }
 
-// maxToolResultDisplay is the maximum number of characters to display for a
-// tool result before truncation.
-const maxToolResultDisplay = 500
-
 // Init implements tea.Model. It starts the text input cursor blinking.
 func (m *Model) Init() tea.Cmd {
 	return textinput.Blink
@@ -98,6 +94,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.content.WriteString(fmt.Sprintf("> %s\n", text))
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
+		m.assistantStartIdx = m.content.Len()
 		m.state = StateStreaming
 
 		return m, tea.Batch(m.startTurn(text), m.spinner.Tick)
@@ -163,6 +160,7 @@ func (m *Model) waitForEvent() tea.Cmd {
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case "text_delta":
+		m.rawAssistant.WriteString(msg.Text)
 		m.content.WriteString(msg.Text)
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
@@ -170,23 +168,26 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 
 	case "tool_call":
 		name := ""
+		args := ""
 		if msg.ToolCall != nil {
 			name = msg.ToolCall.Name
+			args = string(msg.ToolCall.Input)
 		}
-		m.content.WriteString(fmt.Sprintf("\n[Tool: %s]\n", name))
+		m.content.WriteString(m.toolBox.RenderToolCall(name, args))
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
 		return m, m.waitForEvent()
 
 	case "tool_result":
 		resultContent := ""
+		resultName := ""
+		isError := false
 		if msg.ToolResult != nil {
 			resultContent = msg.ToolResult.Content
+			resultName = msg.ToolResult.Name
+			isError = msg.ToolResult.IsError
 		}
-		if len(resultContent) > maxToolResultDisplay {
-			resultContent = resultContent[:maxToolResultDisplay] + "..."
-		}
-		m.content.WriteString(fmt.Sprintf("Result: %s\n", resultContent))
+		m.content.WriteString(m.toolBox.RenderToolResult(resultName, resultContent, isError))
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
 		return m, m.waitForEvent()
@@ -202,6 +203,17 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "done":
+		raw := m.rawAssistant.String()
+		if raw != "" {
+			rendered, err := m.mdRenderer.Render(raw)
+			if err == nil && rendered != "" {
+				contentStr := m.content.String()
+				m.content.Reset()
+				m.content.WriteString(contentStr[:m.assistantStartIdx])
+				m.content.WriteString(rendered)
+			}
+		}
+		m.rawAssistant.Reset()
 		m.content.WriteString("\n")
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()

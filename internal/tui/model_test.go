@@ -219,7 +219,11 @@ func TestModelHandleTurnEventToolCall(t *testing.T) {
 	updated, _ := m.Update(evt)
 
 	um := updated.(*Model)
-	assert.Contains(t, um.content.String(), "[Tool: read_file]")
+	content := um.content.String()
+	// Should render in a bordered box with tool name
+	assert.Contains(t, content, "read_file")
+	assert.Contains(t, content, "\u256d") // rounded border top-left
+	assert.Contains(t, content, "\u2570") // rounded border bottom-left
 }
 
 func TestModelHandleTurnEventToolResult(t *testing.T) {
@@ -241,8 +245,10 @@ func TestModelHandleTurnEventToolResult(t *testing.T) {
 	updated, _ := m.Update(evt)
 
 	um := updated.(*Model)
-	assert.Contains(t, um.content.String(), "Result:")
-	assert.Contains(t, um.content.String(), "file contents here")
+	content := um.content.String()
+	// Should render in a bordered box
+	assert.Contains(t, content, "file contents here")
+	assert.Contains(t, content, "\u256d") // rounded border top-left
 }
 
 func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
@@ -252,8 +258,11 @@ func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
 	ch <- agent.TurnEvent{Type: "done"}
 	m.eventCh = ch
 
-	// Create a long result that should be truncated to 500 chars
-	longContent := strings.Repeat("x", 600)
+	// Create a long result with many lines that should be truncated by ToolBoxRenderer
+	longContent := ""
+	for i := 0; i < 100; i++ {
+		longContent += "line content here\n"
+	}
 	evt := TurnEventMsg(agent.TurnEvent{
 		Type: "tool_result",
 		ToolResult: &agent.ToolResultEvent{
@@ -267,10 +276,8 @@ func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
 
 	um := updated.(*Model)
 	content := um.content.String()
-	assert.Contains(t, content, "Result:")
-	// The displayed content should be truncated, not the full 600 chars
-	assert.True(t, len(content) < 600, "content should be truncated")
-	assert.Contains(t, content, "...")
+	// ToolBoxRenderer truncates by line count and shows "[N more lines]"
+	assert.Contains(t, content, "more lines")
 }
 
 func TestModelHandleTurnEventError(t *testing.T) {
@@ -306,6 +313,38 @@ func TestModelHandleTurnEventDone(t *testing.T) {
 	assert.Equal(t, StateInput, um.state)
 	assert.Nil(t, um.eventCh)
 	assert.Nil(t, cmd)
+}
+
+func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3")
+	m.state = StateStreaming
+
+	// Simulate user prompt written before streaming starts
+	m.content.WriteString("> hello\n")
+	m.assistantStartIdx = m.content.Len()
+
+	// Simulate text_delta events with markdown content
+	m.rawAssistant.WriteString("Hello **world**")
+	m.content.WriteString("Hello **world**")
+
+	ch := make(chan agent.TurnEvent)
+	close(ch)
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{Type: "done"})
+	updated, cmd := m.Update(evt)
+
+	um := updated.(*Model)
+	assert.Equal(t, StateInput, um.state)
+	assert.Nil(t, cmd)
+
+	content := um.content.String()
+	// The raw ** markers should have been replaced by Glamour rendering
+	assert.NotContains(t, content, "**world**")
+	// But the rendered text should still contain the word
+	assert.Contains(t, content, "world")
+	// The user prompt should still be present
+	assert.Contains(t, content, "> hello")
 }
 
 func TestModelViewStreaming(t *testing.T) {
@@ -438,7 +477,9 @@ func TestModelHandleTurnEventToolCallNilToolCall(t *testing.T) {
 
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
-	assert.Contains(t, um.content.String(), "[Tool: ]")
+	// Nil tool_call should render a bordered box with empty name
+	content := um.content.String()
+	assert.Contains(t, content, "\u256d")
 }
 
 func TestModelHandleTurnEventToolResultNilToolResult(t *testing.T) {
@@ -455,7 +496,9 @@ func TestModelHandleTurnEventToolResultNilToolResult(t *testing.T) {
 
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
-	assert.Contains(t, um.content.String(), "Result: ")
+	// Nil tool_result should render a bordered box with empty content
+	content := um.content.String()
+	assert.Contains(t, content, "\u256d")
 }
 
 func TestModelHandleTurnEventErrorNilError(t *testing.T) {
