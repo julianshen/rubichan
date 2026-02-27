@@ -3,143 +3,103 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestModelPicker_Init(t *testing.T) {
+func TestHuhModelPickerCreation(t *testing.T) {
 	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
+		{Name: "llama3", Size: "8B"},
+		{Name: "mistral", Size: "7B"},
 	}
-	picker := NewModelPicker(models)
-	require.NotNil(t, picker)
-	assert.Equal(t, 2, len(picker.models))
-	assert.Equal(t, "", picker.Selected())
-}
-
-func TestModelPicker_SelectModel(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
-	}
-	picker := NewModelPicker(models)
-
-	updated, cmd := picker.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	p := updated.(*ModelPicker)
-	assert.Equal(t, "llama3.2:latest", p.Selected())
-	assert.True(t, p.Done())
-	require.NotNil(t, cmd)
-}
-
-func TestModelPicker_SingleModel(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-	}
-	picker := NewModelPicker(models)
-	assert.Equal(t, "llama3.2:latest", picker.Selected())
-	assert.True(t, picker.Done())
-}
-
-func TestModelPicker_Quit(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
-	}
-	picker := NewModelPicker(models)
-
-	updated, _ := picker.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	p := updated.(*ModelPicker)
-	assert.True(t, p.Cancelled())
-}
-
-func TestModelPicker_Navigation(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
-		{Name: "mistral:7b", Size: "4.1 GB"},
-	}
-	picker := NewModelPicker(models)
-
-	// Press Down to move to second model
-	updated, _ := picker.Update(tea.KeyMsg{Type: tea.KeyDown})
-	p := updated.(*ModelPicker)
-	assert.Equal(t, 1, p.cursor)
-
-	// Press Enter to select second model
-	updated, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	p = updated.(*ModelPicker)
-	assert.Equal(t, "codellama:7b", p.Selected())
-	assert.True(t, p.Done())
-	require.NotNil(t, cmd)
-}
-
-func TestModelPicker_View(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
-	}
-	picker := NewModelPicker(models)
-
-	view := picker.View()
-	assert.Contains(t, view, "llama3.2:latest")
-	assert.Contains(t, view, "codellama:7b")
-	assert.Contains(t, view, "4.0 GB")
-	assert.Contains(t, view, "3.5 GB")
-	assert.Contains(t, view, "> ")
-}
-
-func TestModelPicker_BoundaryUp(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
-	}
-	picker := NewModelPicker(models)
-
-	// Cursor starts at 0; pressing Up should stay at 0
-	updated, _ := picker.Update(tea.KeyMsg{Type: tea.KeyUp})
-	p := updated.(*ModelPicker)
-	assert.Equal(t, 0, p.cursor)
-}
-
-func TestModelPicker_BoundaryDown(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
-	}
-	picker := NewModelPicker(models)
-
-	// Move to last item
-	updated, _ := picker.Update(tea.KeyMsg{Type: tea.KeyDown})
-	p := updated.(*ModelPicker)
-	assert.Equal(t, 1, p.cursor)
-
-	// Pressing Down at last should stay at last
-	updated, _ = p.Update(tea.KeyMsg{Type: tea.KeyDown})
-	p = updated.(*ModelPicker)
-	assert.Equal(t, 1, p.cursor)
-}
-
-func TestModelPicker_EscCancels(t *testing.T) {
-	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
-		{Name: "codellama:7b", Size: "3.5 GB"},
-	}
-	picker := NewModelPicker(models)
-
-	updated, cmd := picker.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	p := updated.(*ModelPicker)
-	assert.True(t, p.Cancelled())
+	p := NewModelPicker(models)
+	require.NotNil(t, p)
 	assert.False(t, p.Done())
-	require.NotNil(t, cmd)
+	assert.False(t, p.Cancelled())
+	// huh.Select initializes value to the first option, but Done() is false
+	// indicating no selection has been confirmed yet.
 }
 
-func TestModelPicker_InitReturnsNil(t *testing.T) {
+func TestHuhModelPickerAutoSelect(t *testing.T) {
 	models := []ModelChoice{
-		{Name: "llama3.2:latest", Size: "4.0 GB"},
+		{Name: "llama3", Size: "8B"},
 	}
-	picker := NewModelPicker(models)
-	cmd := picker.Init()
+	p := NewModelPicker(models)
+	assert.True(t, p.Done())
+	assert.Equal(t, "llama3", p.Selected())
+}
+
+func TestHuhModelPickerEmptyModels(t *testing.T) {
+	p := NewModelPicker([]ModelChoice{})
+	assert.True(t, p.Done())
+	assert.Equal(t, "", p.Selected())
+}
+
+func TestHuhModelPickerView(t *testing.T) {
+	models := []ModelChoice{
+		{Name: "llama3", Size: "8B"},
+		{Name: "mistral", Size: "7B"},
+	}
+	p := NewModelPicker(models)
+	p.Init()
+	view := p.View()
+	assert.Contains(t, view, "llama3")
+	assert.Contains(t, view, "mistral")
+}
+
+func TestHuhModelPickerInitWithForm(t *testing.T) {
+	models := []ModelChoice{
+		{Name: "llama3", Size: "8B"},
+		{Name: "mistral", Size: "7B"},
+	}
+	p := NewModelPicker(models)
+	cmd := p.Init()
+	// huh.Form.Init() returns a command batch
+	assert.NotNil(t, cmd)
+}
+
+func TestHuhModelPickerInitWithoutForm(t *testing.T) {
+	// Single model auto-selects, no form created
+	models := []ModelChoice{
+		{Name: "llama3", Size: "8B"},
+	}
+	p := NewModelPicker(models)
+	cmd := p.Init()
 	assert.Nil(t, cmd)
+}
+
+func TestHuhModelPickerUpdateWithoutForm(t *testing.T) {
+	// Single model auto-selects, form is nil
+	models := []ModelChoice{
+		{Name: "llama3", Size: "8B"},
+	}
+	p := NewModelPicker(models)
+	updated, cmd := p.Update(nil)
+	assert.Equal(t, p, updated)
+	assert.Nil(t, cmd)
+}
+
+func TestHuhModelPickerViewWithoutForm(t *testing.T) {
+	// Single model auto-selects, form is nil
+	models := []ModelChoice{
+		{Name: "llama3", Size: "8B"},
+	}
+	p := NewModelPicker(models)
+	view := p.View()
+	assert.Equal(t, "", view)
+}
+
+func TestHuhModelPickerTeaModelInterface(t *testing.T) {
+	// Compile-time check is in the production code,
+	// but we verify the methods exist via the public API.
+	models := []ModelChoice{
+		{Name: "llama3", Size: "8B"},
+		{Name: "mistral", Size: "7B"},
+	}
+	p := NewModelPicker(models)
+
+	// All three tea.Model methods should be callable
+	_ = p.Init()
+	_, _ = p.Update(nil)
+	_ = p.View()
 }

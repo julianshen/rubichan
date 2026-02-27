@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 )
 
 // ModelChoice represents a selectable model option.
@@ -12,10 +13,9 @@ type ModelChoice struct {
 	Size string
 }
 
-// ModelPicker is a Bubble Tea component for selecting an Ollama model.
+// ModelPicker is a Bubble Tea component for selecting a model using Huh.
 type ModelPicker struct {
-	models    []ModelChoice
-	cursor    int
+	form      *huh.Form
 	selected  string
 	done      bool
 	cancelled bool
@@ -26,12 +26,27 @@ var _ tea.Model = (*ModelPicker)(nil)
 
 // NewModelPicker creates a new ModelPicker with the given model choices.
 // If exactly one model is provided, it is auto-selected.
+// If no models are provided, the picker is immediately done with no selection.
 func NewModelPicker(models []ModelChoice) *ModelPicker {
-	p := &ModelPicker{models: models}
 	if len(models) == 1 {
-		p.selected = models[0].Name
-		p.done = true
+		return &ModelPicker{selected: models[0].Name, done: true}
 	}
+	if len(models) == 0 {
+		return &ModelPicker{done: true}
+	}
+
+	p := &ModelPicker{}
+	opts := make([]huh.Option[string], len(models))
+	for i, m := range models {
+		opts[i] = huh.NewOption(fmt.Sprintf("%s (%s)", m.Name, m.Size), m.Name)
+	}
+
+	sel := huh.NewSelect[string]().
+		Title("Select a model").
+		Options(opts...).
+		Value(&p.selected)
+
+	p.form = huh.NewForm(huh.NewGroup(sel))
 	return p
 }
 
@@ -44,45 +59,39 @@ func (p *ModelPicker) Done() bool { return p.done }
 // Cancelled returns whether the user cancelled the selection.
 func (p *ModelPicker) Cancelled() bool { return p.cancelled }
 
-// Init implements tea.Model. Returns nil (no initial command).
-func (p *ModelPicker) Init() tea.Cmd { return nil }
-
-// Update implements tea.Model. It handles keyboard input for navigating and
-// selecting a model from the list.
-func (p *ModelPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyUp:
-			if p.cursor > 0 {
-				p.cursor--
-			}
-		case tea.KeyDown:
-			if p.cursor < len(p.models)-1 {
-				p.cursor++
-			}
-		case tea.KeyEnter:
-			p.selected = p.models[p.cursor].Name
-			p.done = true
-			return p, tea.Quit
-		case tea.KeyCtrlC, tea.KeyEsc:
-			p.cancelled = true
-			return p, tea.Quit
-		}
+// Init implements tea.Model. Initializes the huh form if present.
+func (p *ModelPicker) Init() tea.Cmd {
+	if p.form == nil {
+		return nil
 	}
-	return p, nil
+	return p.form.Init()
 }
 
-// View implements tea.Model. It renders the model list with a cursor indicator.
-func (p *ModelPicker) View() string {
-	s := "Select an Ollama model:\n\n"
-	for i, m := range p.models {
-		cursor := "  "
-		if i == p.cursor {
-			cursor = "> "
-		}
-		s += fmt.Sprintf("%s%s (%s)\n", cursor, m.Name, m.Size)
+// Update implements tea.Model. Delegates to the huh form and checks for
+// completion or abort.
+func (p *ModelPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if p.form == nil {
+		return p, nil
 	}
-	s += "\n(↑/↓ to move, enter to select, esc to cancel)\n"
-	return s
+	form, cmd := p.form.Update(msg)
+	if f, ok := form.(*huh.Form); ok {
+		p.form = f
+	}
+	if p.form.State == huh.StateCompleted {
+		p.done = true
+		return p, tea.Quit
+	}
+	if p.form.State == huh.StateAborted {
+		p.cancelled = true
+		return p, tea.Quit
+	}
+	return p, cmd
+}
+
+// View implements tea.Model. Renders the huh form.
+func (p *ModelPicker) View() string {
+	if p.form == nil {
+		return ""
+	}
+	return p.form.View()
 }
