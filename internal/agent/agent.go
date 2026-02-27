@@ -78,6 +78,14 @@ func WithCompactionStrategies(strategies ...CompactionStrategy) AgentOption {
 	}
 }
 
+// WithSummarizer attaches an LLM-backed summarizer to the agent, enabling
+// the summarization compaction strategy.
+func WithSummarizer(s Summarizer) AgentOption {
+	return func(a *Agent) {
+		a.summarizer = s
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -117,6 +125,7 @@ type Agent struct {
 	resumeSessionID string
 	agentMD         string
 	extraPrompts    []namedPrompt
+	summarizer      Summarizer
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -149,6 +158,15 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			prompt += "\n\n## " + ep.Name + "\n\n" + ep.Content
 		}
 		a.conversation = NewConversation(prompt)
+	}
+	// If a summarizer was provided, insert the summarization strategy
+	// between tool clearing and truncation in the compaction chain.
+	if a.summarizer != nil {
+		a.context.SetStrategies([]CompactionStrategy{
+			NewToolResultClearingStrategy(),
+			NewSummarizationStrategy(context.Background(), a.summarizer),
+			&truncateStrategy{},
+		})
 	}
 	if a.store != nil {
 		if a.resumeSessionID != "" {
