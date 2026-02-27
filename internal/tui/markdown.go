@@ -9,11 +9,12 @@ type MarkdownRenderer struct {
 	renderer *glamour.TermRenderer
 }
 
-// NewMarkdownRenderer creates a MarkdownRenderer with auto-detected style
-// and the given word wrap width.
+// NewMarkdownRenderer creates a MarkdownRenderer with dark style
+// and the given word wrap width. Dark style is used instead of auto-detect
+// because the TUI runs inside Bubble Tea which manages the terminal directly.
 func NewMarkdownRenderer(width int) *MarkdownRenderer {
 	r, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle("dark"),
 		glamour.WithWordWrap(width),
 	)
 	return &MarkdownRenderer{renderer: r}

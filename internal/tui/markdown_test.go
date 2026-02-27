@@ -23,6 +23,15 @@ func TestRenderMarkdownCodeBlock(t *testing.T) {
 	assert.Contains(t, result, "Println")
 }
 
+func TestRenderMarkdownBoldStripsMarkers(t *testing.T) {
+	r := NewMarkdownRenderer(80)
+	result, err := r.Render("Hello **world**")
+	require.NoError(t, err)
+	// Glamour should strip the ** markdown markers and apply ANSI styling
+	assert.NotContains(t, result, "**world**")
+	assert.Contains(t, result, "world")
+}
+
 func TestRenderMarkdownEmpty(t *testing.T) {
 	r := NewMarkdownRenderer(80)
 	result, err := r.Render("")
