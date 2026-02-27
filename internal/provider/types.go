@@ -53,10 +53,12 @@ type ToolUseBlock struct {
 
 // StreamEvent represents a single event in a streaming response.
 type StreamEvent struct {
-	Type    string
-	Text    string
-	ToolUse *ToolUseBlock
-	Error   error
+	Type         string
+	Text         string
+	ToolUse      *ToolUseBlock
+	Error        error
+	InputTokens  int
+	OutputTokens int
 }
 
 // NewUserMessage creates a new user message with a single text content block.
