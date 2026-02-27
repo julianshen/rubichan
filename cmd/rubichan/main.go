@@ -505,6 +505,11 @@ func runInteractive() error {
 	// Create agent
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
+	// Register notes tool backed by agent's scratchpad.
+	if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
+		return fmt.Errorf("registering notes tool: %w", err)
+	}
+
 	// Create TUI model and run
 	model := tui.NewModel(a, "rubichan", cfg.Provider.Model)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
@@ -637,6 +642,11 @@ func runHeadless() error {
 	}
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
+
+	// Register notes tool backed by agent's scratchpad.
+	if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
+		return fmt.Errorf("registering notes tool: %w", err)
+	}
 
 	// Run headless
 	mode := modeFlag

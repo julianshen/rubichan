@@ -126,6 +126,7 @@ type Agent struct {
 	agentMD         string
 	extraPrompts    []namedPrompt
 	summarizer      Summarizer
+	scratchpad      *Scratchpad
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -141,6 +142,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		approve:      approve,
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
+		scratchpad:   NewScratchpad(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -224,6 +226,11 @@ func (a *Agent) ClearConversation() {
 	a.conversation.Clear()
 }
 
+// ScratchpadAccess returns the agent's scratchpad for external use (e.g., by NotesTool).
+func (a *Agent) ScratchpadAccess() ScratchpadAccess {
+	return a.scratchpad
+}
+
 // SetModel changes the model used for LLM completions.
 func (a *Agent) SetModel(model string) {
 	a.model = model
@@ -262,19 +269,25 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 }
 
 // buildSystemPromptWithFragments returns the base system prompt with any
-// skill prompt fragments appended.
+// skill prompt fragments and scratchpad content appended.
 func (a *Agent) buildSystemPromptWithFragments() string {
 	base := a.conversation.SystemPrompt()
+
+	result := base
+
+	// Inject scratchpad notes if any exist.
+	if a.scratchpad != nil {
+		rendered := a.scratchpad.Render()
+		if rendered != "" {
+			result += "\n\n" + rendered
+		}
+	}
+
 	if a.skillRuntime == nil {
-		return base
+		return result
 	}
 
 	fragments := a.skillRuntime.GetPromptFragments()
-	if len(fragments) == 0 {
-		return base
-	}
-
-	result := base
 	for _, f := range fragments {
 		if f.ResolvedPrompt != "" {
 			result += "\n\n" + f.ResolvedPrompt
