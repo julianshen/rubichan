@@ -70,6 +70,14 @@ func WithResumeSession(sessionID string) AgentOption {
 	}
 }
 
+// WithCompactionStrategies configures the compaction strategy chain for the
+// context manager. Strategies run in order from lightest to heaviest.
+func WithCompactionStrategies(strategies ...CompactionStrategy) AgentOption {
+	return func(a *Agent) {
+		a.context.SetStrategies(strategies)
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -225,7 +233,7 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
-	a.context.Truncate(a.conversation)
+	a.context.Compact(a.conversation)
 
 	ch := make(chan TurnEvent, 64)
 	go func() {
