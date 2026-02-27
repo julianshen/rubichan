@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -31,7 +30,7 @@ const (
 // Model is the Bubble Tea model for the Rubichan TUI.
 type Model struct {
 	agent             *agent.Agent
-	input             textinput.Model
+	input             *InputArea
 	viewport          viewport.Model
 	spinner           spinner.Model
 	content           strings.Builder
@@ -58,9 +57,7 @@ var _ tea.Model = (*Model)(nil)
 // NewModel creates a new TUI Model with the given agent, application name,
 // model name, and maximum turns. The agent may be nil for testing purposes.
 func NewModel(a *agent.Agent, appName, modelName string, maxTurns int) *Model {
-	ti := textinput.New()
-	ti.Placeholder = "Type a message..."
-	ti.Focus()
+	ia := NewInputArea()
 
 	vp := viewport.New(80, 20)
 
@@ -73,7 +70,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int) *Model {
 
 	return &Model{
 		agent:      a,
-		input:      ti,
+		input:      ia,
 		viewport:   vp,
 		spinner:    sp,
 		mdRenderer: NewMarkdownRenderer(80),

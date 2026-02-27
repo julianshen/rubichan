@@ -116,8 +116,8 @@ func TestModelInit(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50)
 	cmd := m.Init()
 
-	// Init should return textinput.Blink
-	assert.NotNil(t, cmd, "Init should return a non-nil tea.Cmd (textinput.Blink)")
+	// Init should return the input area's init command (focus)
+	assert.NotNil(t, cmd, "Init should return a non-nil tea.Cmd")
 }
 
 func TestModelView(t *testing.T) {
@@ -397,9 +397,9 @@ func TestModelUpdateRegularKey(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 
 	um := updated.(*Model)
-	// Should remain in input state; cmd from textinput update
+	// Should remain in input state; cmd from input area update
 	assert.Equal(t, StateInput, um.state)
-	_ = cmd // textinput may return a blink cmd
+	_ = cmd // input area may return a cursor cmd
 }
 
 func TestModelUpdateEnterWhileStreaming(t *testing.T) {
@@ -567,7 +567,7 @@ func TestModelUpdateKeyWhileStreaming(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50)
 	m.state = StateStreaming
 
-	// Regular key press while streaming should be ignored (not forwarded to textinput)
+	// Regular key press while streaming should be ignored (not forwarded to input area)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 
 	um := updated.(*Model)

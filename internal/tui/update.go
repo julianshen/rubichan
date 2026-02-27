@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/julianshen/rubichan/internal/agent"
@@ -23,9 +22,9 @@ type turnStartedMsg struct {
 	first agent.TurnEvent
 }
 
-// Init implements tea.Model. It starts the text input cursor blinking.
+// Init implements tea.Model. It initializes the input area.
 func (m *Model) Init() tea.Cmd {
-	return textinput.Blink
+	return m.input.Init()
 }
 
 // Update implements tea.Model. It processes incoming messages and returns the
@@ -83,7 +82,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		m.input.SetValue("")
+		m.input.Reset()
 
 		if strings.HasPrefix(text, "/") {
 			cmd := m.handleCommand(text)
@@ -100,10 +99,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.startTurn(text), m.spinner.Tick)
 
 	default:
-		// Forward key to textinput
+		// Forward key to input area
 		if m.state == StateInput {
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
+			cmd := m.input.Update(msg)
 			return m, cmd
 		}
 		return m, nil
