@@ -38,12 +38,16 @@ type Model struct {
 	rawAssistant      strings.Builder
 	mdRenderer        *MarkdownRenderer
 	toolBox           *ToolBoxRenderer
+	statusBar         *StatusBar
 	assistantStartIdx int
 	state             UIState
 	appName           string
 	modelName         string
 	width             int
 	height            int
+	turnCount         int
+	maxTurns          int
+	totalCost         float64
 	quitting          bool
 	eventCh           <-chan agent.TurnEvent
 }
@@ -51,9 +55,9 @@ type Model struct {
 // Ensure Model satisfies the tea.Model interface at compile time.
 var _ tea.Model = (*Model)(nil)
 
-// NewModel creates a new TUI Model with the given agent, application name, and
-// model name. The agent may be nil for testing purposes.
-func NewModel(a *agent.Agent, appName, modelName string) *Model {
+// NewModel creates a new TUI Model with the given agent, application name,
+// model name, and maximum turns. The agent may be nil for testing purposes.
+func NewModel(a *agent.Agent, appName, modelName string, maxTurns int) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "Type a message..."
 	ti.Focus()
@@ -63,6 +67,10 @@ func NewModel(a *agent.Agent, appName, modelName string) *Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
+	sb := NewStatusBar(80)
+	sb.SetModel(modelName)
+	sb.SetTurn(0, maxTurns)
+
 	return &Model{
 		agent:      a,
 		input:      ti,
@@ -70,9 +78,11 @@ func NewModel(a *agent.Agent, appName, modelName string) *Model {
 		spinner:    sp,
 		mdRenderer: NewMarkdownRenderer(80),
 		toolBox:    NewToolBoxRenderer(80),
+		statusBar:  sb,
 		state:      StateInput,
 		appName:    appName,
 		modelName:  modelName,
+		maxTurns:   maxTurns,
 		width:      80,
 		height:     24,
 	}
@@ -110,6 +120,7 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 			m.agent.SetModel(newModel)
 		}
 		m.modelName = newModel
+		m.statusBar.SetModel(newModel)
 		m.content.WriteString(fmt.Sprintf("Model switched to %s\n", newModel))
 		m.viewport.SetContent(m.content.String())
 		return nil

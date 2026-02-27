@@ -516,7 +516,7 @@ func runInteractive() error {
 	}
 
 	// Create TUI model and run
-	model := tui.NewModel(a, "rubichan", cfg.Provider.Model)
+	model := tui.NewModel(a, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

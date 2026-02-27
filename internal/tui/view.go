@@ -43,9 +43,10 @@ func (m *Model) View() string {
 	case StateStreaming:
 		b.WriteString(fmt.Sprintf("%s Thinking...", m.spinner.View()))
 	case StateAwaitingApproval:
-		b.WriteString("Approve? [Y/N]")
+		b.WriteString(m.statusBar.View())
+		b.WriteString("  Approve? [Y/N]")
 	default:
-		// No status line content in input state
+		b.WriteString(m.statusBar.View())
 	}
 	b.WriteString("\n")
 

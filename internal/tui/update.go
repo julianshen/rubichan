@@ -217,6 +217,15 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		m.content.WriteString("\n")
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
+
+		// Update status bar with token usage and turn count.
+		m.turnCount++
+		m.statusBar.SetTokens(msg.InputTokens, 100000)
+		m.statusBar.SetTurn(m.turnCount, m.maxTurns)
+		cost := EstimateCost(m.modelName, msg.InputTokens, msg.OutputTokens)
+		m.totalCost += cost
+		m.statusBar.SetCost(m.totalCost)
+
 		m.state = StateInput
 		m.eventCh = nil
 		return m, nil
