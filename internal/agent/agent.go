@@ -357,10 +357,11 @@ func (a *Agent) dispatchHook(event skills.HookEvent) (*skills.HookResult, error)
 
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
+	var totalInputTokens, totalOutputTokens int
 	for ; turnCount < a.maxTurns; turnCount++ {
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- TurnEvent{Type: "done"}
+			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 			return
 		}
 
@@ -378,7 +379,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
-			ch <- TurnEvent{Type: "done"}
+			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 			return
 		}
 
@@ -415,6 +416,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		}
 
 		for event := range stream {
+			// Accumulate token usage from every stream event.
+			totalInputTokens += event.InputTokens
+			totalOutputTokens += event.OutputTokens
+
 			switch event.Type {
 			case "text_delta":
 				if currentTool != nil {
@@ -457,7 +462,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 		// If no pending tool calls, we're done
 		if len(pendingTools) == 0 {
-			ch <- TurnEvent{Type: "done"}
+			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 			return
 		}
 
@@ -465,7 +470,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		for _, tc := range pendingTools {
 			if ctx.Err() != nil {
 				ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-				ch <- TurnEvent{Type: "done"}
+				ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 				return
 			}
 
@@ -621,5 +626,5 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
-	ch <- TurnEvent{Type: "done"}
+	ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 }
