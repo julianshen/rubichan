@@ -86,6 +86,13 @@ func WithSummarizer(s Summarizer) AgentOption {
 	}
 }
 
+// WithMemoryStore attaches a memory store for cross-session learning.
+func WithMemoryStore(ms MemoryStore) AgentOption {
+	return func(a *Agent) {
+		a.memoryStore = ms
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -127,6 +134,7 @@ type Agent struct {
 	extraPrompts    []namedPrompt
 	summarizer      Summarizer
 	scratchpad      *Scratchpad
+	memoryStore     MemoryStore
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -160,6 +168,21 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			prompt += "\n\n## " + ep.Name + "\n\n" + ep.Content
 		}
 		a.conversation = NewConversation(prompt)
+	}
+	// Load cross-session memories into system prompt.
+	if a.memoryStore != nil {
+		wd, _ := os.Getwd()
+		memories, err := a.memoryStore.LoadMemories(wd)
+		if err != nil {
+			log.Printf("warning: failed to load memories: %v", err)
+		} else if len(memories) > 0 {
+			prompt := a.conversation.SystemPrompt()
+			prompt += "\n\n## Prior Session Insights\n\n"
+			for _, m := range memories {
+				prompt += fmt.Sprintf("- **%s**: %s\n", m.Tag, m.Content)
+			}
+			a.conversation = NewConversation(prompt)
+		}
 	}
 	// If a summarizer was provided, insert the summarization strategy
 	// between tool clearing and truncation in the compaction chain.
@@ -229,6 +252,28 @@ func (a *Agent) ClearConversation() {
 // ScratchpadAccess returns the agent's scratchpad for external use (e.g., by NotesTool).
 func (a *Agent) ScratchpadAccess() ScratchpadAccess {
 	return a.scratchpad
+}
+
+// SaveMemories extracts reusable insights from the conversation and persists
+// them. Call on session end for cross-session learning.
+func (a *Agent) SaveMemories(ctx context.Context) error {
+	if a.memoryStore == nil || a.summarizer == nil {
+		return nil
+	}
+
+	extractor := NewMemoryExtractor(a.summarizer)
+	memories, err := extractor.Extract(ctx, a.conversation.Messages())
+	if err != nil {
+		return fmt.Errorf("extracting memories: %w", err)
+	}
+
+	wd, _ := os.Getwd()
+	for _, m := range memories {
+		if err := a.memoryStore.SaveMemory(wd, m.Tag, m.Content); err != nil {
+			log.Printf("warning: failed to save memory %q: %v", m.Tag, err)
+		}
+	}
+	return nil
 }
 
 // SetModel changes the model used for LLM completions.

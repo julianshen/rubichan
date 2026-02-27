@@ -502,6 +502,11 @@ func runInteractive() error {
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
+	// Wire cross-session memory and summarizer.
+	summarizer := agent.NewLLMSummarizer(p, cfg.Provider.Model)
+	opts = append(opts, agent.WithSummarizer(summarizer))
+	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
+
 	// Create agent
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
@@ -515,6 +520,11 @@ func runInteractive() error {
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)
+	}
+
+	// Save memories on graceful shutdown.
+	if err := a.SaveMemories(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save memories: %v\n", err)
 	}
 
 	return nil
@@ -641,6 +651,11 @@ func runHeadless() error {
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
+	// Wire cross-session memory and summarizer.
+	headlessSummarizer := agent.NewLLMSummarizer(p, cfg.Provider.Model)
+	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
+	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
+
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Register notes tool backed by agent's scratchpad.
@@ -743,6 +758,11 @@ func runHeadless() error {
 	}
 
 	fmt.Print(string(out))
+
+	// Save memories on completion.
+	if err := a.SaveMemories(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save memories: %v\n", err)
+	}
 
 	if result.Error != "" {
 		return fmt.Errorf("agent run failed: %s", result.Error)
@@ -943,4 +963,25 @@ type pluginSkillInvokerAdapter struct {
 
 func (a *pluginSkillInvokerAdapter) Invoke(name string, input map[string]any) (map[string]any, error) {
 	return a.invoker.Invoke(a.ctx, name, input)
+}
+
+// storeMemoryAdapter bridges store.Store to agent.MemoryStore interface.
+type storeMemoryAdapter struct {
+	store *store.Store
+}
+
+func (a *storeMemoryAdapter) SaveMemory(workingDir, tag, content string) error {
+	return a.store.SaveMemory(workingDir, tag, content)
+}
+
+func (a *storeMemoryAdapter) LoadMemories(workingDir string) ([]agent.MemoryEntry, error) {
+	storeMemories, err := a.store.LoadMemories(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]agent.MemoryEntry, len(storeMemories))
+	for i, m := range storeMemories {
+		entries[i] = agent.MemoryEntry{Tag: m.Tag, Content: m.Content}
+	}
+	return entries, nil
 }
