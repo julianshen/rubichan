@@ -308,7 +308,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			Model:     a.model,
 			System:    systemPrompt,
 			Messages:  a.conversation.Messages(),
-			Tools:     a.tools.All(),
+			Tools:     a.tools.SelectForContext(a.conversation.Messages()),
 			MaxTokens: 4096,
 		}
 

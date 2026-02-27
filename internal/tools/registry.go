@@ -73,3 +73,13 @@ func (r *Registry) All() []provider.ToolDef {
 	}
 	return defs
 }
+
+// SelectForContext returns tool definitions filtered for relevance to the
+// current conversation context. Uses keyword heuristics and recent tool
+// usage to select relevant tools, falling back to all tools when no
+// heuristic matches.
+func (r *Registry) SelectForContext(messages []provider.Message) []provider.ToolDef {
+	all := r.All()
+	selector := NewToolSelector()
+	return selector.Select(messages, all)
+}
