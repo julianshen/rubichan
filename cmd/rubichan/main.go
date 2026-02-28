@@ -548,6 +548,9 @@ func runInteractive() error {
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
 	if !autoApprove {
 		approvalFunc = model.MakeApprovalFunc()
+		opts = append(opts, agent.WithAutoApproveChecker(model))
+	} else {
+		opts = append(opts, agent.WithAutoApproveChecker(agent.AlwaysAutoApprove{}))
 	}
 
 	// Create agent with the approval function.
@@ -698,6 +701,9 @@ func runHeadless() error {
 	headlessSummarizer := agent.NewLLMSummarizer(p, cfg.Provider.Model)
 	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
+
+	// Headless always auto-approves, so all tools can run in parallel.
+	opts = append(opts, agent.WithAutoApproveChecker(agent.AlwaysAutoApprove{}))
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 

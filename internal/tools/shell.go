@@ -8,9 +8,6 @@ import (
 	"time"
 )
 
-const maxOutputBytes = 30 * 1024
-const maxDisplayBytes = 100 * 1024
-
 // shellInput represents the input for the shell tool.
 type shellInput struct {
 	Command string `json:"command"`
