@@ -141,6 +141,14 @@ func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 	}
 }
 
+// IsAutoApproved checks if a tool was previously marked "always approve"
+// by the user. This implements agent.AutoApproveChecker to enable parallel
+// execution of auto-approved tools.
+func (m *Model) IsAutoApproved(tool string) bool {
+	_, ok := m.alwaysApproved.Load(tool)
+	return ok
+}
+
 // waitForApproval returns a tea.Cmd that blocks until an approval request
 // arrives on the approval channel, then delivers it as an approvalRequestMsg.
 func (m *Model) waitForApproval() tea.Cmd {

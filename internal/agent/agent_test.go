@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -1055,4 +1056,264 @@ func TestTurnDoneEventAccumulatesTokensAcrossEvents(t *testing.T) {
 	// Should accumulate: 50+100 input, 10+30 output
 	assert.Equal(t, 150, doneEvent.InputTokens)
 	assert.Equal(t, 40, doneEvent.OutputTokens)
+}
+
+// --- Parallel tool execution tests ---
+
+// autoApproveChecker wraps autoApprove and implements AutoApproveChecker.
+type autoApproveCheckerFunc struct{}
+
+func (autoApproveCheckerFunc) IsAutoApproved(tool string) bool {
+	return true
+}
+
+func TestParallelToolExecutionAutoApproved(t *testing.T) {
+	// Two auto-approved tools should run concurrently. We verify by checking
+	// that both tools execute and results are returned in order.
+	var callOrder []string
+	var mu sync.Mutex
+
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			mu.Lock()
+			callOrder = append(callOrder, "a")
+			mu.Unlock()
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+	toolB := &mockTool{
+		name:        "tool_b",
+		description: "tool B",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			mu.Lock()
+			callOrder = append(callOrder, "b")
+			mu.Unlock()
+			return tools.ToolResult{Content: "result_b"}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: "tool_b"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Both done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+	require.NoError(t, reg.Register(toolB))
+
+	checker := autoApproveCheckerFunc{}
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg, WithAutoApproveChecker(checker))
+
+	ch, err := a.Turn(context.Background(), "run both tools")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Both tools should have executed.
+	mu.Lock()
+	assert.Len(t, callOrder, 2)
+	mu.Unlock()
+
+	// Verify results are in original tool call order (t1 before t2).
+	var resultIDs []string
+	for _, ev := range events {
+		if ev.Type == "tool_result" {
+			resultIDs = append(resultIDs, ev.ToolResult.ID)
+		}
+	}
+	assert.Equal(t, []string{"t1", "t2"}, resultIDs)
+}
+
+func TestParallelResultsAddedInOrder(t *testing.T) {
+	// Verify conversation messages maintain original tool order even with parallel execution.
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+	toolB := &mockTool{
+		name:        "tool_b",
+		description: "tool B",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_b"}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: "tool_b"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+	require.NoError(t, reg.Register(toolB))
+
+	checker := autoApproveCheckerFunc{}
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg, WithAutoApproveChecker(checker))
+
+	ch, err := a.Turn(context.Background(), "run both")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	// Check conversation: user, assistant (tool_use), tool_result t1, tool_result t2, assistant (text)
+	msgs := a.conversation.Messages()
+	// Find tool_result messages — they should be in order.
+	var toolResultIDs []string
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" {
+				toolResultIDs = append(toolResultIDs, block.ToolUseID)
+			}
+		}
+	}
+	assert.Equal(t, []string{"t1", "t2"}, toolResultIDs)
+}
+
+func TestSequentialFallbackForNonAutoApproved(t *testing.T) {
+	// When the approval function doesn't implement AutoApproveChecker,
+	// tools should still execute sequentially (existing behavior).
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+
+	// Use plain autoApprove — no AutoApproveChecker interface.
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := a.Turn(context.Background(), "run tool")
+	require.NoError(t, err)
+
+	var hasResult bool
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			hasResult = true
+			assert.Equal(t, "result_a", ev.ToolResult.Content)
+		}
+	}
+	assert.True(t, hasResult)
+}
+
+func TestMixedParallelAndSequential(t *testing.T) {
+	// tool_a is auto-approved, tool_b is not. They should be partitioned:
+	// tool_a runs in the parallel batch, tool_b runs sequentially after.
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+	toolB := &mockTool{
+		name:        "tool_b",
+		description: "tool B",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_b"}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: "tool_b"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+	require.NoError(t, reg.Register(toolB))
+
+	// Checker that only auto-approves tool_a.
+	partialChecker := &selectiveChecker{approved: map[string]bool{"tool_a": true}}
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg, WithAutoApproveChecker(partialChecker))
+
+	ch, err := a.Turn(context.Background(), "run mixed tools")
+	require.NoError(t, err)
+
+	var resultNames []string
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			resultNames = append(resultNames, ev.ToolResult.Name)
+		}
+	}
+	// Both tools should execute and results should be in original order.
+	assert.Equal(t, []string{"tool_a", "tool_b"}, resultNames)
+}
+
+// selectiveChecker only auto-approves tools in its approved map.
+type selectiveChecker struct {
+	approved map[string]bool
+}
+
+func (s *selectiveChecker) IsAutoApproved(tool string) bool {
+	return s.approved[tool]
 }

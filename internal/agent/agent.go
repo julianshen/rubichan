@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/google/uuid"
+	"github.com/sourcegraph/conc/pool"
+
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
@@ -18,6 +21,13 @@ import (
 // ApprovalFunc is called before executing a tool to get user approval.
 // Returns true if the tool execution is approved.
 type ApprovalFunc func(ctx context.Context, tool string, input json.RawMessage) (bool, error)
+
+// AutoApproveChecker tests if a tool would be auto-approved without blocking.
+// When the approval function (or the object that provides it) implements this
+// interface, the agent can execute auto-approved tools in parallel.
+type AutoApproveChecker interface {
+	IsAutoApproved(tool string) bool
+}
 
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
@@ -98,6 +108,14 @@ func WithMemoryStore(ms MemoryStore) AgentOption {
 	}
 }
 
+// WithAutoApproveChecker attaches a checker that determines which tools can
+// be auto-approved, enabling parallel execution of those tools.
+func WithAutoApproveChecker(checker AutoApproveChecker) AgentOption {
+	return func(a *Agent) {
+		a.autoApproveChecker = checker
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -124,23 +142,24 @@ func WithExtraSystemPrompt(name, content string) AgentOption {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider         provider.LLMProvider
-	tools            *tools.Registry
-	conversation     *Conversation
-	context          *ContextManager
-	approve          ApprovalFunc
-	model            string
-	maxTurns         int
-	skillRuntime     *skills.Runtime
-	store            *store.Store
-	sessionID        string
-	resumeSessionID  string
-	agentMD          string
-	extraPrompts     []namedPrompt
-	summarizer       Summarizer
-	scratchpad       *Scratchpad
-	memoryStore      MemoryStore
-	customStrategies bool
+	provider           provider.LLMProvider
+	tools              *tools.Registry
+	conversation       *Conversation
+	context            *ContextManager
+	approve            ApprovalFunc
+	autoApproveChecker AutoApproveChecker
+	model              string
+	maxTurns           int
+	skillRuntime       *skills.Runtime
+	store              *store.Store
+	sessionID          string
+	resumeSessionID    string
+	agentMD            string
+	extraPrompts       []namedPrompt
+	summarizer         Summarizer
+	scratchpad         *Scratchpad
+	memoryStore        MemoryStore
+	customStrategies   bool
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -467,160 +486,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			return
 		}
 
-		// Execute tool calls
-		for _, tc := range pendingTools {
-			if ctx.Err() != nil {
-				ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-				ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
-				return
-			}
-
-			ch <- TurnEvent{
-				Type: "tool_call",
-				ToolCall: &ToolCallEvent{
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: tc.Input,
-				},
-			}
-
-			// Dispatch HookOnBeforeToolCall hook. If cancelled, skip execution.
-			hookResult, hookErr := a.dispatchHook(skills.HookEvent{
-				Phase: skills.HookOnBeforeToolCall,
-				Data: map[string]any{
-					"tool_name": tc.Name,
-					"input":     string(tc.Input),
-				},
-				Ctx: ctx,
-			})
-			if hookErr != nil {
-				result := fmt.Sprintf("hook error: %s", hookErr)
-				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistToolResult(tc.ID, result, true)
-				ch <- TurnEvent{
-					Type: "tool_result",
-					ToolResult: &ToolResultEvent{
-						ID:      tc.ID,
-						Name:    tc.Name,
-						Content: result,
-						IsError: true,
-					},
-				}
-				continue
-			}
-			if hookResult != nil && hookResult.Cancel {
-				result := "tool call cancelled by skill"
-				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistToolResult(tc.ID, result, true)
-				ch <- TurnEvent{
-					Type: "tool_result",
-					ToolResult: &ToolResultEvent{
-						ID:      tc.ID,
-						Name:    tc.Name,
-						Content: result,
-						IsError: true,
-					},
-				}
-				continue
-			}
-
-			// Check approval
-			approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
-			if approvalErr != nil {
-				result := fmt.Sprintf("approval error: %s", approvalErr)
-				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistToolResult(tc.ID, result, true)
-				ch <- TurnEvent{
-					Type: "tool_result",
-					ToolResult: &ToolResultEvent{
-						ID:      tc.ID,
-						Name:    tc.Name,
-						Content: result,
-						IsError: true,
-					},
-				}
-				continue
-			}
-
-			if !approved {
-				result := "tool call denied by user"
-				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistToolResult(tc.ID, result, true)
-				ch <- TurnEvent{
-					Type: "tool_result",
-					ToolResult: &ToolResultEvent{
-						ID:      tc.ID,
-						Name:    tc.Name,
-						Content: result,
-						IsError: true,
-					},
-				}
-				continue
-			}
-
-			// Look up and execute the tool
-			tool, found := a.tools.Get(tc.Name)
-			if !found {
-				result := fmt.Sprintf("unknown tool: %s", tc.Name)
-				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistToolResult(tc.ID, result, true)
-				ch <- TurnEvent{
-					Type: "tool_result",
-					ToolResult: &ToolResultEvent{
-						ID:      tc.ID,
-						Name:    tc.Name,
-						Content: result,
-						IsError: true,
-					},
-				}
-				continue
-			}
-
-			toolResult, execErr := tool.Execute(ctx, tc.Input)
-			if execErr != nil {
-				result := fmt.Sprintf("tool execution error: %s", execErr)
-				a.conversation.AddToolResult(tc.ID, result, true)
-				a.persistToolResult(tc.ID, result, true)
-				ch <- TurnEvent{
-					Type: "tool_result",
-					ToolResult: &ToolResultEvent{
-						ID:      tc.ID,
-						Name:    tc.Name,
-						Content: result,
-						IsError: true,
-					},
-				}
-				continue
-			}
-
-			// Dispatch HookOnAfterToolResult hook. If modified, use the new content.
-			afterResult, afterErr := a.dispatchHook(skills.HookEvent{
-				Phase: skills.HookOnAfterToolResult,
-				Data: map[string]any{
-					"tool_name": tc.Name,
-					"content":   toolResult.Content,
-					"is_error":  toolResult.IsError,
-				},
-				Ctx: ctx,
-			})
-			if afterErr == nil && afterResult != nil && afterResult.Modified != nil {
-				if modContent, ok := afterResult.Modified["content"].(string); ok {
-					toolResult.Content = modContent
-				}
-			}
-
-			a.conversation.AddToolResult(tc.ID, toolResult.Content, toolResult.IsError)
-			a.persistToolResult(tc.ID, toolResult.Content, toolResult.IsError)
-			ch <- TurnEvent{
-				Type: "tool_result",
-				ToolResult: &ToolResultEvent{
-					ID:             tc.ID,
-					Name:           tc.Name,
-					Content:        toolResult.Content,
-					DisplayContent: toolResult.DisplayContent,
-					IsError:        toolResult.IsError,
-				},
-			}
+		// Execute tool calls — parallelize auto-approved tools when possible.
+		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
+			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
+			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
+			return
 		}
 
 		// Continue to the next turn after tool results.
@@ -629,4 +499,245 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
 	ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
+}
+
+// maxParallelTools is the upper bound on concurrent tool goroutines.
+const maxParallelTools = 8
+
+// toolExecResult holds the result of a single tool execution for batching.
+type toolExecResult struct {
+	index int
+	event TurnEvent
+	// Fields for conversation/persistence, applied after all parallel tools finish.
+	toolUseID      string
+	content        string
+	displayContent string
+	isError        bool
+}
+
+// executeTools runs the pending tool calls, parallelizing auto-approved ones.
+// Returns true if the context was cancelled during execution.
+func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
+	if a.autoApproveChecker == nil || len(pendingTools) <= 1 {
+		// No checker or single tool — fall back to sequential execution.
+		return a.executeToolsSequential(ctx, ch, pendingTools)
+	}
+
+	// Partition into auto-approved and needs-approval.
+	type indexedTool struct {
+		index int
+		tc    provider.ToolUseBlock
+	}
+	var autoApproved, needsApproval []indexedTool
+	for i, tc := range pendingTools {
+		if a.autoApproveChecker.IsAutoApproved(tc.Name) {
+			autoApproved = append(autoApproved, indexedTool{index: i, tc: tc})
+		} else {
+			needsApproval = append(needsApproval, indexedTool{index: i, tc: tc})
+		}
+	}
+
+	// Emit tool_call events for all tools first (in order).
+	for _, tc := range pendingTools {
+		ch <- TurnEvent{
+			Type: "tool_call",
+			ToolCall: &ToolCallEvent{
+				ID:    tc.ID,
+				Name:  tc.Name,
+				Input: tc.Input,
+			},
+		}
+	}
+
+	// Results array indexed by original position.
+	results := make([]toolExecResult, len(pendingTools))
+
+	// Execute auto-approved tools in parallel.
+	if len(autoApproved) > 0 {
+		if ctx.Err() != nil {
+			return true
+		}
+
+		maxG := len(autoApproved)
+		if maxG > maxParallelTools {
+			maxG = maxParallelTools
+		}
+		p := pool.New().WithMaxGoroutines(maxG)
+		var mu sync.Mutex
+
+		for _, it := range autoApproved {
+			it := it // capture
+			p.Go(func() {
+				res := a.executeSingleToolCore(ctx, it.tc)
+				mu.Lock()
+				results[it.index] = res
+				results[it.index].index = it.index
+				mu.Unlock()
+			})
+		}
+		p.Wait()
+
+		// Emit results and update conversation in original order.
+		for _, it := range autoApproved {
+			r := results[it.index]
+			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
+			a.persistToolResult(r.toolUseID, r.content, r.isError)
+			ch <- r.event
+		}
+	}
+
+	// Execute needs-approval tools sequentially.
+	for _, it := range needsApproval {
+		if ctx.Err() != nil {
+			return true
+		}
+
+		// These need the full sequential flow with approval.
+		r := a.executeSingleToolWithApproval(ctx, it.tc)
+		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
+		a.persistToolResult(r.toolUseID, r.content, r.isError)
+		ch <- r.event
+	}
+
+	return false
+}
+
+// executeToolsSequential is the original sequential tool execution path.
+func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
+	for _, tc := range pendingTools {
+		if ctx.Err() != nil {
+			return true
+		}
+
+		ch <- TurnEvent{
+			Type: "tool_call",
+			ToolCall: &ToolCallEvent{
+				ID:    tc.ID,
+				Name:  tc.Name,
+				Input: tc.Input,
+			},
+		}
+
+		r := a.executeSingleToolWithApproval(ctx, tc)
+		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
+		a.persistToolResult(r.toolUseID, r.content, r.isError)
+		ch <- r.event
+	}
+	return false
+}
+
+// executeSingleToolWithApproval runs hooks, approval, and execution for one tool.
+func (a *Agent) executeSingleToolWithApproval(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+	// Dispatch HookOnBeforeToolCall hook.
+	hookResult, hookErr := a.dispatchHook(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Data: map[string]any{
+			"tool_name": tc.Name,
+			"input":     string(tc.Input),
+		},
+		Ctx: ctx,
+	})
+	if hookErr != nil {
+		result := fmt.Sprintf("hook error: %s", hookErr)
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+	if hookResult != nil && hookResult.Cancel {
+		result := "tool call cancelled by skill"
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+
+	// Check approval.
+	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
+	if approvalErr != nil {
+		result := fmt.Sprintf("approval error: %s", approvalErr)
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+	if !approved {
+		result := "tool call denied by user"
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+
+	return a.executeSingleToolCore(ctx, tc)
+}
+
+// executeSingleToolCore looks up and executes a tool (no approval check).
+func (a *Agent) executeSingleToolCore(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+	tool, found := a.tools.Get(tc.Name)
+	if !found {
+		result := fmt.Sprintf("unknown tool: %s", tc.Name)
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+
+	toolResult, execErr := tool.Execute(ctx, tc.Input)
+	if execErr != nil {
+		result := fmt.Sprintf("tool execution error: %s", execErr)
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+
+	// Dispatch HookOnAfterToolResult hook.
+	afterResult, afterErr := a.dispatchHook(skills.HookEvent{
+		Phase: skills.HookOnAfterToolResult,
+		Data: map[string]any{
+			"tool_name": tc.Name,
+			"content":   toolResult.Content,
+			"is_error":  toolResult.IsError,
+		},
+		Ctx: ctx,
+	})
+	if afterErr == nil && afterResult != nil && afterResult.Modified != nil {
+		if modContent, ok := afterResult.Modified["content"].(string); ok {
+			toolResult.Content = modContent
+		}
+	}
+
+	return toolExecResult{
+		toolUseID:      tc.ID,
+		content:        toolResult.Content,
+		displayContent: toolResult.DisplayContent,
+		isError:        toolResult.IsError,
+		event:          makeToolResultEvent(tc.ID, tc.Name, toolResult.Content, toolResult.DisplayContent, toolResult.IsError),
+	}
+}
+
+func makeToolResultEvent(id, name, content, displayContent string, isError bool) TurnEvent {
+	return TurnEvent{
+		Type: "tool_result",
+		ToolResult: &ToolResultEvent{
+			ID:             id,
+			Name:           name,
+			Content:        content,
+			DisplayContent: displayContent,
+			IsError:        isError,
+		},
+	}
 }
