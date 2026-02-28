@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/config"
 )
 
 // UIState represents the current state of the TUI.
@@ -30,6 +31,9 @@ const (
 // Model is the Bubble Tea model for the Rubichan TUI.
 type Model struct {
 	agent             *agent.Agent
+	cfg               *config.Config
+	configPath        string
+	configForm        *ConfigForm
 	input             *InputArea
 	viewport          viewport.Model
 	spinner           spinner.Model
@@ -55,8 +59,9 @@ type Model struct {
 var _ tea.Model = (*Model)(nil)
 
 // NewModel creates a new TUI Model with the given agent, application name,
-// model name, and maximum turns. The agent may be nil for testing purposes.
-func NewModel(a *agent.Agent, appName, modelName string, maxTurns int) *Model {
+// model name, maximum turns, config path, and config. The agent and config
+// may be nil for testing purposes.
+func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPath string, cfg *config.Config) *Model {
 	ia := NewInputArea()
 
 	vp := viewport.New(80, 20)
@@ -70,6 +75,8 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int) *Model {
 
 	return &Model{
 		agent:      a,
+		cfg:        cfg,
+		configPath: configPath,
 		input:      ia,
 		viewport:   vp,
 		spinner:    sp,
@@ -122,10 +129,21 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		m.viewport.SetContent(m.content.String())
 		return nil
 
+	case "/config":
+		if m.cfg == nil {
+			m.content.WriteString("No config available\n")
+			m.viewport.SetContent(m.content.String())
+			return nil
+		}
+		m.configForm = NewConfigForm(m.cfg, m.configPath)
+		m.state = StateConfigOverlay
+		return m.configForm.Form().Init()
+
 	case "/help":
 		help := "Available commands:\n" +
 			"  /help          Show this help message\n" +
 			"  /clear         Clear conversation history\n" +
+			"  /config        Edit configuration\n" +
 			"  /model <name>  Switch to a different model\n" +
 			"  /quit          Exit the application\n"
 		m.content.WriteString(help)

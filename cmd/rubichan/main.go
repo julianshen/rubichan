@@ -515,8 +515,14 @@ func runInteractive() error {
 		return fmt.Errorf("registering notes tool: %w", err)
 	}
 
+	// Resolve config path for /config command.
+	cfgPath := configPath
+	if cfgPath == "" {
+		cfgPath = filepath.Join(cfgDir, "config.toml")
+	}
+
 	// Create TUI model and run
-	model := tui.NewModel(a, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns)
+	model := tui.NewModel(a, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

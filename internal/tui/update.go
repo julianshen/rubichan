@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 
 	"github.com/julianshen/rubichan/internal/agent"
 )
@@ -30,6 +31,24 @@ func (m *Model) Init() tea.Cmd {
 // Update implements tea.Model. It processes incoming messages and returns the
 // updated model and any commands to execute.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Route messages to config form overlay when active.
+	if m.state == StateConfigOverlay && m.configForm != nil {
+		form, cmd := m.configForm.Form().Update(msg)
+		if f, ok := form.(*huh.Form); ok {
+			m.configForm.SetForm(f)
+		}
+		switch m.configForm.Form().State {
+		case huh.StateCompleted:
+			_ = m.configForm.Save()
+			m.state = StateInput
+			m.configForm = nil
+		case huh.StateAborted:
+			m.state = StateInput
+			m.configForm = nil
+		}
+		return m, cmd
+	}
+
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {

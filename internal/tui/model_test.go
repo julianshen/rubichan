@@ -5,10 +5,12 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/config"
 )
 
 func TestUIStateConstants(t *testing.T) {
@@ -27,7 +29,7 @@ func TestUIStateConstants(t *testing.T) {
 }
 
 func TestNewModel(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 
 	assert.Equal(t, StateInput, m.state)
 	assert.Equal(t, "rubichan", m.appName)
@@ -41,7 +43,7 @@ func TestNewModel(t *testing.T) {
 }
 
 func TestModelHandleSlashQuit(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.handleCommand("/quit")
 
 	require.NotNil(t, cmd, "handleCommand(/quit) should return a non-nil tea.Cmd")
@@ -53,7 +55,7 @@ func TestModelHandleSlashQuit(t *testing.T) {
 }
 
 func TestModelHandleSlashExit(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.handleCommand("/exit")
 
 	require.NotNil(t, cmd, "handleCommand(/exit) should return a non-nil tea.Cmd")
@@ -61,7 +63,7 @@ func TestModelHandleSlashExit(t *testing.T) {
 }
 
 func TestModelHandleSlashClear(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 
 	// Write some content first
 	m.content.WriteString("some previous content")
@@ -73,7 +75,7 @@ func TestModelHandleSlashClear(t *testing.T) {
 }
 
 func TestModelHandleSlashHelp(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.handleCommand("/help")
 
 	assert.Nil(t, cmd, "handleCommand(/help) should return nil")
@@ -85,7 +87,7 @@ func TestModelHandleSlashHelp(t *testing.T) {
 }
 
 func TestModelHandleSlashModel(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.handleCommand("/model gpt-4")
 
 	assert.Nil(t, cmd, "handleCommand(/model) should return nil")
@@ -94,7 +96,7 @@ func TestModelHandleSlashModel(t *testing.T) {
 }
 
 func TestModelHandleSlashModelNoArg(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.handleCommand("/model")
 
 	assert.Nil(t, cmd)
@@ -103,7 +105,7 @@ func TestModelHandleSlashModelNoArg(t *testing.T) {
 }
 
 func TestModelHandleUnknownCommand(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.handleCommand("/unknown")
 
 	assert.Nil(t, cmd)
@@ -113,7 +115,7 @@ func TestModelHandleUnknownCommand(t *testing.T) {
 // --- Task 24 Tests ---
 
 func TestModelInit(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.Init()
 
 	// Init should return the input area's init command (focus)
@@ -121,7 +123,7 @@ func TestModelInit(t *testing.T) {
 }
 
 func TestModelView(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	view := m.View()
 
 	assert.Contains(t, view, "rubichan")
@@ -129,7 +131,7 @@ func TestModelView(t *testing.T) {
 }
 
 func TestModelViewQuitting(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.quitting = true
 	view := m.View()
 
@@ -137,7 +139,7 @@ func TestModelViewQuitting(t *testing.T) {
 }
 
 func TestModelUpdateCtrlC(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	um := updated.(*Model)
@@ -149,7 +151,7 @@ func TestModelUpdateCtrlC(t *testing.T) {
 }
 
 func TestModelUpdateWindowSize(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	um := updated.(*Model)
@@ -158,7 +160,7 @@ func TestModelUpdateWindowSize(t *testing.T) {
 }
 
 func TestModelUpdateEnterSlashCommand(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.input.SetValue("/help")
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -168,7 +170,7 @@ func TestModelUpdateEnterSlashCommand(t *testing.T) {
 }
 
 func TestModelUpdateEnterEmptyInput(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.input.SetValue("")
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -180,7 +182,7 @@ func TestModelUpdateEnterEmptyInput(t *testing.T) {
 }
 
 func TestModelHandleTurnEventTextDelta(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	// Provide event channel so waitForEvent returns a non-nil cmd
 	ch := make(chan agent.TurnEvent, 1)
@@ -201,7 +203,7 @@ func TestModelHandleTurnEventTextDelta(t *testing.T) {
 }
 
 func TestModelHandleTurnEventToolCall(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	// Provide a channel so waitForEvent has something to read from
 	ch := make(chan agent.TurnEvent, 1)
@@ -227,7 +229,7 @@ func TestModelHandleTurnEventToolCall(t *testing.T) {
 }
 
 func TestModelHandleTurnEventToolResult(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -252,7 +254,7 @@ func TestModelHandleTurnEventToolResult(t *testing.T) {
 }
 
 func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -281,7 +283,7 @@ func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
 }
 
 func TestModelHandleTurnEventError(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -299,7 +301,7 @@ func TestModelHandleTurnEventError(t *testing.T) {
 }
 
 func TestModelHandleTurnEventDone(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -316,7 +318,7 @@ func TestModelHandleTurnEventDone(t *testing.T) {
 }
 
 func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 
 	// Simulate user prompt written before streaming starts
@@ -348,7 +350,7 @@ func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
 }
 
 func TestModelViewStreaming(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	view := m.View()
 
@@ -357,7 +359,7 @@ func TestModelViewStreaming(t *testing.T) {
 }
 
 func TestModelViewAwaitingApproval(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateAwaitingApproval
 	view := m.View()
 
@@ -365,7 +367,7 @@ func TestModelViewAwaitingApproval(t *testing.T) {
 }
 
 func TestModelUpdateEnterUserMessage(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.input.SetValue("hello agent")
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -378,7 +380,7 @@ func TestModelUpdateEnterUserMessage(t *testing.T) {
 }
 
 func TestModelStartTurnNilAgent(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.startTurn("test")
 
 	require.NotNil(t, cmd)
@@ -391,7 +393,7 @@ func TestModelStartTurnNilAgent(t *testing.T) {
 }
 
 func TestModelUpdateRegularKey(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 
 	// Type a regular character
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
@@ -403,7 +405,7 @@ func TestModelUpdateRegularKey(t *testing.T) {
 }
 
 func TestModelUpdateEnterWhileStreaming(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	m.input.SetValue("ignored")
 
@@ -415,7 +417,7 @@ func TestModelUpdateEnterWhileStreaming(t *testing.T) {
 }
 
 func TestModelUpdateSpinnerTick(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 
 	// Spinner tick should update the spinner
@@ -428,7 +430,7 @@ func TestModelUpdateSpinnerTick(t *testing.T) {
 }
 
 func TestModelUpdateSpinnerTickNotStreaming(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateInput
 
 	// Spinner tick while not streaming should be handled gracefully
@@ -441,7 +443,7 @@ func TestModelUpdateSpinnerTickNotStreaming(t *testing.T) {
 }
 
 func TestModelWaitForEventClosedChannel(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	ch := make(chan agent.TurnEvent)
 	close(ch)
 	m.eventCh = ch
@@ -456,7 +458,7 @@ func TestModelWaitForEventClosedChannel(t *testing.T) {
 }
 
 func TestModelWaitForEventNilChannel(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.eventCh = nil
 
 	cmd := m.waitForEvent()
@@ -464,7 +466,7 @@ func TestModelWaitForEventNilChannel(t *testing.T) {
 }
 
 func TestModelHandleTurnEventToolCallNilToolCall(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -483,7 +485,7 @@ func TestModelHandleTurnEventToolCallNilToolCall(t *testing.T) {
 }
 
 func TestModelHandleTurnEventToolResultNilToolResult(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -502,7 +504,7 @@ func TestModelHandleTurnEventToolResultNilToolResult(t *testing.T) {
 }
 
 func TestModelHandleTurnEventErrorNilError(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -519,7 +521,7 @@ func TestModelHandleTurnEventErrorNilError(t *testing.T) {
 }
 
 func TestModelUpdateWindowSizeTiny(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 10, Height: 2})
 
 	um := updated.(*Model)
@@ -528,13 +530,13 @@ func TestModelUpdateWindowSizeTiny(t *testing.T) {
 }
 
 func TestModelHandleCommandEmptyString(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	cmd := m.handleCommand("")
 	assert.Nil(t, cmd)
 }
 
 func TestModelHandleTurnEventUnknownType(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -552,7 +554,7 @@ func TestModelHandleTurnEventUnknownType(t *testing.T) {
 }
 
 func TestModelUpdateUnknownMsg(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 
 	// Send an unrecognized message type
 	type customMsg struct{}
@@ -564,7 +566,7 @@ func TestModelUpdateUnknownMsg(t *testing.T) {
 }
 
 func TestModelUpdateKeyWhileStreaming(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateStreaming
 
 	// Regular key press while streaming should be ignored (not forwarded to input area)
@@ -576,7 +578,7 @@ func TestModelUpdateKeyWhileStreaming(t *testing.T) {
 }
 
 func TestModelStatusBarInView(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-sonnet-4-5", 50)
+	m := NewModel(nil, "rubichan", "claude-sonnet-4-5", 50, "", nil)
 	m.state = StateInput
 	view := m.View()
 	assert.Contains(t, view, "claude-sonnet-4-5")
@@ -584,7 +586,7 @@ func TestModelStatusBarInView(t *testing.T) {
 }
 
 func TestModelStatusBarUpdatedOnDone(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-sonnet-4-5", 50)
+	m := NewModel(nil, "rubichan", "claude-sonnet-4-5", 50, "", nil)
 	m.state = StateStreaming
 	ch := make(chan agent.TurnEvent)
 	close(ch)
@@ -603,4 +605,98 @@ func TestModelStatusBarUpdatedOnDone(t *testing.T) {
 	view := um.View()
 	assert.Contains(t, view, "Turn 1/50")
 	assert.Contains(t, view, "1.5k")
+}
+
+// --- Config overlay tests ---
+
+func TestModelHandleSlashConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	m := NewModel(nil, "rubichan", "claude-3", 50, "/tmp/test-config.toml", cfg)
+
+	cmd := m.handleCommand("/config")
+
+	assert.Equal(t, StateConfigOverlay, m.state)
+	assert.NotNil(t, m.configForm)
+	assert.NotNil(t, cmd, "/config should return an init cmd from the form")
+}
+
+func TestModelHandleSlashConfigNilCfg(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+
+	cmd := m.handleCommand("/config")
+
+	assert.Equal(t, StateInput, m.state, "should remain in input state without config")
+	assert.Nil(t, m.configForm)
+	assert.Nil(t, cmd)
+	assert.Contains(t, m.content.String(), "No config available")
+}
+
+func TestModelConfigOverlayView(t *testing.T) {
+	cfg := config.DefaultConfig()
+	m := NewModel(nil, "rubichan", "claude-3", 50, "/tmp/test-config.toml", cfg)
+
+	m.handleCommand("/config")
+	view := m.View()
+
+	// The view should render the form, not the normal TUI
+	assert.NotContains(t, view, "rubichan · claude-3", "config overlay should not show normal header")
+}
+
+func TestModelConfigOverlayCompleted(t *testing.T) {
+	cfg := config.DefaultConfig()
+	dir := t.TempDir()
+	m := NewModel(nil, "rubichan", "claude-3", 50, dir+"/config.toml", cfg)
+
+	m.handleCommand("/config")
+	assert.Equal(t, StateConfigOverlay, m.state)
+
+	// Simulate form completion by setting state directly
+	m.configForm.Form().State = huh.StateCompleted
+
+	// Send any message to trigger the state check in Update
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	um := updated.(*Model)
+
+	assert.Equal(t, StateInput, um.state)
+	assert.Nil(t, um.configForm)
+}
+
+func TestModelConfigOverlayAborted(t *testing.T) {
+	cfg := config.DefaultConfig()
+	m := NewModel(nil, "rubichan", "claude-3", 50, "/tmp/test-config.toml", cfg)
+
+	m.handleCommand("/config")
+	assert.Equal(t, StateConfigOverlay, m.state)
+
+	// Simulate form abort
+	m.configForm.Form().State = huh.StateAborted
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(*Model)
+
+	assert.Equal(t, StateInput, um.state)
+	assert.Nil(t, um.configForm)
+}
+
+func TestModelHelpIncludesConfig(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.handleCommand("/help")
+
+	content := m.content.String()
+	assert.Contains(t, content, "/config")
+}
+
+func TestModelConfigOverlayRoutesMessages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	m := NewModel(nil, "rubichan", "claude-3", 50, "/tmp/test-config.toml", cfg)
+
+	m.handleCommand("/config")
+	assert.Equal(t, StateConfigOverlay, m.state)
+
+	// Regular key message while in config overlay should be routed to form, not handled by model
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	um := updated.(*Model)
+
+	// Should still be in config overlay state (not input state)
+	assert.Equal(t, StateConfigOverlay, um.state)
 }

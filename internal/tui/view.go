@@ -19,6 +19,10 @@ func (m *Model) View() string {
 		return "Goodbye!\n"
 	}
 
+	if m.state == StateConfigOverlay && m.configForm != nil {
+		return m.configForm.Form().View()
+	}
+
 	var b strings.Builder
 
 	// Header
