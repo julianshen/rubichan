@@ -102,6 +102,11 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Ctrl+C always quits, regardless of state.
 	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
+		// Unblock the agent goroutine if it's waiting for approval.
+		if m.pendingApproval != nil {
+			m.pendingApproval.response <- false
+			m.pendingApproval = nil
+		}
 		return m, tea.Quit
 	}
 
@@ -111,7 +116,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			result := m.approvalPrompt.Result()
 			approved := result == ApprovalYes || result == ApprovalAlways
 			if result == ApprovalAlways {
-				m.alwaysApproved[m.pendingApproval.tool] = true
+				m.alwaysApproved.Store(m.pendingApproval.tool, true)
 			}
 			m.pendingApproval.response <- approved
 			m.approvalPrompt = nil
@@ -145,7 +150,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.assistantStartIdx = m.content.Len()
 		m.state = StateStreaming
 
-		return m, tea.Batch(m.startTurn(text), m.spinner.Tick)
+		return m, tea.Batch(m.startTurn(m.agent, text), m.spinner.Tick)
 
 	default:
 		// Forward key to input area
@@ -158,18 +163,19 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // startTurn initiates an agent turn and returns a tea.Cmd that sends back a
-// turnStartedMsg carrying the channel and first event. This avoids mutating
-// m.eventCh from the Cmd goroutine (which would be a data race).
-func (m *Model) startTurn(text string) tea.Cmd {
+// turnStartedMsg carrying the channel and first event. The agent is captured
+// as a parameter (not read from m.agent in the closure) to avoid a data race
+// between the Cmd goroutine and the Update goroutine.
+func (m *Model) startTurn(a *agent.Agent, text string) tea.Cmd {
 	return func() tea.Msg {
-		if m.agent == nil {
+		if a == nil {
 			return TurnEventMsg(agent.TurnEvent{
 				Type:  "error",
 				Error: fmt.Errorf("no agent configured"),
 			})
 		}
 
-		ch, err := m.agent.Turn(context.Background(), text)
+		ch, err := a.Turn(context.Background(), text)
 		if err != nil {
 			return TurnEventMsg(agent.TurnEvent{
 				Type:  "error",
@@ -267,7 +273,11 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 
 		// Update status bar with token usage and turn count.
 		m.turnCount++
-		m.statusBar.SetTokens(msg.InputTokens, 100000)
+		contextBudget := 100000
+		if m.cfg != nil && m.cfg.Agent.ContextBudget > 0 {
+			contextBudget = m.cfg.Agent.ContextBudget
+		}
+		m.statusBar.SetTokens(msg.InputTokens, contextBudget)
 		m.statusBar.SetTurn(m.turnCount, m.maxTurns)
 		cost := EstimateCost(m.modelName, msg.InputTokens, msg.OutputTokens)
 		m.totalCost += cost

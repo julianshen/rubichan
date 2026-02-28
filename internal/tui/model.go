@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -57,7 +58,7 @@ type Model struct {
 	statusBar         *StatusBar
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
-	alwaysApproved    map[string]bool
+	alwaysApproved    sync.Map
 	approvalCh        chan approvalRequest
 	assistantStartIdx int
 	state             UIState
@@ -90,24 +91,27 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	sb.SetModel(modelName)
 	sb.SetTurn(0, maxTurns)
 
+	// Glamour renderer creation is unlikely to fail with static "dark" style,
+	// but handle it gracefully — Render falls back to raw text if renderer is nil.
+	mdRenderer, _ := NewMarkdownRenderer(80)
+
 	return &Model{
-		agent:          a,
-		cfg:            cfg,
-		configPath:     configPath,
-		input:          ia,
-		viewport:       vp,
-		spinner:        sp,
-		mdRenderer:     NewMarkdownRenderer(80),
-		toolBox:        NewToolBoxRenderer(80),
-		statusBar:      sb,
-		alwaysApproved: make(map[string]bool),
-		approvalCh:     make(chan approvalRequest),
-		state:          StateInput,
-		appName:        appName,
-		modelName:      modelName,
-		maxTurns:       maxTurns,
-		width:          80,
-		height:         24,
+		agent:      a,
+		cfg:        cfg,
+		configPath: configPath,
+		input:      ia,
+		viewport:   vp,
+		spinner:    sp,
+		mdRenderer: mdRenderer,
+		toolBox:    NewToolBoxRenderer(80),
+		statusBar:  sb,
+		approvalCh: make(chan approvalRequest),
+		state:      StateInput,
+		appName:    appName,
+		modelName:  modelName,
+		maxTurns:   maxTurns,
+		width:      80,
+		height:     24,
 	}
 }
 
@@ -123,7 +127,7 @@ func (m *Model) SetAgent(a *agent.Agent) {
 func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 	return func(_ context.Context, tool string, input json.RawMessage) (bool, error) {
 		// Auto-approve if user previously chose "always" for this tool.
-		if m.alwaysApproved[tool] {
+		if _, ok := m.alwaysApproved.Load(tool); ok {
 			return true, nil
 		}
 

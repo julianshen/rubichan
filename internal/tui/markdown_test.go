@@ -8,7 +8,8 @@ import (
 )
 
 func TestRenderMarkdown(t *testing.T) {
-	r := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80)
+	require.NoError(t, err)
 	result, err := r.Render("Hello **world**")
 	require.NoError(t, err)
 	assert.NotEmpty(t, result)
@@ -16,7 +17,8 @@ func TestRenderMarkdown(t *testing.T) {
 }
 
 func TestRenderMarkdownCodeBlock(t *testing.T) {
-	r := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80)
+	require.NoError(t, err)
 	md := "```go\nfmt.Println(\"hello\")\n```"
 	result, err := r.Render(md)
 	require.NoError(t, err)
@@ -24,7 +26,8 @@ func TestRenderMarkdownCodeBlock(t *testing.T) {
 }
 
 func TestRenderMarkdownBoldStripsMarkers(t *testing.T) {
-	r := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80)
+	require.NoError(t, err)
 	result, err := r.Render("Hello **world**")
 	require.NoError(t, err)
 	// Glamour should strip the ** markdown markers and apply ANSI styling
@@ -33,8 +36,17 @@ func TestRenderMarkdownBoldStripsMarkers(t *testing.T) {
 }
 
 func TestRenderMarkdownEmpty(t *testing.T) {
-	r := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80)
+	require.NoError(t, err)
 	result, err := r.Render("")
 	require.NoError(t, err)
 	assert.Empty(t, result)
+}
+
+func TestRenderMarkdownNilRenderer(t *testing.T) {
+	// A nil renderer should fall back to returning raw markdown.
+	r := &MarkdownRenderer{}
+	result, err := r.Render("Hello **world**")
+	require.NoError(t, err)
+	assert.Equal(t, "Hello **world**", result)
 }

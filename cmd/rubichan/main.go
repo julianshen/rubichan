@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/sourcegraph/conc"
@@ -436,8 +437,15 @@ func runInteractive() error {
 	if tui.NeedsBootstrap(cfgPath) {
 		wizard := tui.NewBootstrapForm(cfgPath)
 		prog := tea.NewProgram(wizard.Form())
-		if _, err := prog.Run(); err != nil {
+		finalModel, err := prog.Run()
+		if err != nil {
 			return fmt.Errorf("bootstrap wizard: %w", err)
+		}
+		// Bubble Tea returns the final form model after all Updates.
+		// We must check state on the returned model, not the original,
+		// because huh.Form.Update returns new instances.
+		if f, ok := finalModel.(*huh.Form); ok {
+			wizard.SetForm(f)
 		}
 		if wizard.IsAborted() {
 			return fmt.Errorf("setup cancelled")

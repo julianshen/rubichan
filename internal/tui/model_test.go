@@ -386,7 +386,7 @@ func TestModelUpdateEnterUserMessage(t *testing.T) {
 
 func TestModelStartTurnNilAgent(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
-	cmd := m.startTurn("test")
+	cmd := m.startTurn(nil, "test")
 
 	require.NotNil(t, cmd)
 	msg := cmd()
@@ -711,7 +711,10 @@ func TestModelConfigOverlayRoutesMessages(t *testing.T) {
 func TestModelApprovalChannelInitialized(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	assert.NotNil(t, m.approvalCh)
-	assert.NotNil(t, m.alwaysApproved)
+	// sync.Map is always usable at zero value — verify Store/Load works.
+	m.alwaysApproved.Store("test", true)
+	_, ok := m.alwaysApproved.Load("test")
+	assert.True(t, ok)
 }
 
 func TestModelApprovalRequestMsg(t *testing.T) {
@@ -818,7 +821,8 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	um := updated.(*Model)
 
 	assert.Equal(t, StateStreaming, um.state)
-	assert.True(t, um.alwaysApproved["shell"])
+	_, alwaysOK := um.alwaysApproved.Load("shell")
+	assert.True(t, alwaysOK)
 	assert.NotNil(t, cmd)
 
 	select {
@@ -877,7 +881,7 @@ func TestModelMakeApprovalFunc(t *testing.T) {
 
 func TestModelMakeApprovalFuncAlwaysApproved(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
-	m.alwaysApproved["shell"] = true
+	m.alwaysApproved.Store("shell", true)
 
 	fn := m.MakeApprovalFunc()
 
@@ -922,7 +926,16 @@ func TestModelCtrlCDuringApproval(t *testing.T) {
 	um := updated.(*Model)
 
 	assert.True(t, um.quitting)
+	assert.Nil(t, um.pendingApproval, "pendingApproval should be cleared on Ctrl+C")
 	require.NotNil(t, cmd)
 	msg := cmd()
 	assert.IsType(t, tea.QuitMsg{}, msg)
+
+	// Verify the agent goroutine was unblocked with a denial.
+	select {
+	case approved := <-respCh:
+		assert.False(t, approved, "Ctrl+C should deny the pending approval")
+	default:
+		t.Fatal("expected denial response on channel when Ctrl+C pressed during approval")
+	}
 }
