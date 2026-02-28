@@ -42,13 +42,16 @@ func (m *Model) View() string {
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
 
-	// Status line
+	// Status line / approval prompt
 	switch m.state {
 	case StateStreaming:
 		b.WriteString(fmt.Sprintf("%s Thinking...", m.spinner.View()))
 	case StateAwaitingApproval:
-		b.WriteString(m.statusBar.View())
-		b.WriteString("  Approve? [Y/N]")
+		if m.approvalPrompt != nil {
+			b.WriteString(m.approvalPrompt.View())
+		} else {
+			b.WriteString(m.statusBar.View())
+		}
 	default:
 		b.WriteString(m.statusBar.View())
 	}

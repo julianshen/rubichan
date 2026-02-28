@@ -23,9 +23,10 @@ type turnStartedMsg struct {
 	first agent.TurnEvent
 }
 
-// Init implements tea.Model. It initializes the input area.
+// Init implements tea.Model. It initializes the input area and starts
+// listening for approval requests from the agent.
 func (m *Model) Init() tea.Cmd {
-	return m.input.Init()
+	return tea.Batch(m.input.Init(), m.waitForApproval())
 }
 
 // Update implements tea.Model. It processes incoming messages and returns the
@@ -67,6 +68,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Height = viewportHeight
 		return m, nil
 
+	case approvalRequestMsg:
+		m.state = StateAwaitingApproval
+		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, m.width)
+		m.pendingApproval = &approvalRequest{
+			tool:     msg.tool,
+			input:    msg.input,
+			response: msg.response,
+		}
+		return m, m.waitForApproval()
+
 	case turnStartedMsg:
 		m.eventCh = msg.ch
 		return m.handleTurnEvent(TurnEventMsg(msg.first))
@@ -88,11 +99,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyMsg processes keyboard input.
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
+	// Ctrl+C always quits, regardless of state.
+	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
 		return m, tea.Quit
+	}
 
+	// Delegate to approval prompt when awaiting approval.
+	if m.state == StateAwaitingApproval && m.approvalPrompt != nil {
+		if m.approvalPrompt.HandleKey(msg) {
+			result := m.approvalPrompt.Result()
+			approved := result == ApprovalYes || result == ApprovalAlways
+			if result == ApprovalAlways {
+				m.alwaysApproved[m.pendingApproval.tool] = true
+			}
+			m.pendingApproval.response <- approved
+			m.approvalPrompt = nil
+			m.pendingApproval = nil
+			m.state = StateStreaming
+			return m, m.waitForEvent()
+		}
+		return m, nil
+	}
+
+	switch msg.Type {
 	case tea.KeyEnter:
 		if m.state != StateInput {
 			return m, nil

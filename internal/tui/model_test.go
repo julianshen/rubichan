@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -361,9 +364,11 @@ func TestModelViewStreaming(t *testing.T) {
 func TestModelViewAwaitingApproval(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateAwaitingApproval
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 80)
 	view := m.View()
 
-	assert.Contains(t, view, "Approve")
+	assert.Contains(t, view, "Allow")
+	assert.Contains(t, view, "(y)es")
 }
 
 func TestModelUpdateEnterUserMessage(t *testing.T) {
@@ -699,4 +704,225 @@ func TestModelConfigOverlayRoutesMessages(t *testing.T) {
 
 	// Should still be in config overlay state (not input state)
 	assert.Equal(t, StateConfigOverlay, um.state)
+}
+
+// --- Approval wiring tests ---
+
+func TestModelApprovalChannelInitialized(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	assert.NotNil(t, m.approvalCh)
+	assert.NotNil(t, m.alwaysApproved)
+}
+
+func TestModelApprovalRequestMsg(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateStreaming
+
+	// Simulate an approval request arriving
+	respCh := make(chan bool, 1)
+	msg := approvalRequestMsg{
+		tool:     "shell",
+		input:    `{"command":"ls"}`,
+		response: respCh,
+	}
+
+	updated, cmd := m.Update(msg)
+	um := updated.(*Model)
+
+	assert.Equal(t, StateAwaitingApproval, um.state)
+	assert.NotNil(t, um.approvalPrompt)
+	assert.NotNil(t, cmd, "should return a cmd to wait for next approval")
+}
+
+func TestModelApprovalKeyYes(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateAwaitingApproval
+
+	respCh := make(chan bool, 1)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.pendingApproval = &approvalRequest{
+		tool:     "shell",
+		input:    `{"command":"ls"}`,
+		response: respCh,
+	}
+
+	// Provide event channel so waitForEvent works
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	um := updated.(*Model)
+
+	assert.Equal(t, StateStreaming, um.state)
+	assert.Nil(t, um.approvalPrompt)
+	assert.NotNil(t, cmd, "should return waitForEvent cmd")
+
+	// Check that response was sent
+	select {
+	case approved := <-respCh:
+		assert.True(t, approved)
+	default:
+		t.Fatal("expected response on channel")
+	}
+}
+
+func TestModelApprovalKeyNo(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateAwaitingApproval
+
+	respCh := make(chan bool, 1)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, 60)
+	m.pendingApproval = &approvalRequest{
+		tool:     "shell",
+		input:    `{"command":"rm -rf /"}`,
+		response: respCh,
+	}
+
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	um := updated.(*Model)
+
+	assert.Equal(t, StateStreaming, um.state)
+	assert.Nil(t, um.approvalPrompt)
+	assert.NotNil(t, cmd)
+
+	select {
+	case approved := <-respCh:
+		assert.False(t, approved)
+	default:
+		t.Fatal("expected response on channel")
+	}
+}
+
+func TestModelApprovalKeyAlways(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateAwaitingApproval
+
+	respCh := make(chan bool, 1)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.pendingApproval = &approvalRequest{
+		tool:     "shell",
+		input:    `{"command":"ls"}`,
+		response: respCh,
+	}
+
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	um := updated.(*Model)
+
+	assert.Equal(t, StateStreaming, um.state)
+	assert.True(t, um.alwaysApproved["shell"])
+	assert.NotNil(t, cmd)
+
+	select {
+	case approved := <-respCh:
+		assert.True(t, approved)
+	default:
+		t.Fatal("expected response on channel")
+	}
+}
+
+func TestModelApprovalUnhandledKey(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateAwaitingApproval
+
+	respCh := make(chan bool, 1)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.pendingApproval = &approvalRequest{
+		tool:     "shell",
+		input:    `{"command":"ls"}`,
+		response: respCh,
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	um := updated.(*Model)
+
+	// Should remain in awaiting approval state
+	assert.Equal(t, StateAwaitingApproval, um.state)
+	assert.NotNil(t, um.approvalPrompt)
+	assert.Nil(t, cmd)
+
+	// No response should have been sent
+	select {
+	case <-respCh:
+		t.Fatal("no response expected for unhandled key")
+	default:
+		// expected
+	}
+}
+
+func TestModelApprovalViewShowsPrompt(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateAwaitingApproval
+	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, 60)
+
+	view := m.View()
+	assert.Contains(t, view, "file")
+	assert.Contains(t, view, "Allow")
+	assert.Contains(t, view, "(y)es")
+}
+
+func TestModelMakeApprovalFunc(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	fn := m.MakeApprovalFunc()
+	assert.NotNil(t, fn)
+}
+
+func TestModelMakeApprovalFuncAlwaysApproved(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.alwaysApproved["shell"] = true
+
+	fn := m.MakeApprovalFunc()
+
+	// Should return true immediately for always-approved tools.
+	// This runs in a goroutine to avoid blocking.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		approved, err := fn(context.Background(), "shell", json.RawMessage(`{}`))
+		assert.NoError(t, err)
+		assert.True(t, approved)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(time.Second):
+		t.Fatal("MakeApprovalFunc for always-approved tool should return immediately")
+	}
+}
+
+func TestModelInitIncludesWaitForApproval(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	cmd := m.Init()
+	// Init should return a batch that includes waitForApproval
+	assert.NotNil(t, cmd)
+}
+
+func TestModelCtrlCDuringApproval(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateAwaitingApproval
+
+	respCh := make(chan bool, 1)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.pendingApproval = &approvalRequest{
+		tool:     "shell",
+		input:    `{"command":"ls"}`,
+		response: respCh,
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	um := updated.(*Model)
+
+	assert.True(t, um.quitting)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	assert.IsType(t, tea.QuitMsg{}, msg)
 }

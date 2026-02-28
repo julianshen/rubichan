@@ -460,10 +460,15 @@ func runInteractive() error {
 		skillsFlag = removeSkill("apple-dev", skillsFlag)
 	}
 
-	// Deny tool calls by default; require explicit --auto-approve flag to skip approval.
-	// TODO: replace with TUI-based interactive approval prompt.
-	approvalFunc := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
-		return autoApprove, nil
+	// Build the approval function. When --auto-approve is set, skip the TUI
+	// prompt entirely. Otherwise, defer to the TUI model's interactive prompt.
+	// The model is created first (with nil agent) so we can extract its
+	// approval function before constructing the agent.
+	var approvalFunc agent.ApprovalFunc
+	if autoApprove {
+		approvalFunc = func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+			return true, nil
+		}
 	}
 
 	// Wire conversation persistence.
@@ -507,7 +512,20 @@ func runInteractive() error {
 	opts = append(opts, agent.WithSummarizer(summarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
-	// Create agent
+	// Resolve config path for /config command.
+	cfgPath := configPath
+	if cfgPath == "" {
+		cfgPath = filepath.Join(cfgDir, "config.toml")
+	}
+
+	// Create TUI model first (with nil agent) so we can extract the
+	// interactive approval function before constructing the agent.
+	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
+	if !autoApprove {
+		approvalFunc = model.MakeApprovalFunc()
+	}
+
+	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Register notes tool backed by agent's scratchpad.
@@ -515,14 +533,8 @@ func runInteractive() error {
 		return fmt.Errorf("registering notes tool: %w", err)
 	}
 
-	// Resolve config path for /config command.
-	cfgPath := configPath
-	if cfgPath == "" {
-		cfgPath = filepath.Join(cfgDir, "config.toml")
-	}
-
-	// Create TUI model and run
-	model := tui.NewModel(a, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
+	// Wire the agent into the TUI model now that both exist.
+	model.SetAgent(a)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

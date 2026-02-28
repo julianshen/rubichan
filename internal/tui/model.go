@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,6 +13,17 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 )
+
+// approvalRequest carries a tool approval request from the agent goroutine
+// to the TUI. The agent blocks on the response channel until the user decides.
+type approvalRequest struct {
+	tool     string
+	input    string
+	response chan bool
+}
+
+// approvalRequestMsg is the Bubble Tea message type for approval requests.
+type approvalRequestMsg approvalRequest
 
 // UIState represents the current state of the TUI.
 type UIState int
@@ -42,6 +55,10 @@ type Model struct {
 	mdRenderer        *MarkdownRenderer
 	toolBox           *ToolBoxRenderer
 	statusBar         *StatusBar
+	approvalPrompt    *ApprovalPrompt
+	pendingApproval   *approvalRequest
+	alwaysApproved    map[string]bool
+	approvalCh        chan approvalRequest
 	assistantStartIdx int
 	state             UIState
 	appName           string
@@ -74,21 +91,59 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	sb.SetTurn(0, maxTurns)
 
 	return &Model{
-		agent:      a,
-		cfg:        cfg,
-		configPath: configPath,
-		input:      ia,
-		viewport:   vp,
-		spinner:    sp,
-		mdRenderer: NewMarkdownRenderer(80),
-		toolBox:    NewToolBoxRenderer(80),
-		statusBar:  sb,
-		state:      StateInput,
-		appName:    appName,
-		modelName:  modelName,
-		maxTurns:   maxTurns,
-		width:      80,
-		height:     24,
+		agent:          a,
+		cfg:            cfg,
+		configPath:     configPath,
+		input:          ia,
+		viewport:       vp,
+		spinner:        sp,
+		mdRenderer:     NewMarkdownRenderer(80),
+		toolBox:        NewToolBoxRenderer(80),
+		statusBar:      sb,
+		alwaysApproved: make(map[string]bool),
+		approvalCh:     make(chan approvalRequest),
+		state:          StateInput,
+		appName:        appName,
+		modelName:      modelName,
+		maxTurns:       maxTurns,
+		width:          80,
+		height:         24,
+	}
+}
+
+// SetAgent sets the agent on the model. This is used when the model needs to
+// be created before the agent (e.g., to extract the approval function).
+func (m *Model) SetAgent(a *agent.Agent) {
+	m.agent = a
+}
+
+// MakeApprovalFunc returns an agent.ApprovalFunc that bridges the agent's
+// synchronous approval requests to the TUI's async keypress handling.
+// Tools previously marked "always" are auto-approved without prompting.
+func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
+	return func(_ context.Context, tool string, input json.RawMessage) (bool, error) {
+		// Auto-approve if user previously chose "always" for this tool.
+		if m.alwaysApproved[tool] {
+			return true, nil
+		}
+
+		respCh := make(chan bool, 1)
+		m.approvalCh <- approvalRequest{
+			tool:     tool,
+			input:    string(input),
+			response: respCh,
+		}
+		return <-respCh, nil
+	}
+}
+
+// waitForApproval returns a tea.Cmd that blocks until an approval request
+// arrives on the approval channel, then delivers it as an approvalRequestMsg.
+func (m *Model) waitForApproval() tea.Cmd {
+	ch := m.approvalCh
+	return func() tea.Msg {
+		req := <-ch
+		return approvalRequestMsg(req)
 	}
 }
 
