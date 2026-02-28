@@ -29,6 +29,13 @@ type AutoApproveChecker interface {
 	IsAutoApproved(tool string) bool
 }
 
+// AlwaysAutoApprove is an AutoApproveChecker that approves all tools.
+// Use for headless mode or --auto-approve where all tools are pre-approved.
+type AlwaysAutoApprove struct{}
+
+// IsAutoApproved always returns true.
+func (AlwaysAutoApprove) IsAutoApproved(_ string) bool { return true }
+
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
 	Type         string           // "text_delta", "tool_call", "tool_result", "error", "done"

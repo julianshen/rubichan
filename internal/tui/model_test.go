@@ -879,6 +879,23 @@ func TestModelMakeApprovalFunc(t *testing.T) {
 	assert.NotNil(t, fn)
 }
 
+func TestModelIsAutoApproved(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+
+	// Initially nothing is auto-approved.
+	assert.False(t, m.IsAutoApproved("shell"))
+	assert.False(t, m.IsAutoApproved("file"))
+
+	// Mark shell as always-approved.
+	m.alwaysApproved.Store("shell", true)
+	assert.True(t, m.IsAutoApproved("shell"))
+	assert.False(t, m.IsAutoApproved("file"), "unrelated tool should not be auto-approved")
+
+	// Mark file as well.
+	m.alwaysApproved.Store("file", true)
+	assert.True(t, m.IsAutoApproved("file"))
+}
+
 func TestModelMakeApprovalFuncAlwaysApproved(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.alwaysApproved.Store("shell", true)
