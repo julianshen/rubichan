@@ -91,6 +91,11 @@ func TestClassifyMixedBlocksHighestWins(t *testing.T) {
 	assert.Equal(t, "HIGH", classifyMessageImportance(msg))
 }
 
+func TestClassifyEmptyContent(t *testing.T) {
+	msg := provider.Message{Role: "user", Content: nil}
+	assert.Equal(t, "MEDIUM", classifyMessageImportance(msg))
+}
+
 // summarizerCapturingProvider records the CompletionRequest for assertion.
 type summarizerCapturingProvider struct {
 	captured *provider.CompletionRequest
