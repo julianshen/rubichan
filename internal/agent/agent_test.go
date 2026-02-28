@@ -1067,6 +1067,13 @@ func (autoApproveCheckerFunc) IsAutoApproved(tool string) bool {
 	return true
 }
 
+func TestAlwaysAutoApproveReturnsTrue(t *testing.T) {
+	checker := AlwaysAutoApprove{}
+	assert.True(t, checker.IsAutoApproved("shell"))
+	assert.True(t, checker.IsAutoApproved("file"))
+	assert.True(t, checker.IsAutoApproved(""))
+}
+
 func TestParallelToolExecutionAutoApproved(t *testing.T) {
 	// Two auto-approved tools should run concurrently. We verify by checking
 	// that both tools execute and results are returned in order.
