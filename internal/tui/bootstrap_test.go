@@ -126,6 +126,7 @@ func TestBootstrapFormSaveOpenAIKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "openai", loaded.Provider.Default)
 	require.Len(t, loaded.Provider.OpenAI, 1)
+	assert.Equal(t, "https://api.openai.com/v1", loaded.Provider.OpenAI[0].BaseURL)
 	assert.Equal(t, "sk-openai-test", loaded.Provider.OpenAI[0].APIKey)
 	// Anthropic key should remain empty.
 	assert.Empty(t, loaded.Provider.Anthropic.APIKey)

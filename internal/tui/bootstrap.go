@@ -108,7 +108,7 @@ func (b *BootstrapForm) Config() *config.Config { return b.cfg }
 func (b *BootstrapForm) Save() error {
 	if b.cfg.Provider.Default == "openai" && b.openaiKey != "" {
 		b.cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
-			{Name: "default", APIKey: b.openaiKey},
+			{Name: "default", BaseURL: "https://api.openai.com/v1", APIKey: b.openaiKey},
 		}
 	}
 	return config.Save(b.savePath, b.cfg)
