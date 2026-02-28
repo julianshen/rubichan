@@ -59,7 +59,12 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 			if evt.ToolResult != nil {
 				for i := range toolCalls {
 					if toolCalls[i].ID == evt.ToolResult.ID {
-						toolCalls[i].Result = evt.ToolResult.Content
+						// Prefer DisplayContent for user-facing output.
+						result := evt.ToolResult.DisplayContent
+						if result == "" {
+							result = evt.ToolResult.Content
+						}
+						toolCalls[i].Result = result
 						toolCalls[i].IsError = evt.ToolResult.IsError
 						break
 					}
