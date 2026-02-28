@@ -1307,6 +1307,87 @@ func TestMixedParallelAndSequential(t *testing.T) {
 	}
 	// Both tools should execute and results should be in original order.
 	assert.Equal(t, []string{"tool_a", "tool_b"}, resultNames)
+
+	// Verify conversation messages are also in original order.
+	var toolResultIDs []string
+	for _, msg := range a.conversation.Messages() {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" {
+				toolResultIDs = append(toolResultIDs, block.ToolUseID)
+			}
+		}
+	}
+	assert.Equal(t, []string{"t1", "t2"}, toolResultIDs)
+}
+
+func TestMixedParallelReversedOrder(t *testing.T) {
+	// Regression: needs-approval tool first (index 0), auto-approved second (index 1).
+	// Results must still be added to conversation in original order (t1 before t2).
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "needs approval",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+	toolB := &mockTool{
+		name:        "tool_b",
+		description: "auto-approved",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_b"}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				// tool_a (needs approval) at index 0, tool_b (auto-approved) at index 1
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: "tool_b"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+	require.NoError(t, reg.Register(toolB))
+
+	// Only tool_b is auto-approved.
+	partialChecker := &selectiveChecker{approved: map[string]bool{"tool_b": true}}
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg, WithAutoApproveChecker(partialChecker))
+
+	ch, err := a.Turn(context.Background(), "run reversed mixed tools")
+	require.NoError(t, err)
+
+	var resultIDs []string
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			resultIDs = append(resultIDs, ev.ToolResult.ID)
+		}
+	}
+	// Results must be in original order: t1 (needs-approval) before t2 (auto-approved).
+	assert.Equal(t, []string{"t1", "t2"}, resultIDs)
+
+	// Conversation must also have them in order.
+	var convIDs []string
+	for _, msg := range a.conversation.Messages() {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" {
+				convIDs = append(convIDs, block.ToolUseID)
+			}
+		}
+	}
+	assert.Equal(t, []string{"t1", "t2"}, convIDs)
 }
 
 // selectiveChecker only auto-approves tools in its approved map.

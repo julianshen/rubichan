@@ -506,13 +506,11 @@ const maxParallelTools = 8
 
 // toolExecResult holds the result of a single tool execution for batching.
 type toolExecResult struct {
-	index int
 	event TurnEvent
-	// Fields for conversation/persistence, applied after all parallel tools finish.
-	toolUseID      string
-	content        string
-	displayContent string
-	isError        bool
+	// Fields for conversation/persistence, applied after all tools finish.
+	toolUseID string
+	content   string
+	isError   bool
 }
 
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
@@ -537,14 +535,16 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		}
 	}
 
-	// Emit tool_call events for all tools first (in order).
-	for _, tc := range pendingTools {
+	// Emit tool_call events for auto-approved tools upfront (in order).
+	// Needs-approval tool_call events are emitted just before approval,
+	// matching the sequential path behavior.
+	for _, it := range autoApproved {
 		ch <- TurnEvent{
 			Type: "tool_call",
 			ToolCall: &ToolCallEvent{
-				ID:    tc.ID,
-				Name:  tc.Name,
-				Input: tc.Input,
+				ID:    it.tc.ID,
+				Name:  it.tc.Name,
+				Input: it.tc.Input,
 			},
 		}
 	}
@@ -552,7 +552,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	// Results array indexed by original position.
 	results := make([]toolExecResult, len(pendingTools))
 
-	// Execute auto-approved tools in parallel.
+	// Execute auto-approved tools in parallel (hooks + execution, no approval).
 	if len(autoApproved) > 0 {
 		if ctx.Err() != nil {
 			return true
@@ -568,22 +568,13 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		for _, it := range autoApproved {
 			it := it // capture
 			p.Go(func() {
-				res := a.executeSingleToolCore(ctx, it.tc)
+				res := a.executeSingleTool(ctx, it.tc)
 				mu.Lock()
 				results[it.index] = res
-				results[it.index].index = it.index
 				mu.Unlock()
 			})
 		}
 		p.Wait()
-
-		// Emit results and update conversation in original order.
-		for _, it := range autoApproved {
-			r := results[it.index]
-			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
-			a.persistToolResult(r.toolUseID, r.content, r.isError)
-			ch <- r.event
-		}
 	}
 
 	// Execute needs-approval tools sequentially.
@@ -592,8 +583,21 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			return true
 		}
 
-		// These need the full sequential flow with approval.
-		r := a.executeSingleToolWithApproval(ctx, it.tc)
+		ch <- TurnEvent{
+			Type: "tool_call",
+			ToolCall: &ToolCallEvent{
+				ID:    it.tc.ID,
+				Name:  it.tc.Name,
+				Input: it.tc.Input,
+			},
+		}
+
+		results[it.index] = a.executeSingleToolWithApproval(ctx, it.tc)
+	}
+
+	// Emit all results and update conversation in original tool call order.
+	for i := range pendingTools {
+		r := results[i]
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
@@ -626,8 +630,35 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 	return false
 }
 
-// executeSingleToolWithApproval runs hooks, approval, and execution for one tool.
+// executeSingleToolWithApproval runs approval check then delegates to executeSingleTool.
 func (a *Agent) executeSingleToolWithApproval(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+	// Check approval.
+	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
+	if approvalErr != nil {
+		result := fmt.Sprintf("approval error: %s", approvalErr)
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+	if !approved {
+		result := "tool call denied by user"
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+
+	return a.executeSingleTool(ctx, tc)
+}
+
+// executeSingleTool dispatches hooks, looks up, and executes a tool.
+// Used by both the parallel and sequential paths.
+func (a *Agent) executeSingleTool(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
 	// Dispatch HookOnBeforeToolCall hook.
 	hookResult, hookErr := a.dispatchHook(skills.HookEvent{
 		Phase: skills.HookOnBeforeToolCall,
@@ -656,32 +687,6 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, tc provider.T
 		}
 	}
 
-	// Check approval.
-	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
-	if approvalErr != nil {
-		result := fmt.Sprintf("approval error: %s", approvalErr)
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
-	}
-	if !approved {
-		result := "tool call denied by user"
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
-	}
-
-	return a.executeSingleToolCore(ctx, tc)
-}
-
-// executeSingleToolCore looks up and executes a tool (no approval check).
-func (a *Agent) executeSingleToolCore(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
 	tool, found := a.tools.Get(tc.Name)
 	if !found {
 		result := fmt.Sprintf("unknown tool: %s", tc.Name)
@@ -721,11 +726,10 @@ func (a *Agent) executeSingleToolCore(ctx context.Context, tc provider.ToolUseBl
 	}
 
 	return toolExecResult{
-		toolUseID:      tc.ID,
-		content:        toolResult.Content,
-		displayContent: toolResult.DisplayContent,
-		isError:        toolResult.IsError,
-		event:          makeToolResultEvent(tc.ID, tc.Name, toolResult.Content, toolResult.DisplayContent, toolResult.IsError),
+		toolUseID: tc.ID,
+		content:   toolResult.Content,
+		isError:   toolResult.IsError,
+		event:     makeToolResultEvent(tc.ID, tc.Name, toolResult.Content, toolResult.DisplayContent, toolResult.IsError),
 	}
 }
 
