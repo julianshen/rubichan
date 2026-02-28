@@ -71,6 +71,14 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
 	if messageBudget < 0 {
 		messageBudget = 0
 	}
+	// Compute signals once; inject into strategies that support dynamic adjustment.
+	signals := ComputeConversationSignals(conv.messages)
+	for _, s := range cm.strategies {
+		if sa, ok := s.(SignalAware); ok {
+			sa.SetSignals(signals)
+		}
+	}
+
 	for i, s := range cm.strategies {
 		// First strategy always runs (we passed ShouldCompact).
 		// Subsequent strategies only run if still over 100% budget.

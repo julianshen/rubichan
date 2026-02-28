@@ -89,18 +89,19 @@ func (s *summarizationStrategy) Compact(ctx context.Context, messages []provider
 	return result, nil
 }
 
-// findSafeSplitPoint adjusts a target split index so that messages[splitIdx]
-// does not start with a tool_result (which would be orphaned from its
-// preceding tool_use). Scans backward to find the matching tool_use.
-// Returns at least 2 to ensure minimum summarizable messages.
+// findSafeSplitPoint adjusts a target split index so that the split does not
+// break a tool_use/tool_result pair. If messages[target] is a tool_result, it
+// scans backward past it. If messages[target] is a tool_use, it also scans
+// backward so the tool_use and its following tool_result stay together on the
+// recent side. Returns at least 2 to ensure minimum summarizable messages.
 func findSafeSplitPoint(messages []provider.Message, target int) int {
 	if target >= len(messages) {
 		target = len(messages) - 1
 	}
 
-	// If the message at the split point has a tool_result, scan backward
-	// to include the matching tool_use on the recent side.
-	for target > 2 && hasToolResult(messages[target]) {
+	// Scan backward past tool_result or tool_use at the split boundary
+	// to keep tool pairs together on the same side.
+	for target > 2 && (hasToolResult(messages[target]) || hasToolUse(messages[target])) {
 		target--
 	}
 

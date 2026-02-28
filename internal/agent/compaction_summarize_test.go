@@ -230,14 +230,15 @@ func TestSummarizationSplitSafeWhenNoToolPairs(t *testing.T) {
 	assert.Len(t, result, 5)
 }
 
-func TestSummarizationSplitAtToolUseIncludesPair(t *testing.T) {
+func TestSummarizationSplitMovesBackwardPastToolUse(t *testing.T) {
 	ms := &mockSummarizer{summary: "summary"}
 	s := NewSummarizationStrategy(ms)
 	s.messageThreshold = 4
 
 	// Build 8 messages where tool_use is at index 4 and tool_result at index 5.
-	// 60% of 8 = 4, but index 4 is the tool_use. The split should keep
-	// both tool_use (4) and tool_result (5) on the same side.
+	// 60% of 8 = 4. Since index 4 is a tool_use, findSafeSplitPoint should
+	// move backward to index 3, keeping the tool_use/tool_result pair together
+	// on the recent side.
 	messages := []provider.Message{
 		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "msg 0"}}},
 		{Role: "assistant", Content: []provider.ContentBlock{{Type: "text", Text: "msg 1"}}},
@@ -252,11 +253,90 @@ func TestSummarizationSplitAtToolUseIncludesPair(t *testing.T) {
 	result, err := s.Compact(context.Background(), messages, 100000)
 	require.NoError(t, err)
 
-	// The summarizer should receive messages that DON'T split a tool pair.
 	// Verify no orphaned tool_result in recent messages.
 	if len(result) > 1 {
 		assert.NotEqual(t, "tool_result", result[1].Content[0].Type,
 			"recent messages should not start with orphaned tool_result")
+	}
+	// Summarizer should have received fewer than 4 messages (split moved back).
+	assert.Less(t, len(ms.received), 5,
+		"split should move backward past tool_use so pair stays on recent side")
+}
+
+// --- findSafeSplitPoint unit tests ---
+
+func TestFindSafeSplitPoint(t *testing.T) {
+	text := func(s string) provider.Message {
+		return provider.Message{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: s}}}
+	}
+	toolUse := func() provider.Message {
+		return provider.Message{Role: "assistant", Content: []provider.ContentBlock{{Type: "tool_use", ID: "t1", Name: "file"}}}
+	}
+	toolResult := func() provider.Message {
+		return provider.Message{Role: "user", Content: []provider.ContentBlock{{Type: "tool_result", ToolUseID: "t1", Text: "ok"}}}
+	}
+
+	tests := []struct {
+		name     string
+		messages []provider.Message
+		target   int
+		want     int
+	}{
+		{
+			name:     "safe target stays unchanged",
+			messages: []provider.Message{text("a"), text("b"), text("c"), text("d"), text("e")},
+			target:   3,
+			want:     3,
+		},
+		{
+			name:     "tool_result at target moves backward past tool_use too",
+			messages: []provider.Message{text("a"), text("b"), text("c"), toolUse(), toolResult(), text("e")},
+			target:   4,
+			want:     2, // scans past toolResult(4) AND toolUse(3), stops at text(2)
+		},
+		{
+			name:     "tool_use at target moves backward",
+			messages: []provider.Message{text("a"), text("b"), text("c"), toolUse(), toolResult(), text("e")},
+			target:   3,
+			want:     2,
+		},
+		{
+			name:     "consecutive tool pairs move past both",
+			messages: []provider.Message{text("a"), text("b"), text("c"), toolUse(), toolResult(), toolUse(), toolResult(), text("h")},
+			target:   6,
+			want:     2,
+		},
+		{
+			name:     "target at 0 clamps to 2",
+			messages: []provider.Message{toolResult(), text("a"), text("b"), text("c")},
+			target:   0,
+			want:     2,
+		},
+		{
+			name:     "target at 1 clamps to 2",
+			messages: []provider.Message{text("a"), toolResult(), text("b"), text("c")},
+			target:   1,
+			want:     2,
+		},
+		{
+			name:     "target beyond length clamps to last index",
+			messages: []provider.Message{text("a"), text("b"), text("c")},
+			target:   10,
+			want:     2,
+		},
+		{
+			name:     "all tool messages clamps to 2",
+			messages: []provider.Message{text("a"), text("b"), toolUse(), toolResult(), toolUse(), toolResult()},
+			target:   5,
+			want:     2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findSafeSplitPoint(tt.messages, tt.target)
+			assert.Equal(t, tt.want, got)
+		})
 	}
 }
 
