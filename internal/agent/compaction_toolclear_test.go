@@ -130,6 +130,132 @@ func TestToolResultClearingNonToolResultsUntouched(t *testing.T) {
 	assert.Equal(t, largeText, result[0].Content[0].Text)
 }
 
+func TestToolClearingImplementsSignalAware(t *testing.T) {
+	s := NewToolResultClearingStrategy()
+	var _ SignalAware = s // compile-time check
+	assert.NotNil(t, s)
+}
+
+func TestToolClearingWithoutSignals(t *testing.T) {
+	// Default behavior: 50% cutoff, 1024 threshold — no signals injected.
+	s := &toolResultClearingStrategy{threshold: 100}
+
+	largeContent := strings.Repeat("x", 200)
+	messages := make([]provider.Message, 20)
+	for i := range messages {
+		if i == 0 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "tool_result", ToolUseID: "t1", Text: largeContent},
+			}}
+		} else if i%2 == 0 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "text", Text: "msg"},
+			}}
+		} else {
+			messages[i] = provider.Message{Role: "assistant", Content: []provider.ContentBlock{
+				{Type: "text", Text: "resp"},
+			}}
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// Default cutoff = 50% = 10. Message[0] is in oldest half, should be cleared.
+	assert.Contains(t, result[0].Content[0].Text, "[Tool result cleared")
+}
+
+func TestToolClearingHighToolDensity(t *testing.T) {
+	s := NewToolResultClearingStrategy()
+	s.SetSignals(ConversationSignals{ToolCallDensity: 0.7, ErrorDensity: 0.0, MessageCount: 20})
+
+	largeContent := strings.Repeat("x", 2000)
+	// 20 messages, tool result at index 12 (past default 50% but within 65%)
+	messages := make([]provider.Message, 20)
+	for i := range messages {
+		if i == 12 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "tool_result", ToolUseID: "t1", Text: largeContent},
+			}}
+		} else if i%2 == 0 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "text", Text: "msg"},
+			}}
+		} else {
+			messages[i] = provider.Message{Role: "assistant", Content: []provider.ContentBlock{
+				{Type: "text", Text: "resp"},
+			}}
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// With high tool density, cutoff moves to 65%. Index 12 < 13 (65% of 20).
+	assert.Contains(t, result[12].Content[0].Text, "[Tool result cleared")
+}
+
+func TestToolClearingHighErrorDensity(t *testing.T) {
+	s := NewToolResultClearingStrategy()
+	s.SetSignals(ConversationSignals{ErrorDensity: 0.4, ToolCallDensity: 0.0, MessageCount: 20})
+
+	largeContent := strings.Repeat("x", 2000)
+	// 20 messages, tool result at index 8 (past 35% cutoff=7 but within default 50%)
+	messages := make([]provider.Message, 20)
+	for i := range messages {
+		if i == 8 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "tool_result", ToolUseID: "t1", Text: largeContent},
+			}}
+		} else if i%2 == 0 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "text", Text: "msg"},
+			}}
+		} else {
+			messages[i] = provider.Message{Role: "assistant", Content: []provider.ContentBlock{
+				{Type: "text", Text: "resp"},
+			}}
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// With high error density, cutoff shrinks to 35%. Index 8 > 7. Not cleared.
+	assert.Equal(t, largeContent, result[8].Content[0].Text)
+}
+
+func TestToolClearingBothSignals(t *testing.T) {
+	s := NewToolResultClearingStrategy()
+	s.SetSignals(ConversationSignals{ErrorDensity: 0.4, ToolCallDensity: 0.7, MessageCount: 20})
+
+	largeContent := strings.Repeat("x", 2000)
+	// ErrorDensity wins for cutoff → 35%. Tool result at index 8 should NOT be cleared.
+	messages := make([]provider.Message, 20)
+	for i := range messages {
+		if i == 8 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "tool_result", ToolUseID: "t1", Text: largeContent},
+			}}
+		} else if i%2 == 0 {
+			messages[i] = provider.Message{Role: "user", Content: []provider.ContentBlock{
+				{Type: "text", Text: "msg"},
+			}}
+		} else {
+			messages[i] = provider.Message{Role: "assistant", Content: []provider.ContentBlock{
+				{Type: "text", Text: "resp"},
+			}}
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// ErrorDensity wins — cutoff 35%, threshold still lowered (768).
+	// Index 8 > 7 (35% of 20), so not cleared.
+	assert.Equal(t, largeContent, result[8].Content[0].Text)
+}
+
 func TestToolResultClearingIntegrationWithCompact(t *testing.T) {
 	cm := NewContextManager(80)
 	cm.SetStrategies([]CompactionStrategy{

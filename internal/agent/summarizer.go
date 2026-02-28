@@ -24,13 +24,40 @@ func NewLLMSummarizer(p provider.LLMProvider, model string) *LLMSummarizer {
 	return &LLMSummarizer{provider: p, model: model}
 }
 
+// classifyMessageImportance returns HIGH, MEDIUM, or LOW for a message.
+// The highest importance block in the message wins.
+func classifyMessageImportance(msg provider.Message) string {
+	highest := "MEDIUM"
+	for _, block := range msg.Content {
+		var level string
+		switch {
+		case block.Type == "tool_result" && block.IsError:
+			return "HIGH" // error results are always highest
+		case block.Type == "text" && msg.Role == "user" && len(block.Text) < 100:
+			level = "HIGH" // short user text — likely correction/follow-up
+		case block.Type == "tool_result" && len(block.Text) > 500:
+			level = "LOW" // large successful output — routine
+		default:
+			level = "MEDIUM"
+		}
+		if level == "HIGH" {
+			highest = "HIGH"
+		}
+		if level == "LOW" && highest != "HIGH" {
+			highest = "LOW"
+		}
+	}
+	return highest
+}
+
 // Summarize sends the messages to the LLM with a summarization prompt and
 // returns the condensed text.
 func (s *LLMSummarizer) Summarize(ctx context.Context, messages []provider.Message) (string, error) {
-	// Build a text representation of the messages for the prompt.
+	// Build a text representation of the messages with importance tags.
 	var sb strings.Builder
 	for _, msg := range messages {
-		sb.WriteString(fmt.Sprintf("[%s] ", msg.Role))
+		importance := classifyMessageImportance(msg)
+		sb.WriteString(fmt.Sprintf("[%s] [%s] ", importance, msg.Role))
 		for _, block := range msg.Content {
 			switch block.Type {
 			case "tool_use":
@@ -52,6 +79,10 @@ func (s *LLMSummarizer) Summarize(ctx context.Context, messages []provider.Messa
 
 	systemPrompt := "You are a conversation summarizer. Condense the following conversation " +
 		"into a brief summary capturing key facts, decisions, code changes, and important context. " +
+		"Each message is tagged with an importance level:\n" +
+		"- [HIGH]: Preserve details fully — these contain errors, corrections, or critical decisions.\n" +
+		"- [MEDIUM]: Summarize intent and outcome.\n" +
+		"- [LOW]: Mention the action succeeded, omit raw output.\n" +
 		"Be concise but preserve critical information that would be needed to continue the conversation."
 
 	req := provider.CompletionRequest{

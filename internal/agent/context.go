@@ -17,15 +17,17 @@ type CompactionStrategy interface {
 // ContextManager tracks token usage and compacts conversation history
 // to stay within a configured budget using a chain of strategies.
 type ContextManager struct {
-	budget     int
-	strategies []CompactionStrategy
+	budget       int
+	triggerRatio float64 // fraction of budget at which to trigger compaction (default 0.7)
+	strategies   []CompactionStrategy
 }
 
 // NewContextManager creates a new ContextManager with the given token budget.
 // The default strategy chain contains only truncation.
 func NewContextManager(budget int) *ContextManager {
 	return &ContextManager{
-		budget: budget,
+		budget:       budget,
+		triggerRatio: 0.7,
 		strategies: []CompactionStrategy{
 			NewToolResultClearingStrategy(),
 			&truncateStrategy{},
@@ -46,11 +48,21 @@ func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
 	cm.strategies = strategies
 }
 
+// ShouldCompact returns true when the estimated token count exceeds the
+// proactive trigger threshold (default 70% of budget), allowing compaction
+// to start before the conversation fully exhausts the context window.
+func (cm *ContextManager) ShouldCompact(conv *Conversation) bool {
+	threshold := int(float64(cm.budget) * cm.triggerRatio)
+	return cm.EstimateTokens(conv) > threshold
+}
+
 // Compact runs the compaction strategy chain until the conversation fits
 // within the token budget. Strategies are tried in order; the chain stops
-// as soon as the conversation is under budget.
+// as soon as the conversation is under budget. Triggers proactively at
+// the configured triggerRatio (default 70%) to leave headroom for quality
+// summarization.
 func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
-	if !cm.ExceedsBudget(conv) {
+	if !cm.ShouldCompact(conv) {
 		return
 	}
 	// Subtract system prompt overhead so strategies only need to fit messages.
@@ -59,8 +71,18 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
 	if messageBudget < 0 {
 		messageBudget = 0
 	}
+	// Compute signals once; inject into strategies that support dynamic adjustment.
+	signals := ComputeConversationSignals(conv.messages)
 	for _, s := range cm.strategies {
-		if !cm.ExceedsBudget(conv) {
+		if sa, ok := s.(SignalAware); ok {
+			sa.SetSignals(signals)
+		}
+	}
+
+	for i, s := range cm.strategies {
+		// First strategy always runs (we passed ShouldCompact).
+		// Subsequent strategies only run if still over 100% budget.
+		if i > 0 && !cm.ExceedsBudget(conv) {
 			return
 		}
 		result, err := s.Compact(ctx, conv.messages, messageBudget)
@@ -133,6 +155,16 @@ func (s *truncateStrategy) Compact(_ context.Context, messages []provider.Messag
 func hasToolResult(msg provider.Message) bool {
 	for _, block := range msg.Content {
 		if block.Type == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasToolUse returns true if any content block in the message is a tool_use.
+func hasToolUse(msg provider.Message) bool {
+	for _, block := range msg.Content {
+		if block.Type == "tool_use" {
 			return true
 		}
 	}
