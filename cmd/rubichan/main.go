@@ -422,6 +422,33 @@ func loadConfig() (*config.Config, error) {
 }
 
 func runInteractive() error {
+	// Resolve config path early for bootstrap check.
+	cfgDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	cfgPath := configPath
+	if cfgPath == "" {
+		cfgPath = filepath.Join(cfgDir, "config.toml")
+	}
+
+	// Run first-run bootstrap wizard if no config/API key found.
+	if tui.NeedsBootstrap(cfgPath) {
+		wizard := tui.NewBootstrapForm(cfgPath)
+		prog := tea.NewProgram(wizard.Form())
+		if _, err := prog.Run(); err != nil {
+			return fmt.Errorf("bootstrap wizard: %w", err)
+		}
+		if wizard.IsAborted() {
+			return fmt.Errorf("setup cancelled")
+		}
+		if wizard.IsCompleted() {
+			if err := wizard.Save(); err != nil {
+				return fmt.Errorf("saving bootstrap config: %w", err)
+			}
+		}
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -472,10 +499,6 @@ func runInteractive() error {
 	}
 
 	// Wire conversation persistence.
-	cfgDir, err := configDir()
-	if err != nil {
-		return err
-	}
 	s, err := openStore(cfgDir)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
@@ -511,12 +534,6 @@ func runInteractive() error {
 	summarizer := agent.NewLLMSummarizer(p, cfg.Provider.Model)
 	opts = append(opts, agent.WithSummarizer(summarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
-
-	// Resolve config path for /config command.
-	cfgPath := configPath
-	if cfgPath == "" {
-		cfgPath = filepath.Join(cfgDir, "config.toml")
-	}
 
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
