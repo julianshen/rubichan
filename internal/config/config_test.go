@@ -288,3 +288,33 @@ approved_skills = ["lint-fixer", "test-gen", "security-scan"]
 	assert.Equal(t, 20, cfg.Skills.MaxShellExecPerTurn)
 	assert.Equal(t, 10, cfg.Skills.MaxNetFetchPerTurn)
 }
+
+func TestSaveAndReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	cfg := DefaultConfig()
+	cfg.Provider.Default = "ollama"
+	cfg.Provider.Model = "llama3"
+	cfg.Agent.MaxTurns = 25
+
+	err := Save(path, cfg)
+	require.NoError(t, err)
+
+	loaded, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "ollama", loaded.Provider.Default)
+	assert.Equal(t, "llama3", loaded.Provider.Model)
+	assert.Equal(t, 25, loaded.Agent.MaxTurns)
+}
+
+func TestSaveCreatesDirectory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "dir", "config.toml")
+
+	err := Save(path, DefaultConfig())
+	require.NoError(t, err)
+
+	_, err = os.Stat(path)
+	assert.NoError(t, err)
+}

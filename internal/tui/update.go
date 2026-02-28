@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 
 	"github.com/julianshen/rubichan/internal/agent"
 )
@@ -23,18 +23,33 @@ type turnStartedMsg struct {
 	first agent.TurnEvent
 }
 
-// maxToolResultDisplay is the maximum number of characters to display for a
-// tool result before truncation.
-const maxToolResultDisplay = 500
-
-// Init implements tea.Model. It starts the text input cursor blinking.
+// Init implements tea.Model. It initializes the input area and starts
+// listening for approval requests from the agent.
 func (m *Model) Init() tea.Cmd {
-	return textinput.Blink
+	return tea.Batch(m.input.Init(), m.waitForApproval())
 }
 
 // Update implements tea.Model. It processes incoming messages and returns the
 // updated model and any commands to execute.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Route messages to config form overlay when active.
+	if m.state == StateConfigOverlay && m.configForm != nil {
+		form, cmd := m.configForm.Form().Update(msg)
+		if f, ok := form.(*huh.Form); ok {
+			m.configForm.SetForm(f)
+		}
+		switch m.configForm.Form().State {
+		case huh.StateCompleted:
+			_ = m.configForm.Save()
+			m.state = StateInput
+			m.configForm = nil
+		case huh.StateAborted:
+			m.state = StateInput
+			m.configForm = nil
+		}
+		return m, cmd
+	}
+
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -52,6 +67,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = m.width
 		m.viewport.Height = viewportHeight
 		return m, nil
+
+	case approvalRequestMsg:
+		m.state = StateAwaitingApproval
+		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, m.width)
+		m.pendingApproval = &approvalRequest{
+			tool:     msg.tool,
+			input:    msg.input,
+			response: msg.response,
+		}
+		return m, m.waitForApproval()
 
 	case turnStartedMsg:
 		m.eventCh = msg.ch
@@ -74,11 +99,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyMsg processes keyboard input.
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
+	// Ctrl+C always quits, regardless of state.
+	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
+		// Unblock the agent goroutine if it's waiting for approval.
+		if m.pendingApproval != nil {
+			m.pendingApproval.response <- false
+			m.pendingApproval = nil
+		}
 		return m, tea.Quit
+	}
 
+	// Delegate to approval prompt when awaiting approval.
+	if m.state == StateAwaitingApproval && m.approvalPrompt != nil {
+		if m.approvalPrompt.HandleKey(msg) {
+			result := m.approvalPrompt.Result()
+			approved := result == ApprovalYes || result == ApprovalAlways
+			if result == ApprovalAlways {
+				m.alwaysApproved.Store(m.pendingApproval.tool, true)
+			}
+			m.pendingApproval.response <- approved
+			m.approvalPrompt = nil
+			m.pendingApproval = nil
+			m.state = StateStreaming
+			return m, m.waitForEvent()
+		}
+		return m, nil
+	}
+
+	switch msg.Type {
 	case tea.KeyEnter:
 		if m.state != StateInput {
 			return m, nil
@@ -87,7 +136,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		m.input.SetValue("")
+		m.input.Reset()
 
 		if strings.HasPrefix(text, "/") {
 			cmd := m.handleCommand(text)
@@ -98,15 +147,15 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.content.WriteString(fmt.Sprintf("> %s\n", text))
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
+		m.assistantStartIdx = m.content.Len()
 		m.state = StateStreaming
 
-		return m, tea.Batch(m.startTurn(text), m.spinner.Tick)
+		return m, tea.Batch(m.startTurn(m.agent, text), m.spinner.Tick)
 
 	default:
-		// Forward key to textinput
+		// Forward key to input area
 		if m.state == StateInput {
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
+			cmd := m.input.Update(msg)
 			return m, cmd
 		}
 		return m, nil
@@ -114,18 +163,19 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // startTurn initiates an agent turn and returns a tea.Cmd that sends back a
-// turnStartedMsg carrying the channel and first event. This avoids mutating
-// m.eventCh from the Cmd goroutine (which would be a data race).
-func (m *Model) startTurn(text string) tea.Cmd {
+// turnStartedMsg carrying the channel and first event. The agent is captured
+// as a parameter (not read from m.agent in the closure) to avoid a data race
+// between the Cmd goroutine and the Update goroutine.
+func (m *Model) startTurn(a *agent.Agent, text string) tea.Cmd {
 	return func() tea.Msg {
-		if m.agent == nil {
+		if a == nil {
 			return TurnEventMsg(agent.TurnEvent{
 				Type:  "error",
 				Error: fmt.Errorf("no agent configured"),
 			})
 		}
 
-		ch, err := m.agent.Turn(context.Background(), text)
+		ch, err := a.Turn(context.Background(), text)
 		if err != nil {
 			return TurnEventMsg(agent.TurnEvent{
 				Type:  "error",
@@ -163,6 +213,7 @@ func (m *Model) waitForEvent() tea.Cmd {
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case "text_delta":
+		m.rawAssistant.WriteString(msg.Text)
 		m.content.WriteString(msg.Text)
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
@@ -170,23 +221,26 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 
 	case "tool_call":
 		name := ""
+		args := ""
 		if msg.ToolCall != nil {
 			name = msg.ToolCall.Name
+			args = string(msg.ToolCall.Input)
 		}
-		m.content.WriteString(fmt.Sprintf("\n[Tool: %s]\n", name))
+		m.content.WriteString(m.toolBox.RenderToolCall(name, args))
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
 		return m, m.waitForEvent()
 
 	case "tool_result":
 		resultContent := ""
+		resultName := ""
+		isError := false
 		if msg.ToolResult != nil {
 			resultContent = msg.ToolResult.Content
+			resultName = msg.ToolResult.Name
+			isError = msg.ToolResult.IsError
 		}
-		if len(resultContent) > maxToolResultDisplay {
-			resultContent = resultContent[:maxToolResultDisplay] + "..."
-		}
-		m.content.WriteString(fmt.Sprintf("Result: %s\n", resultContent))
+		m.content.WriteString(m.toolBox.RenderToolResult(resultName, resultContent, isError))
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
 		return m, m.waitForEvent()
@@ -202,9 +256,33 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "done":
+		raw := m.rawAssistant.String()
+		if raw != "" {
+			rendered, err := m.mdRenderer.Render(raw)
+			if err == nil && rendered != "" {
+				contentStr := m.content.String()
+				m.content.Reset()
+				m.content.WriteString(contentStr[:m.assistantStartIdx])
+				m.content.WriteString(rendered)
+			}
+		}
+		m.rawAssistant.Reset()
 		m.content.WriteString("\n")
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
+
+		// Update status bar with token usage and turn count.
+		m.turnCount++
+		contextBudget := 100000
+		if m.cfg != nil && m.cfg.Agent.ContextBudget > 0 {
+			contextBudget = m.cfg.Agent.ContextBudget
+		}
+		m.statusBar.SetTokens(msg.InputTokens, contextBudget)
+		m.statusBar.SetTurn(m.turnCount, m.maxTurns)
+		cost := EstimateCost(m.modelName, msg.InputTokens, msg.OutputTokens)
+		m.totalCost += cost
+		m.statusBar.SetCost(m.totalCost)
+
 		m.state = StateInput
 		m.eventCh = nil
 		return m, nil

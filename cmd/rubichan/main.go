@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/sourcegraph/conc"
@@ -422,6 +423,40 @@ func loadConfig() (*config.Config, error) {
 }
 
 func runInteractive() error {
+	// Resolve config path early for bootstrap check.
+	cfgDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	cfgPath := configPath
+	if cfgPath == "" {
+		cfgPath = filepath.Join(cfgDir, "config.toml")
+	}
+
+	// Run first-run bootstrap wizard if no config/API key found.
+	if tui.NeedsBootstrap(cfgPath) {
+		wizard := tui.NewBootstrapForm(cfgPath)
+		prog := tea.NewProgram(wizard.Form())
+		finalModel, err := prog.Run()
+		if err != nil {
+			return fmt.Errorf("bootstrap wizard: %w", err)
+		}
+		// Bubble Tea returns the final form model after all Updates.
+		// We must check state on the returned model, not the original,
+		// because huh.Form.Update returns new instances.
+		if f, ok := finalModel.(*huh.Form); ok {
+			wizard.SetForm(f)
+		}
+		if wizard.IsAborted() {
+			return fmt.Errorf("setup cancelled")
+		}
+		if wizard.IsCompleted() {
+			if err := wizard.Save(); err != nil {
+				return fmt.Errorf("saving bootstrap config: %w", err)
+			}
+		}
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -460,17 +495,18 @@ func runInteractive() error {
 		skillsFlag = removeSkill("apple-dev", skillsFlag)
 	}
 
-	// Deny tool calls by default; require explicit --auto-approve flag to skip approval.
-	// TODO: replace with TUI-based interactive approval prompt.
-	approvalFunc := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
-		return autoApprove, nil
+	// Build the approval function. When --auto-approve is set, skip the TUI
+	// prompt entirely. Otherwise, defer to the TUI model's interactive prompt.
+	// The model is created first (with nil agent) so we can extract its
+	// approval function before constructing the agent.
+	var approvalFunc agent.ApprovalFunc
+	if autoApprove {
+		approvalFunc = func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+			return true, nil
+		}
 	}
 
 	// Wire conversation persistence.
-	cfgDir, err := configDir()
-	if err != nil {
-		return err
-	}
 	s, err := openStore(cfgDir)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
@@ -507,7 +543,14 @@ func runInteractive() error {
 	opts = append(opts, agent.WithSummarizer(summarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
-	// Create agent
+	// Create TUI model first (with nil agent) so we can extract the
+	// interactive approval function before constructing the agent.
+	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
+	if !autoApprove {
+		approvalFunc = model.MakeApprovalFunc()
+	}
+
+	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Register notes tool backed by agent's scratchpad.
@@ -515,8 +558,8 @@ func runInteractive() error {
 		return fmt.Errorf("registering notes tool: %w", err)
 	}
 
-	// Create TUI model and run
-	model := tui.NewModel(a, "rubichan", cfg.Provider.Model)
+	// Wire the agent into the TUI model now that both exist.
+	model.SetAgent(a)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

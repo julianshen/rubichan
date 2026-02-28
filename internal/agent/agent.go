@@ -21,11 +21,13 @@ type ApprovalFunc func(ctx context.Context, tool string, input json.RawMessage) 
 
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
-	Type       string           // "text_delta", "tool_call", "tool_result", "error", "done"
-	Text       string           // text content for text_delta events
-	ToolCall   *ToolCallEvent   // populated for tool_call events
-	ToolResult *ToolResultEvent // populated for tool_result events
-	Error      error            // populated for error events
+	Type         string           // "text_delta", "tool_call", "tool_result", "error", "done"
+	Text         string           // text content for text_delta events
+	ToolCall     *ToolCallEvent   // populated for tool_call events
+	ToolResult   *ToolResultEvent // populated for tool_result events
+	Error        error            // populated for error events
+	InputTokens  int              // populated for done events: total input tokens used
+	OutputTokens int              // populated for done events: total output tokens used
 }
 
 // ToolCallEvent contains details about a tool being called.
@@ -355,10 +357,11 @@ func (a *Agent) dispatchHook(event skills.HookEvent) (*skills.HookResult, error)
 
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
+	var totalInputTokens, totalOutputTokens int
 	for ; turnCount < a.maxTurns; turnCount++ {
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- TurnEvent{Type: "done"}
+			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 			return
 		}
 
@@ -376,7 +379,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
-			ch <- TurnEvent{Type: "done"}
+			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 			return
 		}
 
@@ -413,6 +416,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		}
 
 		for event := range stream {
+			// Accumulate token usage from every stream event.
+			totalInputTokens += event.InputTokens
+			totalOutputTokens += event.OutputTokens
+
 			switch event.Type {
 			case "text_delta":
 				if currentTool != nil {
@@ -455,7 +462,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 		// If no pending tool calls, we're done
 		if len(pendingTools) == 0 {
-			ch <- TurnEvent{Type: "done"}
+			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 			return
 		}
 
@@ -463,7 +470,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		for _, tc := range pendingTools {
 			if ctx.Err() != nil {
 				ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-				ch <- TurnEvent{Type: "done"}
+				ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 				return
 			}
 
@@ -619,5 +626,5 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
-	ch <- TurnEvent{Type: "done"}
+	ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
 }

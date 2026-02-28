@@ -905,3 +905,57 @@ func TestAgentPersistMessageErrorIsNonFatal(t *testing.T) {
 	}
 	assert.True(t, hasText, "should still get text from LLM")
 }
+
+func TestTurnDoneEventCarriesTokenUsage(t *testing.T) {
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "Hello!"},
+			{Type: "stop", InputTokens: 120, OutputTokens: 45},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(mp, reg, autoApprove, cfg)
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+
+	var doneEvent TurnEvent
+	for ev := range ch {
+		if ev.Type == "done" {
+			doneEvent = ev
+		}
+	}
+
+	assert.Equal(t, "done", doneEvent.Type)
+	assert.Equal(t, 120, doneEvent.InputTokens)
+	assert.Equal(t, 45, doneEvent.OutputTokens)
+}
+
+func TestTurnDoneEventAccumulatesTokensAcrossEvents(t *testing.T) {
+	// Some providers may send partial token counts in multiple events
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "Hi"},
+			{Type: "text_delta", Text: " there", InputTokens: 50, OutputTokens: 10},
+			{Type: "stop", InputTokens: 100, OutputTokens: 30},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(mp, reg, autoApprove, cfg)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var doneEvent TurnEvent
+	for ev := range ch {
+		if ev.Type == "done" {
+			doneEvent = ev
+		}
+	}
+
+	// Should accumulate: 50+100 input, 10+30 output
+	assert.Equal(t, 150, doneEvent.InputTokens)
+	assert.Equal(t, 40, doneEvent.OutputTokens)
+}

@@ -19,6 +19,10 @@ func (m *Model) View() string {
 		return "Goodbye!\n"
 	}
 
+	if m.state == StateConfigOverlay && m.configForm != nil {
+		return m.configForm.Form().View()
+	}
+
 	var b strings.Builder
 
 	// Header
@@ -38,14 +42,18 @@ func (m *Model) View() string {
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
 
-	// Status line
+	// Status line / approval prompt
 	switch m.state {
 	case StateStreaming:
 		b.WriteString(fmt.Sprintf("%s Thinking...", m.spinner.View()))
 	case StateAwaitingApproval:
-		b.WriteString("Approve? [Y/N]")
+		if m.approvalPrompt != nil {
+			b.WriteString(m.approvalPrompt.View())
+		} else {
+			b.WriteString(m.statusBar.View())
+		}
 	default:
-		// No status line content in input state
+		b.WriteString(m.statusBar.View())
 	}
 	b.WriteString("\n")
 

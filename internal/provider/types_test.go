@@ -185,4 +185,10 @@ func TestContentBlockJSON(t *testing.T) {
 	assert.False(t, decodedResult.IsError)
 }
 
+func TestStreamEventUsage(t *testing.T) {
+	evt := StreamEvent{Type: "message_done", InputTokens: 100, OutputTokens: 50}
+	assert.Equal(t, 100, evt.InputTokens)
+	assert.Equal(t, 50, evt.OutputTokens)
+}
+
 func floatPtr(f float64) *float64 { return &f }
