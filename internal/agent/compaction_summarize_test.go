@@ -140,6 +140,118 @@ func TestSummarizationReceivesOldestMessages(t *testing.T) {
 	assert.Equal(t, "msg-5", ms.received[5].Content[0].Text)
 }
 
+func TestSummarizationImplementsSignalAware(t *testing.T) {
+	s := NewSummarizationStrategy(nil)
+	var _ SignalAware = s // compile-time check
+	assert.NotNil(t, s)
+}
+
+func TestSummarizationWithoutSignals(t *testing.T) {
+	ms := &mockSummarizer{summary: "summary"}
+	s := NewSummarizationStrategy(ms)
+	s.messageThreshold = 4
+
+	messages := make([]provider.Message, 10)
+	for i := range messages {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages[i] = provider.Message{
+			Role:    role,
+			Content: []provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("msg %d", i)}},
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// Default 60% split: 6 summarized + 4 recent = 1 summary + 4 = 5
+	assert.Len(t, ms.received, 6)
+	assert.Len(t, result, 5)
+}
+
+func TestSummarizationHighErrorDensity(t *testing.T) {
+	ms := &mockSummarizer{summary: "summary"}
+	s := NewSummarizationStrategy(ms)
+	s.messageThreshold = 4
+	s.SetSignals(ConversationSignals{ErrorDensity: 0.4, MessageCount: 10})
+
+	messages := make([]provider.Message, 10)
+	for i := range messages {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages[i] = provider.Message{
+			Role:    role,
+			Content: []provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("msg %d", i)}},
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// 45% split: 4 summarized + 6 recent = 1 summary + 6 = 7
+	// (10 * 45 / 100 = 4, but minimum is 2)
+	assert.Len(t, ms.received, 4)
+	assert.Len(t, result, 7)
+}
+
+func TestSummarizationLongConversation(t *testing.T) {
+	ms := &mockSummarizer{summary: "summary"}
+	s := NewSummarizationStrategy(ms)
+	s.messageThreshold = 20
+	// MessageCount > threshold*2 (50 > 40)
+	s.SetSignals(ConversationSignals{ErrorDensity: 0.0, MessageCount: 50})
+
+	messages := make([]provider.Message, 50)
+	for i := range messages {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages[i] = provider.Message{
+			Role:    role,
+			Content: []provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("msg %d", i)}},
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// 70% split: 35 summarized + 15 recent = 1 summary + 15 = 16
+	assert.Len(t, ms.received, 35)
+	assert.Len(t, result, 16)
+}
+
+func TestSummarizationErrorDensityPrecedence(t *testing.T) {
+	ms := &mockSummarizer{summary: "summary"}
+	s := NewSummarizationStrategy(ms)
+	s.messageThreshold = 20
+	// Both: ErrorDensity > 0.3 AND MessageCount > threshold*2
+	s.SetSignals(ConversationSignals{ErrorDensity: 0.4, MessageCount: 50})
+
+	messages := make([]provider.Message, 50)
+	for i := range messages {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages[i] = provider.Message{
+			Role:    role,
+			Content: []provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("msg %d", i)}},
+		}
+	}
+
+	result, err := s.Compact(context.Background(), messages, 100000)
+	require.NoError(t, err)
+
+	// ErrorDensity wins → 45% split: 22 summarized + 28 recent = 1 + 28 = 29
+	assert.Len(t, ms.received, 22)
+	assert.Len(t, result, 29)
+}
+
 func TestSummarizationErrorReturnsOriginal(t *testing.T) {
 	ms := &mockSummarizer{err: fmt.Errorf("API error")}
 	s := NewSummarizationStrategy(ms)

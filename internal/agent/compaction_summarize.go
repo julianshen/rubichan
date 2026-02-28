@@ -9,9 +9,11 @@ import (
 
 // summarizationStrategy compacts a conversation by summarizing the oldest
 // messages into a single summary message. Requires a Summarizer; skips if nil.
+// When signals are injected, the split ratio adjusts dynamically.
 type summarizationStrategy struct {
 	summarizer       Summarizer
-	messageThreshold int // minimum message count to trigger summarization
+	messageThreshold int                  // minimum message count to trigger summarization
+	signals          *ConversationSignals // optional, injected via SetSignals
 }
 
 // NewSummarizationStrategy creates a strategy with the given summarizer and
@@ -25,6 +27,11 @@ func NewSummarizationStrategy(s Summarizer) *summarizationStrategy {
 
 func (s *summarizationStrategy) Name() string { return "summarization" }
 
+// SetSignals injects conversation signals for dynamic split adjustment.
+func (s *summarizationStrategy) SetSignals(signals ConversationSignals) {
+	s.signals = &signals
+}
+
 func (s *summarizationStrategy) Compact(ctx context.Context, messages []provider.Message, _ int) ([]provider.Message, error) {
 	// Skip if no summarizer is configured.
 	if s.summarizer == nil {
@@ -36,8 +43,19 @@ func (s *summarizationStrategy) Compact(ctx context.Context, messages []provider
 		return messages, nil
 	}
 
-	// Summarize the oldest 60% of messages.
-	splitIdx := len(messages) * 60 / 100
+	// Default: summarize oldest 60%.
+	splitPct := 60
+	if s.signals != nil {
+		// High error density → preserve more recent (shrink summarized portion).
+		if s.signals.ErrorDensity > 0.3 {
+			splitPct = 45
+		} else if s.signals.MessageCount > s.messageThreshold*2 {
+			// Very long conversation → compress more aggressively.
+			splitPct = 70
+		}
+	}
+
+	splitIdx := len(messages) * splitPct / 100
 	if splitIdx < 2 {
 		splitIdx = 2
 	}
