@@ -906,6 +906,103 @@ func TestAgentPersistMessageErrorIsNonFatal(t *testing.T) {
 	assert.True(t, hasText, "should still get text from LLM")
 }
 
+func TestToolResultEventCarriesDisplayContent(t *testing.T) {
+	// A tool that sets DisplayContent should propagate it to the event.
+	displayTool := &mockTool{
+		name:        "display_tool",
+		description: "returns dual content",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{
+				Content:        "compact for LLM",
+				DisplayContent: "rich for user",
+			}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_dc",
+					Name: "display_tool",
+				}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(displayTool))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := a.Turn(context.Background(), "use display tool")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var found bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" && ev.ToolResult.Name == "display_tool" {
+			found = true
+			assert.Equal(t, "compact for LLM", ev.ToolResult.Content)
+			assert.Equal(t, "rich for user", ev.ToolResult.DisplayContent)
+		}
+	}
+	assert.True(t, found, "should have tool_result event with DisplayContent")
+}
+
+func TestToolResultEventEmptyDisplayContent(t *testing.T) {
+	// Error paths (denied, unknown tool, hook cancel) should leave DisplayContent empty.
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_deny",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"x.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "OK"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	require.NoError(t, reg.Register(tools.NewFileTool(tmpDir)))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoDeny, cfg)
+
+	ch, err := a.Turn(context.Background(), "read x.txt")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	for _, ev := range events {
+		if ev.Type == "tool_result" {
+			assert.Empty(t, ev.ToolResult.DisplayContent, "error paths should not set DisplayContent")
+		}
+	}
+}
+
 func TestTurnDoneEventCarriesTokenUsage(t *testing.T) {
 	mp := &mockProvider{
 		events: []provider.StreamEvent{

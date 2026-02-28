@@ -39,10 +39,11 @@ type ToolCallEvent struct {
 
 // ToolResultEvent contains details about a tool execution result.
 type ToolResultEvent struct {
-	ID      string
-	Name    string
-	Content string
-	IsError bool
+	ID             string
+	Name           string
+	Content        string
+	DisplayContent string // shown to user; falls back to Content if empty
+	IsError        bool
 }
 
 // AgentOption is a functional option for configuring an Agent.
@@ -613,10 +614,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			ch <- TurnEvent{
 				Type: "tool_result",
 				ToolResult: &ToolResultEvent{
-					ID:      tc.ID,
-					Name:    tc.Name,
-					Content: toolResult.Content,
-					IsError: toolResult.IsError,
+					ID:             tc.ID,
+					Name:           tc.Name,
+					Content:        toolResult.Content,
+					DisplayContent: toolResult.DisplayContent,
+					IsError:        toolResult.IsError,
 				},
 			}
 		}

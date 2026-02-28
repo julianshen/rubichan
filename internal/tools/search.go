@@ -145,12 +145,18 @@ func (s *SearchTool) Execute(ctx context.Context, input json.RawMessage) (ToolRe
 		return ToolResult{Content: "no matches found"}, nil
 	}
 
-	// Truncate to 30KB like shell tool.
+	// Truncate for LLM; optionally set richer DisplayContent for user.
+	var displayContent string
 	if len(result) > maxOutputBytes {
+		display := result
+		if len(display) > maxDisplayBytes {
+			display = display[:maxDisplayBytes] + "\n... output truncated"
+		}
+		displayContent = display
 		result = result[:maxOutputBytes] + "\n... output truncated"
 	}
 
-	return ToolResult{Content: result}, nil
+	return ToolResult{Content: result, DisplayContent: displayContent}, nil
 }
 
 func (s *SearchTool) searchWithRipgrep(ctx context.Context, rgPath, searchDir string, in searchInput) (string, error) {

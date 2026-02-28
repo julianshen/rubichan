@@ -9,6 +9,7 @@ import (
 )
 
 const maxOutputBytes = 30 * 1024
+const maxDisplayBytes = 100 * 1024
 
 // shellInput represents the input for the shell tool.
 type shellInput struct {
@@ -73,16 +74,23 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 		}, nil
 	}
 
-	// Truncate output if it exceeds the maximum
+	// Truncate output for LLM; optionally set richer DisplayContent for user.
 	content := string(output)
+	var displayContent string
 	if len(output) > maxOutputBytes {
 		content = string(output[:maxOutputBytes]) + "\n... output truncated"
+		// Give the user more output via DisplayContent.
+		if len(output) > maxDisplayBytes {
+			displayContent = string(output[:maxDisplayBytes]) + "\n... output truncated"
+		} else {
+			displayContent = string(output)
+		}
 	}
 
 	// Non-zero exit code
 	if err != nil {
-		return ToolResult{Content: content, IsError: true}, nil
+		return ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, nil
 	}
 
-	return ToolResult{Content: content}, nil
+	return ToolResult{Content: content, DisplayContent: displayContent}, nil
 }

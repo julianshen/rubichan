@@ -266,6 +266,40 @@ func TestSearchTool_OutputTruncation(t *testing.T) {
 	assert.Contains(t, result.Content, "truncated")
 }
 
+func TestSearchTool_LargeOutputSetsDisplayContent(t *testing.T) {
+	dir := t.TempDir()
+	// Create a large file that will produce output exceeding 30KB.
+	var content strings.Builder
+	for i := 0; i < 2000; i++ {
+		content.WriteString("func largeHandler" + strings.Repeat("y", 30) + "()\n")
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.go"), []byte(content.String()), 0o644))
+
+	s := NewSearchTool(dir)
+	input, _ := json.Marshal(searchInput{Pattern: "func large", MaxResults: 2000})
+	result, err := s.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	// Content should be truncated at 30KB.
+	assert.LessOrEqual(t, len(result.Content), maxOutputBytes+50)
+	assert.Contains(t, result.Content, "truncated")
+	// DisplayContent should have more data than Content.
+	assert.NotEmpty(t, result.DisplayContent)
+	assert.Greater(t, len(result.DisplayContent), len(result.Content))
+}
+
+func TestSearchTool_SmallOutputNoDisplayContent(t *testing.T) {
+	dir := setupSearchDir(t)
+	s := NewSearchTool(dir)
+
+	input, _ := json.Marshal(searchInput{Pattern: "func main"})
+	result, err := s.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	// Small output should not set DisplayContent.
+	assert.Empty(t, result.DisplayContent)
+}
+
 func TestSearchTool_PathNotFound(t *testing.T) {
 	dir := setupSearchDir(t)
 	s := NewSearchTool(dir)

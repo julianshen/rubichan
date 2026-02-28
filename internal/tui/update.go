@@ -236,7 +236,11 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		resultName := ""
 		isError := false
 		if msg.ToolResult != nil {
-			resultContent = msg.ToolResult.Content
+			// Prefer DisplayContent for user-facing output; fall back to Content.
+			resultContent = msg.ToolResult.DisplayContent
+			if resultContent == "" {
+				resultContent = msg.ToolResult.Content
+			}
 			resultName = msg.ToolResult.Name
 			isError = msg.ToolResult.IsError
 		}

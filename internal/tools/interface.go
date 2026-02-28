@@ -15,6 +15,16 @@ type Tool interface {
 
 // ToolResult represents the result of executing a tool.
 type ToolResult struct {
-	Content string
-	IsError bool
+	Content        string // sent to LLM conversation history
+	DisplayContent string // shown to user; falls back to Content if empty
+	IsError        bool
+}
+
+// Display returns the content intended for user display. It returns
+// DisplayContent when set, otherwise falls back to Content.
+func (r ToolResult) Display() string {
+	if r.DisplayContent != "" {
+		return r.DisplayContent
+	}
+	return r.Content
 }
