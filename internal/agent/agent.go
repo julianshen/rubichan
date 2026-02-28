@@ -566,7 +566,6 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		var mu sync.Mutex
 
 		for _, it := range autoApproved {
-			it := it // capture
 			p.Go(func() {
 				res := a.executeSingleTool(ctx, it.tc)
 				mu.Lock()
@@ -575,6 +574,9 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			})
 		}
 		p.Wait()
+		if ctx.Err() != nil {
+			return true
+		}
 	}
 
 	// Execute needs-approval tools sequentially.
@@ -722,6 +724,9 @@ func (a *Agent) executeSingleTool(ctx context.Context, tc provider.ToolUseBlock)
 	if afterErr == nil && afterResult != nil && afterResult.Modified != nil {
 		if modContent, ok := afterResult.Modified["content"].(string); ok {
 			toolResult.Content = modContent
+			// Clear DisplayContent so user sees modified content, not the
+			// original (e.g., when a security hook strips sensitive data).
+			toolResult.DisplayContent = ""
 		}
 	}
 

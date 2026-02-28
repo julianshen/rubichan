@@ -91,6 +91,27 @@ func TestShellToolLargeOutputSetsDisplayContent(t *testing.T) {
 	assert.Greater(t, len(result.DisplayContent), len(result.Content))
 }
 
+func TestShellToolHugeOutputCapsDisplayContent(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	// Generate output larger than 100KB (maxDisplayBytes).
+	// 120KB = 120 * 1024 = 122880 bytes.
+	input, _ := json.Marshal(map[string]string{
+		"command": "dd if=/dev/zero bs=1024 count=120 2>/dev/null | tr '\\0' 'C'",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	// Content should be truncated at 30KB.
+	assert.LessOrEqual(t, len(result.Content), maxOutputBytes+50)
+	assert.Contains(t, result.Content, "truncated")
+	// DisplayContent should be truncated at 100KB.
+	assert.NotEmpty(t, result.DisplayContent)
+	assert.LessOrEqual(t, len(result.DisplayContent), maxDisplayBytes+50)
+	assert.Contains(t, result.DisplayContent, "truncated")
+}
+
 func TestShellToolSmallOutputNoDisplayContent(t *testing.T) {
 	dir := t.TempDir()
 	st := NewShellTool(dir, 30*time.Second)
