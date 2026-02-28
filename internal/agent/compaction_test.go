@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -165,6 +166,66 @@ func TestTruncateStrategyRemovesOldMessages(t *testing.T) {
 	require.NoError(t, err)
 	assert.Less(t, len(result), 4, "should remove some messages")
 	assert.GreaterOrEqual(t, len(result), 2, "should keep at least 2")
+}
+
+// --- Enhancement 2: Proactive compression threshold ---
+
+func TestShouldCompactAt70Percent(t *testing.T) {
+	cm := NewContextManager(1000)
+
+	conv := NewConversation("sys")
+	// Add enough content to exceed 70% of 1000 tokens = 700
+	for i := 0; i < 30; i++ {
+		conv.AddUser(fmt.Sprintf("message %d with some reasonable content to take up tokens", i))
+	}
+
+	tokens := cm.EstimateTokens(conv)
+	require.Greater(t, tokens, 700, "test requires tokens > 70%% of budget")
+	require.LessOrEqual(t, tokens, 1000, "test requires tokens <= 100%% of budget")
+
+	assert.True(t, cm.ShouldCompact(conv), "should trigger compaction at >70%% budget")
+}
+
+func TestShouldCompactFalseBelow70Percent(t *testing.T) {
+	cm := NewContextManager(100000)
+
+	conv := NewConversation("sys")
+	conv.AddUser("hello")
+
+	assert.False(t, cm.ShouldCompact(conv), "should not trigger compaction below 70%% budget")
+}
+
+func TestCompactTriggersProactively(t *testing.T) {
+	cm := NewContextManager(1000)
+
+	s := &mockStrategy{name: "test", removeN: 10}
+	cm.SetStrategies([]CompactionStrategy{s, &truncateStrategy{}})
+
+	conv := NewConversation("sys")
+	for i := 0; i < 30; i++ {
+		conv.AddUser(fmt.Sprintf("message %d with some reasonable content to take up tokens", i))
+	}
+
+	tokens := cm.EstimateTokens(conv)
+	require.Greater(t, tokens, 700, "test requires >70%% budget used")
+	require.LessOrEqual(t, tokens, 1000, "test requires <=100%% budget (not exceeding)")
+
+	cm.Compact(context.Background(), conv)
+	assert.True(t, s.called, "strategy should be called proactively when above 70%% threshold")
+}
+
+func TestCompactCustomTriggerRatio(t *testing.T) {
+	cm := NewContextManager(100000)
+	cm.triggerRatio = 0.0001 // very low ratio — even tiny conversations trigger
+
+	s := &mockStrategy{name: "test"}
+	cm.SetStrategies([]CompactionStrategy{s, &truncateStrategy{}})
+
+	conv := NewConversation("sys")
+	conv.AddUser("hello")
+
+	cm.Compact(context.Background(), conv)
+	assert.True(t, s.called, "strategy should be called with custom low trigger ratio")
 }
 
 func TestTruncateStrategySkipsLeadingToolResults(t *testing.T) {
