@@ -36,14 +36,22 @@ func NeedsBootstrap(configPath string) bool {
 
 // BootstrapForm is a first-run setup wizard using Huh multi-step form.
 type BootstrapForm struct {
-	form     *huh.Form
-	cfg      *config.Config
-	savePath string
+	form      *huh.Form
+	cfg       *config.Config
+	savePath  string
+	openaiKey string
 }
 
 // NewBootstrapForm creates a multi-step setup wizard.
 func NewBootstrapForm(savePath string) *BootstrapForm {
 	cfg := config.DefaultConfig()
+
+	// openaiKey is a staging area. After the form completes, Save() copies
+	// it into the correct OpenAI-compatible provider config entry.
+	bf := &BootstrapForm{
+		cfg:      cfg,
+		savePath: savePath,
+	}
 
 	providerGroup := huh.NewGroup(
 		huh.NewSelect[string]().
@@ -56,28 +64,34 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 			Value(&cfg.Provider.Default),
 	).Title("Welcome to Rubichan")
 
-	apiKeyGroup := huh.NewGroup(
+	anthropicKeyGroup := huh.NewGroup(
 		huh.NewInput().
-			Title("API Key").
-			Placeholder("sk-...").
+			Title("Anthropic API Key").
+			Placeholder("sk-ant-...").
 			Value(&cfg.Provider.Anthropic.APIKey).
 			EchoMode(huh.EchoModePassword),
-	).Title("Authentication")
+	).Title("Authentication").
+		WithHideFunc(func() bool { return cfg.Provider.Default != "anthropic" })
+
+	openaiKeyGroup := huh.NewGroup(
+		huh.NewInput().
+			Title("OpenAI API Key").
+			Placeholder("sk-...").
+			Value(&bf.openaiKey).
+			EchoMode(huh.EchoModePassword),
+	).Title("Authentication").
+		WithHideFunc(func() bool { return cfg.Provider.Default != "openai" })
 
 	modelGroup := huh.NewGroup(
 		huh.NewInput().
 			Title("Model").
 			Placeholder("claude-sonnet-4-5").
 			Value(&cfg.Provider.Model),
-	).Title("Model")
+	).Title("Model").
+		WithHideFunc(func() bool { return cfg.Provider.Default == "ollama" })
 
-	form := huh.NewForm(providerGroup, apiKeyGroup, modelGroup)
-
-	return &BootstrapForm{
-		form:     form,
-		cfg:      cfg,
-		savePath: savePath,
-	}
+	bf.form = huh.NewForm(providerGroup, anthropicKeyGroup, openaiKeyGroup, modelGroup)
+	return bf
 }
 
 // Form returns the underlying huh.Form for Bubble Tea embedding.
@@ -89,8 +103,14 @@ func (b *BootstrapForm) SetForm(f *huh.Form) { b.form = f }
 // Config returns the config populated by the wizard.
 func (b *BootstrapForm) Config() *config.Config { return b.cfg }
 
-// Save persists the config.
+// Save persists the config. It copies the OpenAI key into the correct config
+// entry if the user selected the OpenAI provider.
 func (b *BootstrapForm) Save() error {
+	if b.cfg.Provider.Default == "openai" && b.openaiKey != "" {
+		b.cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+			{Name: "default", APIKey: b.openaiKey},
+		}
+	}
 	return config.Save(b.savePath, b.cfg)
 }
 

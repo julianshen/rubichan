@@ -110,3 +110,40 @@ func TestBootstrapFormSetForm(t *testing.T) {
 	form.SetForm(originalForm)
 	assert.Equal(t, originalForm, form.Form())
 }
+
+func TestBootstrapFormSaveOpenAIKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	bf := NewBootstrapForm(path)
+	bf.Config().Provider.Default = "openai"
+	bf.openaiKey = "sk-openai-test"
+
+	err := bf.Save()
+	require.NoError(t, err)
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", loaded.Provider.Default)
+	require.Len(t, loaded.Provider.OpenAI, 1)
+	assert.Equal(t, "sk-openai-test", loaded.Provider.OpenAI[0].APIKey)
+	// Anthropic key should remain empty.
+	assert.Empty(t, loaded.Provider.Anthropic.APIKey)
+}
+
+func TestBootstrapFormSaveOllamaNoKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	bf := NewBootstrapForm(path)
+	bf.Config().Provider.Default = "ollama"
+
+	err := bf.Save()
+	require.NoError(t, err)
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "ollama", loaded.Provider.Default)
+	assert.Empty(t, loaded.Provider.Anthropic.APIKey)
+	assert.Empty(t, loaded.Provider.OpenAI)
+}
