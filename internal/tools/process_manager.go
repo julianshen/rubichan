@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -110,22 +111,42 @@ func (pm *ProcessManager) Exec(ctx context.Context, command string) (string, str
 		pm.mu.Unlock()
 		return "", "", fmt.Errorf("process limit reached (%d)", pm.maxProcesses)
 	}
+
+	// Generate a unique ID while holding the lock to prevent races.
+	id := uuid.New().String()[:8]
+	for pm.processes[id] != nil {
+		id = uuid.New().String()[:8]
+	}
+
+	// Reserve the slot with a placeholder so concurrent Exec calls
+	// see this slot as occupied during the limit check above.
+	pm.processes[id] = &managedProcess{
+		id:     id,
+		status: ProcessRunning,
+	}
 	pm.mu.Unlock()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	// Use exec.Command (not CommandContext) so that parent context
+	// cancellation does not bypass our graceful SIGTERM shutdown path.
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = pm.workDir
 
 	pio, err := NewPipeProcessIO(cmd)
 	if err != nil {
+		pm.mu.Lock()
+		delete(pm.processes, id)
+		pm.mu.Unlock()
 		return "", "", fmt.Errorf("creating process I/O: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
 		pio.Close()
+		pm.mu.Lock()
+		delete(pm.processes, id)
+		pm.mu.Unlock()
 		return "", "", fmt.Errorf("starting process: %w", err)
 	}
 
-	id := uuid.New().String()[:8]
 	proc := &managedProcess{
 		id:        id,
 		command:   command,
@@ -266,7 +287,8 @@ func (pm *ProcessManager) List() []ProcessInfo {
 }
 
 // Shutdown terminates all running processes with a grace period.
-func (pm *ProcessManager) Shutdown(_ context.Context) error {
+// The context can be used to impose a deadline on the entire shutdown.
+func (pm *ProcessManager) Shutdown(ctx context.Context) error {
 	pm.mu.Lock()
 	procs := make([]*managedProcess, 0, len(pm.processes))
 	for _, p := range pm.processes {
@@ -275,13 +297,15 @@ func (pm *ProcessManager) Shutdown(_ context.Context) error {
 	pm.mu.Unlock()
 
 	for _, p := range procs {
-		pm.killProcess(p)
+		pm.killProcess(p, ctx)
 	}
 	return nil
 }
 
-// killProcess closes I/O, waits for the grace period, then marks as killed.
-func (pm *ProcessManager) killProcess(proc *managedProcess) {
+// killProcess sends SIGTERM, waits for the grace period, then falls back
+// to SIGKILL if the process has not exited. An optional context can
+// shorten the grace period.
+func (pm *ProcessManager) killProcess(proc *managedProcess, ctxs ...context.Context) {
 	proc.mu.Lock()
 	if proc.status != ProcessRunning {
 		proc.mu.Unlock()
@@ -289,18 +313,30 @@ func (pm *ProcessManager) killProcess(proc *managedProcess) {
 	}
 	proc.mu.Unlock()
 
-	// Close I/O to signal the process to exit.
-	proc.io.Close()
+	// Send SIGTERM for graceful shutdown.
+	if proc.cmd.Process != nil {
+		_ = proc.cmd.Process.Signal(syscall.SIGTERM)
+	}
+
+	graceTimer := time.After(pm.shutdownGrace)
+
+	// Build a context done channel (nil if no context supplied).
+	var ctxDone <-chan struct{}
+	if len(ctxs) > 0 && ctxs[0] != nil {
+		ctxDone = ctxs[0].Done()
+	}
 
 	select {
 	case <-proc.done:
-		return // exited cleanly
-	case <-time.After(pm.shutdownGrace):
+		return // exited cleanly after SIGTERM
+	case <-graceTimer:
+	case <-ctxDone:
 	}
 
-	// Force kill if still running.
+	// Close I/O and force kill if still running.
+	proc.io.Close()
 	if proc.cmd.Process != nil {
-		proc.cmd.Process.Kill()
+		_ = proc.cmd.Process.Kill()
 	}
 
 	proc.mu.Lock()

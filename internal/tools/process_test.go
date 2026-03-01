@@ -304,7 +304,7 @@ func TestProcessToolList(t *testing.T) {
 	result, err := pt.Execute(context.Background(), listInput)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
-	assert.Contains(t, result.Content, "no running processes")
+	assert.Contains(t, result.Content, "no managed processes")
 
 	// Start a process, then list again.
 	execInput, _ := json.Marshal(map[string]string{

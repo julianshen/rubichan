@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // processInput represents the input for the process tool.
@@ -126,7 +127,14 @@ func (p *ProcessTool) writeStdinOp(in processInput) (ToolResult, error) {
 		return ToolResult{Content: fmt.Sprintf("write_stdin failed: %s", err), IsError: true}, nil
 	}
 
-	return ToolResult{Content: fmt.Sprintf("sent %d bytes to process %s", len(in.Input), in.ProcessID)}, nil
+	// Brief pause to let the process respond, then include a snippet.
+	time.Sleep(50 * time.Millisecond)
+	output, status, readErr := p.manager.ReadOutput(in.ProcessID)
+	if readErr != nil || output == "" {
+		return ToolResult{Content: fmt.Sprintf("sent %d bytes to process %s", len(in.Input), in.ProcessID)}, nil
+	}
+
+	return ToolResult{Content: fmt.Sprintf("sent %d bytes to process %s\nstatus: %s\n%s", len(in.Input), in.ProcessID, status, output)}, nil
 }
 
 func (p *ProcessTool) killOp(in processInput) (ToolResult, error) {
@@ -145,7 +153,7 @@ func (p *ProcessTool) killOp(in processInput) (ToolResult, error) {
 func (p *ProcessTool) listOp() (ToolResult, error) {
 	procs := p.manager.List()
 	if len(procs) == 0 {
-		return ToolResult{Content: "no running processes"}, nil
+		return ToolResult{Content: "no managed processes"}, nil
 	}
 
 	var b strings.Builder

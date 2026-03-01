@@ -69,14 +69,19 @@ func (p *PipeProcessIO) Read(buf []byte) (int, error) {
 	return p.stdout.Read(buf)
 }
 
-// Close closes the stdin pipe (signaling EOF to the process) and the
-// write end of the stdout pipe so that subsequent reads return io.EOF
-// once all buffered data has been consumed.
+// Close closes the stdin pipe (signaling EOF to the process), the write
+// end of the stdout pipe, and the read end so that no file descriptors
+// leak. The write end is closed first so that reads drain remaining data
+// and then see io.EOF.
 func (p *PipeProcessIO) Close() error {
 	stdinErr := p.stdin.Close()
 	writerErr := p.outWriter.Close()
+	readerErr := p.stdout.Close()
 	if stdinErr != nil {
 		return stdinErr
 	}
-	return writerErr
+	if writerErr != nil {
+		return writerErr
+	}
+	return readerErr
 }
