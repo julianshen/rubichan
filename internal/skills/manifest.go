@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 
@@ -256,4 +257,85 @@ func validateManifest(m *SkillManifest) error {
 	}
 
 	return nil
+}
+
+// instructionFrontmatter is the subset of fields allowed in a SKILL.md
+// frontmatter block. Instruction skills are always prompt-only.
+type instructionFrontmatter struct {
+	Name        string        `yaml:"name"`
+	Version     string        `yaml:"version"`
+	Description string        `yaml:"description"`
+	Types       []SkillType   `yaml:"types"`
+	Triggers    TriggerConfig `yaml:"triggers"`
+	Permissions []Permission  `yaml:"permissions"`
+}
+
+// ParseInstructionSkill parses a SKILL.md file with YAML frontmatter delimited
+// by "---" lines. Returns the synthesized manifest (always type prompt), the
+// markdown body, and an error if parsing or validation fails.
+func ParseInstructionSkill(data []byte) (*SkillManifest, string, error) {
+	// Split frontmatter from body.
+	frontmatter, body, err := splitFrontmatter(data)
+	if err != nil {
+		return nil, "", fmt.Errorf("instruction skill: %w", err)
+	}
+
+	var fm instructionFrontmatter
+	if err := yaml.Unmarshal(frontmatter, &fm); err != nil {
+		return nil, "", fmt.Errorf("instruction skill: parse frontmatter: %w", err)
+	}
+
+	// Default types to [prompt] if not specified.
+	if len(fm.Types) == 0 {
+		fm.Types = []SkillType{SkillTypePrompt}
+	}
+
+	// Instruction skills must be prompt-only.
+	for _, st := range fm.Types {
+		if st != SkillTypePrompt {
+			return nil, "", fmt.Errorf("instruction skill: type %q not allowed (only %q is supported)", st, SkillTypePrompt)
+		}
+	}
+
+	m := &SkillManifest{
+		Name:        fm.Name,
+		Version:     fm.Version,
+		Description: fm.Description,
+		Types:       fm.Types,
+		Triggers:    fm.Triggers,
+		Permissions: fm.Permissions,
+	}
+
+	if err := validateManifest(m); err != nil {
+		return nil, "", fmt.Errorf("instruction skill: %w", err)
+	}
+
+	return m, string(body), nil
+}
+
+// splitFrontmatter extracts YAML frontmatter from markdown content.
+// The frontmatter must be delimited by "---" lines.
+func splitFrontmatter(data []byte) ([]byte, []byte, error) {
+	sep := []byte("---")
+
+	// Must start with "---".
+	trimmed := bytes.TrimLeft(data, " \t")
+	if !bytes.HasPrefix(trimmed, sep) {
+		return nil, nil, fmt.Errorf("missing frontmatter delimiter (---)")
+	}
+
+	// Find opening delimiter.
+	start := bytes.Index(data, sep)
+	rest := data[start+len(sep):]
+
+	// Find closing delimiter.
+	end := bytes.Index(rest, sep)
+	if end < 0 {
+		return nil, nil, fmt.Errorf("missing closing frontmatter delimiter (---)")
+	}
+
+	frontmatter := bytes.TrimSpace(rest[:end])
+	body := bytes.TrimSpace(rest[end+len(sep):])
+
+	return frontmatter, body, nil
 }

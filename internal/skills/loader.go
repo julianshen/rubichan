@@ -31,6 +31,10 @@ type DiscoveredSkill struct {
 	Manifest *SkillManifest
 	Dir      string
 	Source   Source
+
+	// InstructionBody holds the markdown body for instruction skills (SKILL.md).
+	// Empty for regular SKILL.yaml skills.
+	InstructionBody string
 }
 
 // Loader discovers skills from multiple sources: built-in registrations,
@@ -188,8 +192,9 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	return result, warnings, nil
 }
 
-// scanDir walks a directory looking for <name>/SKILL.yaml files.
-// If the directory does not exist, it returns an empty slice (not an error).
+// scanDir walks a directory looking for <name>/SKILL.yaml files (and SKILL.md
+// instruction skills as a fallback). If the directory does not exist, it
+// returns an empty slice (not an error).
 func scanDir(dir string, source Source) ([]DiscoveredSkill, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -205,24 +210,46 @@ func scanDir(dir string, source Source) ([]DiscoveredSkill, error) {
 			continue
 		}
 
-		yamlPath := filepath.Join(dir, entry.Name(), "SKILL.yaml")
+		skillDir := filepath.Join(dir, entry.Name())
+
+		// Try SKILL.yaml first.
+		yamlPath := filepath.Join(skillDir, "SKILL.yaml")
 		data, err := os.ReadFile(yamlPath)
+		if err == nil {
+			manifest, err := ParseManifest(data)
+			if err != nil {
+				return nil, fmt.Errorf("parse skill %q: %w", entry.Name(), err)
+			}
+			results = append(results, DiscoveredSkill{
+				Manifest: manifest,
+				Dir:      skillDir,
+				Source:   source,
+			})
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read skill manifest %q: %w", yamlPath, err)
+		}
+
+		// Fall back to SKILL.md (instruction skill).
+		mdPath := filepath.Join(skillDir, "SKILL.md")
+		mdData, err := os.ReadFile(mdPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, fmt.Errorf("read skill manifest %q: %w", yamlPath, err)
+			return nil, fmt.Errorf("read instruction skill %q: %w", mdPath, err)
 		}
 
-		manifest, err := ParseManifest(data)
+		manifest, body, err := ParseInstructionSkill(mdData)
 		if err != nil {
-			return nil, fmt.Errorf("parse skill %q: %w", entry.Name(), err)
+			return nil, fmt.Errorf("parse instruction skill %q: %w", entry.Name(), err)
 		}
-
 		results = append(results, DiscoveredSkill{
-			Manifest: manifest,
-			Dir:      filepath.Join(dir, entry.Name()),
-			Source:   source,
+			Manifest:        manifest,
+			Dir:             skillDir,
+			Source:          source,
+			InstructionBody: body,
 		})
 	}
 

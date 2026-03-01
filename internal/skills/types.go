@@ -177,6 +177,10 @@ type Skill struct {
 
 	// Backend is the loaded implementation backend (nil when inactive).
 	Backend SkillBackend
+
+	// InstructionBody holds the markdown body for instruction skills (SKILL.md).
+	// Empty for regular SKILL.yaml skills.
+	InstructionBody string
 }
 
 // TransitionTo validates and performs a state transition. It returns an error
@@ -188,4 +192,95 @@ func (s *Skill) TransitionTo(newState SkillState) error {
 	}
 	s.State = newState
 	return nil
+}
+
+// SkillIndex is a lightweight representation of a skill for system prompt building
+// and trigger evaluation. It contains only the minimal metadata needed to list
+// skills in the prompt (~50 tokens per skill) without exposing the full manifest.
+type SkillIndex struct {
+	// Name is the skill's unique identifier.
+	Name string
+
+	// Description is a short human-readable summary.
+	Description string
+
+	// Types lists the skill types (tool, prompt, workflow, etc.).
+	Types []SkillType
+
+	// Triggers holds the activation trigger configuration.
+	Triggers TriggerConfig
+
+	// Source indicates where the skill was discovered.
+	Source Source
+
+	// Dir is the directory on disk where the skill resides.
+	Dir string
+}
+
+// NewSkillIndex creates a SkillIndex from a manifest, source, and directory.
+func NewSkillIndex(manifest *SkillManifest, source Source, dir string) SkillIndex {
+	if manifest == nil {
+		return SkillIndex{Source: source, Dir: dir}
+	}
+	typesCopy := make([]SkillType, len(manifest.Types))
+	copy(typesCopy, manifest.Types)
+	return SkillIndex{
+		Name:        manifest.Name,
+		Description: manifest.Description,
+		Types:       typesCopy,
+		Triggers:    manifest.Triggers,
+		Source:      source,
+		Dir:         dir,
+	}
+}
+
+// ContextBudget controls the total context window budget allocated to skill
+// prompt fragments. When set, the PromptCollector enforces these limits during
+// prompt building, using priority-based allocation.
+type ContextBudget struct {
+	// MaxTotalTokens is the global cap on total tokens from all skill fragments.
+	// Zero means unlimited (backward compatible).
+	MaxTotalTokens int
+
+	// MaxPerSkillTokens is the maximum tokens any single skill may contribute.
+	// Zero means unlimited.
+	MaxPerSkillTokens int
+}
+
+// DefaultContextBudget returns a ContextBudget with sensible defaults.
+func DefaultContextBudget() ContextBudget {
+	return ContextBudget{
+		MaxTotalTokens:    8000,
+		MaxPerSkillTokens: 2000,
+	}
+}
+
+// estimateTokens provides a rough token estimate based on character count.
+// The approximation is ~4 characters per token, which is a reasonable average
+// for English text and code.
+func estimateTokens(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	return (len(s) + 3) / 4 // round up
+}
+
+// sourceBudgetPriority returns a priority value for context budget allocation.
+// Higher values mean higher priority (included first). This is different from
+// hook dispatch priority where lower = higher.
+func sourceBudgetPriority(src Source) int {
+	switch src {
+	case SourceInline:
+		return 50
+	case SourceBuiltin:
+		return 40
+	case SourceUser:
+		return 30
+	case SourceProject:
+		return 20
+	case SourceMCP:
+		return 10
+	default:
+		return 0
+	}
 }
