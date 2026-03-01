@@ -719,3 +719,50 @@ func TestLoadMemoriesEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, memories)
 }
+
+// --- Tool result blob persistence tests ---
+
+func TestSaveAndRetrieveBlob(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.CreateSession(Session{ID: "s1", Model: "test", Title: "test"})
+	require.NoError(t, err)
+
+	err = s.SaveBlob("blob1", "s1", "shell", "huge output content", 20)
+	require.NoError(t, err)
+
+	content, err := s.GetBlob("blob1")
+	require.NoError(t, err)
+	assert.Equal(t, "huge output content", content)
+}
+
+func TestGetBlobNotFound(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	content, err := s.GetBlob("nonexistent")
+	assert.NoError(t, err)
+	assert.Equal(t, "", content)
+}
+
+func TestBlobCascadeOnSessionDelete(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.CreateSession(Session{ID: "s1", Model: "test", Title: "test"})
+	require.NoError(t, err)
+
+	err = s.SaveBlob("blob1", "s1", "shell", "data", 4)
+	require.NoError(t, err)
+
+	err = s.DeleteSession("s1")
+	require.NoError(t, err)
+
+	content, err := s.GetBlob("blob1")
+	assert.NoError(t, err)
+	assert.Equal(t, "", content, "blob should be cascade-deleted")
+}
