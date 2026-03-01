@@ -314,7 +314,9 @@ func ParseInstructionSkill(data []byte) (*SkillManifest, string, error) {
 }
 
 // splitFrontmatter extracts YAML frontmatter from markdown content.
-// The frontmatter must be delimited by "---" lines.
+// The frontmatter must be delimited by "---" lines. The closing delimiter
+// must appear at the start of a line to avoid matching "---" as a substring
+// inside YAML values.
 func splitFrontmatter(data []byte) ([]byte, []byte, error) {
 	sep := []byte("---")
 
@@ -324,18 +326,19 @@ func splitFrontmatter(data []byte) ([]byte, []byte, error) {
 		return nil, nil, fmt.Errorf("missing frontmatter delimiter (---)")
 	}
 
-	// Find opening delimiter.
+	// Find opening delimiter and skip to next line.
 	start := bytes.Index(data, sep)
 	rest := data[start+len(sep):]
 
-	// Find closing delimiter.
-	end := bytes.Index(rest, sep)
+	// Find closing delimiter at the start of a line ("\n---").
+	closingMarker := []byte("\n---")
+	end := bytes.Index(rest, closingMarker)
 	if end < 0 {
 		return nil, nil, fmt.Errorf("missing closing frontmatter delimiter (---)")
 	}
 
 	frontmatter := bytes.TrimSpace(rest[:end])
-	body := bytes.TrimSpace(rest[end+len(sep):])
+	body := bytes.TrimSpace(rest[end+len(closingMarker):])
 
 	return frontmatter, body, nil
 }

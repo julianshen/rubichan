@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"unicode/utf8"
 )
 
 // SecurityFinding represents a single finding from a security scanner.
@@ -145,11 +146,8 @@ func (pc *PromptCollector) BudgetedFragments(budget *ContextBudget) []PromptFrag
 		if budget.MaxPerSkillTokens > 0 {
 			perSkillTokens := estimateTokens(prompt)
 			if perSkillTokens > budget.MaxPerSkillTokens {
-				// Truncate to per-skill limit.
 				maxChars := budget.MaxPerSkillTokens * 4
-				if maxChars < len(prompt) {
-					prompt = prompt[:maxChars]
-				}
+				prompt = truncateUTF8(prompt, maxChars)
 			}
 		}
 
@@ -161,18 +159,26 @@ func (pc *PromptCollector) BudgetedFragments(budget *ContextBudget) []PromptFrag
 		} else {
 			// Partial fit: truncate to remaining budget.
 			maxChars := remainingTokens * 4
-			if maxChars > 0 && maxChars <= len(prompt) {
-				f.ResolvedPrompt = prompt[:maxChars]
-				result = append(result, f)
-			} else if maxChars > len(prompt) {
-				f.ResolvedPrompt = prompt
-				result = append(result, f)
-			}
+			f.ResolvedPrompt = truncateUTF8(prompt, maxChars)
+			result = append(result, f)
 			remainingTokens = 0
 		}
 	}
 
 	return result
+}
+
+// truncateUTF8 truncates s to at most maxBytes while preserving valid UTF-8.
+// It walks backwards from maxBytes to find the last valid rune boundary.
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	// Walk backwards from maxBytes to find a valid rune start.
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
 }
 
 // RemoveBySkill removes the prompt fragment for the given skill name.
