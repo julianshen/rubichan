@@ -1405,3 +1405,32 @@ type selectiveChecker struct {
 func (s *selectiveChecker) IsAutoApproved(tool string) bool {
 	return s.approved[tool]
 }
+
+func TestAgentNewWithContextEnhancements(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxOutputTokens = 4096
+	cfg.Agent.ResultOffloadThreshold = 2048
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+	assert.NotNil(t, a)
+	assert.NotNil(t, a.resultStore, "resultStore should be initialized when store is present")
+	assert.NotNil(t, a.promptBuilder, "promptBuilder should always be initialized")
+}
+
+func TestAgentNewWithoutStoreNoResultStore(t *testing.T) {
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg)
+	assert.NotNil(t, a)
+	assert.Nil(t, a.resultStore, "resultStore should be nil when no store is present")
+	assert.NotNil(t, a.promptBuilder, "promptBuilder should always be initialized")
+}

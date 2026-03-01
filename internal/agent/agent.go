@@ -180,6 +180,8 @@ type Agent struct {
 	scratchpad       *Scratchpad
 	memoryStore      MemoryStore
 	customStrategies bool
+	resultStore      *ResultStore
+	promptBuilder    *PromptBuilder
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -279,6 +281,17 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			}
 		}
 	}
+
+	// Initialize context management subsystems.
+	if a.store != nil && a.sessionID != "" {
+		threshold := cfg.Agent.ResultOffloadThreshold
+		if threshold <= 0 {
+			threshold = 4096
+		}
+		a.resultStore = NewResultStore(a.store, a.sessionID, threshold)
+	}
+	a.promptBuilder = NewPromptBuilder()
+
 	return a
 }
 
