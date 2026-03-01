@@ -152,6 +152,40 @@ func TestBootstrapFormSaveOllamaNoKey(t *testing.T) {
 	assert.Empty(t, loaded.Provider.OpenAI)
 }
 
+func TestBootstrapFormSaveOpenAICustomBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	bf := NewBootstrapForm(path)
+	bf.Config().Provider.Default = "openai"
+	bf.openaiKey = "sk-custom-test"
+	bf.openaiBaseURL = "https://openrouter.ai/api/v1"
+
+	require.NoError(t, bf.Save())
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	require.Len(t, loaded.Provider.OpenAI, 1)
+	assert.Equal(t, "https://openrouter.ai/api/v1", loaded.Provider.OpenAI[0].BaseURL)
+}
+
+func TestBootstrapFormSaveOpenAIDefaultBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	// When user leaves base URL empty, it should default to OpenAI.
+	bf := NewBootstrapForm(path)
+	bf.Config().Provider.Default = "openai"
+	bf.openaiKey = "sk-default-test"
+
+	require.NoError(t, bf.Save())
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	require.Len(t, loaded.Provider.OpenAI, 1)
+	assert.Equal(t, "https://api.openai.com/v1", loaded.Provider.OpenAI[0].BaseURL)
+}
+
 func TestBootstrapOpenAIProviderRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
