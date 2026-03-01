@@ -22,7 +22,12 @@ func TestRenderBannerContainsAllLines(t *testing.T) {
 		}
 		// Each line's text content should appear in the rendered output
 		// (lipgloss adds ANSI codes around it but preserves the text).
-		assert.Contains(t, rendered, strings.TrimSpace(line)[:10],
+		trimmed := strings.TrimSpace(line)
+		snippet := trimmed
+		if len(snippet) > 10 {
+			snippet = snippet[:10]
+		}
+		assert.Contains(t, rendered, snippet,
 			"rendered banner should contain text from each line")
 	}
 }
