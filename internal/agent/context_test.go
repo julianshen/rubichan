@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -8,7 +10,7 @@ import (
 )
 
 func TestContextManagerEstimateTokens(t *testing.T) {
-	cm := NewContextManager(100000)
+	cm := NewContextManager(100000, 0)
 	conv := NewConversation("system prompt")
 
 	// System prompt: "system prompt" = 13 chars / 4 = 3, + 10 overhead = 13
@@ -23,7 +25,7 @@ func TestContextManagerEstimateTokens(t *testing.T) {
 
 func TestContextManagerExceedsBudget(t *testing.T) {
 	// Very small budget
-	cm := NewContextManager(20)
+	cm := NewContextManager(20, 0)
 	conv := NewConversation("sys")
 
 	// "sys" = 3 chars / 4 = 0, + 10 = 10
@@ -35,14 +37,14 @@ func TestContextManagerExceedsBudget(t *testing.T) {
 }
 
 func TestContextManagerExceedsBudgetNotExceeded(t *testing.T) {
-	cm := NewContextManager(100000)
+	cm := NewContextManager(100000, 0)
 	conv := NewConversation("system prompt")
 	conv.AddUser("hello")
 	assert.False(t, cm.ExceedsBudget(conv))
 }
 
 func TestContextManagerTruncate(t *testing.T) {
-	cm := NewContextManager(50)
+	cm := NewContextManager(50, 0)
 	conv := NewConversation("sys")
 
 	// Add several message pairs to exceed budget
@@ -64,7 +66,7 @@ func TestContextManagerTruncate(t *testing.T) {
 }
 
 func TestContextManagerSmallConversationNoTruncation(t *testing.T) {
-	cm := NewContextManager(10) // Very small budget
+	cm := NewContextManager(10, 0) // Very small budget
 	conv := NewConversation("system")
 	conv.AddUser("hello world this is a very long message that exceeds the budget easily")
 	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "response that is also long enough"}})
@@ -75,7 +77,7 @@ func TestContextManagerSmallConversationNoTruncation(t *testing.T) {
 }
 
 func TestContextManagerTruncateSkipsLeadingToolResult(t *testing.T) {
-	cm := NewContextManager(30)
+	cm := NewContextManager(30, 0)
 	conv := NewConversation("s")
 
 	// Leading tool_result message — should not be removed since it would
@@ -97,7 +99,7 @@ func TestContextManagerTruncateSkipsLeadingToolResult(t *testing.T) {
 }
 
 func TestContextManagerTruncateAllToolResults(t *testing.T) {
-	cm := NewContextManager(5) // Very small budget
+	cm := NewContextManager(5, 0) // Very small budget
 	conv := NewConversation("s")
 
 	// All messages are tool_results — truncation should break out
@@ -129,4 +131,118 @@ func TestHasToolResult(t *testing.T) {
 		},
 	}
 	assert.False(t, hasToolResult(msg2))
+}
+
+func TestContextBudgetEffectiveWindow(t *testing.T) {
+	b := ContextBudget{Total: 100000, MaxOutputTokens: 4096}
+	assert.Equal(t, 95904, b.EffectiveWindow())
+}
+
+func TestContextBudgetEffectiveWindowZeroOutput(t *testing.T) {
+	b := ContextBudget{Total: 100000, MaxOutputTokens: 0}
+	assert.Equal(t, 100000, b.EffectiveWindow())
+}
+
+func TestContextBudgetUsedTokens(t *testing.T) {
+	b := ContextBudget{
+		Total:            100000,
+		MaxOutputTokens:  4096,
+		SystemPrompt:     500,
+		SkillPrompts:     200,
+		ToolDescriptions: 3000,
+		Conversation:     10000,
+	}
+	assert.Equal(t, 13700, b.UsedTokens())
+}
+
+func TestContextBudgetRemainingTokens(t *testing.T) {
+	b := ContextBudget{
+		Total:            100000,
+		MaxOutputTokens:  4096,
+		SystemPrompt:     500,
+		SkillPrompts:     200,
+		ToolDescriptions: 3000,
+		Conversation:     10000,
+	}
+	assert.Equal(t, 82204, b.RemainingTokens()) // 95904 - 13700
+}
+
+func TestContextBudgetUsedPercentage(t *testing.T) {
+	b := ContextBudget{
+		Total:           100000,
+		MaxOutputTokens: 0,
+		SystemPrompt:    50000,
+		Conversation:    50000,
+	}
+	assert.InDelta(t, 1.0, b.UsedPercentage(), 0.001)
+}
+
+func TestContextBudgetUsedPercentageZeroWindow(t *testing.T) {
+	b := ContextBudget{Total: 0, MaxOutputTokens: 0}
+	assert.Equal(t, 1.0, b.UsedPercentage())
+}
+
+func TestNewContextManagerWithBudget(t *testing.T) {
+	cm := NewContextManager(100000, 4096)
+	assert.NotNil(t, cm)
+}
+
+func TestContextManagerShouldCompactAt95Percent(t *testing.T) {
+	cm := NewContextManager(1000, 100) // effective window = 900, threshold = 855
+	conv := NewConversation("")
+
+	// System prompt "" contributes 10 tokens overhead.
+	// makeStringOfTokens(840) => 840 tokens => total = 10 + 840 = 850 < 855
+	conv.AddUser(makeStringOfTokens(840))
+	assert.False(t, cm.ShouldCompact(conv), "below 95%% should not trigger")
+
+	conv.Clear()
+	// makeStringOfTokens(850) => 850 tokens => total = 10 + 850 = 860 > 855
+	conv.AddUser(makeStringOfTokens(850))
+	assert.True(t, cm.ShouldCompact(conv), "above 95%% should trigger")
+}
+
+func TestContextManagerIsBlocked(t *testing.T) {
+	cm := NewContextManager(1000, 100) // effective window = 900, threshold = 882
+	conv := NewConversation("")
+
+	// System prompt "" contributes 10 tokens overhead.
+	// makeStringOfTokens(870) => 870 tokens => total = 10 + 870 = 880 < 882
+	conv.AddUser(makeStringOfTokens(870))
+	assert.False(t, cm.IsBlocked(conv), "below 98%% should not block")
+
+	conv.Clear()
+	// makeStringOfTokens(880) => 880 tokens => total = 10 + 880 = 890 > 882
+	conv.AddUser(makeStringOfTokens(880))
+	assert.True(t, cm.IsBlocked(conv), "above 98%% should block")
+}
+
+func TestContextManagerMeasureUsage(t *testing.T) {
+	cm := NewContextManager(100000, 4096)
+
+	systemPrompt := "You are a helpful assistant"
+	conv := NewConversation(systemPrompt)
+	conv.AddUser("hello")
+	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "hi there"}})
+
+	toolDefs := []provider.ToolDef{
+		{Name: "shell", Description: "Execute shell commands", InputSchema: json.RawMessage(`{"type":"object"}`)},
+	}
+	skillPrompt := "## Skill\nDo stuff"
+
+	cm.MeasureUsage(conv, systemPrompt, skillPrompt, toolDefs)
+
+	assert.Greater(t, cm.budget.SystemPrompt, 0)
+	assert.Greater(t, cm.budget.SkillPrompts, 0)
+	assert.Greater(t, cm.budget.ToolDescriptions, 0)
+	assert.Greater(t, cm.budget.Conversation, 0)
+}
+
+// makeStringOfTokens returns a string that estimates to approximately n tokens.
+func makeStringOfTokens(n int) string {
+	chars := (n - 10) * 4
+	if chars < 0 {
+		chars = 0
+	}
+	return strings.Repeat("a", chars)
 }

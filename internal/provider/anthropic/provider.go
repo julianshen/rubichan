@@ -39,10 +39,22 @@ type apiRequest struct {
 	Model       string       `json:"model"`
 	MaxTokens   int          `json:"max_tokens"`
 	Stream      bool         `json:"stream"`
-	System      string       `json:"system,omitempty"`
+	System      any          `json:"system,omitempty"` // string or []apiSystemBlock
 	Messages    []apiMessage `json:"messages"`
 	Tools       []apiTool    `json:"tools,omitempty"`
 	Temperature *float64     `json:"temperature,omitempty"`
+}
+
+// apiSystemBlock represents a structured system prompt block with optional cache control.
+type apiSystemBlock struct {
+	Type         string           `json:"type"`
+	Text         string           `json:"text"`
+	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+}
+
+// apiCacheControl marks a block for prompt caching.
+type apiCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
 }
 
 type apiMessage struct {
@@ -108,7 +120,13 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 		Model:     req.Model,
 		MaxTokens: req.MaxTokens,
 		Stream:    true,
-		System:    req.System,
+	}
+
+	// Build system prompt with optional cache breakpoints.
+	if len(req.CacheBreakpoints) > 0 && req.System != "" {
+		apiReq.System = buildCachedSystemBlocks(req.System, req.CacheBreakpoints)
+	} else {
+		apiReq.System = req.System
 	}
 
 	if req.Temperature != nil {
@@ -134,6 +152,34 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 	}
 
 	return json.Marshal(apiReq)
+}
+
+// buildCachedSystemBlocks splits the system prompt at breakpoint byte offsets
+// and marks pre-breakpoint blocks with cache_control.
+func buildCachedSystemBlocks(system string, breakpoints []int) []apiSystemBlock {
+	var blocks []apiSystemBlock
+	prev := 0
+	for _, bp := range breakpoints {
+		if bp > len(system) {
+			bp = len(system)
+		}
+		if bp <= prev {
+			continue
+		}
+		blocks = append(blocks, apiSystemBlock{
+			Type:         "text",
+			Text:         system[prev:bp],
+			CacheControl: &apiCacheControl{Type: "ephemeral"},
+		})
+		prev = bp
+	}
+	if prev < len(system) {
+		blocks = append(blocks, apiSystemBlock{
+			Type: "text",
+			Text: system[prev:],
+		})
+	}
+	return blocks
 }
 
 // convertContentBlocks maps provider.ContentBlock to Anthropic-specific

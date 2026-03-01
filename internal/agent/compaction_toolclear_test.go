@@ -257,7 +257,7 @@ func TestToolClearingBothSignals(t *testing.T) {
 }
 
 func TestToolResultClearingIntegrationWithCompact(t *testing.T) {
-	cm := NewContextManager(80)
+	cm := NewContextManager(80, 0)
 	cm.SetStrategies([]CompactionStrategy{
 		NewToolResultClearingStrategy(),
 		&truncateStrategy{},

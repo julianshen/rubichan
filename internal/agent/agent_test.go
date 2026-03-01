@@ -1405,3 +1405,163 @@ type selectiveChecker struct {
 func (s *selectiveChecker) IsAutoApproved(tool string) bool {
 	return s.approved[tool]
 }
+
+func TestAgentNewWithContextEnhancements(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxOutputTokens = 4096
+	cfg.Agent.ResultOffloadThreshold = 2048
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+	assert.NotNil(t, a)
+	assert.NotNil(t, a.resultStore, "resultStore should be initialized when store is present")
+	assert.NotNil(t, a.promptBuilder, "promptBuilder should always be initialized")
+}
+
+func TestAgentNewWithoutStoreNoResultStore(t *testing.T) {
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg)
+	assert.NotNil(t, a)
+	assert.Nil(t, a.resultStore, "resultStore should be nil when no store is present")
+	assert.NotNil(t, a.promptBuilder, "promptBuilder should always be initialized")
+}
+
+func TestAgentToolResultOffloading(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ResultOffloadThreshold = 20 // very small threshold
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "big_output",
+		description: "produces large output",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{
+				Content: "this output is definitely large enough to trigger offloading behavior in the result store",
+			}, nil
+		},
+	}))
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	tc := provider.ToolUseBlock{ID: "t1", Name: "big_output", Input: json.RawMessage(`{}`)}
+	result := a.executeSingleTool(context.Background(), tc)
+
+	assert.Contains(t, result.content, "Tool result stored")
+	assert.Contains(t, result.content, "read_result")
+}
+
+func TestAgentToolResultOffloadingSkipsSmallResults(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ResultOffloadThreshold = 10000 // high threshold
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "small_output",
+		description: "produces small output",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "small"}, nil
+		},
+	}))
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	tc := provider.ToolUseBlock{ID: "t2", Name: "small_output", Input: json.RawMessage(`{}`)}
+	result := a.executeSingleTool(context.Background(), tc)
+
+	assert.Equal(t, "small", result.content, "small results should not be offloaded")
+}
+
+func TestAgentToolResultOffloadingSkipsErrors(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ResultOffloadThreshold = 20 // small threshold
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "error_tool",
+		description: "produces error",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{
+				Content: "this is a very long error message that exceeds the threshold",
+				IsError: true,
+			}, nil
+		},
+	}))
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	tc := provider.ToolUseBlock{ID: "t3", Name: "error_tool", Input: json.RawMessage(`{}`)}
+	result := a.executeSingleTool(context.Background(), tc)
+
+	// Error results should NOT be offloaded.
+	assert.NotContains(t, result.content, "Tool result stored")
+	assert.True(t, result.isError)
+}
+
+func TestAgentSavesSnapshotAfterCompaction(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ContextBudget = 500 // small budget to force compaction
+	cfg.Agent.MaxOutputTokens = 0
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "done"},
+		{Type: "stop"},
+	}}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	// Fill conversation to make snapshot meaningful.
+	for i := 0; i < 20; i++ {
+		a.conversation.AddUser("message content for testing")
+		a.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "response"}})
+	}
+
+	a.saveSnapshotIfNeeded()
+
+	// Verify snapshot was saved.
+	snap, err := s.GetSnapshot(a.sessionID)
+	require.NoError(t, err)
+	assert.NotNil(t, snap, "snapshot should exist after saveSnapshotIfNeeded")
+}
+
+func TestAgentSaveSnapshotIfNeededWithoutStore(t *testing.T) {
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg)
+
+	// Should not panic when store is nil.
+	a.saveSnapshotIfNeeded()
+}
