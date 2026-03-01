@@ -522,6 +522,7 @@ func runInteractive() error {
 		return fmt.Errorf("registering search tool: %w", err)
 	}
 	procMgr := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
+	defer procMgr.Shutdown(context.Background())
 	if err := registry.Register(tools.NewProcessTool(procMgr)); err != nil {
 		return fmt.Errorf("registering process tool: %w", err)
 	}
@@ -747,6 +748,7 @@ func runHeadless() error {
 	}
 	if shouldRegister("process", allowed) {
 		pm := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
+		defer pm.Shutdown(context.Background())
 		if err := registry.Register(tools.NewProcessTool(pm)); err != nil {
 			return fmt.Errorf("registering process tool: %w", err)
 		}

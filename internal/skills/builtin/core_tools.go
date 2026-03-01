@@ -43,7 +43,7 @@ func (b *CoreToolsBackend) Load(_ skills.SkillManifest, _ skills.PermissionCheck
 	return nil
 }
 
-// Tools returns the file and shell tools created during Load.
+// Tools returns the file, shell, and process tools created during Load.
 func (b *CoreToolsBackend) Tools() []tools.Tool {
 	return b.tools
 }
