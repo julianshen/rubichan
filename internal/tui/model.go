@@ -156,6 +156,17 @@ func (m *Model) IsAutoApproved(tool string) bool {
 	return ok
 }
 
+// CheckApproval implements agent.ApprovalChecker by checking the session
+// cache of "always approved" tools. Returns AutoApproved for cached tools,
+// ApprovalRequired otherwise. Trust rules are composed at a higher level
+// via CompositeApprovalChecker.
+func (m *Model) CheckApproval(tool string, _ json.RawMessage) agent.ApprovalResult {
+	if _, ok := m.alwaysApproved.Load(tool); ok {
+		return agent.AutoApproved
+	}
+	return agent.ApprovalRequired
+}
+
 // waitForApproval returns a tea.Cmd that blocks until an approval request
 // arrives on the approval channel, then delivers it as an approvalRequestMsg.
 func (m *Model) waitForApproval() tea.Cmd {
