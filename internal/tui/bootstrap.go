@@ -36,10 +36,11 @@ func NeedsBootstrap(configPath string) bool {
 
 // BootstrapForm is a first-run setup wizard using Huh multi-step form.
 type BootstrapForm struct {
-	form      *huh.Form
-	cfg       *config.Config
-	savePath  string
-	openaiKey string
+	form          *huh.Form
+	cfg           *config.Config
+	savePath      string
+	openaiKey     string
+	openaiBaseURL string
 }
 
 // NewBootstrapForm creates a multi-step setup wizard.
@@ -73,13 +74,18 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 	).Title("Authentication").
 		WithHideFunc(func() bool { return cfg.Provider.Default != "anthropic" })
 
-	openaiKeyGroup := huh.NewGroup(
+	openaiGroup := huh.NewGroup(
 		huh.NewInput().
-			Title("OpenAI API Key").
+			Title("Base URL").
+			Description("Leave empty for https://api.openai.com/v1").
+			Placeholder("https://api.openai.com/v1").
+			Value(&bf.openaiBaseURL),
+		huh.NewInput().
+			Title("API Key").
 			Placeholder("sk-...").
 			Value(&bf.openaiKey).
 			EchoMode(huh.EchoModePassword),
-	).Title("Authentication").
+	).Title("OpenAI Compatible Provider").
 		WithHideFunc(func() bool { return cfg.Provider.Default != "openai" })
 
 	modelGroup := huh.NewGroup(
@@ -90,7 +96,7 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 	).Title("Model").
 		WithHideFunc(func() bool { return cfg.Provider.Default == "ollama" })
 
-	bf.form = huh.NewForm(providerGroup, anthropicKeyGroup, openaiKeyGroup, modelGroup)
+	bf.form = huh.NewForm(providerGroup, anthropicKeyGroup, openaiGroup, modelGroup)
 	return bf
 }
 
@@ -107,8 +113,12 @@ func (b *BootstrapForm) Config() *config.Config { return b.cfg }
 // entry if the user selected the OpenAI provider.
 func (b *BootstrapForm) Save() error {
 	if b.cfg.Provider.Default == "openai" && b.openaiKey != "" {
+		baseURL := b.openaiBaseURL
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
 		b.cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
-			{Name: "default", BaseURL: "https://api.openai.com/v1", APIKey: b.openaiKey},
+			{Name: "openai", BaseURL: baseURL, APIKey: b.openaiKey, APIKeySource: "config"},
 		}
 	}
 	return config.Save(b.savePath, b.cfg)

@@ -436,7 +436,10 @@ func runInteractive() error {
 	// Run first-run bootstrap wizard if no config/API key found.
 	if tui.NeedsBootstrap(cfgPath) {
 		wizard := tui.NewBootstrapForm(cfgPath)
-		prog := tea.NewProgram(wizard.Form())
+		form := wizard.Form()
+		form.SubmitCmd = tea.Quit
+		form.CancelCmd = tea.Interrupt
+		prog := tea.NewProgram(form)
 		finalModel, err := prog.Run()
 		if err != nil {
 			return fmt.Errorf("bootstrap wizard: %w", err)
@@ -563,7 +566,7 @@ func runInteractive() error {
 
 	// Wire the agent into the TUI model now that both exist.
 	model.SetAgent(a)
-	prog := tea.NewProgram(model, tea.WithAltScreen())
+	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)
 	}

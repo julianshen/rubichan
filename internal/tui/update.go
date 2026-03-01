@@ -56,6 +56,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -125,6 +130,13 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.waitForEvent()
 		}
 		return m, nil
+	}
+
+	// Scroll keys are forwarded to the viewport regardless of state.
+	if isScrollKey(msg) {
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 	}
 
 	switch msg.Type {
@@ -209,14 +221,39 @@ func (m *Model) waitForEvent() tea.Cmd {
 	}
 }
 
+// isScrollKey returns true if the key message is a viewport scroll key.
+func isScrollKey(msg tea.KeyMsg) bool {
+	switch msg.Type {
+	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		return true
+	case tea.KeyUp, tea.KeyDown:
+		return true
+	}
+	// Ctrl+U / Ctrl+D for half-page scroll.
+	if msg.Type == tea.KeyCtrlU || msg.Type == tea.KeyCtrlD {
+		return true
+	}
+	return false
+}
+
+// setContentAndAutoScroll updates the viewport content and scrolls to bottom only
+// if the viewport was already at the bottom before the update. This preserves the
+// user's scroll position when they scroll up to read earlier content.
+func (m *Model) setContentAndAutoScroll(content string) {
+	wasAtBottom := m.viewport.AtBottom()
+	m.viewport.SetContent(content)
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+}
+
 // handleTurnEvent processes a streaming TurnEvent from the agent.
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case "text_delta":
 		m.rawAssistant.WriteString(msg.Text)
 		m.content.WriteString(msg.Text)
-		m.viewport.SetContent(m.content.String())
-		m.viewport.GotoBottom()
+		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 
 	case "tool_call":
@@ -227,8 +264,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			args = string(msg.ToolCall.Input)
 		}
 		m.content.WriteString(m.toolBox.RenderToolCall(name, args))
-		m.viewport.SetContent(m.content.String())
-		m.viewport.GotoBottom()
+		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 
 	case "tool_result":
@@ -245,8 +281,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			isError = msg.ToolResult.IsError
 		}
 		m.content.WriteString(m.toolBox.RenderToolResult(resultName, resultContent, isError))
-		m.viewport.SetContent(m.content.String())
-		m.viewport.GotoBottom()
+		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 
 	case "error":
@@ -255,8 +290,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			errMsg = msg.Error.Error()
 		}
 		m.content.WriteString(fmt.Sprintf("Error: %s\n", errMsg))
-		m.viewport.SetContent(m.content.String())
-		m.viewport.GotoBottom()
+		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 
 	case "done":
@@ -272,8 +306,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 		m.rawAssistant.Reset()
 		m.content.WriteString("\n")
-		m.viewport.SetContent(m.content.String())
-		m.viewport.GotoBottom()
+		m.setContentAndAutoScroll(m.content.String())
 
 		// Update status bar with token usage and turn count.
 		m.turnCount++
