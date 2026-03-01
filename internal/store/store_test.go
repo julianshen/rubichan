@@ -766,3 +766,85 @@ func TestBlobCascadeOnSessionDelete(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "", content, "blob should be cascade-deleted")
 }
+
+// --- Session snapshot persistence tests ---
+
+func TestSaveAndGetSnapshot(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.CreateSession(Session{ID: "s1", Model: "test", Title: "test"})
+	require.NoError(t, err)
+
+	msgs := []provider.Message{
+		provider.NewUserMessage("[Summary of 20 earlier messages]\nKey decisions..."),
+		provider.NewUserMessage("latest question"),
+	}
+	err = s.SaveSnapshot("s1", msgs, 500)
+	require.NoError(t, err)
+
+	loaded, err := s.GetSnapshot("s1")
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
+	assert.Contains(t, loaded[0].Content[0].Text, "Summary")
+}
+
+func TestGetSnapshotNotFound(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	loaded, err := s.GetSnapshot("nonexistent")
+	assert.NoError(t, err)
+	assert.Nil(t, loaded)
+}
+
+func TestSnapshotCascadeOnSessionDelete(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.CreateSession(Session{ID: "s1", Model: "test", Title: "test"})
+	require.NoError(t, err)
+
+	msgs := []provider.Message{provider.NewUserMessage("summary")}
+	err = s.SaveSnapshot("s1", msgs, 100)
+	require.NoError(t, err)
+
+	err = s.DeleteSession("s1")
+	require.NoError(t, err)
+
+	loaded, err := s.GetSnapshot("s1")
+	assert.NoError(t, err)
+	assert.Nil(t, loaded, "snapshot should be cascade-deleted")
+}
+
+func TestSnapshotReplaceExisting(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.CreateSession(Session{ID: "s1", Model: "test", Title: "test"})
+	require.NoError(t, err)
+
+	// Save initial snapshot.
+	msgs1 := []provider.Message{provider.NewUserMessage("first snapshot")}
+	err = s.SaveSnapshot("s1", msgs1, 100)
+	require.NoError(t, err)
+
+	// Replace with updated snapshot.
+	msgs2 := []provider.Message{
+		provider.NewUserMessage("second snapshot"),
+		provider.NewUserMessage("extra message"),
+	}
+	err = s.SaveSnapshot("s1", msgs2, 250)
+	require.NoError(t, err)
+
+	// GetSnapshot should return the latest.
+	loaded, err := s.GetSnapshot("s1")
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
+	assert.Equal(t, "second snapshot", loaded[0].Content[0].Text)
+	assert.Equal(t, "extra message", loaded[1].Content[0].Text)
+}

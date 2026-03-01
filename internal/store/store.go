@@ -181,6 +181,12 @@ func createTables(db *sql.DB) error {
 			created_at DATETIME NOT NULL DEFAULT (datetime('now'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_blobs_session ON tool_result_blobs(session_id)`,
+		`CREATE TABLE IF NOT EXISTS session_snapshots (
+			session_id  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+			messages    TEXT NOT NULL,
+			token_count INTEGER NOT NULL,
+			created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -570,4 +576,41 @@ func (s *Store) GetBlob(id string) (string, error) {
 		return "", fmt.Errorf("get blob: %w", err)
 	}
 	return content, nil
+}
+
+// SaveSnapshot persists the post-compaction message state for resume.
+func (s *Store) SaveSnapshot(sessionID string, msgs []provider.Message, tokenCount int) error {
+	data, err := json.Marshal(msgs)
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+	_, err = s.db.Exec(
+		`INSERT OR REPLACE INTO session_snapshots (session_id, messages, token_count, created_at)
+		 VALUES (?, ?, ?, datetime('now'))`,
+		sessionID, string(data), tokenCount,
+	)
+	if err != nil {
+		return fmt.Errorf("save snapshot: %w", err)
+	}
+	return nil
+}
+
+// GetSnapshot retrieves the compacted snapshot for resume. Returns nil if
+// no snapshot exists (session was never compacted).
+func (s *Store) GetSnapshot(sessionID string) ([]provider.Message, error) {
+	var data string
+	err := s.db.QueryRow(
+		`SELECT messages FROM session_snapshots WHERE session_id = ?`, sessionID,
+	).Scan(&data)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get snapshot: %w", err)
+	}
+	var msgs []provider.Message
+	if err := json.Unmarshal([]byte(data), &msgs); err != nil {
+		return nil, fmt.Errorf("unmarshal snapshot: %w", err)
+	}
+	return msgs, nil
 }
