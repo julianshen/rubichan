@@ -19,6 +19,7 @@ import (
 	"github.com/sourcegraph/conc"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
@@ -582,9 +583,31 @@ func runInteractive() error {
 	opts = append(opts, agent.WithSummarizer(summarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
+	// Create command registry and register built-in slash commands.
+	cmdRegistry := commands.NewRegistry()
+	_ = cmdRegistry.Register(commands.NewQuitCommand())
+	_ = cmdRegistry.Register(commands.NewExitCommand())
+	_ = cmdRegistry.Register(commands.NewConfigCommand())
+	_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
+
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
-	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
+	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
+
+	// Register commands that need model callbacks (these need the model instance).
+	_ = cmdRegistry.Register(commands.NewClearCommand(func() {
+		if model.GetAgent() != nil {
+			model.GetAgent().ClearConversation()
+		}
+		model.ClearContent()
+	}))
+	_ = cmdRegistry.Register(commands.NewModelCommand(func(name string) {
+		if model.GetAgent() != nil {
+			model.GetAgent().SetModel(name)
+		}
+		model.SwitchModel(name)
+	}))
+
 	if !autoApprove {
 		approvalFunc = model.MakeApprovalFunc()
 

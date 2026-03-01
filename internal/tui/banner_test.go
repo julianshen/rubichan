@@ -40,7 +40,7 @@ func TestRenderBannerPreservesLineCount(t *testing.T) {
 }
 
 func TestNewModelInitialContent(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 
 	content := m.content.String()
 	assert.Contains(t, content, ".-')", "initial viewport should contain the banner ASCII art")
