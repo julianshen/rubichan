@@ -38,6 +38,7 @@ func toolNames(defs []provider.ToolDef) []string {
 func TestCategorize(t *testing.T) {
 	assert.Equal(t, CategoryCore, Categorize("shell"))
 	assert.Equal(t, CategoryCore, Categorize("file"))
+	assert.Equal(t, CategoryCore, Categorize("process"))
 	assert.Equal(t, CategoryFileSystem, Categorize("search"))
 	assert.Equal(t, CategoryPlatform, Categorize("xcode_build"))
 	assert.Equal(t, CategoryPlatform, Categorize("xcode_discover"))

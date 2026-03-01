@@ -26,7 +26,7 @@ func TestCoreToolsManifest(t *testing.T) {
 	assert.Empty(t, string(m.Implementation.Backend), "built-in skills should not set a backend")
 }
 
-func TestCoreToolsRegistersFileShell(t *testing.T) {
+func TestCoreToolsRegistersFileShellProcess(t *testing.T) {
 	backend := &CoreToolsBackend{WorkDir: t.TempDir()}
 	m := CoreToolsManifest()
 
@@ -34,7 +34,7 @@ func TestCoreToolsRegistersFileShell(t *testing.T) {
 	require.NoError(t, err)
 
 	toolList := backend.Tools()
-	require.Len(t, toolList, 2, "core-tools should expose exactly 2 tools")
+	require.Len(t, toolList, 3, "core-tools should expose exactly 3 tools")
 
 	names := make(map[string]bool)
 	for _, tool := range toolList {
@@ -42,6 +42,7 @@ func TestCoreToolsRegistersFileShell(t *testing.T) {
 	}
 	assert.True(t, names["file"], "core-tools must expose a 'file' tool")
 	assert.True(t, names["shell"], "core-tools must expose a 'shell' tool")
+	assert.True(t, names["process"], "core-tools must expose a 'process' tool")
 
 	// Hooks should be empty.
 	assert.Empty(t, backend.Hooks())
