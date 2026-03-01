@@ -95,7 +95,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	// but handle it gracefully — Render falls back to raw text if renderer is nil.
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
-	return &Model{
+	m := &Model{
 		agent:      a,
 		cfg:        cfg,
 		configPath: configPath,
@@ -113,6 +113,13 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		width:      80,
 		height:     24,
 	}
+
+	bannerText := bannerStyle.Render(Banner)
+	m.content.WriteString(bannerText)
+	m.content.WriteString("\n")
+	m.viewport.SetContent(m.content.String())
+
+	return m
 }
 
 // SetAgent sets the agent on the model. This is used when the model needs to
