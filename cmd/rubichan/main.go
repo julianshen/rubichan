@@ -586,9 +586,11 @@ func runInteractive() error {
 		var checkers []agent.ApprovalChecker
 		checkers = append(checkers, model) // session cache
 		if len(cfg.Agent.TrustRules) > 0 {
-			checkers = append(checkers, agent.NewTrustRuleChecker(
-				configToTrustRules(cfg.Agent.TrustRules),
-			))
+			trustRules := configToTrustRules(cfg.Agent.TrustRules)
+			if err := agent.ValidateTrustRules(trustRules); err != nil {
+				return fmt.Errorf("invalid trust rules in config: %w", err)
+			}
+			checkers = append(checkers, agent.NewTrustRuleChecker(trustRules))
 		}
 		opts = append(opts, agent.WithApprovalChecker(
 			agent.NewCompositeApprovalChecker(checkers...),

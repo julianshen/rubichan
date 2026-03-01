@@ -205,6 +205,62 @@ func TestCompositeApprovalCheckerEmpty(t *testing.T) {
 	assert.Equal(t, ApprovalRequired, composite.CheckApproval("any", json.RawMessage(`{}`)))
 }
 
+func TestValidateTrustRulesValid(t *testing.T) {
+	err := ValidateTrustRules([]TrustRule{
+		{Tool: "shell", Pattern: `^go test`, Action: "allow"},
+		{Tool: "shell", Pattern: `^rm\s`, Action: "deny"},
+	})
+	assert.NoError(t, err)
+}
+
+func TestValidateTrustRulesInvalidAction(t *testing.T) {
+	err := ValidateTrustRules([]TrustRule{
+		{Tool: "shell", Pattern: `^go test`, Action: "alow"}, // typo
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid action "alow"`)
+}
+
+func TestValidateTrustRulesInvalidPattern(t *testing.T) {
+	err := ValidateTrustRules([]TrustRule{
+		{Tool: "shell", Pattern: `[invalid`, Action: "allow"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid pattern")
+}
+
+func TestValidateTrustRulesEmpty(t *testing.T) {
+	assert.NoError(t, ValidateTrustRules(nil))
+}
+
+func TestTrustRuleCheckerNonStringInputNoMatch(t *testing.T) {
+	// Patterns only match string values; numeric-only inputs yield no match.
+	checker := NewTrustRuleChecker([]TrustRule{
+		{Tool: "counter", Pattern: `.*`, Action: "allow"},
+	})
+
+	result := checker.CheckApproval("counter", json.RawMessage(`{"count":42}`))
+	assert.Equal(t, ApprovalRequired, result, "numeric-only input should not match string patterns")
+}
+
+func TestTrustRuleCheckerNilInput(t *testing.T) {
+	checker := NewTrustRuleChecker([]TrustRule{
+		{Tool: "shell", Pattern: `.*`, Action: "allow"},
+	})
+
+	result := checker.CheckApproval("shell", nil)
+	assert.Equal(t, ApprovalRequired, result, "nil input should not match any pattern")
+}
+
+func TestTrustRuleCheckerEmptyInput(t *testing.T) {
+	checker := NewTrustRuleChecker([]TrustRule{
+		{Tool: "shell", Pattern: `.*`, Action: "allow"},
+	})
+
+	result := checker.CheckApproval("shell", json.RawMessage(`{}`))
+	assert.Equal(t, ApprovalRequired, result, "empty object has no string values to match")
+}
+
 // selectiveAutoApprover implements AutoApproveChecker for tests.
 type selectiveAutoApprover struct {
 	approved map[string]bool

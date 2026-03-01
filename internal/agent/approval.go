@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 )
 
@@ -45,7 +46,7 @@ type ApprovalChecker interface {
 // against the serialized tool input.
 type TrustRule struct {
 	Tool    string `toml:"tool"`    // Tool name to match, or "*" for all tools
-	Pattern string `toml:"pattern"` // Regex pattern matched against serialized input
+	Pattern string `toml:"pattern"` // Regex pattern matched against string values in input
 	Action  string `toml:"action"`  // "allow" or "deny"
 }
 
@@ -54,6 +55,9 @@ type TrustRule struct {
 // matches the pattern against string values extracted from the JSON input.
 // This allows patterns like "^go test" to match the command value directly,
 // rather than requiring users to account for JSON structure.
+//
+// Note: patterns only match against string values within the JSON input.
+// Non-string values (numbers, booleans) are not matched.
 func (r TrustRule) Matches(tool string, input json.RawMessage) (bool, error) {
 	// Check tool name.
 	if r.Tool != "*" && r.Tool != tool {
@@ -74,6 +78,21 @@ func (r TrustRule) Matches(tool string, input json.RawMessage) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// ValidateTrustRules checks that all trust rules have valid Action fields
+// ("allow" or "deny") and compilable regex patterns. Returns the first
+// validation error found.
+func ValidateTrustRules(rules []TrustRule) error {
+	for i, r := range rules {
+		if r.Action != "allow" && r.Action != "deny" {
+			return fmt.Errorf("trust rule %d: invalid action %q (must be \"allow\" or \"deny\")", i, r.Action)
+		}
+		if _, err := regexp.Compile(r.Pattern); err != nil {
+			return fmt.Errorf("trust rule %d: invalid pattern %q: %w", i, r.Pattern, err)
+		}
+	}
+	return nil
 }
 
 // extractStringValues recursively extracts all string values from a JSON blob.
@@ -107,16 +126,37 @@ func extractStringValues(data json.RawMessage) []string {
 	return nil
 }
 
+// compiledRule is a trust rule with its regex pre-compiled for efficiency.
+type compiledRule struct {
+	tool   string
+	re     *regexp.Regexp
+	action string
+}
+
 // TrustRuleChecker evaluates tool calls against a list of trust rules.
 // Deny rules take precedence over allow rules. If no rule matches,
-// the result is ApprovalRequired.
+// the result is ApprovalRequired. Regexes are pre-compiled at construction
+// time; rules with invalid patterns are skipped.
 type TrustRuleChecker struct {
-	rules []TrustRule
+	rules []compiledRule
 }
 
 // NewTrustRuleChecker creates a checker with the given trust rules.
+// Rules with invalid regex patterns are silently skipped.
 func NewTrustRuleChecker(rules []TrustRule) *TrustRuleChecker {
-	return &TrustRuleChecker{rules: rules}
+	var compiled []compiledRule
+	for _, r := range rules {
+		re, err := regexp.Compile(r.Pattern)
+		if err != nil {
+			continue // skip invalid patterns (validated earlier by ValidateTrustRules)
+		}
+		compiled = append(compiled, compiledRule{
+			tool:   r.Tool,
+			re:     re,
+			action: r.Action,
+		})
+	}
+	return &TrustRuleChecker{rules: compiled}
 }
 
 // CheckApproval evaluates the tool call against all trust rules.
@@ -124,41 +164,42 @@ func NewTrustRuleChecker(rules []TrustRule) *TrustRuleChecker {
 // is ApprovalRequired regardless of allow rules. Then allow rules are
 // checked — if any matches, the result is TrustRuleApproved.
 func (c *TrustRuleChecker) CheckApproval(tool string, input json.RawMessage) ApprovalResult {
-	hasAllow := false
+	values := extractStringValues(input)
 
 	// First pass: check deny rules.
 	for _, rule := range c.rules {
-		if rule.Action != "deny" {
+		if rule.action != "deny" {
 			continue
 		}
-		matched, err := rule.Matches(tool, input)
-		if err != nil {
-			continue // skip rules with invalid patterns
-		}
-		if matched {
+		if matchesCompiledRule(rule, tool, values) {
 			return ApprovalRequired
 		}
 	}
 
 	// Second pass: check allow rules.
 	for _, rule := range c.rules {
-		if rule.Action != "allow" {
+		if rule.action != "allow" {
 			continue
 		}
-		matched, err := rule.Matches(tool, input)
-		if err != nil {
-			continue // skip rules with invalid patterns
-		}
-		if matched {
-			hasAllow = true
-			break
+		if matchesCompiledRule(rule, tool, values) {
+			return TrustRuleApproved
 		}
 	}
 
-	if hasAllow {
-		return TrustRuleApproved
-	}
 	return ApprovalRequired
+}
+
+// matchesCompiledRule checks if a compiled rule matches the given tool and values.
+func matchesCompiledRule(rule compiledRule, tool string, values []string) bool {
+	if rule.tool != "*" && rule.tool != tool {
+		return false
+	}
+	for _, v := range values {
+		if rule.re.MatchString(v) {
+			return true
+		}
+	}
+	return false
 }
 
 // autoApproveAdapter wraps a legacy AutoApproveChecker (tool-name-only)
@@ -177,6 +218,12 @@ func (a *autoApproveAdapter) CheckApproval(tool string, _ json.RawMessage) Appro
 // CompositeApprovalChecker chains multiple ApprovalCheckers. The first
 // non-ApprovalRequired result wins. This lets session caches, trust rules,
 // and built-in defaults compose together.
+//
+// Ordering matters: checkers earlier in the list take priority. In the typical
+// composition [sessionCache, trustRules], a user's explicit "always approve"
+// decision (session cache) intentionally overrides config-based deny rules.
+// This is by design — the session cache represents a real-time user decision
+// which has higher authority than static configuration.
 type CompositeApprovalChecker struct {
 	checkers []ApprovalChecker
 }
