@@ -14,6 +14,27 @@ type CompactionStrategy interface {
 	Compact(ctx context.Context, messages []provider.Message, budget int) ([]provider.Message, error)
 }
 
+// ContextBudget tracks token usage by component category.
+type ContextBudget struct {
+	Total           int // configured max (from config.Agent.ContextBudget)
+	MaxOutputTokens int // reserved for LLM response (e.g., 4096)
+
+	// Measured usage (updated before each LLM call):
+	SystemPrompt     int // base prompt + AGENT.md + memories
+	SkillPrompts     int // active skill prompt fragments
+	ToolDescriptions int // tool defs sent to LLM (grows with MCP/skills)
+	Conversation     int // messages + tool results
+}
+
+// EffectiveWindow returns the usable context after reserving output tokens.
+func (b *ContextBudget) EffectiveWindow() int {
+	ew := b.Total - b.MaxOutputTokens
+	if ew < 0 {
+		return 0
+	}
+	return ew
+}
+
 // ContextManager tracks token usage and compacts conversation history
 // to stay within a configured budget using a chain of strategies.
 type ContextManager struct {

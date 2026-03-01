@@ -130,3 +130,13 @@ func TestHasToolResult(t *testing.T) {
 	}
 	assert.False(t, hasToolResult(msg2))
 }
+
+func TestContextBudgetEffectiveWindow(t *testing.T) {
+	b := ContextBudget{Total: 100000, MaxOutputTokens: 4096}
+	assert.Equal(t, 95904, b.EffectiveWindow())
+}
+
+func TestContextBudgetEffectiveWindowZeroOutput(t *testing.T) {
+	b := ContextBudget{Total: 100000, MaxOutputTokens: 0}
+	assert.Equal(t, 100000, b.EffectiveWindow())
+}
