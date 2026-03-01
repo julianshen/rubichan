@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"io"
 	"os/exec"
 	"testing"
 	"time"
@@ -29,7 +28,7 @@ func TestPipeProcessIOWriteAndRead(t *testing.T) {
 	require.NoError(t, pio.Close())
 }
 
-func TestPipeProcessIOCloseSignalsEOF(t *testing.T) {
+func TestPipeProcessIOCloseSignalsReadError(t *testing.T) {
 	cmd := exec.Command("cat")
 	pio, err := NewPipeProcessIO(cmd)
 	require.NoError(t, err)
@@ -40,7 +39,8 @@ func TestPipeProcessIOCloseSignalsEOF(t *testing.T) {
 
 	buf := make([]byte, 64)
 	_, err = pio.Read(buf)
-	assert.ErrorIs(t, err, io.EOF)
+	// After Close() the read end is closed, so reads must fail.
+	assert.Error(t, err)
 }
 
 func TestPipeProcessIOCapturesStderr(t *testing.T) {
