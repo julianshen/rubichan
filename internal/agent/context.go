@@ -192,6 +192,62 @@ func (cm *ContextManager) Budget() ContextBudget {
 	return cm.budget
 }
 
+// CompactResult reports what happened during a compaction.
+type CompactResult struct {
+	BeforeTokens   int
+	AfterTokens    int
+	BeforeMsgCount int
+	AfterMsgCount  int
+	StrategiesRun  []string
+}
+
+// ForceCompact runs the compaction strategy chain unconditionally,
+// regardless of whether the trigger threshold has been reached.
+func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) CompactResult {
+	result := CompactResult{
+		BeforeTokens:   cm.EstimateTokens(conv),
+		BeforeMsgCount: len(conv.messages),
+	}
+
+	if len(conv.messages) == 0 {
+		result.AfterTokens = cm.EstimateTokens(conv)
+		result.AfterMsgCount = 0
+		return result
+	}
+
+	systemTokens := len(conv.SystemPrompt())/4 + 10
+	messageBudget := cm.budget.EffectiveWindow() - systemTokens
+	if messageBudget < 0 {
+		messageBudget = 0
+	}
+
+	signals := ComputeConversationSignals(conv.messages)
+	for _, s := range cm.strategies {
+		if sa, ok := s.(SignalAware); ok {
+			sa.SetSignals(signals)
+		}
+	}
+
+	for _, s := range cm.strategies {
+		tokensBefore := estimateMessageTokens(conv.messages)
+		countBefore := len(conv.messages)
+		msgs, err := s.Compact(ctx, conv.messages, messageBudget)
+		if err != nil {
+			continue
+		}
+		tokensAfter := estimateMessageTokens(msgs)
+		countAfter := len(msgs)
+		if tokensAfter < tokensBefore || countAfter < countBefore {
+			result.StrategiesRun = append(result.StrategiesRun, s.Name())
+		}
+		conv.messages = msgs
+	}
+
+	result.AfterTokens = cm.EstimateTokens(conv)
+	result.AfterMsgCount = len(conv.messages)
+	return result
+}
+
 // ExceedsBudget returns true if the estimated token count exceeds the effective window.
 func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
 	return cm.EstimateTokens(conv) > cm.budget.EffectiveWindow()
