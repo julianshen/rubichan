@@ -81,6 +81,17 @@ func NewContextManager(totalBudget, maxOutputTokens int) *ContextManager {
 	}
 }
 
+// SetThresholds overrides the compaction trigger and hard block ratios.
+// Values must be between 0 and 1; invalid values are silently ignored.
+func (cm *ContextManager) SetThresholds(compactTrigger, hardBlock float64) {
+	if compactTrigger > 0 && compactTrigger <= 1 {
+		cm.compactTrigger = compactTrigger
+	}
+	if hardBlock > 0 && hardBlock <= 1 {
+		cm.hardBlock = hardBlock
+	}
+}
+
 // SetStrategies replaces the compaction strategy chain. An empty or nil
 // slice restores the default chain (tool clearing + truncation).
 func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
@@ -113,7 +124,7 @@ func (cm *ContextManager) IsBlocked(conv *Conversation) bool {
 // Compact runs the compaction strategy chain until the conversation fits
 // within the token budget. Strategies are tried in order; the chain stops
 // as soon as the conversation is under budget. Triggers proactively at
-// the configured triggerRatio (default 70%) to leave headroom for quality
+// the configured trigger ratio (default 95%) to leave headroom for quality
 // summarization.
 func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
 	if !cm.ShouldCompact(conv) {

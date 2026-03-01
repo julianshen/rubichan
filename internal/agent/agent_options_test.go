@@ -174,7 +174,7 @@ func TestBuildSystemPromptWithScratchpad(t *testing.T) {
 
 	a.scratchpad.Set("note1", "important info")
 
-	prompt := a.buildSystemPromptWithFragments()
+	prompt, _ := a.buildSystemPromptWithFragments()
 	assert.Contains(t, prompt, "Agent Notes")
 	assert.Contains(t, prompt, "note1")
 	assert.Contains(t, prompt, "important info")
@@ -185,7 +185,7 @@ func TestBuildSystemPromptEmptyScratchpad(t *testing.T) {
 	reg := tools.NewRegistry()
 	a := New(nil, reg, nil, cfg)
 
-	prompt := a.buildSystemPromptWithFragments()
+	prompt, _ := a.buildSystemPromptWithFragments()
 	assert.NotContains(t, prompt, "Agent Notes")
 }
 

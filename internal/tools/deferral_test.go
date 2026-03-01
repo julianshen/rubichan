@@ -62,6 +62,10 @@ func TestDeferralManagerSearch(t *testing.T) {
 
 	dm.SelectForContext(allTools, 1000) // trigger deferral
 
+	// The MCP tool should have been deferred (exceeds 10% of 1000 budget).
+	assert.Equal(t, 1, dm.DeferredCount(), "mcp-xcode-build should be deferred")
+
 	results := dm.Search("xcode")
-	assert.GreaterOrEqual(t, len(results), 0) // may or may not find depending on deferral
+	assert.Equal(t, 1, len(results), "should find the deferred xcode tool")
+	assert.Equal(t, "mcp-xcode-build", results[0].Name)
 }

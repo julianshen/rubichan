@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -182,6 +183,7 @@ type Agent struct {
 	customStrategies bool
 	resultStore      *ResultStore
 	promptBuilder    *PromptBuilder
+	deferral         *tools.DeferralManager
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -193,7 +195,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		provider:     p,
 		tools:        t,
 		conversation: NewConversation(systemPrompt),
-		context:      NewContextManager(cfg.Agent.ContextBudget, cfg.Agent.MaxOutputTokens),
+		context:      newContextManagerFromConfig(cfg),
 		approve:      approve,
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
@@ -249,18 +251,26 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			} else {
 				a.sessionID = sess.ID
 				a.conversation = NewConversation(sess.SystemPrompt)
-				msgs, err := a.store.GetMessages(sess.ID)
-				if err != nil {
-					log.Printf("warning: failed to load messages: %v", err)
+				// Prefer compacted snapshot for resume (avoids re-exceeding
+				// context limits). Fall back to full message history for
+				// sessions that were never compacted.
+				snapMsgs, snapErr := a.store.GetSnapshot(sess.ID)
+				if snapErr == nil && snapMsgs != nil {
+					a.conversation.LoadFromMessages(snapMsgs)
 				} else {
-					providerMsgs := make([]provider.Message, len(msgs))
-					for i, m := range msgs {
-						providerMsgs[i] = provider.Message{
-							Role:    m.Role,
-							Content: m.Content,
+					msgs, err := a.store.GetMessages(sess.ID)
+					if err != nil {
+						log.Printf("warning: failed to load messages: %v", err)
+					} else {
+						providerMsgs := make([]provider.Message, len(msgs))
+						for i, m := range msgs {
+							providerMsgs[i] = provider.Message{
+								Role:    m.Role,
+								Content: m.Content,
+							}
 						}
+						a.conversation.LoadFromMessages(providerMsgs)
 					}
-					a.conversation.LoadFromMessages(providerMsgs)
 				}
 			}
 		}
@@ -289,8 +299,33 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			threshold = 4096
 		}
 		a.resultStore = NewResultStore(a.store, a.sessionID, threshold)
+
+		// Register read_result tool so the LLM can retrieve offloaded results.
+		readResultTool := tools.NewReadResultTool(a.resultStore)
+		if err := a.tools.Register(readResultTool); err != nil {
+			log.Printf("warning: failed to register read_result tool: %v", err)
+		}
 	}
 	a.promptBuilder = NewPromptBuilder()
+
+	// Initialize tool deferral manager.
+	deferralThreshold := cfg.Agent.ToolDeferralThreshold
+	if deferralThreshold <= 0 {
+		deferralThreshold = 0.10
+	}
+	a.deferral = tools.NewDeferralManager(deferralThreshold)
+
+	// Register tool_search tool so the LLM can discover deferred tools.
+	toolSearchTool := tools.NewToolSearchTool(a.deferral)
+	if err := a.tools.Register(toolSearchTool); err != nil {
+		log.Printf("warning: failed to register tool_search tool: %v", err)
+	}
+
+	// Register compact_context tool for agent-initiated compaction.
+	compactTool := tools.NewCompactContextTool(&agentCompactor{agent: a})
+	if err := a.tools.Register(compactTool); err != nil {
+		log.Printf("warning: failed to register compact_context tool: %v", err)
+	}
 
 	return a
 }
@@ -299,6 +334,32 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 func buildSystemPrompt(_ *config.Config) string {
 	return "You are a helpful AI coding assistant. You can read and write files, " +
 		"execute shell commands, and help with software development tasks."
+}
+
+// agentCompactor adapts the Agent's ForceCompact to the tools.Compactor interface,
+// bridging the agent and tools packages without a circular import.
+type agentCompactor struct {
+	agent *Agent
+}
+
+func (ac *agentCompactor) ForceCompact(ctx context.Context) tools.CompactResult {
+	r := ac.agent.context.ForceCompact(ctx, ac.agent.conversation)
+	return tools.CompactResult{
+		BeforeTokens:   r.BeforeTokens,
+		AfterTokens:    r.AfterTokens,
+		BeforeMsgCount: r.BeforeMsgCount,
+		AfterMsgCount:  r.AfterMsgCount,
+		StrategiesRun:  r.StrategiesRun,
+	}
+}
+
+// newContextManagerFromConfig creates a ContextManager with thresholds from config.
+func newContextManagerFromConfig(cfg *config.Config) *ContextManager {
+	cm := NewContextManager(cfg.Agent.ContextBudget, cfg.Agent.MaxOutputTokens)
+	if cfg.Agent.CompactTrigger > 0 || cfg.Agent.HardBlock > 0 {
+		cm.SetThresholds(cfg.Agent.CompactTrigger, cfg.Agent.HardBlock)
+	}
+	return cm
 }
 
 // ClearConversation removes all messages from the conversation history,
@@ -384,32 +445,64 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 	return ch, nil
 }
 
-// buildSystemPromptWithFragments returns the base system prompt with any
-// skill prompt fragments and scratchpad content appended.
-func (a *Agent) buildSystemPromptWithFragments() string {
-	base := a.conversation.SystemPrompt()
+// buildSystemPromptWithFragments returns the assembled system prompt and
+// cache breakpoint offsets using the PromptBuilder. Cacheable (static)
+// sections are placed first for optimal provider caching.
+func (a *Agent) buildSystemPromptWithFragments() (string, []int) {
+	pb := NewPromptBuilder()
 
-	result := base
+	// Base system prompt — static across turns.
+	pb.AddSection(PromptSection{
+		Name:      "System",
+		Content:   a.conversation.SystemPrompt(),
+		Cacheable: true,
+	})
 
-	// Inject scratchpad notes if any exist.
+	// Scratchpad — dynamic, changes as user adds notes.
 	if a.scratchpad != nil {
 		rendered := a.scratchpad.Render()
 		if rendered != "" {
-			result += "\n\n" + rendered
+			pb.AddSection(PromptSection{
+				Name:      "Scratchpad",
+				Content:   rendered,
+				Cacheable: false,
+			})
 		}
 	}
 
+	// Skill prompt fragments — dynamic, can change between turns.
+	if a.skillRuntime != nil {
+		for _, f := range a.skillRuntime.GetPromptFragments() {
+			if f.ResolvedPrompt != "" {
+				pb.AddSection(PromptSection{
+					Name:      f.SkillName,
+					Content:   f.ResolvedPrompt,
+					Cacheable: false,
+				})
+			}
+		}
+	}
+
+	return pb.Build()
+}
+
+// getSkillPromptText returns the concatenated skill prompt fragments for
+// token tracking. The text is already included in the system prompt via
+// PromptBuilder; this method extracts it separately for MeasureUsage.
+func (a *Agent) getSkillPromptText() string {
 	if a.skillRuntime == nil {
-		return result
+		return ""
 	}
-
-	fragments := a.skillRuntime.GetPromptFragments()
-	for _, f := range fragments {
+	var sb strings.Builder
+	for _, f := range a.skillRuntime.GetPromptFragments() {
 		if f.ResolvedPrompt != "" {
-			result += "\n\n" + f.ResolvedPrompt
+			if sb.Len() > 0 {
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(f.ResolvedPrompt)
 		}
 	}
-	return result
+	return sb.String()
 }
 
 // dispatchHook dispatches a hook event via the skill runtime. If no runtime is
@@ -431,15 +524,33 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			return
 		}
 
-		// Build the system prompt, injecting prompt fragments from skills.
-		systemPrompt := a.buildSystemPromptWithFragments()
+		// Build the system prompt with cache breakpoints.
+		systemPrompt, cacheBreakpoints := a.buildSystemPromptWithFragments()
+
+		// Select tools via DeferralManager to stay within budget.
+		allToolDefs := a.tools.SelectForContext(a.conversation.Messages())
+		budget := a.context.Budget()
+		activeTools, _ := a.deferral.SelectForContext(allToolDefs, budget.EffectiveWindow())
+
+		// Measure component-level token usage before the LLM call.
+		// Skill prompt fragments are included in systemPrompt via PromptBuilder
+		// but tracked separately for budget visibility.
+		skillPromptText := a.getSkillPromptText()
+		a.context.MeasureUsage(a.conversation, systemPrompt, skillPromptText, activeTools)
+
+		// If at hard block threshold, force compaction before proceeding.
+		if a.context.IsBlocked(a.conversation) {
+			a.context.ForceCompact(ctx, a.conversation)
+			a.saveSnapshotIfNeeded()
+		}
 
 		req := provider.CompletionRequest{
-			Model:     a.model,
-			System:    systemPrompt,
-			Messages:  a.conversation.Messages(),
-			Tools:     a.tools.SelectForContext(a.conversation.Messages()),
-			MaxTokens: 4096,
+			Model:            a.model,
+			System:           systemPrompt,
+			Messages:         a.conversation.Messages(),
+			Tools:            activeTools,
+			MaxTokens:        4096,
+			CacheBreakpoints: cacheBreakpoints,
 		}
 
 		stream, err := a.provider.Stream(ctx, req)
