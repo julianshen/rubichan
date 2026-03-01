@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,8 @@ func (m *mockBackend) Tools() []tools.Tool {
 func (m *mockBackend) Hooks() map[HookPhase]HookHandler {
 	return m.hooks
 }
+
+func (m *mockBackend) Commands() []commands.SlashCommand { return nil }
 
 func (m *mockBackend) Unload() error {
 	m.unloadCalled = true
@@ -480,4 +483,134 @@ func TestRuntimeDeactivateNilBackend(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, SkillStateInactive, sk.State)
 	assert.NotContains(t, rt.active, "nil-backend")
+}
+
+// --- mock slash command for testing ---
+
+type mockSlashCommand struct {
+	name string
+}
+
+func (c *mockSlashCommand) Name() string        { return c.name }
+func (c *mockSlashCommand) Description() string { return "mock command " + c.name }
+func (c *mockSlashCommand) Arguments() []commands.ArgumentDef {
+	return nil
+}
+func (c *mockSlashCommand) Complete(_ context.Context, _ []string) []commands.Candidate {
+	return nil
+}
+func (c *mockSlashCommand) Execute(_ context.Context, _ []string) (commands.Result, error) {
+	return commands.Result{}, nil
+}
+
+// mockBackendWithCommands embeds mockBackend and overrides Commands() to
+// return actual slash commands for testing command registration.
+type mockBackendWithCommands struct {
+	mockBackend
+	cmds []commands.SlashCommand
+}
+
+func (m *mockBackendWithCommands) Commands() []commands.SlashCommand {
+	return m.cmds
+}
+
+func TestRuntimeActivateRegistersCommands(t *testing.T) {
+	cmdReg := commands.NewRegistry()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	registry := tools.NewRegistry()
+
+	testCmd := &mockSlashCommand{name: "test-cmd"}
+
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackendWithCommands{
+			mockBackend: mockBackend{
+				tools: []tools.Tool{
+					&runtimeMockTool{name: manifest.Name + "-tool", description: "from " + manifest.Name},
+				},
+				hooks: map[HookPhase]HookHandler{},
+			},
+			cmds: []commands.SlashCommand{testCmd},
+		}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &mockPermissionChecker{}
+	}
+
+	rt := NewRuntime(NewLoader("", ""), s, registry, []string{"cmd-skill"}, backendFactory, sandboxFactory)
+	rt.SetCommandRegistry(cmdReg)
+
+	m := testManifest("cmd-skill")
+	rt.loader.RegisterBuiltin(m)
+	require.NoError(t, rt.Discover(nil))
+
+	// Before activation, command should not exist.
+	_, found := cmdReg.Get("test-cmd")
+	assert.False(t, found, "command should not exist before activation")
+
+	// Activate.
+	require.NoError(t, rt.Activate("cmd-skill"))
+
+	// After activation, command should be registered.
+	cmd, found := cmdReg.Get("test-cmd")
+	require.True(t, found, "command should exist after activation")
+	assert.Equal(t, "test-cmd", cmd.Name())
+
+	// Deactivate.
+	require.NoError(t, rt.Deactivate("cmd-skill"))
+
+	// After deactivation, command should be unregistered.
+	_, found = cmdReg.Get("test-cmd")
+	assert.False(t, found, "command should be removed after deactivation")
+}
+
+func TestRuntimeActivateCommandRegistrationRollback(t *testing.T) {
+	cmdReg := commands.NewRegistry()
+
+	// Pre-register a command with the same name to cause a collision.
+	preExisting := &mockSlashCommand{name: "collision-cmd"}
+	require.NoError(t, cmdReg.Register(preExisting))
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	registry := tools.NewRegistry()
+
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackendWithCommands{
+			mockBackend: mockBackend{
+				tools: []tools.Tool{
+					&runtimeMockTool{name: manifest.Name + "-tool", description: "from " + manifest.Name},
+				},
+				hooks: map[HookPhase]HookHandler{},
+			},
+			cmds: []commands.SlashCommand{&mockSlashCommand{name: "collision-cmd"}},
+		}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &mockPermissionChecker{}
+	}
+
+	rt := NewRuntime(NewLoader("", ""), s, registry, []string{"collision-skill"}, backendFactory, sandboxFactory)
+	rt.SetCommandRegistry(cmdReg)
+
+	m := testManifest("collision-skill")
+	rt.loader.RegisterBuiltin(m)
+	require.NoError(t, rt.Discover(nil))
+
+	// Activate should fail due to command collision.
+	err = rt.Activate("collision-skill")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "register command")
+
+	// Skill should be back to Inactive.
+	assert.Equal(t, SkillStateInactive, rt.skills["collision-skill"].State)
+
+	// The tool registered before the command collision should be rolled back.
+	_, ok := registry.Get("collision-skill-tool")
+	assert.False(t, ok, "tool should be rolled back after command registration failure")
 }

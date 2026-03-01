@@ -3,6 +3,7 @@ package builtin
 import (
 	"time"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -49,6 +50,9 @@ func (b *CoreToolsBackend) Tools() []tools.Tool {
 func (b *CoreToolsBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return nil
 }
+
+// Commands returns nil — core-tools does not provide slash commands.
+func (b *CoreToolsBackend) Commands() []commands.SlashCommand { return nil }
 
 // Unload is a no-op for core-tools.
 func (b *CoreToolsBackend) Unload() error {

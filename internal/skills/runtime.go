@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -55,6 +56,7 @@ type Runtime struct {
 	workflowRunner  *WorkflowRunner
 	securityAdapter *SecurityRuleAdapter
 	contextBudget   *ContextBudget
+	cmdRegistry     *commands.Registry
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -251,6 +253,27 @@ func (rt *Runtime) Activate(name string) error {
 		registeredTools = append(registeredTools, tool)
 	}
 
+	// Register commands from backend.
+	var registeredCmds []commands.SlashCommand
+	if rt.cmdRegistry != nil {
+		for _, cmd := range backend.Commands() {
+			if err := rt.cmdRegistry.Register(cmd); err != nil {
+				// Roll back commands registered in this activation attempt.
+				for _, c := range registeredCmds {
+					_ = rt.cmdRegistry.Unregister(c.Name())
+				}
+				// Rollback tools on command registration failure.
+				for _, t := range registeredTools {
+					_ = rt.registry.Unregister(t.Name())
+				}
+				_ = sk.TransitionTo(SkillStateError)
+				_ = sk.TransitionTo(SkillStateInactive)
+				return fmt.Errorf("register command for skill %q: %w", name, err)
+			}
+			registeredCmds = append(registeredCmds, cmd)
+		}
+	}
+
 	priority := sourcePriority(source)
 	for phase, handler := range backend.Hooks() {
 		rt.lifecycle.Register(phase, name, priority, handler)
@@ -296,6 +319,13 @@ func (rt *Runtime) Deactivate(name string) error {
 	if sk.Backend != nil {
 		for _, tool := range sk.Backend.Tools() {
 			_ = rt.registry.Unregister(tool.Name())
+		}
+	}
+
+	// Unregister commands.
+	if rt.cmdRegistry != nil && sk.Backend != nil {
+		for _, cmd := range sk.Backend.Commands() {
+			_ = rt.cmdRegistry.Unregister(cmd.Name())
 		}
 	}
 
@@ -392,6 +422,13 @@ func (rt *Runtime) SetContextBudget(budget *ContextBudget) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.contextBudget = budget
+}
+
+// SetCommandRegistry sets the command registry for skill-contributed commands.
+func (rt *Runtime) SetCommandRegistry(reg *commands.Registry) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.cmdRegistry = reg
 }
 
 // GetBudgetedPromptFragments returns prompt fragments constrained by the

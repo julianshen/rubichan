@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -50,6 +51,9 @@ func (b *GitBackend) Tools() []tools.Tool {
 func (b *GitBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return nil
 }
+
+// Commands returns nil — git does not provide slash commands.
+func (b *GitBackend) Commands() []commands.SlashCommand { return nil }
 
 // Unload is a no-op for the git skill.
 func (b *GitBackend) Unload() error {

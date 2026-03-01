@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -146,6 +147,9 @@ func (b *ProcessBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	}
 	return result
 }
+
+// Commands returns nil — process skills do not provide slash commands.
+func (b *ProcessBackend) Commands() []commands.SlashCommand { return nil }
 
 // Unload implements skills.SkillBackend. Sends a "shutdown" request and
 // stops the child process.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
@@ -46,7 +47,8 @@ func (m *skillMockBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	}
 	return m.hooks
 }
-func (m *skillMockBackend) Unload() error { return nil }
+func (m *skillMockBackend) Commands() []commands.SlashCommand { return nil }
+func (m *skillMockBackend) Unload() error                     { return nil }
 
 // skillMockChecker is a mock PermissionChecker that always approves.
 type skillMockChecker struct{}

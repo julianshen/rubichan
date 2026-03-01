@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -46,6 +47,9 @@ func (b *WikiBackend) Tools() []tools.Tool {
 func (b *WikiBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return nil
 }
+
+// Commands returns nil — wiki does not provide slash commands.
+func (b *WikiBackend) Commands() []commands.SlashCommand { return nil }
 
 // Unload is a no-op for wiki.
 func (b *WikiBackend) Unload() error {

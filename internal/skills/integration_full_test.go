@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/process"
 	"github.com/julianshen/rubichan/internal/skills/starlark"
@@ -61,6 +62,8 @@ func (m *fullMockBackend) Tools() []tools.Tool {
 func (m *fullMockBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return m.hooks
 }
+
+func (m *fullMockBackend) Commands() []commands.SlashCommand { return nil }
 
 func (m *fullMockBackend) Unload() error {
 	m.unloadCalled = true

@@ -71,6 +71,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.viewport.Width = m.width
 		m.viewport.Height = viewportHeight
+		if m.completion != nil {
+			m.completion.SetWidth(m.width)
+		}
 		return m, nil
 
 	case approvalRequestMsg:
@@ -132,6 +135,25 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Completion overlay intercepts Tab/Up/Down/Escape when visible,
+	// before scroll keys can claim Up/Down.
+	if m.state == StateInput && m.completion != nil && m.completion.Visible() {
+		switch msg.Type {
+		case tea.KeyTab:
+			if accepted, value := m.completion.HandleTab(); accepted {
+				m.input.SetValue("/" + value + " ")
+				m.syncCompletion()
+			}
+			return m, nil
+		case tea.KeyUp, tea.KeyDown:
+			m.completion.HandleKey(msg)
+			return m, nil
+		case tea.KeyEsc:
+			m.completion.HandleKey(msg)
+			return m, nil
+		}
+	}
+
 	// Scroll keys are forwarded to the viewport regardless of state.
 	if isScrollKey(msg) {
 		var cmd tea.Cmd
@@ -149,6 +171,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
+		m.syncCompletion()
 
 		if strings.HasPrefix(text, "/") {
 			cmd := m.handleCommand(text)
@@ -168,6 +191,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Forward key to input area
 		if m.state == StateInput {
 			cmd := m.input.Update(msg)
+			m.syncCompletion()
 			return m, cmd
 		}
 		return m, nil
