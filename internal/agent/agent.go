@@ -764,6 +764,14 @@ func (a *Agent) executeSingleTool(ctx context.Context, tc provider.ToolUseBlock)
 		}
 	}
 
+	// Offload large tool results to disk if ResultStore is attached.
+	if a.resultStore != nil && !toolResult.IsError {
+		offloaded, offErr := a.resultStore.OffloadResult(tc.Name, tc.ID, toolResult.Content)
+		if offErr == nil {
+			toolResult.Content = offloaded
+		}
+	}
+
 	return toolExecResult{
 		toolUseID: tc.ID,
 		content:   toolResult.Content,

@@ -1434,3 +1434,92 @@ func TestAgentNewWithoutStoreNoResultStore(t *testing.T) {
 	assert.Nil(t, a.resultStore, "resultStore should be nil when no store is present")
 	assert.NotNil(t, a.promptBuilder, "promptBuilder should always be initialized")
 }
+
+func TestAgentToolResultOffloading(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ResultOffloadThreshold = 20 // very small threshold
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "big_output",
+		description: "produces large output",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{
+				Content: "this output is definitely large enough to trigger offloading behavior in the result store",
+			}, nil
+		},
+	}))
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	tc := provider.ToolUseBlock{ID: "t1", Name: "big_output", Input: json.RawMessage(`{}`)}
+	result := a.executeSingleTool(context.Background(), tc)
+
+	assert.Contains(t, result.content, "Tool result stored")
+	assert.Contains(t, result.content, "read_result")
+}
+
+func TestAgentToolResultOffloadingSkipsSmallResults(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ResultOffloadThreshold = 10000 // high threshold
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "small_output",
+		description: "produces small output",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "small"}, nil
+		},
+	}))
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	tc := provider.ToolUseBlock{ID: "t2", Name: "small_output", Input: json.RawMessage(`{}`)}
+	result := a.executeSingleTool(context.Background(), tc)
+
+	assert.Equal(t, "small", result.content, "small results should not be offloaded")
+}
+
+func TestAgentToolResultOffloadingSkipsErrors(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ResultOffloadThreshold = 20 // small threshold
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "error_tool",
+		description: "produces error",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{
+				Content: "this is a very long error message that exceeds the threshold",
+				IsError: true,
+			}, nil
+		},
+	}))
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	tc := provider.ToolUseBlock{ID: "t3", Name: "error_tool", Input: json.RawMessage(`{}`)}
+	result := a.executeSingleTool(context.Background(), tc)
+
+	// Error results should NOT be offloaded.
+	assert.NotContains(t, result.content, "Tool result stored")
+	assert.True(t, result.isError)
+}
