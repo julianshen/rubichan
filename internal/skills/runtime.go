@@ -54,6 +54,7 @@ type Runtime struct {
 	promptCollector *PromptCollector
 	workflowRunner  *WorkflowRunner
 	securityAdapter *SecurityRuleAdapter
+	contextBudget   *ContextBudget
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -101,10 +102,11 @@ func (rt *Runtime) Discover(explicit []string) error {
 
 	for _, ds := range discovered {
 		rt.skills[ds.Manifest.Name] = &Skill{
-			Manifest: ds.Manifest,
-			State:    SkillStateInactive,
-			Dir:      ds.Dir,
-			Source:   ds.Source,
+			Manifest:        ds.Manifest,
+			State:           SkillStateInactive,
+			Dir:             ds.Dir,
+			Source:          ds.Source,
+			InstructionBody: ds.InstructionBody,
 		}
 	}
 
@@ -367,4 +369,37 @@ func (rt *Runtime) DispatchHook(event HookEvent) (*HookResult, error) {
 // security-rule skills.
 func (rt *Runtime) GetScanners() []RegisteredScanner {
 	return rt.securityAdapter.Scanners()
+}
+
+// GetSkillIndexes returns lightweight index information for all discovered
+// skills (both active and inactive). This is designed for system prompt
+// building where only name + description + types are needed, avoiding
+// exposure of full manifests.
+func (rt *Runtime) GetSkillIndexes() []SkillIndex {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	indexes := make([]SkillIndex, 0, len(rt.skills))
+	for _, sk := range rt.skills {
+		indexes = append(indexes, NewSkillIndex(sk.Manifest, sk.Source, sk.Dir))
+	}
+	return indexes
+}
+
+// SetContextBudget configures the global context budget for prompt fragments.
+// Pass nil to disable budget enforcement.
+func (rt *Runtime) SetContextBudget(budget *ContextBudget) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.contextBudget = budget
+}
+
+// GetBudgetedPromptFragments returns prompt fragments constrained by the
+// configured context budget. If no budget is set, it returns all fragments.
+func (rt *Runtime) GetBudgetedPromptFragments() []PromptFragment {
+	rt.mu.RLock()
+	budget := rt.contextBudget
+	rt.mu.RUnlock()
+
+	return rt.promptCollector.BudgetedFragments(budget)
 }

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
+	"unicode/utf8"
 )
 
 // SecurityFinding represents a single finding from a security scanner.
@@ -79,6 +81,7 @@ type PromptFragment struct {
 	ResolvedPrompt   string // content read from SystemPromptFile
 	ContextFiles     []string
 	MaxContextTokens int
+	Source           Source // discovery source, used for budget priority
 }
 
 // PromptCollector gathers prompt fragments from active prompt skills and
@@ -107,6 +110,75 @@ func (pc *PromptCollector) Fragments() []PromptFragment {
 	result := make([]PromptFragment, len(pc.fragments))
 	copy(result, pc.fragments)
 	return result
+}
+
+// BudgetedFragments returns prompt fragments that fit within the given budget.
+// Fragments are sorted by source priority (highest first). If a budget is nil
+// or has zero MaxTotalTokens, all fragments are returned unchanged.
+// When over budget, lower-priority fragments are excluded first. A fragment
+// that partially fits is truncated to use the remaining budget.
+func (pc *PromptCollector) BudgetedFragments(budget *ContextBudget) []PromptFragment {
+	pc.mu.RLock()
+	all := make([]PromptFragment, len(pc.fragments))
+	copy(all, pc.fragments)
+	pc.mu.RUnlock()
+
+	if budget == nil || budget.MaxTotalTokens <= 0 {
+		return all
+	}
+
+	// Sort by source priority descending (highest priority first).
+	sort.SliceStable(all, func(i, j int) bool {
+		return sourceBudgetPriority(all[i].Source) > sourceBudgetPriority(all[j].Source)
+	})
+
+	var result []PromptFragment
+	remainingTokens := budget.MaxTotalTokens
+
+	for _, f := range all {
+		if remainingTokens <= 0 {
+			break
+		}
+
+		prompt := f.ResolvedPrompt
+
+		// Apply per-skill limit.
+		if budget.MaxPerSkillTokens > 0 {
+			perSkillTokens := estimateTokens(prompt)
+			if perSkillTokens > budget.MaxPerSkillTokens {
+				maxChars := budget.MaxPerSkillTokens * 4
+				prompt = truncateUTF8(prompt, maxChars)
+			}
+		}
+
+		tokens := estimateTokens(prompt)
+		if tokens <= remainingTokens {
+			f.ResolvedPrompt = prompt
+			result = append(result, f)
+			remainingTokens -= tokens
+		} else {
+			// Partial fit: truncate to remaining budget.
+			maxChars := remainingTokens * 4
+			f.ResolvedPrompt = truncateUTF8(prompt, maxChars)
+			result = append(result, f)
+			remainingTokens = 0
+		}
+	}
+
+	return result
+}
+
+// truncateUTF8 truncates s to at most maxBytes while preserving valid UTF-8.
+// It walks backwards from maxBytes to find the last valid rune boundary.
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	// Walk backwards from maxBytes to find a valid rune start.
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
 }
 
 // RemoveBySkill removes the prompt fragment for the given skill name.
@@ -168,19 +240,24 @@ func (wr *WorkflowRunner) Unregister(name string) {
 // wirePromptSkill registers a HookOnBeforePromptBuild hook for a prompt skill
 // that injects the skill's prompt fragment into the event data. It reads the
 // SystemPromptFile content at wiring time so the agent doesn't need to do
-// file I/O during prompt building.
+// file I/O during prompt building. For instruction skills (SKILL.md), the
+// InstructionBody is used directly as the resolved prompt.
 func wirePromptSkill(rt *Runtime, sk *Skill) {
 	fragment := PromptFragment{
 		SkillName:        sk.Manifest.Name,
 		SystemPromptFile: sk.Manifest.Prompt.SystemPromptFile,
 		ContextFiles:     sk.Manifest.Prompt.ContextFiles,
 		MaxContextTokens: sk.Manifest.Prompt.MaxContextTokens,
+		Source:           sk.Source,
 	}
 
-	// Read the system prompt file content if a file path is specified and the
-	// skill has a directory on disk. For built-in skills (Dir=""), the
-	// SystemPromptFile value is used as inline content.
-	if sk.Manifest.Prompt.SystemPromptFile != "" {
+	// Instruction skills (SKILL.md) have their body pre-parsed.
+	if sk.InstructionBody != "" {
+		fragment.ResolvedPrompt = sk.InstructionBody
+	} else if sk.Manifest.Prompt.SystemPromptFile != "" {
+		// Read the system prompt file content if a file path is specified and the
+		// skill has a directory on disk. For built-in skills (Dir=""), the
+		// SystemPromptFile value is used as inline content.
 		if sk.Dir != "" {
 			promptPath := filepath.Join(sk.Dir, sk.Manifest.Prompt.SystemPromptFile)
 			data, err := os.ReadFile(promptPath)
