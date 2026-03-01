@@ -356,12 +356,25 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 	}
 }
 
+// saveSnapshotIfNeeded persists the current conversation state as a
+// resume snapshot if persistence is enabled.
+func (a *Agent) saveSnapshotIfNeeded() {
+	if a.store == nil || a.sessionID == "" {
+		return
+	}
+	tokens := a.context.EstimateTokens(a.conversation)
+	if err := a.store.SaveSnapshot(a.sessionID, a.conversation.Messages(), tokens); err != nil {
+		log.Printf("warning: failed to save snapshot: %v", err)
+	}
+}
+
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
 	a.context.Compact(ctx, a.conversation)
+	a.saveSnapshotIfNeeded()
 
 	ch := make(chan TurnEvent, 64)
 	go func() {

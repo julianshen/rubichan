@@ -1523,3 +1523,45 @@ func TestAgentToolResultOffloadingSkipsErrors(t *testing.T) {
 	assert.NotContains(t, result.content, "Tool result stored")
 	assert.True(t, result.isError)
 }
+
+func TestAgentSavesSnapshotAfterCompaction(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.ContextBudget = 500 // small budget to force compaction
+	cfg.Agent.MaxOutputTokens = 0
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	p := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "done"},
+		{Type: "stop"},
+	}}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+
+	// Fill conversation to make snapshot meaningful.
+	for i := 0; i < 20; i++ {
+		a.conversation.AddUser("message content for testing")
+		a.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "response"}})
+	}
+
+	a.saveSnapshotIfNeeded()
+
+	// Verify snapshot was saved.
+	snap, err := s.GetSnapshot(a.sessionID)
+	require.NoError(t, err)
+	assert.NotNil(t, snap, "snapshot should exist after saveSnapshotIfNeeded")
+}
+
+func TestAgentSaveSnapshotIfNeededWithoutStore(t *testing.T) {
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg)
+
+	// Should not panic when store is nil.
+	a.saveSnapshotIfNeeded()
+}
