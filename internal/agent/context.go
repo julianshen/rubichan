@@ -14,20 +14,66 @@ type CompactionStrategy interface {
 	Compact(ctx context.Context, messages []provider.Message, budget int) ([]provider.Message, error)
 }
 
+// ContextBudget tracks token usage by component category.
+type ContextBudget struct {
+	Total           int // configured max (from config.Agent.ContextBudget)
+	MaxOutputTokens int // reserved for LLM response (e.g., 4096)
+
+	// Measured usage (updated before each LLM call):
+	SystemPrompt     int // base prompt + AGENT.md + memories
+	SkillPrompts     int // active skill prompt fragments
+	ToolDescriptions int // tool defs sent to LLM (grows with MCP/skills)
+	Conversation     int // messages + tool results
+}
+
+// EffectiveWindow returns the usable context after reserving output tokens.
+func (b *ContextBudget) EffectiveWindow() int {
+	ew := b.Total - b.MaxOutputTokens
+	if ew < 0 {
+		return 0
+	}
+	return ew
+}
+
+// UsedTokens returns total tokens consumed across all components.
+func (b *ContextBudget) UsedTokens() int {
+	return b.SystemPrompt + b.SkillPrompts + b.ToolDescriptions + b.Conversation
+}
+
+// RemainingTokens returns how many tokens are available for conversation growth.
+func (b *ContextBudget) RemainingTokens() int {
+	return b.EffectiveWindow() - b.UsedTokens()
+}
+
+// UsedPercentage returns the fraction of the effective window in use (0.0-1.0+).
+func (b *ContextBudget) UsedPercentage() float64 {
+	ew := b.EffectiveWindow()
+	if ew <= 0 {
+		return 1.0
+	}
+	return float64(b.UsedTokens()) / float64(ew)
+}
+
 // ContextManager tracks token usage and compacts conversation history
 // to stay within a configured budget using a chain of strategies.
 type ContextManager struct {
-	budget       int
-	triggerRatio float64 // fraction of budget at which to trigger compaction (default 0.7)
-	strategies   []CompactionStrategy
+	budget         ContextBudget
+	compactTrigger float64 // fraction of effective window to trigger compaction (default 0.95)
+	hardBlock      float64 // fraction of effective window to block new messages (default 0.98)
+	strategies     []CompactionStrategy
 }
 
-// NewContextManager creates a new ContextManager with the given token budget.
-// The default strategy chain contains only truncation.
-func NewContextManager(budget int) *ContextManager {
+// NewContextManager creates a new ContextManager with the given total budget
+// and max output tokens. The effective window is total - maxOutputTokens.
+// Pass maxOutputTokens=0 to use the full budget as the effective window.
+func NewContextManager(totalBudget, maxOutputTokens int) *ContextManager {
 	return &ContextManager{
-		budget:       budget,
-		triggerRatio: 0.7,
+		budget: ContextBudget{
+			Total:           totalBudget,
+			MaxOutputTokens: maxOutputTokens,
+		},
+		compactTrigger: 0.95,
+		hardBlock:      0.98,
 		strategies: []CompactionStrategy{
 			NewToolResultClearingStrategy(),
 			&truncateStrategy{},
@@ -49,10 +95,18 @@ func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
 }
 
 // ShouldCompact returns true when the estimated token count exceeds the
-// proactive trigger threshold (default 70% of budget), allowing compaction
-// to start before the conversation fully exhausts the context window.
+// proactive trigger threshold (default 95% of effective window), allowing
+// compaction to start before the conversation fully exhausts the context window.
 func (cm *ContextManager) ShouldCompact(conv *Conversation) bool {
-	threshold := int(float64(cm.budget) * cm.triggerRatio)
+	threshold := int(float64(cm.budget.EffectiveWindow()) * cm.compactTrigger)
+	return cm.EstimateTokens(conv) > threshold
+}
+
+// IsBlocked returns true when the conversation has exceeded the hard block
+// threshold (default 98% of effective window), indicating new messages should
+// not be added.
+func (cm *ContextManager) IsBlocked(conv *Conversation) bool {
+	threshold := int(float64(cm.budget.EffectiveWindow()) * cm.hardBlock)
 	return cm.EstimateTokens(conv) > threshold
 }
 
@@ -67,7 +121,7 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
 	}
 	// Subtract system prompt overhead so strategies only need to fit messages.
 	systemTokens := len(conv.SystemPrompt())/4 + 10
-	messageBudget := cm.budget - systemTokens
+	messageBudget := cm.budget.EffectiveWindow() - systemTokens
 	if messageBudget < 0 {
 		messageBudget = 0
 	}
@@ -115,9 +169,32 @@ func estimateMessageTokens(msgs []provider.Message) int {
 	return total
 }
 
-// ExceedsBudget returns true if the estimated token count exceeds the budget.
+// MeasureUsage populates the budget's component-level token counts based
+// on the current conversation state. Call before each LLM request.
+func (cm *ContextManager) MeasureUsage(conv *Conversation, systemPrompt, skillPrompts string, toolDefs []provider.ToolDef) {
+	cm.budget.SystemPrompt = len(systemPrompt)/4 + 10
+	cm.budget.SkillPrompts = len(skillPrompts)/4 + 10
+	if skillPrompts == "" {
+		cm.budget.SkillPrompts = 0
+	}
+
+	toolTokens := 0
+	for _, td := range toolDefs {
+		toolTokens += len(td.Name)/4 + len(td.Description)/4 + len(td.InputSchema)/4 + 30
+	}
+	cm.budget.ToolDescriptions = toolTokens
+
+	cm.budget.Conversation = estimateMessageTokens(conv.messages)
+}
+
+// Budget returns a copy of the current budget for external inspection.
+func (cm *ContextManager) Budget() ContextBudget {
+	return cm.budget
+}
+
+// ExceedsBudget returns true if the estimated token count exceeds the effective window.
 func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
-	return cm.EstimateTokens(conv) > cm.budget
+	return cm.EstimateTokens(conv) > cm.budget.EffectiveWindow()
 }
 
 // Truncate removes the oldest messages until the conversation is within budget.

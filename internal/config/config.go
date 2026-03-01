@@ -56,10 +56,15 @@ type OllamaProviderConfig struct {
 
 // AgentConfig holds settings for the agent behavior.
 type AgentConfig struct {
-	MaxTurns      int             `toml:"max_turns"`
-	ApprovalMode  string          `toml:"approval_mode"`
-	ContextBudget int             `toml:"context_budget"`
-	TrustRules    []TrustRuleConf `toml:"trust_rules"`
+	MaxTurns               int             `toml:"max_turns"`
+	ApprovalMode           string          `toml:"approval_mode"`
+	ContextBudget          int             `toml:"context_budget"`
+	MaxOutputTokens        int             `toml:"max_output_tokens"`
+	CompactTrigger         float64         `toml:"compact_trigger"`
+	HardBlock              float64         `toml:"hard_block"`
+	ResultOffloadThreshold int             `toml:"result_offload_threshold"`
+	ToolDeferralThreshold  float64         `toml:"tool_deferral_threshold"`
+	TrustRules             []TrustRuleConf `toml:"trust_rules"`
 }
 
 // TrustRuleConf defines a trust rule in the configuration file.
@@ -173,9 +178,14 @@ func DefaultConfig() *Config {
 			},
 		},
 		Agent: AgentConfig{
-			MaxTurns:      50,
-			ApprovalMode:  "prompt",
-			ContextBudget: 100000,
+			MaxTurns:               50,
+			ApprovalMode:           "prompt",
+			ContextBudget:          100000,
+			MaxOutputTokens:        4096,
+			CompactTrigger:         0.95,
+			HardBlock:              0.98,
+			ResultOffloadThreshold: 4096,
+			ToolDeferralThreshold:  0.10,
 		},
 		Skills: SkillsConfig{
 			RegistryURL:         "https://registry.rubichan.dev",
