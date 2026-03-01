@@ -28,6 +28,7 @@ import (
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/skills/builtin"
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
 	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
@@ -38,6 +39,7 @@ import (
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
+	"github.com/julianshen/rubichan/internal/wiki"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
 
 	// Register providers via init() side effects.
@@ -120,7 +122,7 @@ func main() {
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(skillCmd())
-	rootCmd.AddCommand(wikiCmd())
+	// wiki is now a built-in skill (generate_wiki tool), not a CLI subcommand.
 	rootCmd.AddCommand(ollamaCmd())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -498,6 +500,12 @@ func runInteractive() error {
 		skillsFlag = removeSkill("apple-dev", skillsFlag)
 	}
 
+	// Wire wiki skill (generate_wiki tool).
+	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	if err := wireWiki(cwd, registry, llmCompleter, nil); err != nil {
+		return err
+	}
+
 	// Build the approval function. When --auto-approve is set, skip the TUI
 	// prompt entirely. Otherwise, defer to the TUI model's interactive prompt.
 	// The model is created first (with nil agent) so we can extract its
@@ -657,6 +665,12 @@ func runHeadless() error {
 	} else if appleOpt != nil {
 		opts = append(opts, appleOpt)
 		skillsFlag = removeSkill("apple-dev", skillsFlag)
+	}
+
+	// Wire wiki skill (generate_wiki tool).
+	headlessLLM := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	if err := wireWiki(cwd, registry, headlessLLM, allowed); err != nil {
+		return err
 	}
 
 	// Headless always auto-approves (tools are restricted via whitelist)
@@ -907,6 +921,23 @@ func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool)
 		return nil, nil
 	}
 	return agent.WithExtraSystemPrompt("Apple Platform Expertise", appledev.SystemPrompt()), nil
+}
+
+// wireWiki creates the wiki skill backend and registers its generate_wiki tool.
+// The llmCompleter is injected from the caller (created from the provider).
+func wireWiki(cwd string, registry *tools.Registry, llm wiki.LLMCompleter, allowed map[string]bool) error {
+	backend := &builtin.WikiBackend{WorkDir: cwd, LLM: llm}
+	if err := backend.Load(builtin.WikiManifest(), nil); err != nil {
+		return fmt.Errorf("loading wiki skill: %w", err)
+	}
+	for _, tool := range backend.Tools() {
+		if shouldRegister(tool.Name(), allowed) {
+			if err := registry.Register(tool); err != nil {
+				return fmt.Errorf("registering wiki tool %s: %w", tool.Name(), err)
+			}
+		}
+	}
+	return nil
 }
 
 // --- Adapter types ---
