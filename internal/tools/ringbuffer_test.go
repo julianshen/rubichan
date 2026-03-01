@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,4 +45,42 @@ func TestRingBufferReset(t *testing.T) {
 	rb.Reset()
 	assert.Equal(t, 0, rb.Len())
 	assert.Empty(t, rb.Bytes())
+}
+
+// TestRingBufferConcurrentAccess exercises the mutex under contention.
+// Run with -race to verify thread safety.
+func TestRingBufferConcurrentAccess(t *testing.T) {
+	rb := NewRingBuffer(64)
+	var wg sync.WaitGroup
+	const goroutines = 8
+	const writes = 100
+
+	// Multiple writers.
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < writes; j++ {
+				rb.Write([]byte("data"))
+			}
+		}()
+	}
+
+	// Concurrent readers.
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < writes; j++ {
+				_ = rb.Bytes()
+				_ = rb.Len()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Buffer should contain data and not have panicked.
+	assert.True(t, rb.Len() > 0)
+	assert.True(t, rb.Len() <= 64)
 }
