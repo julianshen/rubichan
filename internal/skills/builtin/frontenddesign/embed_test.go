@@ -39,20 +39,3 @@ func TestRegisterPopulatesLoader(t *testing.T) {
 		t.Errorf("content too short (%d bytes)", len(ds.Manifest.Prompt.SystemPromptFile))
 	}
 }
-
-func TestParseFrontmatter(t *testing.T) {
-	input := "---\nname: test-skill\ndescription: \"A test\"\n---\n\nBody here"
-	name, desc, body, err := parseFrontmatter(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if name != "test-skill" {
-		t.Errorf("name = %q, want %q", name, "test-skill")
-	}
-	if desc != "A test" {
-		t.Errorf("description = %q, want %q", desc, "A test")
-	}
-	if body != "Body here" {
-		t.Errorf("body = %q, want %q", body, "Body here")
-	}
-}

@@ -26,7 +26,7 @@ func RegisterPrompt(loader *skills.Loader) {
 			SystemPromptFile: systemPrompt,
 		},
 		Triggers: skills.TriggerConfig{
-			Modes: []string{"interactive"},
+			Files: []string{"*.xcodeproj", "*.xcworkspace", "*.swift", "Package.swift"},
 		},
 	}
 	loader.RegisterBuiltin(m)

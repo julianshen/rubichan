@@ -34,5 +34,5 @@ func TestRegisterPrompt(t *testing.T) {
 	assert.Equal(t, skills.SourceBuiltin, ds.Source)
 	assert.Contains(t, ds.Manifest.Types, skills.SkillTypePrompt)
 	assert.NotEmpty(t, ds.Manifest.Prompt.SystemPromptFile)
-	assert.Contains(t, ds.Manifest.Triggers.Modes, "interactive")
+	assert.Contains(t, ds.Manifest.Triggers.Files, "*.swift")
 }

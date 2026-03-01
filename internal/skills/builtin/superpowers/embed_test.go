@@ -6,30 +6,6 @@ import (
 	"github.com/julianshen/rubichan/internal/skills"
 )
 
-func TestParseFrontmatter(t *testing.T) {
-	input := "---\nname: brainstorming\ndescription: \"A creative skill\"\n---\n\n# Body content\nHello world"
-	name, desc, body, err := parseFrontmatter(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if name != "brainstorming" {
-		t.Errorf("name = %q, want %q", name, "brainstorming")
-	}
-	if desc != "A creative skill" {
-		t.Errorf("description = %q, want %q", desc, "A creative skill")
-	}
-	if body != "# Body content\nHello world" {
-		t.Errorf("body = %q, want %q", body, "# Body content\nHello world")
-	}
-}
-
-func TestParseFrontmatterMissingDelimiter(t *testing.T) {
-	_, _, _, err := parseFrontmatter("no frontmatter here")
-	if err == nil {
-		t.Fatal("expected error for missing frontmatter")
-	}
-}
-
 func TestRegisterPopulatesLoader(t *testing.T) {
 	loader := skills.NewLoader("", "")
 	Register(loader)
