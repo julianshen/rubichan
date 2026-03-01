@@ -169,6 +169,29 @@ func estimateMessageTokens(msgs []provider.Message) int {
 	return total
 }
 
+// MeasureUsage populates the budget's component-level token counts based
+// on the current conversation state. Call before each LLM request.
+func (cm *ContextManager) MeasureUsage(conv *Conversation, systemPrompt, skillPrompts string, toolDefs []provider.ToolDef) {
+	cm.budget.SystemPrompt = len(systemPrompt)/4 + 10
+	cm.budget.SkillPrompts = len(skillPrompts)/4 + 10
+	if skillPrompts == "" {
+		cm.budget.SkillPrompts = 0
+	}
+
+	toolTokens := 0
+	for _, td := range toolDefs {
+		toolTokens += len(td.Name)/4 + len(td.Description)/4 + len(td.InputSchema)/4 + 30
+	}
+	cm.budget.ToolDescriptions = toolTokens
+
+	cm.budget.Conversation = estimateMessageTokens(conv.messages)
+}
+
+// Budget returns a copy of the current budget for external inspection.
+func (cm *ContextManager) Budget() ContextBudget {
+	return cm.budget
+}
+
 // ExceedsBudget returns true if the estimated token count exceeds the effective window.
 func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
 	return cm.EstimateTokens(conv) > cm.budget.EffectiveWindow()

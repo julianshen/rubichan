@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -214,6 +215,27 @@ func TestContextManagerIsBlocked(t *testing.T) {
 	// makeStringOfTokens(880) => 880 tokens => total = 10 + 880 = 890 > 882
 	conv.AddUser(makeStringOfTokens(880))
 	assert.True(t, cm.IsBlocked(conv), "above 98%% should block")
+}
+
+func TestContextManagerMeasureUsage(t *testing.T) {
+	cm := NewContextManager(100000, 4096)
+
+	systemPrompt := "You are a helpful assistant"
+	conv := NewConversation(systemPrompt)
+	conv.AddUser("hello")
+	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "hi there"}})
+
+	toolDefs := []provider.ToolDef{
+		{Name: "shell", Description: "Execute shell commands", InputSchema: json.RawMessage(`{"type":"object"}`)},
+	}
+	skillPrompt := "## Skill\nDo stuff"
+
+	cm.MeasureUsage(conv, systemPrompt, skillPrompt, toolDefs)
+
+	assert.Greater(t, cm.budget.SystemPrompt, 0)
+	assert.Greater(t, cm.budget.SkillPrompts, 0)
+	assert.Greater(t, cm.budget.ToolDescriptions, 0)
+	assert.Greater(t, cm.budget.Conversation, 0)
 }
 
 // makeStringOfTokens returns a string that estimates to approximately n tokens.
