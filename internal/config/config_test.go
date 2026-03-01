@@ -308,6 +308,52 @@ func TestSaveAndReload(t *testing.T) {
 	assert.Equal(t, 25, loaded.Agent.MaxTurns)
 }
 
+func TestTrustRulesDefaultEmpty(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Nil(t, cfg.Agent.TrustRules)
+}
+
+func TestTrustRulesFromTOML(t *testing.T) {
+	tomlContent := `
+[agent]
+max_turns = 50
+approval_mode = "prompt"
+
+[[agent.trust_rules]]
+tool = "shell"
+pattern = "^go test"
+action = "allow"
+
+[[agent.trust_rules]]
+tool = "shell"
+pattern = "^rm\\s"
+action = "deny"
+
+[[agent.trust_rules]]
+tool = "file"
+pattern = ".*"
+action = "allow"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.Agent.TrustRules, 3)
+
+	assert.Equal(t, "shell", cfg.Agent.TrustRules[0].Tool)
+	assert.Equal(t, "^go test", cfg.Agent.TrustRules[0].Pattern)
+	assert.Equal(t, "allow", cfg.Agent.TrustRules[0].Action)
+
+	assert.Equal(t, "shell", cfg.Agent.TrustRules[1].Tool)
+	assert.Equal(t, `^rm\s`, cfg.Agent.TrustRules[1].Pattern)
+	assert.Equal(t, "deny", cfg.Agent.TrustRules[1].Action)
+
+	assert.Equal(t, "file", cfg.Agent.TrustRules[2].Tool)
+	assert.Equal(t, ".*", cfg.Agent.TrustRules[2].Pattern)
+	assert.Equal(t, "allow", cfg.Agent.TrustRules[2].Action)
+}
+
 func TestSaveCreatesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "dir", "config.toml")

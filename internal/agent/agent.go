@@ -36,6 +36,11 @@ type AlwaysAutoApprove struct{}
 // IsAutoApproved always returns true.
 func (AlwaysAutoApprove) IsAutoApproved(_ string) bool { return true }
 
+// CheckApproval always returns AutoApproved, implementing ApprovalChecker.
+func (AlwaysAutoApprove) CheckApproval(_ string, _ json.RawMessage) ApprovalResult {
+	return AutoApproved
+}
+
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
 	Type         string           // "text_delta", "tool_call", "tool_result", "error", "done"
@@ -115,11 +120,19 @@ func WithMemoryStore(ms MemoryStore) AgentOption {
 	}
 }
 
-// WithAutoApproveChecker attaches a checker that determines which tools can
-// be auto-approved, enabling parallel execution of those tools.
+// WithApprovalChecker attaches an input-sensitive checker that determines
+// whether tool calls can be auto-approved based on both tool name and input.
+func WithApprovalChecker(checker ApprovalChecker) AgentOption {
+	return func(a *Agent) {
+		a.approvalChecker = checker
+	}
+}
+
+// WithAutoApproveChecker attaches a legacy tool-name-only checker by wrapping
+// it into an ApprovalChecker. Prefer WithApprovalChecker for input-sensitive rules.
 func WithAutoApproveChecker(checker AutoApproveChecker) AgentOption {
 	return func(a *Agent) {
-		a.autoApproveChecker = checker
+		a.approvalChecker = &autoApproveAdapter{checker: checker}
 	}
 }
 
@@ -149,24 +162,24 @@ func WithExtraSystemPrompt(name, content string) AgentOption {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider           provider.LLMProvider
-	tools              *tools.Registry
-	conversation       *Conversation
-	context            *ContextManager
-	approve            ApprovalFunc
-	autoApproveChecker AutoApproveChecker
-	model              string
-	maxTurns           int
-	skillRuntime       *skills.Runtime
-	store              *store.Store
-	sessionID          string
-	resumeSessionID    string
-	agentMD            string
-	extraPrompts       []namedPrompt
-	summarizer         Summarizer
-	scratchpad         *Scratchpad
-	memoryStore        MemoryStore
-	customStrategies   bool
+	provider         provider.LLMProvider
+	tools            *tools.Registry
+	conversation     *Conversation
+	context          *ContextManager
+	approve          ApprovalFunc
+	approvalChecker  ApprovalChecker
+	model            string
+	maxTurns         int
+	skillRuntime     *skills.Runtime
+	store            *store.Store
+	sessionID        string
+	resumeSessionID  string
+	agentMD          string
+	extraPrompts     []namedPrompt
+	summarizer       Summarizer
+	scratchpad       *Scratchpad
+	memoryStore      MemoryStore
+	customStrategies bool
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -523,19 +536,20 @@ type toolExecResult struct {
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
 // Returns true if the context was cancelled during execution.
 func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
-	if a.autoApproveChecker == nil || len(pendingTools) <= 1 {
+	if a.approvalChecker == nil || len(pendingTools) <= 1 {
 		// No checker or single tool — fall back to sequential execution.
 		return a.executeToolsSequential(ctx, ch, pendingTools)
 	}
 
-	// Partition into auto-approved and needs-approval.
+	// Partition into auto-approved and needs-approval using input-sensitive check.
 	type indexedTool struct {
 		index int
 		tc    provider.ToolUseBlock
 	}
 	var autoApproved, needsApproval []indexedTool
 	for i, tc := range pendingTools {
-		if a.autoApproveChecker.IsAutoApproved(tc.Name) {
+		result := a.approvalChecker.CheckApproval(tc.Name, tc.Input)
+		if result == AutoApproved || result == TrustRuleApproved {
 			autoApproved = append(autoApproved, indexedTool{index: i, tc: tc})
 		} else {
 			needsApproval = append(needsApproval, indexedTool{index: i, tc: tc})

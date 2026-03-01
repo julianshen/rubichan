@@ -587,9 +587,24 @@ func runInteractive() error {
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
 	if !autoApprove {
 		approvalFunc = model.MakeApprovalFunc()
-		opts = append(opts, agent.WithAutoApproveChecker(model))
+
+		// Build the approval checker: compose session cache with trust rules.
+		// Session cache (TUI "always" decisions) is checked first, then
+		// config-based trust rules.
+		var checkers []agent.ApprovalChecker
+		checkers = append(checkers, model) // session cache
+		if len(cfg.Agent.TrustRules) > 0 {
+			trustRules := configToTrustRules(cfg.Agent.TrustRules)
+			if err := agent.ValidateTrustRules(trustRules); err != nil {
+				return fmt.Errorf("invalid trust rules in config: %w", err)
+			}
+			checkers = append(checkers, agent.NewTrustRuleChecker(trustRules))
+		}
+		opts = append(opts, agent.WithApprovalChecker(
+			agent.NewCompositeApprovalChecker(checkers...),
+		))
 	} else {
-		opts = append(opts, agent.WithAutoApproveChecker(agent.AlwaysAutoApprove{}))
+		opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
 	}
 
 	// Create agent with the approval function.
@@ -750,7 +765,7 @@ func runHeadless() error {
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
 	// Headless always auto-approves, so all tools can run in parallel.
-	opts = append(opts, agent.WithAutoApproveChecker(agent.AlwaysAutoApprove{}))
+	opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
@@ -1095,4 +1110,17 @@ func (a *storeMemoryAdapter) LoadMemories(workingDir string) ([]agent.MemoryEntr
 		entries[i] = agent.MemoryEntry{Tag: m.Tag, Content: m.Content}
 	}
 	return entries, nil
+}
+
+// configToTrustRules converts config trust rule entries to agent TrustRules.
+func configToTrustRules(rules []config.TrustRuleConf) []agent.TrustRule {
+	result := make([]agent.TrustRule, len(rules))
+	for i, r := range rules {
+		result[i] = agent.TrustRule{
+			Tool:    r.Tool,
+			Pattern: r.Pattern,
+			Action:  r.Action,
+		}
+	}
+	return result
 }

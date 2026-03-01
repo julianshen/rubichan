@@ -897,6 +897,23 @@ func TestModelIsAutoApproved(t *testing.T) {
 	assert.True(t, m.IsAutoApproved("file"))
 }
 
+func TestModelCheckApproval(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+
+	// Initially nothing is auto-approved.
+	assert.Equal(t, agent.ApprovalRequired, m.CheckApproval("shell", json.RawMessage(`{}`)))
+
+	// Mark shell as always-approved via session cache.
+	m.alwaysApproved.Store("shell", true)
+	assert.Equal(t, agent.AutoApproved, m.CheckApproval("shell", json.RawMessage(`{}`)))
+	assert.Equal(t, agent.ApprovalRequired, m.CheckApproval("file", json.RawMessage(`{}`)))
+}
+
+func TestModelImplementsApprovalChecker(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	var _ agent.ApprovalChecker = m // compile-time check
+}
+
 func TestModelMakeApprovalFuncAlwaysApproved(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.alwaysApproved.Store("shell", true)

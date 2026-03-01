@@ -56,9 +56,19 @@ type OllamaProviderConfig struct {
 
 // AgentConfig holds settings for the agent behavior.
 type AgentConfig struct {
-	MaxTurns      int    `toml:"max_turns"`
-	ApprovalMode  string `toml:"approval_mode"`
-	ContextBudget int    `toml:"context_budget"`
+	MaxTurns      int             `toml:"max_turns"`
+	ApprovalMode  string          `toml:"approval_mode"`
+	ContextBudget int             `toml:"context_budget"`
+	TrustRules    []TrustRuleConf `toml:"trust_rules"`
+}
+
+// TrustRuleConf defines a trust rule in the configuration file.
+// Trust rules enable input-sensitive approval caching: matching tool calls
+// are auto-approved without prompting the user.
+type TrustRuleConf struct {
+	Tool    string `toml:"tool"`    // Tool name to match, or "*" for all tools
+	Pattern string `toml:"pattern"` // Regex pattern matched against tool input values
+	Action  string `toml:"action"`  // "allow" or "deny"
 }
 
 // SkillsConfig holds settings for the skill system.
