@@ -303,9 +303,17 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 		return nil, nil, fmt.Errorf("discovering skills: %w", err)
 	}
 
+	// Collect top-level project files for trigger evaluation.
+	entries, _ := os.ReadDir(cwd)
+	projectFiles := make([]string, 0, len(entries))
+	for _, e := range entries {
+		projectFiles = append(projectFiles, e.Name())
+	}
+
 	// Evaluate triggers and activate matching skills.
 	triggerCtx := skills.TriggerContext{
-		Mode: mode,
+		Mode:         mode,
+		ProjectFiles: projectFiles,
 	}
 	if err := rt.EvaluateAndActivate(triggerCtx); err != nil {
 		s.Close()

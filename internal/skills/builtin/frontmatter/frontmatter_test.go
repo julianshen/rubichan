@@ -42,6 +42,24 @@ func TestParseNoNewlineAfterOpening(t *testing.T) {
 	}
 }
 
+func TestParseIgnoresSubstringDashes(t *testing.T) {
+	// Description containing "---" inline should not be treated as the closing delimiter.
+	input := "---\nname: tricky\ndescription: \"uses --- in value\"\n---\n\nBody"
+	name, desc, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "tricky" {
+		t.Errorf("name = %q, want %q", name, "tricky")
+	}
+	if desc != "uses --- in value" {
+		t.Errorf("description = %q, want %q", desc, "uses --- in value")
+	}
+	if body != "Body" {
+		t.Errorf("body = %q, want %q", body, "Body")
+	}
+}
+
 func TestParseUnquotedDescription(t *testing.T) {
 	input := "---\nname: test-skill\ndescription: A test skill\n---\n\nBody here"
 	name, desc, body, err := Parse(input)
