@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 )
 
@@ -71,15 +72,22 @@ type Model struct {
 	totalCost         float64
 	quitting          bool
 	eventCh           <-chan agent.TurnEvent
+	cmdRegistry       *commands.Registry
+	completion        *CompletionOverlay
 }
 
 // Ensure Model satisfies the tea.Model interface at compile time.
 var _ tea.Model = (*Model)(nil)
 
 // NewModel creates a new TUI Model with the given agent, application name,
-// model name, maximum turns, config path, and config. The agent and config
-// may be nil for testing purposes.
-func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPath string, cfg *config.Config) *Model {
+// model name, maximum turns, config path, config, and command registry.
+// The agent, config, and registry may be nil for testing purposes.
+// A nil registry is replaced with an empty default.
+func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPath string, cfg *config.Config, cmdRegistry *commands.Registry) *Model {
+	defaultReg := cmdRegistry == nil
+	if defaultReg {
+		cmdRegistry = commands.NewRegistry()
+	}
 	ia := NewInputArea()
 
 	vp := viewport.New(80, 20)
@@ -96,22 +104,48 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
 	m := &Model{
-		agent:      a,
-		cfg:        cfg,
-		configPath: configPath,
-		input:      ia,
-		viewport:   vp,
-		spinner:    sp,
-		mdRenderer: mdRenderer,
-		toolBox:    NewToolBoxRenderer(80),
-		statusBar:  sb,
-		approvalCh: make(chan approvalRequest),
-		state:      StateInput,
-		appName:    appName,
-		modelName:  modelName,
-		maxTurns:   maxTurns,
-		width:      80,
-		height:     24,
+		agent:       a,
+		cfg:         cfg,
+		configPath:  configPath,
+		input:       ia,
+		viewport:    vp,
+		spinner:     sp,
+		mdRenderer:  mdRenderer,
+		toolBox:     NewToolBoxRenderer(80),
+		statusBar:   sb,
+		approvalCh:  make(chan approvalRequest),
+		state:       StateInput,
+		appName:     appName,
+		modelName:   modelName,
+		maxTurns:    maxTurns,
+		width:       80,
+		height:      24,
+		cmdRegistry: cmdRegistry,
+		completion:  NewCompletionOverlay(cmdRegistry, 80),
+	}
+
+	// When no registry was provided, populate with default built-in commands.
+	// Commands that need model callbacks (clear, model) reference the model
+	// instance via closures.
+	if defaultReg {
+		_ = cmdRegistry.Register(commands.NewQuitCommand())
+		_ = cmdRegistry.Register(commands.NewExitCommand())
+		_ = cmdRegistry.Register(commands.NewConfigCommand())
+		_ = cmdRegistry.Register(commands.NewClearCommand(func() {
+			if m.agent != nil {
+				m.agent.ClearConversation()
+			}
+			m.content.Reset()
+			m.viewport.SetContent("")
+		}))
+		_ = cmdRegistry.Register(commands.NewModelCommand(func(name string) {
+			if m.agent != nil {
+				m.agent.SetModel(name)
+			}
+			m.modelName = name
+			m.statusBar.SetModel(name)
+		}))
+		_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 	}
 
 	bannerText := RenderBanner()
@@ -126,6 +160,33 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 // be created before the agent (e.g., to extract the approval function).
 func (m *Model) SetAgent(a *agent.Agent) {
 	m.agent = a
+}
+
+// GetAgent returns the model's agent. This is used by command callbacks that
+// need to interact with the agent (e.g., clear conversation, switch model).
+func (m *Model) GetAgent() *agent.Agent {
+	return m.agent
+}
+
+// ClearContent resets the content buffer and viewport. This is used by the
+// /clear command callback to wipe the display.
+func (m *Model) ClearContent() {
+	m.content.Reset()
+	m.viewport.SetContent("")
+}
+
+// SwitchModel updates the model name and status bar. This is used by the
+// /model command callback to reflect the switch in the TUI.
+func (m *Model) SwitchModel(name string) {
+	m.modelName = name
+	m.statusBar.SetModel(name)
+}
+
+// syncCompletion updates the completion overlay based on the current input.
+func (m *Model) syncCompletion() {
+	if m.completion != nil {
+		m.completion.Update(m.input.Value())
+	}
 }
 
 // MakeApprovalFunc returns an agent.ApprovalFunc that bridges the agent's
@@ -178,6 +239,7 @@ func (m *Model) waitForApproval() tea.Cmd {
 }
 
 // handleCommand processes slash commands entered by the user.
+// It delegates to the command registry and interprets the result's Action.
 // Returns a tea.Cmd if the command produces one (e.g., tea.Quit), or nil.
 func (m *Model) handleCommand(cmd string) tea.Cmd {
 	parts := strings.Fields(cmd)
@@ -185,36 +247,31 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		return nil
 	}
 
-	switch parts[0] {
-	case "/quit", "/exit":
-		m.quitting = true
-		return tea.Quit
-
-	case "/clear":
-		if m.agent != nil {
-			m.agent.ClearConversation()
-		}
-		m.content.Reset()
-		m.viewport.SetContent("")
-		return nil
-
-	case "/model":
-		if len(parts) < 2 {
-			m.content.WriteString("Usage: /model <name>\n")
-			m.viewport.SetContent(m.content.String())
-			return nil
-		}
-		newModel := parts[1]
-		if m.agent != nil {
-			m.agent.SetModel(newModel)
-		}
-		m.modelName = newModel
-		m.statusBar.SetModel(newModel)
-		m.content.WriteString(fmt.Sprintf("Model switched to %s\n", newModel))
+	name := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
+	slashCmd, ok := m.cmdRegistry.Get(name)
+	if !ok {
+		m.content.WriteString(fmt.Sprintf("Unknown command: %s\n", parts[0]))
 		m.viewport.SetContent(m.content.String())
 		return nil
+	}
 
-	case "/config":
+	result, err := slashCmd.Execute(context.Background(), parts[1:])
+	if err != nil {
+		m.content.WriteString(fmt.Sprintf("Error: %s\n", err.Error()))
+		m.viewport.SetContent(m.content.String())
+		return nil
+	}
+
+	if result.Output != "" {
+		m.content.WriteString(result.Output + "\n")
+		m.viewport.SetContent(m.content.String())
+	}
+
+	switch result.Action {
+	case commands.ActionQuit:
+		m.quitting = true
+		return tea.Quit
+	case commands.ActionOpenConfig:
 		if m.cfg == nil {
 			m.content.WriteString("No config available\n")
 			m.viewport.SetContent(m.content.String())
@@ -223,21 +280,7 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		m.configForm = NewConfigForm(m.cfg, m.configPath)
 		m.state = StateConfigOverlay
 		return m.configForm.Form().Init()
-
-	case "/help":
-		help := "Available commands:\n" +
-			"  /help          Show this help message\n" +
-			"  /clear         Clear conversation history\n" +
-			"  /config        Edit configuration\n" +
-			"  /model <name>  Switch to a different model\n" +
-			"  /quit          Exit the application\n"
-		m.content.WriteString(help)
-		m.viewport.SetContent(m.content.String())
-		return nil
-
-	default:
-		m.content.WriteString(fmt.Sprintf("Unknown command: %s\n", parts[0]))
-		m.viewport.SetContent(m.content.String())
-		return nil
 	}
+
+	return nil
 }

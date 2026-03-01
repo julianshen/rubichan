@@ -19,6 +19,7 @@ import (
 	"github.com/sourcegraph/conc"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
@@ -162,6 +163,7 @@ func (*noopPromptBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecke
 }
 func (*noopPromptBackend) Tools() []tools.Tool                            { return nil }
 func (*noopPromptBackend) Hooks() map[skills.HookPhase]skills.HookHandler { return nil }
+func (*noopPromptBackend) Commands() []commands.SlashCommand              { return nil }
 func (*noopPromptBackend) Unload() error                                  { return nil }
 
 // createSkillRuntime creates and configures a skill runtime with built-in
@@ -582,9 +584,48 @@ func runInteractive() error {
 	opts = append(opts, agent.WithSummarizer(summarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
+	// Create command registry and register built-in slash commands.
+	// Built-in registration failures indicate a programming bug (duplicate names).
+	cmdRegistry := commands.NewRegistry()
+	for _, cmd := range []commands.SlashCommand{
+		commands.NewQuitCommand(),
+		commands.NewExitCommand(),
+		commands.NewConfigCommand(),
+		commands.NewHelpCommand(cmdRegistry),
+	} {
+		if err := cmdRegistry.Register(cmd); err != nil {
+			return fmt.Errorf("register built-in command %q: %w", cmd.Name(), err)
+		}
+	}
+
+	// Wire command registry into skill runtime so skill-contributed commands
+	// are registered on activation and unregistered on deactivation.
+	if rt != nil {
+		rt.SetCommandRegistry(cmdRegistry)
+	}
+
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
-	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg)
+	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
+
+	// Register commands that need model callbacks (these need the model instance).
+	if err := cmdRegistry.Register(commands.NewClearCommand(func() {
+		if model.GetAgent() != nil {
+			model.GetAgent().ClearConversation()
+		}
+		model.ClearContent()
+	})); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "clear", err)
+	}
+	if err := cmdRegistry.Register(commands.NewModelCommand(func(name string) {
+		if model.GetAgent() != nil {
+			model.GetAgent().SetModel(name)
+		}
+		model.SwitchModel(name)
+	})); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "model", err)
+	}
+
 	if !autoApprove {
 		approvalFunc = model.MakeApprovalFunc()
 

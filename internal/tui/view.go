@@ -57,6 +57,14 @@ func (m *Model) View() string {
 	}
 	b.WriteString("\n")
 
+	// Completion overlay (above input)
+	if m.completion != nil {
+		if cv := m.completion.View(); cv != "" {
+			b.WriteString(cv)
+			b.WriteString("\n")
+		}
+	}
+
 	// Input line
 	b.WriteString(inputPromptStyle.Render("> "))
 	b.WriteString(m.input.View())

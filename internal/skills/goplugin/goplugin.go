@@ -18,6 +18,7 @@ import (
 
 	goplugin "plugin"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
@@ -192,6 +193,9 @@ func (b *GoPluginBackend) Tools() []tools.Tool {
 func (b *GoPluginBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return b.hooks
 }
+
+// Commands returns nil — Go plugins do not provide slash commands.
+func (b *GoPluginBackend) Commands() []commands.SlashCommand { return nil }
 
 // Unload implements skills.SkillBackend. Calls Deactivate on the plugin
 // and releases all resources.

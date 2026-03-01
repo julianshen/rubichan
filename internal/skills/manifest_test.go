@@ -360,6 +360,51 @@ prompt:
 	assert.Equal(t, BackendType(""), m.Implementation.Backend)
 }
 
+func TestParseManifestWithCommands(t *testing.T) {
+	data := []byte(`
+name: kubernetes
+version: "1.0.0"
+description: Kubernetes skill
+types: [tool]
+implementation:
+  backend: starlark
+  entrypoint: main.star
+commands:
+  - name: pods
+    description: "List Kubernetes pods"
+    arguments:
+      - name: namespace
+        description: "Target namespace"
+        required: false
+  - name: deploy
+    description: "Deploy a resource"
+    arguments:
+      - name: resource
+        description: "Resource to deploy"
+        required: true
+`)
+	m, err := ParseManifest(data)
+	require.NoError(t, err)
+	assert.Len(t, m.Commands, 2)
+	assert.Equal(t, "pods", m.Commands[0].Name)
+	assert.Len(t, m.Commands[0].Arguments, 1)
+	assert.False(t, m.Commands[0].Arguments[0].Required)
+	assert.Equal(t, "deploy", m.Commands[1].Name)
+	assert.True(t, m.Commands[1].Arguments[0].Required)
+}
+
+func TestParseManifestWithoutCommands(t *testing.T) {
+	data := []byte(`
+name: simple
+version: "1.0.0"
+description: Simple skill
+types: [prompt]
+`)
+	m, err := ParseManifest(data)
+	require.NoError(t, err)
+	assert.Empty(t, m.Commands)
+}
+
 func TestParseManifestMCPBackendNoEntrypoint(t *testing.T) {
 	// MCP backends are exempt from the entrypoint requirement since their
 	// config comes from MCPServerConfig, not from a file path.
