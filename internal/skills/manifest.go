@@ -77,6 +77,20 @@ var validPermissions = map[Permission]bool{
 // Hyphens must be followed by at least one alphanumeric character (no trailing hyphens).
 var nameRegex = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
+// CommandDef declares a slash command contributed by a skill.
+type CommandDef struct {
+	Name        string          `yaml:"name"`
+	Description string          `yaml:"description"`
+	Arguments   []CommandArgDef `yaml:"arguments"`
+}
+
+// CommandArgDef describes an argument for a skill-contributed command.
+type CommandArgDef struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Required    bool   `yaml:"required"`
+}
+
 // SkillManifest represents a parsed SKILL.yaml file.
 type SkillManifest struct {
 	Name           string               `yaml:"name"`
@@ -92,6 +106,7 @@ type SkillManifest struct {
 	Implementation ImplementationConfig `yaml:"implementation"`
 	Prompt         PromptConfig         `yaml:"prompt"`
 	Tools          []ToolDef            `yaml:"tools"`
+	Commands       []CommandDef         `yaml:"commands"`
 	SecurityRules  SecurityRuleConfig   `yaml:"security_rules"`
 	Wiki           WikiConfig           `yaml:"wiki"`
 	Compatibility  CompatibilityConfig  `yaml:"compatibility"`
