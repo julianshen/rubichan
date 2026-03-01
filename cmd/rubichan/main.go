@@ -591,6 +591,12 @@ func runInteractive() error {
 	_ = cmdRegistry.Register(commands.NewConfigCommand())
 	_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 
+	// Wire command registry into skill runtime so skill-contributed commands
+	// are registered on activation and unregistered on deactivation.
+	if rt != nil {
+		rt.SetCommandRegistry(cmdRegistry)
+	}
+
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
