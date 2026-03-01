@@ -28,7 +28,10 @@ import (
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/skills/builtin"
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
+	"github.com/julianshen/rubichan/internal/skills/builtin/frontenddesign"
+	"github.com/julianshen/rubichan/internal/skills/builtin/superpowers"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
 	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
 	"github.com/julianshen/rubichan/internal/skills/process"
@@ -38,6 +41,7 @@ import (
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
+	"github.com/julianshen/rubichan/internal/wiki"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
 
 	// Register providers via init() side effects.
@@ -120,7 +124,7 @@ func main() {
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(skillCmd())
-	rootCmd.AddCommand(wikiCmd())
+	// wiki is now a built-in skill (generate_wiki tool), not a CLI subcommand.
 	rootCmd.AddCommand(ollamaCmd())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -148,18 +152,30 @@ func parseSkillsFlag(s string) []string {
 	return names
 }
 
-// createSkillRuntime creates and configures a skill runtime from the
-// --skills and --approve-skills flags. The provider and config are used to
-// create integration adapters (LLM completer, HTTP fetcher, git runner,
-// skill invoker) that get injected into skill backends.
+// noopPromptBackend is a no-op backend for prompt-only skills that have no
+// implementation backend. It satisfies the SkillBackend interface so prompt
+// skills can be activated through the normal runtime flow.
+type noopPromptBackend struct{}
+
+func (*noopPromptBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error {
+	return nil
+}
+func (*noopPromptBackend) Tools() []tools.Tool                            { return nil }
+func (*noopPromptBackend) Hooks() map[skills.HookPhase]skills.HookHandler { return nil }
+func (*noopPromptBackend) Unload() error                                  { return nil }
+
+// createSkillRuntime creates and configures a skill runtime with built-in
+// prompt skills and any explicitly requested skills from --skills flag.
+// Built-in skills (superpowers, frontend-design, apple-platform-guide) are
+// always registered and auto-activate based on mode triggers.
+//
+// The mode parameter is set in TriggerContext to enable mode-based activation
+// (e.g. "interactive", "headless", "code-review").
 //
 // The returned io.Closer must be closed by the caller to release the SQLite
-// store. Returns (nil, nil, nil) if no skills are requested.
-func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config) (*skills.Runtime, io.Closer, error) {
+// store.
+func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config, mode string) (*skills.Runtime, io.Closer, error) {
 	skillNames := parseSkillsFlag(skillsFlag)
-	if len(skillNames) == 0 {
-		return nil, nil, nil
-	}
 
 	if cfg == nil {
 		return nil, nil, fmt.Errorf("config is required for skill runtime")
@@ -197,6 +213,11 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	loader := skills.NewLoader(userDir, projectDir)
 	loader.AddMCPServers(cfg.MCP.Servers)
 
+	// Register built-in prompt skills. These auto-activate via mode triggers.
+	superpowers.Register(loader)
+	frontenddesign.Register(loader)
+	appledev.RegisterPrompt(loader)
+
 	// Create integration objects shared across all skill backends.
 	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
 	httpFetcher := integrations.NewHTTPFetcher(30 * time.Second)
@@ -216,9 +237,12 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	pluginSkillAdapter := &pluginSkillInvokerAdapter{ctx: ctx, invoker: skillInvoker}
 
 	// Backend factory routes to real Starlark, Go plugin, or process backends
-	// with integration objects injected.
+	// with integration objects injected. Prompt-only skills use a noop backend.
 	backendFactory := func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
 		switch manifest.Implementation.Backend {
+		case "":
+			// Prompt-only skills have no implementation backend.
+			return &noopPromptBackend{}, nil
 		case skills.BackendStarlark:
 			engine := starengine.NewEngine(manifest.Name, dir, nil)
 			engine.SetLLMCompleter(llmCompleter)
@@ -279,9 +303,17 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 		return nil, nil, fmt.Errorf("discovering skills: %w", err)
 	}
 
+	// Collect top-level project files for trigger evaluation.
+	entries, _ := os.ReadDir(cwd)
+	projectFiles := make([]string, 0, len(entries))
+	for _, e := range entries {
+		projectFiles = append(projectFiles, e.Name())
+	}
+
 	// Evaluate triggers and activate matching skills.
 	triggerCtx := skills.TriggerContext{
-		// TODO: Populate with actual project files, keywords, etc.
+		Mode:         mode,
+		ProjectFiles: projectFiles,
 	}
 	if err := rt.EvaluateAndActivate(triggerCtx); err != nil {
 		s.Close()
@@ -488,14 +520,18 @@ func runInteractive() error {
 		return fmt.Errorf("registering search tool: %w", err)
 	}
 
-	// Auto-activate apple-dev skill if Apple project detected.
+	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
-	if appleOpt, err := wireAppleDev(cwd, registry, nil); err != nil {
+	if err := wireAppleDev(cwd, registry, nil); err != nil {
 		return err
-	} else if appleOpt != nil {
-		opts = append(opts, appleOpt)
-		// Prevent createSkillRuntime from trying to discover apple-dev again.
-		skillsFlag = removeSkill("apple-dev", skillsFlag)
+	}
+	// Prevent createSkillRuntime from trying to discover apple-dev again.
+	skillsFlag = removeSkill("apple-dev", skillsFlag)
+
+	// Wire wiki skill (generate_wiki tool).
+	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	if err := wireWiki(cwd, registry, llmCompleter, nil); err != nil {
+		return err
 	}
 
 	// Build the approval function. When --auto-approve is set, skip the TUI
@@ -529,8 +565,8 @@ func runInteractive() error {
 		opts = append(opts, agent.WithAgentMD(agentMD))
 	}
 
-	// Create skill runtime if --skills is provided.
-	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg)
+	// Create skill runtime with built-in prompt skills and any explicit --skills.
+	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg, "interactive")
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
@@ -650,13 +686,17 @@ func runHeadless() error {
 		}
 	}
 
-	// Auto-activate apple-dev skill if Apple project detected.
+	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
-	if appleOpt, err := wireAppleDev(cwd, registry, allowed); err != nil {
+	if err := wireAppleDev(cwd, registry, allowed); err != nil {
 		return err
-	} else if appleOpt != nil {
-		opts = append(opts, appleOpt)
-		skillsFlag = removeSkill("apple-dev", skillsFlag)
+	}
+	skillsFlag = removeSkill("apple-dev", skillsFlag)
+
+	// Wire wiki skill (generate_wiki tool).
+	headlessLLM := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	if err := wireWiki(cwd, registry, headlessLLM, allowed); err != nil {
+		return err
 	}
 
 	// Headless always auto-approves (tools are restricted via whitelist)
@@ -688,8 +728,12 @@ func runHeadless() error {
 		opts = append(opts, agent.WithAgentMD(agentMD))
 	}
 
-	// Create skill runtime if --skills is provided.
-	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg)
+	// Create skill runtime with built-in skills.
+	headlessMode := modeFlag
+	if headlessMode == "" {
+		headlessMode = "headless"
+	}
+	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg, headlessMode)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
@@ -881,32 +925,45 @@ func containsSkill(name, flagValue string) bool {
 	return false
 }
 
-// wireAppleDev detects Apple projects and registers Xcode tools + system prompt.
+// wireAppleDev detects Apple projects and registers Xcode tools.
 // The allowed map is used to filter tools in headless mode (nil means all allowed).
-// Returns an AgentOption to inject the Apple system prompt, or nil if not activated.
-func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool) (agent.AgentOption, error) {
+// The Apple system prompt is now registered as a built-in skill via
+// appledev.RegisterPrompt and injected through the skill runtime's PromptCollector.
+func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool) error {
 	appleProject := xcode.DiscoverProject(cwd)
 	if appleProject.Type == "none" && !containsSkill("apple-dev", skillsFlag) {
-		return nil, nil
+		return nil
 	}
 	pc := xcode.NewRealPlatformChecker()
 	appleBackend := &appledev.Backend{WorkDir: cwd, Platform: pc}
 	if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
-		return nil, fmt.Errorf("loading apple-dev skill: %w", err)
+		return fmt.Errorf("loading apple-dev skill: %w", err)
 	}
-	registered := 0
 	for _, tool := range appleBackend.Tools() {
 		if shouldRegister(tool.Name(), allowed) {
 			if err := registry.Register(tool); err != nil {
-				return nil, fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
+				return fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
 			}
-			registered++
 		}
 	}
-	if registered == 0 {
-		return nil, nil
+	return nil
+}
+
+// wireWiki creates the wiki skill backend and registers its generate_wiki tool.
+// The llmCompleter is injected from the caller (created from the provider).
+func wireWiki(cwd string, registry *tools.Registry, llm wiki.LLMCompleter, allowed map[string]bool) error {
+	backend := &builtin.WikiBackend{WorkDir: cwd, LLM: llm}
+	if err := backend.Load(builtin.WikiManifest(), nil); err != nil {
+		return fmt.Errorf("loading wiki skill: %w", err)
 	}
-	return agent.WithExtraSystemPrompt("Apple Platform Expertise", appledev.SystemPrompt()), nil
+	for _, tool := range backend.Tools() {
+		if shouldRegister(tool.Name(), allowed) {
+			if err := registry.Register(tool); err != nil {
+				return fmt.Errorf("registering wiki tool %s: %w", tool.Name(), err)
+			}
+		}
+	}
+	return nil
 }
 
 // --- Adapter types ---

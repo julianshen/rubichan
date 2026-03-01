@@ -174,14 +174,15 @@ func TestModelUpdateEnterSlashCommand(t *testing.T) {
 
 func TestModelUpdateEnterEmptyInput(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	contentBefore := m.content.String()
 	m.input.SetValue("")
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	um := updated.(*Model)
-	// Empty input should not change state
+	// Empty input should not change state or add new content
 	assert.Equal(t, StateInput, um.state)
-	assert.Equal(t, "", um.content.String())
+	assert.Equal(t, contentBefore, um.content.String())
 }
 
 func TestModelHandleTurnEventTextDelta(t *testing.T) {
