@@ -140,3 +140,42 @@ func TestContextBudgetEffectiveWindowZeroOutput(t *testing.T) {
 	b := ContextBudget{Total: 100000, MaxOutputTokens: 0}
 	assert.Equal(t, 100000, b.EffectiveWindow())
 }
+
+func TestContextBudgetUsedTokens(t *testing.T) {
+	b := ContextBudget{
+		Total:            100000,
+		MaxOutputTokens:  4096,
+		SystemPrompt:     500,
+		SkillPrompts:     200,
+		ToolDescriptions: 3000,
+		Conversation:     10000,
+	}
+	assert.Equal(t, 13700, b.UsedTokens())
+}
+
+func TestContextBudgetRemainingTokens(t *testing.T) {
+	b := ContextBudget{
+		Total:            100000,
+		MaxOutputTokens:  4096,
+		SystemPrompt:     500,
+		SkillPrompts:     200,
+		ToolDescriptions: 3000,
+		Conversation:     10000,
+	}
+	assert.Equal(t, 82204, b.RemainingTokens()) // 95904 - 13700
+}
+
+func TestContextBudgetUsedPercentage(t *testing.T) {
+	b := ContextBudget{
+		Total:           100000,
+		MaxOutputTokens: 0,
+		SystemPrompt:    50000,
+		Conversation:    50000,
+	}
+	assert.InDelta(t, 1.0, b.UsedPercentage(), 0.001)
+}
+
+func TestContextBudgetUsedPercentageZeroWindow(t *testing.T) {
+	b := ContextBudget{Total: 0, MaxOutputTokens: 0}
+	assert.Equal(t, 1.0, b.UsedPercentage())
+}

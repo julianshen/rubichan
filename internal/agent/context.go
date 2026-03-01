@@ -35,6 +35,25 @@ func (b *ContextBudget) EffectiveWindow() int {
 	return ew
 }
 
+// UsedTokens returns total tokens consumed across all components.
+func (b *ContextBudget) UsedTokens() int {
+	return b.SystemPrompt + b.SkillPrompts + b.ToolDescriptions + b.Conversation
+}
+
+// RemainingTokens returns how many tokens are available for conversation growth.
+func (b *ContextBudget) RemainingTokens() int {
+	return b.EffectiveWindow() - b.UsedTokens()
+}
+
+// UsedPercentage returns the fraction of the effective window in use (0.0-1.0+).
+func (b *ContextBudget) UsedPercentage() float64 {
+	ew := b.EffectiveWindow()
+	if ew <= 0 {
+		return 1.0
+	}
+	return float64(b.UsedTokens()) / float64(ew)
+}
+
 // ContextManager tracks token usage and compacts conversation history
 // to stay within a configured budget using a chain of strategies.
 type ContextManager struct {
