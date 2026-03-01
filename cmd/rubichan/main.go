@@ -163,6 +163,7 @@ func (*noopPromptBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecke
 }
 func (*noopPromptBackend) Tools() []tools.Tool                            { return nil }
 func (*noopPromptBackend) Hooks() map[skills.HookPhase]skills.HookHandler { return nil }
+func (*noopPromptBackend) Commands() []commands.SlashCommand              { return nil }
 func (*noopPromptBackend) Unload() error                                  { return nil }
 
 // createSkillRuntime creates and configures a skill runtime with built-in

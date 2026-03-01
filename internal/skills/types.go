@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
@@ -154,6 +155,9 @@ type SkillBackend interface {
 
 	// Hooks returns hook handlers registered by this backend, keyed by phase.
 	Hooks() map[HookPhase]HookHandler
+
+	// Commands returns slash commands provided by this backend.
+	Commands() []commands.SlashCommand
 
 	// Unload releases resources held by this backend.
 	Unload() error

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 	mcpclient "github.com/julianshen/rubichan/internal/tools/mcp"
@@ -104,6 +105,9 @@ func (b *MCPBackend) Tools() []tools.Tool {
 func (b *MCPBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return nil
 }
+
+// Commands returns nil — MCP skills do not provide slash commands.
+func (b *MCPBackend) Commands() []commands.SlashCommand { return nil }
 
 // Unload disconnects from the MCP server.
 func (b *MCPBackend) Unload() error {

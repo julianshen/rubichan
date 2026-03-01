@@ -1,6 +1,7 @@
 package appledev
 
 import (
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
@@ -65,6 +66,9 @@ func (b *Backend) Tools() []tools.Tool {
 func (b *Backend) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return nil
 }
+
+// Commands returns nil — apple-dev does not provide slash commands.
+func (b *Backend) Commands() []commands.SlashCommand { return nil }
 
 // Unload is a no-op for apple-dev.
 func (b *Backend) Unload() error {

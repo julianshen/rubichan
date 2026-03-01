@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 
@@ -222,6 +223,9 @@ func (e *Engine) Tools() []tools.Tool {
 func (e *Engine) Hooks() map[skills.HookPhase]skills.HookHandler {
 	return e.hooks
 }
+
+// Commands returns nil — Starlark skills do not provide slash commands.
+func (e *Engine) Commands() []commands.SlashCommand { return nil }
 
 // Workflows returns workflow handlers registered by this skill, keyed by name.
 // This is populated by register_workflow() calls in the Starlark code.
