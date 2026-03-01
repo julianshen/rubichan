@@ -233,6 +233,24 @@ func TestValidateTrustRulesEmpty(t *testing.T) {
 	assert.NoError(t, ValidateTrustRules(nil))
 }
 
+func TestApprovalResultStringUnknown(t *testing.T) {
+	assert.Equal(t, "Unknown", ApprovalResult(99).String())
+}
+
+func TestTrustRuleMatchesArrayInput(t *testing.T) {
+	rule := TrustRule{Tool: "multi", Pattern: `dangerous`, Action: "deny"}
+	matched, err := rule.Matches("multi", json.RawMessage(`["safe","dangerous"]`))
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
+func TestTrustRuleMatchesNestedInput(t *testing.T) {
+	rule := TrustRule{Tool: "complex", Pattern: `secret`, Action: "deny"}
+	matched, err := rule.Matches("complex", json.RawMessage(`{"outer":{"inner":{"deep":"secret value"}}}`))
+	require.NoError(t, err)
+	assert.True(t, matched)
+}
+
 func TestTrustRuleCheckerNonStringInputNoMatch(t *testing.T) {
 	// Patterns only match string values; numeric-only inputs yield no match.
 	checker := NewTrustRuleChecker([]TrustRule{
