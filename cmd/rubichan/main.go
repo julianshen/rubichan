@@ -436,7 +436,10 @@ func runInteractive() error {
 	// Run first-run bootstrap wizard if no config/API key found.
 	if tui.NeedsBootstrap(cfgPath) {
 		wizard := tui.NewBootstrapForm(cfgPath)
-		prog := tea.NewProgram(wizard.Form())
+		form := wizard.Form()
+		form.SubmitCmd = tea.Quit
+		form.CancelCmd = tea.Interrupt
+		prog := tea.NewProgram(form)
 		finalModel, err := prog.Run()
 		if err != nil {
 			return fmt.Errorf("bootstrap wizard: %w", err)

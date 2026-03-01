@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/provider"
+	_ "github.com/julianshen/rubichan/internal/provider/openai"
 )
 
 func TestBootstrapFormCreation(t *testing.T) {
@@ -126,6 +128,7 @@ func TestBootstrapFormSaveOpenAIKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "openai", loaded.Provider.Default)
 	require.Len(t, loaded.Provider.OpenAI, 1)
+	assert.Equal(t, "openai", loaded.Provider.OpenAI[0].Name)
 	assert.Equal(t, "https://api.openai.com/v1", loaded.Provider.OpenAI[0].BaseURL)
 	assert.Equal(t, "sk-openai-test", loaded.Provider.OpenAI[0].APIKey)
 	// Anthropic key should remain empty.
@@ -147,4 +150,24 @@ func TestBootstrapFormSaveOllamaNoKey(t *testing.T) {
 	assert.Equal(t, "ollama", loaded.Provider.Default)
 	assert.Empty(t, loaded.Provider.Anthropic.APIKey)
 	assert.Empty(t, loaded.Provider.OpenAI)
+}
+
+func TestBootstrapOpenAIProviderRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	// Simulate bootstrap wizard saving an OpenAI config.
+	bf := NewBootstrapForm(path)
+	bf.Config().Provider.Default = "openai"
+	bf.Config().Provider.Model = "gpt-4o"
+	bf.openaiKey = "sk-round-trip-test"
+	require.NoError(t, bf.Save())
+
+	// Load the saved config and verify NewProvider succeeds.
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+
+	p, err := provider.NewProvider(loaded)
+	require.NoError(t, err, "NewProvider should succeed with bootstrap-saved openai config")
+	assert.NotNil(t, p)
 }
