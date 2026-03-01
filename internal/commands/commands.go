@@ -101,14 +101,16 @@ func (r *Registry) Get(name string) (SlashCommand, bool) {
 }
 
 // All returns all registered commands sorted by name.
+// The lock is released before calling external SlashCommand methods
+// to avoid potential deadlocks from externally-implemented commands.
 func (r *Registry) All() []SlashCommand {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	cmds := make([]SlashCommand, 0, len(r.cmds))
 	for _, cmd := range r.cmds {
 		cmds = append(cmds, cmd)
 	}
+	r.mu.RUnlock()
+
 	sort.Slice(cmds, func(i, j int) bool {
 		return cmds[i].Name() < cmds[j].Name()
 	})
@@ -117,13 +119,18 @@ func (r *Registry) All() []SlashCommand {
 
 // Match returns completion candidates for commands whose names match the
 // given prefix (case-insensitive). Results are sorted by name.
+// The lock is released before calling external SlashCommand methods.
 func (r *Registry) Match(prefix string) []Candidate {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	cmds := make([]SlashCommand, 0, len(r.cmds))
+	for _, cmd := range r.cmds {
+		cmds = append(cmds, cmd)
+	}
+	r.mu.RUnlock()
 
 	lower := strings.ToLower(prefix)
 	var candidates []Candidate
-	for _, cmd := range r.cmds {
+	for _, cmd := range cmds {
 		if strings.HasPrefix(strings.ToLower(cmd.Name()), lower) {
 			candidates = append(candidates, Candidate{
 				Value:       cmd.Name(),

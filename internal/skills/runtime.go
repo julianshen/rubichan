@@ -254,9 +254,14 @@ func (rt *Runtime) Activate(name string) error {
 	}
 
 	// Register commands from backend.
+	var registeredCmds []commands.SlashCommand
 	if rt.cmdRegistry != nil {
 		for _, cmd := range backend.Commands() {
 			if err := rt.cmdRegistry.Register(cmd); err != nil {
+				// Roll back commands registered in this activation attempt.
+				for _, c := range registeredCmds {
+					_ = rt.cmdRegistry.Unregister(c.Name())
+				}
 				// Rollback tools on command registration failure.
 				for _, t := range registeredTools {
 					_ = rt.registry.Unregister(t.Name())
@@ -265,6 +270,7 @@ func (rt *Runtime) Activate(name string) error {
 				_ = sk.TransitionTo(SkillStateInactive)
 				return fmt.Errorf("register command for skill %q: %w", name, err)
 			}
+			registeredCmds = append(registeredCmds, cmd)
 		}
 	}
 

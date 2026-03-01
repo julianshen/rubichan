@@ -247,7 +247,7 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		return nil
 	}
 
-	name := strings.TrimPrefix(parts[0], "/")
+	name := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
 	slashCmd, ok := m.cmdRegistry.Get(name)
 	if !ok {
 		m.content.WriteString(fmt.Sprintf("Unknown command: %s\n", parts[0]))
