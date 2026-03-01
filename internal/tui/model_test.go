@@ -927,6 +927,119 @@ func TestModelInitIncludesWaitForApproval(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
+// --- Viewport scrolling tests ---
+
+func TestModelViewportScrollUpPreservesPosition(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	// Set a small viewport so content overflows.
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+
+	// Fill content so it overflows the viewport.
+	var lines strings.Builder
+	for i := 0; i < 50; i++ {
+		lines.WriteString("line content\n")
+	}
+	m.content.WriteString(lines.String())
+	m.viewport.SetContent(m.content.String())
+	m.viewport.GotoBottom()
+
+	// Scroll up via PageUp key.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	um := updated.(*Model)
+
+	// After scrolling up, viewport should NOT be at the bottom.
+	assert.False(t, um.viewport.AtBottom(), "viewport should not be at bottom after PageUp")
+}
+
+func TestModelAutoScrollWhenAtBottom(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateStreaming
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+
+	// Fill content and stay at bottom.
+	var lines strings.Builder
+	for i := 0; i < 50; i++ {
+		lines.WriteString("line content\n")
+	}
+	m.content.WriteString(lines.String())
+	m.viewport.SetContent(m.content.String())
+	m.viewport.GotoBottom()
+
+	// Provide event channel.
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	// Receive new content — should auto-scroll since we're at bottom.
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "text_delta",
+		Text: "new streaming text\n",
+	})
+	updated, _ := m.Update(evt)
+	um := updated.(*Model)
+
+	assert.True(t, um.viewport.AtBottom(), "should auto-scroll when already at bottom")
+}
+
+func TestModelNoAutoScrollWhenScrolledUp(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.state = StateStreaming
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+
+	// Fill content so it overflows.
+	var lines strings.Builder
+	for i := 0; i < 50; i++ {
+		lines.WriteString("line content\n")
+	}
+	m.content.WriteString(lines.String())
+	m.viewport.SetContent(m.content.String())
+	m.viewport.GotoBottom()
+
+	// Scroll up first.
+	m.viewport.HalfPageUp()
+	assert.False(t, m.viewport.AtBottom(), "precondition: should be scrolled up")
+
+	// Provide event channel.
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	// Receive new content — should NOT auto-scroll since user scrolled up.
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "text_delta",
+		Text: "new streaming text\n",
+	})
+	updated, _ := m.Update(evt)
+	um := updated.(*Model)
+
+	assert.False(t, um.viewport.AtBottom(), "should NOT auto-scroll when user scrolled up")
+}
+
+func TestModelPageDownScrollsViewport(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+
+	// Fill content.
+	var lines strings.Builder
+	for i := 0; i < 50; i++ {
+		lines.WriteString("line content\n")
+	}
+	m.content.WriteString(lines.String())
+	m.viewport.SetContent(m.content.String())
+	// Start at top.
+	m.viewport.GotoTop()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	um := updated.(*Model)
+
+	// Should have scrolled down from top.
+	assert.Greater(t, um.viewport.YOffset, 0, "viewport should scroll down on PageDown")
+}
+
 func TestModelCtrlCDuringApproval(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil)
 	m.state = StateAwaitingApproval
