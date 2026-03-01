@@ -521,6 +521,10 @@ func runInteractive() error {
 	if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
 		return fmt.Errorf("registering search tool: %w", err)
 	}
+	procMgr := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
+	if err := registry.Register(tools.NewProcessTool(procMgr)); err != nil {
+		return fmt.Errorf("registering process tool: %w", err)
+	}
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
@@ -739,6 +743,12 @@ func runHeadless() error {
 	if shouldRegister("search", allowed) {
 		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
 			return fmt.Errorf("registering search tool: %w", err)
+		}
+	}
+	if shouldRegister("process", allowed) {
+		pm := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
+		if err := registry.Register(tools.NewProcessTool(pm)); err != nil {
+			return fmt.Errorf("registering process tool: %w", err)
 		}
 	}
 
