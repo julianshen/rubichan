@@ -191,7 +191,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		provider:     p,
 		tools:        t,
 		conversation: NewConversation(systemPrompt),
-		context:      NewContextManager(cfg.Agent.ContextBudget),
+		context:      NewContextManager(cfg.Agent.ContextBudget, cfg.Agent.MaxOutputTokens),
 		approve:      approve,
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,

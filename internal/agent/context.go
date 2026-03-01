@@ -57,17 +57,23 @@ func (b *ContextBudget) UsedPercentage() float64 {
 // ContextManager tracks token usage and compacts conversation history
 // to stay within a configured budget using a chain of strategies.
 type ContextManager struct {
-	budget       int
-	triggerRatio float64 // fraction of budget at which to trigger compaction (default 0.7)
-	strategies   []CompactionStrategy
+	budget         ContextBudget
+	compactTrigger float64 // fraction of effective window to trigger compaction (default 0.95)
+	hardBlock      float64 // fraction of effective window to block new messages (default 0.98)
+	strategies     []CompactionStrategy
 }
 
-// NewContextManager creates a new ContextManager with the given token budget.
-// The default strategy chain contains only truncation.
-func NewContextManager(budget int) *ContextManager {
+// NewContextManager creates a new ContextManager with the given total budget
+// and max output tokens. The effective window is total - maxOutputTokens.
+// Pass maxOutputTokens=0 to use the full budget as the effective window.
+func NewContextManager(totalBudget, maxOutputTokens int) *ContextManager {
 	return &ContextManager{
-		budget:       budget,
-		triggerRatio: 0.7,
+		budget: ContextBudget{
+			Total:           totalBudget,
+			MaxOutputTokens: maxOutputTokens,
+		},
+		compactTrigger: 0.95,
+		hardBlock:      0.98,
 		strategies: []CompactionStrategy{
 			NewToolResultClearingStrategy(),
 			&truncateStrategy{},
@@ -89,10 +95,18 @@ func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
 }
 
 // ShouldCompact returns true when the estimated token count exceeds the
-// proactive trigger threshold (default 70% of budget), allowing compaction
-// to start before the conversation fully exhausts the context window.
+// proactive trigger threshold (default 95% of effective window), allowing
+// compaction to start before the conversation fully exhausts the context window.
 func (cm *ContextManager) ShouldCompact(conv *Conversation) bool {
-	threshold := int(float64(cm.budget) * cm.triggerRatio)
+	threshold := int(float64(cm.budget.EffectiveWindow()) * cm.compactTrigger)
+	return cm.EstimateTokens(conv) > threshold
+}
+
+// IsBlocked returns true when the conversation has exceeded the hard block
+// threshold (default 98% of effective window), indicating new messages should
+// not be added.
+func (cm *ContextManager) IsBlocked(conv *Conversation) bool {
+	threshold := int(float64(cm.budget.EffectiveWindow()) * cm.hardBlock)
 	return cm.EstimateTokens(conv) > threshold
 }
 
@@ -107,7 +121,7 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
 	}
 	// Subtract system prompt overhead so strategies only need to fit messages.
 	systemTokens := len(conv.SystemPrompt())/4 + 10
-	messageBudget := cm.budget - systemTokens
+	messageBudget := cm.budget.EffectiveWindow() - systemTokens
 	if messageBudget < 0 {
 		messageBudget = 0
 	}
@@ -155,9 +169,9 @@ func estimateMessageTokens(msgs []provider.Message) int {
 	return total
 }
 
-// ExceedsBudget returns true if the estimated token count exceeds the budget.
+// ExceedsBudget returns true if the estimated token count exceeds the effective window.
 func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
-	return cm.EstimateTokens(conv) > cm.budget
+	return cm.EstimateTokens(conv) > cm.budget.EffectiveWindow()
 }
 
 // Truncate removes the oldest messages until the conversation is within budget.

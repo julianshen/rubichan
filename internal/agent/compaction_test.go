@@ -37,7 +37,7 @@ func TestCompactionStrategyInterface(t *testing.T) {
 }
 
 func TestCompactRunsStrategiesInOrder(t *testing.T) {
-	cm := NewContextManager(30)
+	cm := NewContextManager(30, 0)
 
 	s1 := &mockStrategy{name: "first", removeN: 2}
 	s2 := &mockStrategy{name: "second", removeN: 2}
@@ -61,7 +61,7 @@ func TestCompactRunsStrategiesInOrder(t *testing.T) {
 }
 
 func TestCompactFallsBackToTruncation(t *testing.T) {
-	cm := NewContextManager(55)
+	cm := NewContextManager(55, 0)
 
 	conv := NewConversation("s")
 	conv.AddUser("first user message with some content")
@@ -80,7 +80,7 @@ func TestCompactFallsBackToTruncation(t *testing.T) {
 
 func TestCompactEmptyStrategiesUsesTruncation(t *testing.T) {
 	// Default constructor includes truncation strategy
-	cm := NewContextManager(55)
+	cm := NewContextManager(55, 0)
 
 	conv := NewConversation("s")
 	conv.AddUser("first user message with some content")
@@ -97,7 +97,7 @@ func TestCompactEmptyStrategiesUsesTruncation(t *testing.T) {
 }
 
 func TestCompactNoOpWhenWithinBudget(t *testing.T) {
-	cm := NewContextManager(100000)
+	cm := NewContextManager(100000, 0)
 
 	s := &mockStrategy{name: "test"}
 	cm.SetStrategies([]CompactionStrategy{s, &truncateStrategy{}})
@@ -114,7 +114,7 @@ func TestCompactNoOpWhenWithinBudget(t *testing.T) {
 }
 
 func TestCompactStopsWhenUnderBudget(t *testing.T) {
-	cm := NewContextManager(50)
+	cm := NewContextManager(50, 0)
 
 	s1 := &mockStrategy{name: "first", removeN: 2}
 	s2 := &mockStrategy{name: "second", removeN: 2}
@@ -170,33 +170,33 @@ func TestTruncateStrategyRemovesOldMessages(t *testing.T) {
 
 // --- Enhancement 2: Proactive compression threshold ---
 
-func TestShouldCompactAt70Percent(t *testing.T) {
-	cm := NewContextManager(1000)
+func TestShouldCompactAt95Percent(t *testing.T) {
+	cm := NewContextManager(730, 0)
 
 	conv := NewConversation("sys")
-	// Add enough content to exceed 70% of 1000 tokens = 700
+	// Add enough content to exceed 95% of 730 tokens = 693
 	for i := 0; i < 30; i++ {
 		conv.AddUser(fmt.Sprintf("message %d with some reasonable content to take up tokens", i))
 	}
 
 	tokens := cm.EstimateTokens(conv)
-	require.Greater(t, tokens, 700, "test requires tokens > 70%% of budget")
-	require.LessOrEqual(t, tokens, 1000, "test requires tokens <= 100%% of budget")
+	require.Greater(t, tokens, 693, "test requires tokens > 95%% of budget")
+	require.LessOrEqual(t, tokens, 730, "test requires tokens <= 100%% of budget")
 
-	assert.True(t, cm.ShouldCompact(conv), "should trigger compaction at >70%% budget")
+	assert.True(t, cm.ShouldCompact(conv), "should trigger compaction at >95%% budget")
 }
 
-func TestShouldCompactFalseBelow70Percent(t *testing.T) {
-	cm := NewContextManager(100000)
+func TestShouldCompactFalseBelow95Percent(t *testing.T) {
+	cm := NewContextManager(100000, 0)
 
 	conv := NewConversation("sys")
 	conv.AddUser("hello")
 
-	assert.False(t, cm.ShouldCompact(conv), "should not trigger compaction below 70%% budget")
+	assert.False(t, cm.ShouldCompact(conv), "should not trigger compaction below 95%% budget")
 }
 
 func TestCompactTriggersProactively(t *testing.T) {
-	cm := NewContextManager(1000)
+	cm := NewContextManager(730, 0)
 
 	s := &mockStrategy{name: "test", removeN: 10}
 	cm.SetStrategies([]CompactionStrategy{s, &truncateStrategy{}})
@@ -207,16 +207,16 @@ func TestCompactTriggersProactively(t *testing.T) {
 	}
 
 	tokens := cm.EstimateTokens(conv)
-	require.Greater(t, tokens, 700, "test requires >70%% budget used")
-	require.LessOrEqual(t, tokens, 1000, "test requires <=100%% budget (not exceeding)")
+	require.Greater(t, tokens, 693, "test requires >95%% budget used")
+	require.LessOrEqual(t, tokens, 730, "test requires <=100%% budget (not exceeding)")
 
 	cm.Compact(context.Background(), conv)
-	assert.True(t, s.called, "strategy should be called proactively when above 70%% threshold")
+	assert.True(t, s.called, "strategy should be called proactively when above 95%% threshold")
 }
 
 func TestCompactCustomTriggerRatio(t *testing.T) {
-	cm := NewContextManager(100000)
-	cm.triggerRatio = 0.0001 // very low ratio — even tiny conversations trigger
+	cm := NewContextManager(100000, 0)
+	cm.compactTrigger = 0.0001 // very low ratio — even tiny conversations trigger
 
 	s := &mockStrategy{name: "test"}
 	cm.SetStrategies([]CompactionStrategy{s, &truncateStrategy{}})
