@@ -75,6 +75,9 @@ func (co *CompletionOverlay) Update(input string) {
 	co.lastPrefix = rest
 
 	co.candidates = candidates
+	if co.selected >= len(candidates) && len(candidates) > 0 {
+		co.selected = len(candidates) - 1
+	}
 	co.visible = len(candidates) > 0
 }
 
@@ -172,14 +175,27 @@ func (co *CompletionOverlay) View() string {
 	descStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"})
 
-	// Cap the visible candidates.
-	visible := co.candidates
-	if len(visible) > maxVisibleCandidates {
-		visible = visible[:maxVisibleCandidates]
+	// Compute a scroll window that keeps the selected item visible.
+	start := 0
+	total := len(co.candidates)
+	if total > maxVisibleCandidates {
+		// Scroll so the selected item stays in view.
+		if co.selected >= maxVisibleCandidates {
+			start = co.selected - maxVisibleCandidates + 1
+		}
+		if start+maxVisibleCandidates > total {
+			start = total - maxVisibleCandidates
+		}
 	}
+	end := start + maxVisibleCandidates
+	if end > total {
+		end = total
+	}
+	visible := co.candidates[start:end]
 
 	var rows []string
-	for i, c := range visible {
+	for idx, c := range visible {
+		i := start + idx // actual index in the full candidate list
 		name := fmt.Sprintf("/%s", c.Value)
 		desc := c.Description
 

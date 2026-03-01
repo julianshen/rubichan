@@ -585,11 +585,18 @@ func runInteractive() error {
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
 	// Create command registry and register built-in slash commands.
+	// Built-in registration failures indicate a programming bug (duplicate names).
 	cmdRegistry := commands.NewRegistry()
-	_ = cmdRegistry.Register(commands.NewQuitCommand())
-	_ = cmdRegistry.Register(commands.NewExitCommand())
-	_ = cmdRegistry.Register(commands.NewConfigCommand())
-	_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
+	for _, cmd := range []commands.SlashCommand{
+		commands.NewQuitCommand(),
+		commands.NewExitCommand(),
+		commands.NewConfigCommand(),
+		commands.NewHelpCommand(cmdRegistry),
+	} {
+		if err := cmdRegistry.Register(cmd); err != nil {
+			return fmt.Errorf("register built-in command %q: %w", cmd.Name(), err)
+		}
+	}
 
 	// Wire command registry into skill runtime so skill-contributed commands
 	// are registered on activation and unregistered on deactivation.
@@ -602,18 +609,22 @@ func runInteractive() error {
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
 
 	// Register commands that need model callbacks (these need the model instance).
-	_ = cmdRegistry.Register(commands.NewClearCommand(func() {
+	if err := cmdRegistry.Register(commands.NewClearCommand(func() {
 		if model.GetAgent() != nil {
 			model.GetAgent().ClearConversation()
 		}
 		model.ClearContent()
-	}))
-	_ = cmdRegistry.Register(commands.NewModelCommand(func(name string) {
+	})); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "clear", err)
+	}
+	if err := cmdRegistry.Register(commands.NewModelCommand(func(name string) {
 		if model.GetAgent() != nil {
 			model.GetAgent().SetModel(name)
 		}
 		model.SwitchModel(name)
-	}))
+	})); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "model", err)
+	}
 
 	if !autoApprove {
 		approvalFunc = model.MakeApprovalFunc()

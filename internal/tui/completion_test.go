@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -255,6 +256,55 @@ func TestCompletionOverlayMaxVisible(t *testing.T) {
 	}
 	assert.LessOrEqual(t, commandLines, maxVisibleCandidates,
 		"view should show at most %d candidates", maxVisibleCandidates)
+}
+
+func TestCompletionOverlayScrollsWithSelection(t *testing.T) {
+	// Register more commands than maxVisibleCandidates to test scrolling.
+	reg := commands.NewRegistry()
+	for i := 0; i < 12; i++ {
+		cmd := &testCmd{
+			name: fmt.Sprintf("cmd%02d", i), // cmd00, cmd01, ..., cmd11
+			desc: fmt.Sprintf("command %d", i),
+		}
+		_ = reg.Register(cmd)
+	}
+
+	co := NewCompletionOverlay(reg, 80)
+	co.Update("/")
+
+	require.Equal(t, 12, len(co.Candidates()))
+
+	// Navigate down past maxVisibleCandidates.
+	for i := 0; i < 10; i++ {
+		co.HandleKey(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	assert.Equal(t, 10, co.Selected())
+
+	// The view should still show the selected item.
+	view := co.View()
+	assert.Contains(t, view, "cmd10", "scrolled view should contain the selected item")
+
+	// Tab-accept should return the correct (scrolled-to) value.
+	accepted, val := co.HandleTab()
+	assert.True(t, accepted)
+	assert.Equal(t, "cmd10", val)
+}
+
+func TestCompletionOverlayBoundsClampOnFilterChange(t *testing.T) {
+	// Start with many candidates, navigate down, then filter to fewer.
+	reg := newTestRegistry() // 6 commands
+	co := NewCompletionOverlay(reg, 80)
+	co.Update("/")
+
+	// Navigate to last (index 5).
+	for i := 0; i < 5; i++ {
+		co.HandleKey(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	assert.Equal(t, 5, co.Selected())
+
+	// Filter to fewer candidates — selected should be clamped.
+	co.Update("/cl") // only "clear"
+	assert.Equal(t, 0, co.Selected(), "selected should be clamped when candidates shrink")
 }
 
 func TestCompletionOverlaySelectedValue(t *testing.T) {
