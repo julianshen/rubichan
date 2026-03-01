@@ -1,4 +1,4 @@
-package tools_test
+package tools
 
 import (
 	"io"
@@ -6,14 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPipeProcessIOWriteAndRead(t *testing.T) {
 	cmd := exec.Command("cat")
-	pio, err := tools.NewPipeProcessIO(cmd)
+	pio, err := NewPipeProcessIO(cmd)
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
 	defer cmd.Process.Kill()
@@ -32,7 +31,7 @@ func TestPipeProcessIOWriteAndRead(t *testing.T) {
 
 func TestPipeProcessIOCloseSignalsEOF(t *testing.T) {
 	cmd := exec.Command("cat")
-	pio, err := tools.NewPipeProcessIO(cmd)
+	pio, err := NewPipeProcessIO(cmd)
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
 
@@ -45,14 +44,12 @@ func TestPipeProcessIOCloseSignalsEOF(t *testing.T) {
 }
 
 func TestPipeProcessIOCapturesStderr(t *testing.T) {
-	// Use sh -c to write to stderr, which should be merged into stdout
 	cmd := exec.Command("sh", "-c", "echo error_output >&2")
-	pio, err := tools.NewPipeProcessIO(cmd)
+	pio, err := NewPipeProcessIO(cmd)
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
 	defer func() { _ = cmd.Wait() }()
 
-	// Give the process time to produce output
 	time.Sleep(100 * time.Millisecond)
 
 	buf := make([]byte, 64)
@@ -64,22 +61,18 @@ func TestPipeProcessIOCapturesStderr(t *testing.T) {
 }
 
 func TestNewPipeProcessIOReturnsErrorAfterStart(t *testing.T) {
-	// If cmd has already been started, StdinPipe/StdoutPipe will fail.
 	cmd := exec.Command("cat")
 	require.NoError(t, cmd.Start())
 	defer cmd.Process.Kill()
 
-	_, err := tools.NewPipeProcessIO(cmd)
+	_, err := NewPipeProcessIO(cmd)
 	assert.Error(t, err)
 }
 
 func TestProcessIOInterfaceCompliance(t *testing.T) {
-	// Verify PipeProcessIO satisfies the ProcessIO interface at compile time.
 	cmd := exec.Command("cat")
-	pio, err := tools.NewPipeProcessIO(cmd)
+	pio, err := NewPipeProcessIO(cmd)
 	require.NoError(t, err)
 
-	var _ tools.ProcessIO = pio
-
-	// Clean up — don't start the command, just verify interface compliance
+	var _ ProcessIO = pio
 }
