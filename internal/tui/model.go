@@ -114,7 +114,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		height:     24,
 	}
 
-	bannerText := bannerStyle.Render(Banner)
+	bannerText := RenderBanner()
 	m.content.WriteString(bannerText)
 	m.content.WriteString("\n")
 	m.viewport.SetContent(m.content.String())
