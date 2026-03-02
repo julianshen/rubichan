@@ -135,3 +135,32 @@ func TestShellToolInvalidJSON(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "invalid")
 }
+
+func TestShellToolSetDiffTracker(t *testing.T) {
+	dir := t.TempDir()
+	dt := NewDiffTracker()
+	st := NewShellTool(dir, 30*time.Second)
+	st.SetDiffTracker(dt)
+
+	// Run a command that doesn't change files — git diff should not record anything
+	// (temp dir isn't a git repo, so detectChanges is a no-op).
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo hello",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Empty(t, dt.Changes())
+}
+
+func TestShellToolNoDiffTrackerDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second) // No DiffTracker
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo safe",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+}

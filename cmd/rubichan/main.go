@@ -512,12 +512,20 @@ func runInteractive() error {
 	}
 
 	registry := tools.NewRegistry()
-	if err := registry.Register(tools.NewFileTool(cwd)); err != nil {
+	diffTracker := tools.NewDiffTracker()
+
+	fileTool := tools.NewFileTool(cwd)
+	fileTool.SetDiffTracker(diffTracker)
+	if err := registry.Register(fileTool); err != nil {
 		return fmt.Errorf("registering file tool: %w", err)
 	}
-	if err := registry.Register(tools.NewShellTool(cwd, 120*time.Second)); err != nil {
+
+	shellTool := tools.NewShellTool(cwd, 120*time.Second)
+	shellTool.SetDiffTracker(diffTracker)
+	if err := registry.Register(shellTool); err != nil {
 		return fmt.Errorf("registering shell tool: %w", err)
 	}
+
 	if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
 		return fmt.Errorf("registering search tool: %w", err)
 	}
@@ -529,6 +537,7 @@ func runInteractive() error {
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
+	opts = append(opts, agent.WithDiffTracker(diffTracker))
 	if err := wireAppleDev(cwd, registry, nil); err != nil {
 		return err
 	}
@@ -730,14 +739,19 @@ func runHeadless() error {
 
 	registry := tools.NewRegistry()
 	allowed := parseToolsFlag(toolsFlag)
+	headlessDiffTracker := tools.NewDiffTracker()
 
 	if shouldRegister("file", allowed) {
-		if err := registry.Register(tools.NewFileTool(cwd)); err != nil {
+		headlessFileTool := tools.NewFileTool(cwd)
+		headlessFileTool.SetDiffTracker(headlessDiffTracker)
+		if err := registry.Register(headlessFileTool); err != nil {
 			return fmt.Errorf("registering file tool: %w", err)
 		}
 	}
 	if shouldRegister("shell", allowed) {
-		if err := registry.Register(tools.NewShellTool(cwd, timeoutFlag)); err != nil {
+		headlessShellTool := tools.NewShellTool(cwd, timeoutFlag)
+		headlessShellTool.SetDiffTracker(headlessDiffTracker)
+		if err := registry.Register(headlessShellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
 	}
@@ -756,6 +770,7 @@ func runHeadless() error {
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
+	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
 	if err := wireAppleDev(cwd, registry, allowed); err != nil {
 		return err
 	}

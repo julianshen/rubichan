@@ -51,6 +51,7 @@ type TurnEvent struct {
 	Error        error            // populated for error events
 	InputTokens  int              // populated for done events: total input tokens used
 	OutputTokens int              // populated for done events: total output tokens used
+	DiffSummary  string           // populated for done events: cumulative file change summary
 }
 
 // ToolCallEvent contains details about a tool being called.
@@ -137,6 +138,15 @@ func WithAutoApproveChecker(checker AutoApproveChecker) AgentOption {
 	}
 }
 
+// WithDiffTracker attaches a DiffTracker to the agent for turn-level
+// cumulative change awareness. The tracker is reset at the start of each
+// turn and summarized in the "done" event.
+func WithDiffTracker(dt *tools.DiffTracker) AgentOption {
+	return func(a *Agent) {
+		a.diffTracker = dt
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -184,6 +194,7 @@ type Agent struct {
 	resultStore      *ResultStore
 	promptBuilder    *PromptBuilder
 	deferral         *tools.DeferralManager
+	diffTracker      *tools.DiffTracker
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -437,12 +448,22 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 	a.context.Compact(ctx, a.conversation)
 	a.saveSnapshotIfNeeded()
 
+	// Reset the diff tracker so each turn starts with a clean slate.
+	if a.diffTracker != nil {
+		a.diffTracker.Reset()
+	}
+
 	ch := make(chan TurnEvent, 64)
 	go func() {
 		defer close(ch)
 		a.runLoop(ctx, ch, 0)
 	}()
 	return ch, nil
+}
+
+// DiffTracker returns the agent's diff tracker, or nil if none is attached.
+func (a *Agent) DiffTracker() *tools.DiffTracker {
+	return a.diffTracker
 }
 
 // buildSystemPromptWithFragments returns the assembled system prompt and
@@ -514,13 +535,27 @@ func (a *Agent) dispatchHook(event skills.HookEvent) (*skills.HookResult, error)
 	return a.skillRuntime.DispatchHook(event)
 }
 
+// makeDoneEvent constructs a "done" TurnEvent, attaching the cumulative diff
+// summary from the DiffTracker if one is attached.
+func (a *Agent) makeDoneEvent(inputTokens, outputTokens int) TurnEvent {
+	event := TurnEvent{
+		Type:         "done",
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+	}
+	if a.diffTracker != nil {
+		event.DiffSummary = a.diffTracker.Summarize()
+	}
+	return event
+}
+
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
 	var totalInputTokens, totalOutputTokens int
 	for ; turnCount < a.maxTurns; turnCount++ {
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
 
@@ -556,7 +591,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
-			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
 
@@ -639,14 +674,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 		// If no pending tool calls, we're done
 		if len(pendingTools) == 0 {
-			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
 
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
 
@@ -655,7 +690,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
-	ch <- TurnEvent{Type: "done", InputTokens: totalInputTokens, OutputTokens: totalOutputTokens}
+	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 }
 
 // maxParallelTools is the upper bound on concurrent tool goroutines.

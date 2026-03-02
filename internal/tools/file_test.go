@@ -291,3 +291,108 @@ func TestFileToolSymlinkWriteTraversal(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "path traversal")
 }
+
+func TestFileToolWriteRecordsDiffTrackerCreated(t *testing.T) {
+	dir := t.TempDir()
+	dt := NewDiffTracker()
+	ft := NewFileTool(dir)
+	ft.SetDiffTracker(dt)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "new_file.txt",
+		"content":   "hello",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	changes := dt.Changes()
+	require.Len(t, changes, 1)
+	assert.Equal(t, "new_file.txt", changes[0].Path)
+	assert.Equal(t, OpCreated, changes[0].Operation)
+	assert.Equal(t, "file", changes[0].Tool)
+}
+
+func TestFileToolWriteRecordsDiffTrackerModified(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("old"), 0644))
+
+	dt := NewDiffTracker()
+	ft := NewFileTool(dir)
+	ft.SetDiffTracker(dt)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "existing.txt",
+		"content":   "new content",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	changes := dt.Changes()
+	require.Len(t, changes, 1)
+	assert.Equal(t, "existing.txt", changes[0].Path)
+	assert.Equal(t, OpModified, changes[0].Operation)
+}
+
+func TestFileToolPatchRecordsDiffTracker(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "patch.txt"), []byte("old text here"), 0644))
+
+	dt := NewDiffTracker()
+	ft := NewFileTool(dir)
+	ft.SetDiffTracker(dt)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation":  "patch",
+		"path":       "patch.txt",
+		"old_string": "old text",
+		"new_string": "new text",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	changes := dt.Changes()
+	require.Len(t, changes, 1)
+	assert.Equal(t, "patch.txt", changes[0].Path)
+	assert.Equal(t, OpModified, changes[0].Operation)
+	assert.Contains(t, changes[0].Diff, "-old text")
+	assert.Contains(t, changes[0].Diff, "+new text")
+	assert.Equal(t, "file", changes[0].Tool)
+}
+
+func TestFileToolReadDoesNotRecordDiffTracker(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "read.txt"), []byte("content"), 0644))
+
+	dt := NewDiffTracker()
+	ft := NewFileTool(dir)
+	ft.SetDiffTracker(dt)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "read.txt",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	assert.Empty(t, dt.Changes())
+}
+
+func TestFileToolNoDiffTrackerDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	ft := NewFileTool(dir) // No DiffTracker set
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "safe.txt",
+		"content":   "no panic",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+}
