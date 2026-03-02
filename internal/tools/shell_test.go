@@ -164,3 +164,94 @@ func TestShellToolNoDiffTrackerDoesNotPanic(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 }
+
+func TestShellToolDetectChangesInGitRepo(t *testing.T) {
+	dir := t.TempDir()
+
+	// Initialize a git repo with one committed file.
+	for _, cmd := range []string{
+		"git init",
+		"git config user.email test@test.com",
+		"git config user.name Test",
+		"echo initial > tracked.txt",
+		"git add tracked.txt",
+		"git commit -m init",
+	} {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		st := NewShellTool(dir, 30*time.Second)
+		r, err := st.Execute(context.Background(), input)
+		require.NoError(t, err, "setup cmd %q", cmd)
+		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
+	}
+
+	dt := NewDiffTracker()
+	st := NewShellTool(dir, 30*time.Second)
+	st.SetDiffTracker(dt)
+
+	// Modify a tracked file and create an untracked file in one command.
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo modified > tracked.txt && echo new > untracked.txt",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	changes := dt.Changes()
+	require.GreaterOrEqual(t, len(changes), 2, "should detect modified + untracked")
+
+	pathSet := make(map[string]Operation)
+	for _, c := range changes {
+		pathSet[c.Path] = c.Operation
+		assert.Equal(t, "shell", c.Tool)
+	}
+	assert.Equal(t, OpModified, pathSet["tracked.txt"], "tracked.txt should be modified")
+	assert.Equal(t, OpCreated, pathSet["untracked.txt"], "untracked.txt should be created")
+}
+
+func TestShellToolDetectChangesDeduplicates(t *testing.T) {
+	dir := t.TempDir()
+
+	// Initialize a git repo.
+	for _, cmd := range []string{
+		"git init",
+		"git config user.email test@test.com",
+		"git config user.name Test",
+		"echo initial > file.txt",
+		"git add file.txt",
+		"git commit -m init",
+	} {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		st := NewShellTool(dir, 30*time.Second)
+		r, err := st.Execute(context.Background(), input)
+		require.NoError(t, err, "setup cmd %q", cmd)
+		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
+	}
+
+	dt := NewDiffTracker()
+	st := NewShellTool(dir, 30*time.Second)
+	st.SetDiffTracker(dt)
+
+	// First command: modify file.txt
+	input1, _ := json.Marshal(map[string]string{
+		"command": "echo changed > file.txt",
+	})
+	_, err := st.Execute(context.Background(), input1)
+	require.NoError(t, err)
+
+	// Second command: another no-op. detectChanges should not re-add file.txt.
+	input2, _ := json.Marshal(map[string]string{
+		"command": "echo done",
+	})
+	_, err = st.Execute(context.Background(), input2)
+	require.NoError(t, err)
+
+	changes := dt.Changes()
+	// file.txt should appear exactly once despite two detectChanges calls.
+	count := 0
+	for _, c := range changes {
+		if c.Path == "file.txt" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "file.txt should be recorded once, not duplicated")
+}

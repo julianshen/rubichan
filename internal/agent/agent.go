@@ -51,7 +51,7 @@ type TurnEvent struct {
 	Error        error            // populated for error events
 	InputTokens  int              // populated for done events: total input tokens used
 	OutputTokens int              // populated for done events: total output tokens used
-	DiffSummary  string           // populated for done events: cumulative file change summary
+	DiffSummary  string           // populated for done events: markdown-formatted cumulative file change summary
 }
 
 // ToolCallEvent contains details about a tool being called.

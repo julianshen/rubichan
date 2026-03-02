@@ -105,30 +105,42 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	return ToolResult{Content: content, DisplayContent: displayContent}, nil
 }
 
-// detectChanges runs git diff --name-status to find files modified by the
-// shell command and records them in the DiffTracker.
+// detectChanges runs git status --porcelain to find files modified by the
+// shell command and records them in the DiffTracker. It uses porcelain format
+// to capture staged, unstaged, and untracked changes. Already-recorded paths
+// are skipped to avoid duplicates across multiple shell invocations per turn.
 func (s *ShellTool) detectChanges(ctx context.Context) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-status")
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	cmd.Dir = s.workDir
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
 		return
 	}
 
+	// Build a set of paths already recorded in this turn to avoid duplicates.
+	existing := make(map[string]bool)
+	for _, c := range s.diffTracker.Changes() {
+		existing[c.Path] = true
+	}
+
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
+		if len(line) < 4 {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
-		if len(parts) != 2 {
+		// Porcelain format: XY <space> path
+		// X = index status, Y = worktree status
+		statusCode := line[:2]
+		path := line[3:]
+
+		if existing[path] {
 			continue
 		}
-		status, path := parts[0], parts[1]
+
 		var op Operation
 		switch {
-		case strings.HasPrefix(status, "A"):
+		case statusCode == "??" || statusCode[0] == 'A' || statusCode[1] == 'A':
 			op = OpCreated
-		case strings.HasPrefix(status, "D"):
+		case statusCode[0] == 'D' || statusCode[1] == 'D':
 			op = OpDeleted
 		default:
 			op = OpModified
@@ -138,5 +150,6 @@ func (s *ShellTool) detectChanges(ctx context.Context) {
 			Operation: op,
 			Tool:      "shell",
 		})
+		existing[path] = true
 	}
 }
