@@ -195,6 +195,7 @@ type Agent struct {
 	promptBuilder    *PromptBuilder
 	deferral         *tools.DeferralManager
 	diffTracker      *tools.DiffTracker
+	turnMu           sync.Mutex // serializes Turn() calls to prevent DiffTracker race
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -442,7 +443,10 @@ func (a *Agent) saveSnapshotIfNeeded() {
 
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
+// Concurrent calls are serialized to prevent DiffTracker race conditions.
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
+	a.turnMu.Lock()
+
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
 	a.context.Compact(ctx, a.conversation)
@@ -455,6 +459,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 
 	ch := make(chan TurnEvent, 64)
 	go func() {
+		defer a.turnMu.Unlock()
 		defer close(ch)
 		a.runLoop(ctx, ch, 0)
 	}()

@@ -31,7 +31,7 @@ func NewShellTool(workDir string, timeout time.Duration) *ShellTool {
 }
 
 // SetDiffTracker attaches a DiffTracker to record file changes detected
-// by running git diff after command execution.
+// by running git status --porcelain after command execution.
 func (s *ShellTool) SetDiffTracker(dt *DiffTracker) {
 	s.diffTracker = dt
 }
@@ -92,14 +92,15 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 		}
 	}
 
+	// Detect file changes regardless of exit code — a command can modify
+	// files and still exit non-zero (e.g., "echo x > file && false").
+	if s.diffTracker != nil {
+		s.detectChanges(ctx)
+	}
+
 	// Non-zero exit code
 	if err != nil {
 		return ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, nil
-	}
-
-	// Detect file changes after successful execution.
-	if s.diffTracker != nil {
-		s.detectChanges(ctx)
 	}
 
 	return ToolResult{Content: content, DisplayContent: displayContent}, nil
@@ -128,9 +129,17 @@ func (s *ShellTool) detectChanges(ctx context.Context) {
 			continue
 		}
 		// Porcelain format: XY <space> path
+		// For renames/copies: XY <space> new_path -> old_path
 		// X = index status, Y = worktree status
 		statusCode := line[:2]
 		path := line[3:]
+
+		// For renames/copies, extract the destination (new) path.
+		if statusCode[0] == 'R' || statusCode[0] == 'C' {
+			if parts := strings.SplitN(path, " -> ", 2); len(parts) == 2 {
+				path = parts[1]
+			}
+		}
 
 		if existing[path] {
 			continue
@@ -139,6 +148,8 @@ func (s *ShellTool) detectChanges(ctx context.Context) {
 		var op Operation
 		switch {
 		case statusCode == "??" || statusCode[0] == 'A' || statusCode[1] == 'A':
+			op = OpCreated
+		case statusCode[0] == 'R' || statusCode[0] == 'C':
 			op = OpCreated
 		case statusCode[0] == 'D' || statusCode[1] == 'D':
 			op = OpDeleted
