@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// Task 6 tests
 
 func TestSubagentConfigDefaults(t *testing.T) {
 	cfg := SubagentConfig{Name: "test"}
@@ -28,8 +31,24 @@ func TestSubagentResultFields(t *testing.T) {
 	assert.Nil(t, result.Error)
 }
 
-func TestSubagentSpawnerInterface(t *testing.T) {
-	// Verify the interface is well-formed by checking it compiles.
-	// DefaultSubagentSpawner (added in the next commit) will implement it.
-	var _ SubagentSpawner = (SubagentSpawner)(nil)
+// Task 7 tests
+
+func TestDefaultSubagentSpawnerMaxDepth(t *testing.T) {
+	spawner := &DefaultSubagentSpawner{}
+	cfg := SubagentConfig{Depth: 3, MaxDepth: 3}
+	_, err := spawner.Spawn(context.Background(), cfg, "hello")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "depth")
+}
+
+func TestDefaultSubagentSpawnerNoProvider(t *testing.T) {
+	spawner := &DefaultSubagentSpawner{}
+	cfg := SubagentConfig{Name: "test"}
+	_, err := spawner.Spawn(context.Background(), cfg, "hello")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "provider")
+}
+
+func TestMockSpawnerSatisfiesInterface(t *testing.T) {
+	var _ SubagentSpawner = (*DefaultSubagentSpawner)(nil)
 }
