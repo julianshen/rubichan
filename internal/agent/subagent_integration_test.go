@@ -38,6 +38,8 @@ func (e *echoProvider) Stream(_ context.Context, req provider.CompletionRequest)
 
 // testSpawnerAdapter bridges agent.DefaultSubagentSpawner to tools.TaskSpawner,
 // converting between the type-specific config/result structs.
+// NOTE: Intentionally duplicates spawnerAdapter in cmd/rubichan/main.go —
+// cannot import package main. Keep both in sync.
 type testSpawnerAdapter struct {
 	spawner *agent.DefaultSubagentSpawner
 }
@@ -68,6 +70,7 @@ func (a *testSpawnerAdapter) Spawn(ctx context.Context, cfg tools.TaskSpawnConfi
 }
 
 // testDefLookupAdapter bridges agent.AgentDefRegistry to tools.TaskAgentDefLookup.
+// NOTE: Intentionally duplicates agentDefLookupAdapter in cmd/rubichan/main.go.
 type testDefLookupAdapter struct {
 	reg *agent.AgentDefRegistry
 }
