@@ -380,12 +380,14 @@ func TestModelToggleDiffPanel(t *testing.T) {
 
 	diffSummary := "## Turn Summary: 1 file(s) changed\n\n- **a.txt** modified (via edit)\n```diff\n-a\n+b\n```\n"
 	_, _ = m.Update(TurnEventMsg(agent.TurnEvent{Type: "done", DiffSummary: diffSummary}))
+	assert.Contains(t, m.viewport.View(), "Ctrl+G to expand")
 
 	// Expand.
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
 	um := updated.(*Model)
 	assert.True(t, um.diffSummaryOpen)
 	assert.Contains(t, um.content.String(), "Ctrl+G to collapse")
+	assert.Contains(t, um.viewport.View(), "Ctrl+G to collapse")
 	assert.Contains(t, um.content.String(), "a.txt")
 
 	// Collapse again.
