@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -161,6 +163,14 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Toggle the current turn's diff summary panel.
+	if msg.Type == tea.KeyCtrlG && m.state == StateInput && m.diffSummary != "" {
+		m.diffSummaryOpen = !m.diffSummaryOpen
+		m.updateDiffPanel()
+		m.setContentAndAutoScroll(m.content.String())
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyEnter:
 		if m.state != StateInput {
@@ -179,6 +189,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Regular user message: write to content and start agent turn
+		// The tracked diff panel only applies to the latest completed turn.
+		m.clearTrackedDiffPanel()
 		m.content.WriteString(fmt.Sprintf("> %s\n", text))
 		m.viewport.SetContent(m.content.String())
 		m.viewport.GotoBottom()
@@ -330,6 +342,18 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 		m.rawAssistant.Reset()
 		m.content.WriteString("\n")
+		if msg.DiffSummary != "" {
+			renderedDiff := msg.DiffSummary
+			if rendered, err := m.mdRenderer.Render(msg.DiffSummary); err == nil && rendered != "" {
+				renderedDiff = rendered
+			}
+			m.diffSummary = msg.DiffSummary
+			m.diffSummaryRender = renderedDiff
+			m.diffSummaryOpen = false
+			m.updateDiffPanel()
+		} else {
+			m.clearTrackedDiffPanel()
+		}
 		m.setContentAndAutoScroll(m.content.String())
 
 		// Update status bar with token usage and turn count.
@@ -350,4 +374,65 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, m.waitForEvent()
+}
+
+var diffSummaryHeaderPattern = regexp.MustCompile(`(?m)^##\s+Turn Summary:\s+(\d+)\s+file\(s\)\s+changed`)
+
+func (m *Model) clearTrackedDiffPanel() {
+	m.diffSummary = ""
+	m.diffSummaryRender = ""
+	m.diffSummaryOpen = false
+	m.diffPanelStartIdx = -1
+}
+
+func (m *Model) updateDiffPanel() {
+	if m.diffSummary == "" {
+		return
+	}
+
+	contentStr := m.content.String()
+	if m.diffPanelStartIdx >= 0 && m.diffPanelStartIdx <= len(contentStr) {
+		contentStr = contentStr[:m.diffPanelStartIdx]
+	}
+
+	m.content.Reset()
+	m.content.WriteString(contentStr)
+
+	if m.content.Len() > 0 && !strings.HasSuffix(m.content.String(), "\n") {
+		m.content.WriteString("\n")
+	}
+	m.diffPanelStartIdx = m.content.Len()
+	m.content.WriteString(m.renderDiffPanel())
+}
+
+func (m *Model) renderDiffPanel() string {
+	fileCount := extractDiffSummaryFileCount(m.diffSummary)
+	if !m.diffSummaryOpen {
+		return fmt.Sprintf("[Turn changes] %d file(s) changed (Ctrl+G to expand)\n", fileCount)
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("[Turn changes] %d file(s) changed (Ctrl+G to collapse)\n", fileCount))
+	b.WriteString(m.diffSummaryRender)
+	if !strings.HasSuffix(m.diffSummaryRender, "\n") {
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func extractDiffSummaryFileCount(summary string) int {
+	matches := diffSummaryHeaderPattern.FindStringSubmatch(summary)
+	if len(matches) == 2 {
+		if n, err := strconv.Atoi(matches[1]); err == nil {
+			return n
+		}
+	}
+
+	count := 0
+	for _, line := range strings.Split(summary, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "- **") {
+			count++
+		}
+	}
+	return count
 }
