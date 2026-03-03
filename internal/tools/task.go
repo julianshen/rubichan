@@ -54,16 +54,30 @@ type TaskAgentDefLookup interface {
 	GetAgentDef(name string) (*TaskAgentDef, bool)
 }
 
+// BackgroundTaskManager handles background task lifecycle.
+// Defined here so that the agent package can provide an adapter without
+// creating an import cycle (tools/ does not import agent/).
+type BackgroundTaskManager interface {
+	SubmitBackground(name string, cancel context.CancelFunc) string
+	CompleteBackground(taskID string, output string, err error)
+}
+
 // TaskTool delegates tasks to subagents via the TaskSpawner interface.
 type TaskTool struct {
 	spawner   TaskSpawner
 	agentDefs TaskAgentDefLookup
 	depth     int
+	bgManager BackgroundTaskManager
 }
 
 // NewTaskTool creates a TaskTool that delegates to the given spawner.
 func NewTaskTool(spawner TaskSpawner, defs TaskAgentDefLookup, depth int) *TaskTool {
 	return &TaskTool{spawner: spawner, agentDefs: defs, depth: depth}
+}
+
+// SetBackgroundManager attaches a BackgroundTaskManager for background mode.
+func (t *TaskTool) SetBackgroundManager(mgr BackgroundTaskManager) {
+	t.bgManager = mgr
 }
 
 func (t *TaskTool) Name() string { return "task" }
@@ -121,7 +135,26 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 		cfg.MaxTurns = ti.MaxTurns
 	}
 
-	// Background mode will be wired in Task 10.
+	// Background mode: submit to BackgroundTaskManager and return immediately.
+	if ti.Background && t.bgManager != nil {
+		bgCtx, cancel := context.WithCancel(context.Background())
+		taskID := t.bgManager.SubmitBackground(cfg.Name, cancel)
+		go func() {
+			result, err := t.spawner.Spawn(bgCtx, cfg, ti.Prompt)
+			var output string
+			var spawnErr error
+			if err != nil {
+				spawnErr = err
+			} else if result != nil {
+				output = result.Output
+				spawnErr = result.Error
+			}
+			t.bgManager.CompleteBackground(taskID, output, spawnErr)
+		}()
+		return ToolResult{
+			Content: fmt.Sprintf("Background task %s started (agent: %s)", taskID, cfg.Name),
+		}, nil
+	}
 
 	result, err := t.spawner.Spawn(ctx, cfg, ti.Prompt)
 	if err != nil {

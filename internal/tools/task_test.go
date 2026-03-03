@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -187,4 +189,126 @@ func TestTaskToolUnknownAgentType(t *testing.T) {
 	assert.False(t, result.IsError)
 	// Should fall back to "general" when agent type is not found.
 	assert.Equal(t, "general", spawner.lastCfg.Name)
+}
+
+// fakeBGManager implements BackgroundTaskManager for testing.
+type fakeBGManager struct {
+	mu        sync.Mutex
+	submitted []string
+	completed []fakeBGCompletion
+	nextID    string
+}
+
+type fakeBGCompletion struct {
+	taskID string
+	output string
+	err    error
+}
+
+func (f *fakeBGManager) SubmitBackground(name string, _ context.CancelFunc) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.submitted = append(f.submitted, name)
+	return f.nextID
+}
+
+func (f *fakeBGManager) CompleteBackground(taskID string, output string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.completed = append(f.completed, fakeBGCompletion{taskID: taskID, output: output, err: err})
+}
+
+func TestTaskToolBackgroundMode(t *testing.T) {
+	// Use a channel-based spawner so we can control when Spawn completes.
+	spawnCh := make(chan struct{})
+	spawner := &channelSpawner{
+		ch:     spawnCh,
+		result: &TaskSpawnResult{Name: "general", Output: "bg result"},
+	}
+	bgMgr := &fakeBGManager{nextID: "bg-001"}
+	tool := NewTaskTool(spawner, nil, 0)
+	tool.SetBackgroundManager(bgMgr)
+
+	input := json.RawMessage(`{"prompt":"background work","background":true}`)
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "bg-001")
+	assert.Contains(t, result.Content, "Background task")
+
+	// Spawner hasn't completed yet.
+	bgMgr.mu.Lock()
+	assert.Len(t, bgMgr.completed, 0)
+	bgMgr.mu.Unlock()
+
+	// Let the goroutine finish.
+	close(spawnCh)
+
+	// Wait for completion to be reported.
+	assert.Eventually(t, func() bool {
+		bgMgr.mu.Lock()
+		defer bgMgr.mu.Unlock()
+		return len(bgMgr.completed) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	bgMgr.mu.Lock()
+	assert.Equal(t, "bg-001", bgMgr.completed[0].taskID)
+	assert.Equal(t, "bg result", bgMgr.completed[0].output)
+	assert.NoError(t, bgMgr.completed[0].err)
+	bgMgr.mu.Unlock()
+}
+
+func TestTaskToolBackgroundFallsBackWithoutManager(t *testing.T) {
+	spawner := &fakeSpawner{
+		result: &TaskSpawnResult{Name: "general", Output: "sync result"},
+	}
+	tool := NewTaskTool(spawner, nil, 0)
+	// No SetBackgroundManager call — background flag should be ignored.
+	input := json.RawMessage(`{"prompt":"test","background":true}`)
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "sync result")
+}
+
+func TestTaskToolBackgroundSpawnError(t *testing.T) {
+	spawnCh := make(chan struct{})
+	spawner := &channelSpawner{
+		ch:  spawnCh,
+		err: fmt.Errorf("spawn failed"),
+	}
+	bgMgr := &fakeBGManager{nextID: "bg-err"}
+	tool := NewTaskTool(spawner, nil, 0)
+	tool.SetBackgroundManager(bgMgr)
+
+	input := json.RawMessage(`{"prompt":"test","background":true}`)
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Contains(t, result.Content, "bg-err")
+
+	close(spawnCh)
+
+	assert.Eventually(t, func() bool {
+		bgMgr.mu.Lock()
+		defer bgMgr.mu.Unlock()
+		return len(bgMgr.completed) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	bgMgr.mu.Lock()
+	assert.Error(t, bgMgr.completed[0].err)
+	assert.Contains(t, bgMgr.completed[0].err.Error(), "spawn failed")
+	bgMgr.mu.Unlock()
+}
+
+// channelSpawner blocks on a channel before returning, letting tests
+// verify async behavior of background mode.
+type channelSpawner struct {
+	ch     <-chan struct{}
+	result *TaskSpawnResult
+	err    error
+}
+
+func (c *channelSpawner) Spawn(_ context.Context, _ TaskSpawnConfig, _ string) (*TaskSpawnResult, error) {
+	<-c.ch
+	return c.result, c.err
 }
