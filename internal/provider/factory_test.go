@@ -121,6 +121,10 @@ func TestNewProviderOllama(t *testing.T) {
 	p, err := provider.NewProvider(cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, p)
+
+	kac, ok := p.(provider.KeepAliveConfigurer)
+	require.True(t, ok)
+	assert.Equal(t, "", kac.KeepAlive(), "unset keep_alive should return empty string")
 }
 
 func TestNewProviderOllamaKeepAlive(t *testing.T) {
