@@ -63,6 +63,13 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
 
+	// Capture a baseline of dirty paths before execution so we only attribute
+	// genuinely new changes to this command, not pre-existing dirty files.
+	var baseline map[string]bool
+	if s.diffTracker != nil {
+		baseline = s.captureBaseline()
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
@@ -70,6 +77,12 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	cmd.Dir = s.workDir
 
 	output, err := cmd.CombinedOutput()
+
+	// Detect file changes regardless of exit code or timeout — a command can
+	// modify files before timing out or exiting non-zero.
+	if s.diffTracker != nil {
+		s.detectChanges(baseline)
+	}
 
 	// Check if the timeout context (not the parent) triggered a deadline exceeded
 	if timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
@@ -92,12 +105,6 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 		}
 	}
 
-	// Detect file changes regardless of exit code — a command can modify
-	// files and still exit non-zero (e.g., "echo x > file && false").
-	if s.diffTracker != nil {
-		s.detectChanges(ctx)
-	}
-
 	// Non-zero exit code
 	if err != nil {
 		return ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, nil
@@ -110,14 +117,46 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 // A short, fixed timeout prevents blocking the agent loop on large repos.
 const detectChangesTimeout = 2 * time.Second
 
+// captureBaseline runs git status --porcelain and returns the set of currently
+// dirty paths. This is called before command execution so that detectChanges
+// can distinguish genuinely new changes from pre-existing dirty files.
+func (s *ShellTool) captureBaseline() map[string]bool {
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), detectChangesTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "git", "status", "--porcelain")
+	cmd.Dir = s.workDir
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		return nil
+	}
+
+	paths := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		statusCode := line[:2]
+		path := line[3:]
+		if statusCode[0] == 'R' || statusCode[0] == 'C' {
+			if parts := strings.SplitN(path, " -> ", 2); len(parts) == 2 {
+				path = parts[1]
+			}
+		}
+		paths[path] = true
+	}
+	return paths
+}
+
 // detectChanges runs git status --porcelain to find files modified by the
 // shell command and records them in the DiffTracker. It uses porcelain format
-// to capture staged, unstaged, and untracked changes. Already-recorded paths
-// are skipped to avoid duplicates across multiple shell invocations per turn.
+// to capture staged, unstaged, and untracked changes. Paths that existed in
+// the pre-execution baseline or were already recorded this turn are skipped
+// to avoid attributing pre-existing dirty files to the current command.
 //
 // A dedicated timeout is used so that a slow git status cannot block the
 // agent indefinitely, independent of the parent context's deadline.
-func (s *ShellTool) detectChanges(_ context.Context) {
+func (s *ShellTool) detectChanges(baseline map[string]bool) {
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), detectChangesTimeout)
 	defer cancel()
 
@@ -134,12 +173,12 @@ func (s *ShellTool) detectChanges(_ context.Context) {
 		existing[c.Path] = true
 	}
 
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if len(line) < 4 {
 			continue
 		}
 		// Porcelain format: XY <space> path
-		// For renames/copies: XY <space> new_path -> old_path
+		// For renames/copies: XY <space> orig_path -> new_path
 		// X = index status, Y = worktree status
 		statusCode := line[:2]
 		path := line[3:]
@@ -151,7 +190,13 @@ func (s *ShellTool) detectChanges(_ context.Context) {
 			}
 		}
 
+		// Skip paths already recorded in this turn.
 		if existing[path] {
+			continue
+		}
+
+		// Skip paths that were dirty before this command ran.
+		if baseline[path] {
 			continue
 		}
 

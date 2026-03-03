@@ -239,12 +239,10 @@ func TestShellToolDetectChangesRespectsOwnTimeout(t *testing.T) {
 	require.NoError(t, err)
 	dt.Reset()
 
-	// Verify detectChanges succeeds even with an already-cancelled parent
-	// context. This proves it creates its own timeout context rather than
-	// relying solely on the parent.
-	cancelledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	st.detectChanges(cancelledCtx)
+	// Verify detectChanges succeeds with a nil baseline (no pre-existing
+	// dirty files). It creates its own timeout context internally rather
+	// than relying on any parent context.
+	st.detectChanges(nil)
 
 	changes := dt.Changes()
 	assert.GreaterOrEqual(t, len(changes), 1, "detectChanges should use its own timeout, not the parent context")
@@ -296,4 +294,97 @@ func TestShellToolDetectChangesDeduplicates(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, count, "file.txt should be recorded once, not duplicated")
+}
+
+func TestShellToolDetectChangesIgnoresPreExistingDirtyFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	// Initialize a git repo with one committed file.
+	for _, cmd := range []string{
+		"git init",
+		"git config user.email test@test.com",
+		"git config user.name Test",
+		"echo initial > tracked.txt",
+		"echo initial > preexisting.txt",
+		"git add tracked.txt preexisting.txt",
+		"git commit -m init",
+	} {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		st := NewShellTool(dir, 30*time.Second)
+		r, err := st.Execute(context.Background(), input)
+		require.NoError(t, err, "setup cmd %q", cmd)
+		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
+	}
+
+	// Dirty preexisting.txt BEFORE attaching the tracker, simulating
+	// a file that was already modified before the agent turn.
+	preInput, _ := json.Marshal(map[string]string{
+		"command": "echo dirty > preexisting.txt",
+	})
+	preShell := NewShellTool(dir, 30*time.Second)
+	_, err := preShell.Execute(context.Background(), preInput)
+	require.NoError(t, err)
+
+	dt := NewDiffTracker()
+	st := NewShellTool(dir, 30*time.Second)
+	st.SetDiffTracker(dt)
+
+	// Now modify tracked.txt — only this should be recorded.
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo changed > tracked.txt",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	changes := dt.Changes()
+	pathSet := make(map[string]bool)
+	for _, c := range changes {
+		pathSet[c.Path] = true
+	}
+	assert.True(t, pathSet["tracked.txt"], "tracked.txt should be recorded")
+	assert.False(t, pathSet["preexisting.txt"], "preexisting.txt should NOT be recorded (pre-existing dirty file)")
+}
+
+func TestShellToolDetectChangesRunsOnTimeout(t *testing.T) {
+	dir := t.TempDir()
+
+	// Initialize a git repo.
+	for _, cmd := range []string{
+		"git init",
+		"git config user.email test@test.com",
+		"git config user.name Test",
+		"echo initial > file.txt",
+		"git add file.txt",
+		"git commit -m init",
+	} {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		st := NewShellTool(dir, 30*time.Second)
+		r, err := st.Execute(context.Background(), input)
+		require.NoError(t, err, "setup cmd %q", cmd)
+		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
+	}
+
+	dt := NewDiffTracker()
+	// Very short timeout to trigger the timeout path.
+	st := NewShellTool(dir, 100*time.Millisecond)
+	st.SetDiffTracker(dt)
+
+	// Command that writes a file then sleeps past the timeout.
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo modified > file.txt && sleep 10",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "timed out")
+
+	// Despite the timeout, detectChanges should have recorded the file change.
+	changes := dt.Changes()
+	require.GreaterOrEqual(t, len(changes), 1, "file changes should be detected even on timeout")
+	pathSet := make(map[string]bool)
+	for _, c := range changes {
+		pathSet[c.Path] = true
+	}
+	assert.True(t, pathSet["file.txt"], "file.txt should be detected despite command timeout")
 }
