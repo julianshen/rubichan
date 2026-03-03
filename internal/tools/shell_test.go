@@ -11,6 +11,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// initGitRepo initializes a git repo in dir with the given committed files.
+// Each file is created with "initial" as content, staged, and committed.
+func initGitRepo(t *testing.T, dir string, files ...string) {
+	t.Helper()
+	cmds := []string{
+		"git init",
+		"git config user.email test@test.com",
+		"git config user.name Test",
+	}
+	for _, f := range files {
+		cmds = append(cmds, "echo initial > "+f)
+	}
+	cmds = append(cmds, "git add "+strings.Join(files, " "))
+	cmds = append(cmds, "git commit -m init")
+
+	for _, cmd := range cmds {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		st := NewShellTool(dir, 30*time.Second)
+		r, err := st.Execute(context.Background(), input)
+		require.NoError(t, err, "setup cmd %q", cmd)
+		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
+	}
+}
+
 func TestShellToolExecute(t *testing.T) {
 	dir := t.TempDir()
 	st := NewShellTool(dir, 30*time.Second)
@@ -167,22 +191,7 @@ func TestShellToolNoDiffTrackerDoesNotPanic(t *testing.T) {
 
 func TestShellToolDetectChangesInGitRepo(t *testing.T) {
 	dir := t.TempDir()
-
-	// Initialize a git repo with one committed file.
-	for _, cmd := range []string{
-		"git init",
-		"git config user.email test@test.com",
-		"git config user.name Test",
-		"echo initial > tracked.txt",
-		"git add tracked.txt",
-		"git commit -m init",
-	} {
-		input, _ := json.Marshal(map[string]string{"command": cmd})
-		st := NewShellTool(dir, 30*time.Second)
-		r, err := st.Execute(context.Background(), input)
-		require.NoError(t, err, "setup cmd %q", cmd)
-		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
-	}
+	initGitRepo(t, dir, "tracked.txt")
 
 	dt := NewDiffTracker()
 	st := NewShellTool(dir, 30*time.Second)
@@ -210,22 +219,7 @@ func TestShellToolDetectChangesInGitRepo(t *testing.T) {
 
 func TestShellToolDetectChangesRespectsOwnTimeout(t *testing.T) {
 	dir := t.TempDir()
-
-	// Initialize a git repo.
-	for _, cmd := range []string{
-		"git init",
-		"git config user.email test@test.com",
-		"git config user.name Test",
-		"echo initial > file.txt",
-		"git add file.txt",
-		"git commit -m init",
-	} {
-		input, _ := json.Marshal(map[string]string{"command": cmd})
-		st := NewShellTool(dir, 30*time.Second)
-		r, err := st.Execute(context.Background(), input)
-		require.NoError(t, err, "setup cmd %q", cmd)
-		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
-	}
+	initGitRepo(t, dir, "file.txt")
 
 	dt := NewDiffTracker()
 	st := NewShellTool(dir, 30*time.Second)
@@ -250,22 +244,7 @@ func TestShellToolDetectChangesRespectsOwnTimeout(t *testing.T) {
 
 func TestShellToolDetectChangesDeduplicates(t *testing.T) {
 	dir := t.TempDir()
-
-	// Initialize a git repo.
-	for _, cmd := range []string{
-		"git init",
-		"git config user.email test@test.com",
-		"git config user.name Test",
-		"echo initial > file.txt",
-		"git add file.txt",
-		"git commit -m init",
-	} {
-		input, _ := json.Marshal(map[string]string{"command": cmd})
-		st := NewShellTool(dir, 30*time.Second)
-		r, err := st.Execute(context.Background(), input)
-		require.NoError(t, err, "setup cmd %q", cmd)
-		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
-	}
+	initGitRepo(t, dir, "file.txt")
 
 	dt := NewDiffTracker()
 	st := NewShellTool(dir, 30*time.Second)
@@ -298,23 +277,7 @@ func TestShellToolDetectChangesDeduplicates(t *testing.T) {
 
 func TestShellToolDetectChangesIgnoresPreExistingDirtyFiles(t *testing.T) {
 	dir := t.TempDir()
-
-	// Initialize a git repo with one committed file.
-	for _, cmd := range []string{
-		"git init",
-		"git config user.email test@test.com",
-		"git config user.name Test",
-		"echo initial > tracked.txt",
-		"echo initial > preexisting.txt",
-		"git add tracked.txt preexisting.txt",
-		"git commit -m init",
-	} {
-		input, _ := json.Marshal(map[string]string{"command": cmd})
-		st := NewShellTool(dir, 30*time.Second)
-		r, err := st.Execute(context.Background(), input)
-		require.NoError(t, err, "setup cmd %q", cmd)
-		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
-	}
+	initGitRepo(t, dir, "tracked.txt", "preexisting.txt")
 
 	// Dirty preexisting.txt BEFORE attaching the tracker, simulating
 	// a file that was already modified before the agent turn.
@@ -348,22 +311,7 @@ func TestShellToolDetectChangesIgnoresPreExistingDirtyFiles(t *testing.T) {
 
 func TestShellToolDetectChangesRunsOnTimeout(t *testing.T) {
 	dir := t.TempDir()
-
-	// Initialize a git repo.
-	for _, cmd := range []string{
-		"git init",
-		"git config user.email test@test.com",
-		"git config user.name Test",
-		"echo initial > file.txt",
-		"git add file.txt",
-		"git commit -m init",
-	} {
-		input, _ := json.Marshal(map[string]string{"command": cmd})
-		st := NewShellTool(dir, 30*time.Second)
-		r, err := st.Execute(context.Background(), input)
-		require.NoError(t, err, "setup cmd %q", cmd)
-		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
-	}
+	initGitRepo(t, dir, "file.txt")
 
 	dt := NewDiffTracker()
 	// Very short timeout to trigger the timeout path.
