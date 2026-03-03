@@ -63,9 +63,10 @@ type apiMessage struct {
 }
 
 type apiTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description"`
+	InputSchema  json.RawMessage  `json:"input_schema"`
+	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
 }
 
 // apiContentBlock is an Anthropic-specific content block for serialization.
@@ -149,6 +150,11 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 			Description: tool.Description,
 			InputSchema: tool.InputSchema,
 		})
+	}
+
+	// Mark last tool with cache_control for Anthropic prompt caching.
+	if len(apiReq.Tools) > 0 {
+		apiReq.Tools[len(apiReq.Tools)-1].CacheControl = &apiCacheControl{Type: "ephemeral"}
 	}
 
 	return json.Marshal(apiReq)
