@@ -567,4 +567,36 @@ func TestStreamContextCancelledDuringProcessing(t *testing.T) {
 done:
 }
 
+func TestToolDefinitionsSortedAlphabetically(t *testing.T) {
+	p := &Provider{apiKey: "test-key", baseURL: "http://test"}
+
+	req := provider.CompletionRequest{
+		Model:  "gpt-4",
+		System: "You are helpful.",
+		Tools: []provider.ToolDef{
+			{Name: "shell", Description: "Run commands", InputSchema: json.RawMessage(`{}`)},
+			{Name: "file", Description: "Read files", InputSchema: json.RawMessage(`{}`)},
+			{Name: "search", Description: "Search code", InputSchema: json.RawMessage(`{}`)},
+		},
+	}
+
+	body, err := p.buildRequestBody(req)
+	require.NoError(t, err)
+
+	var parsed struct {
+		Tools []struct {
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(body, &parsed))
+	require.Len(t, parsed.Tools, 3)
+
+	// Tools should be sorted: file, search, shell
+	assert.Equal(t, "file", parsed.Tools[0].Function.Name)
+	assert.Equal(t, "search", parsed.Tools[1].Function.Name)
+	assert.Equal(t, "shell", parsed.Tools[2].Function.Name)
+}
+
 func floatPtr(f float64) *float64 { return &f }

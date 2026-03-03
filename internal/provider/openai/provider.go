@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -179,6 +180,11 @@ func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, err
 			},
 		})
 	}
+
+	// Sort tools alphabetically for deterministic serialization (OpenAI auto-cache optimization).
+	sort.Slice(apiReq.Tools, func(i, j int) bool {
+		return apiReq.Tools[i].Function.Name < apiReq.Tools[j].Function.Name
+	})
 
 	return json.Marshal(apiReq)
 }
