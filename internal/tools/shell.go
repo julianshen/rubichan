@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -12,6 +14,59 @@ import (
 // shellInput represents the input for the shell tool.
 type shellInput struct {
 	Command string `json:"command"`
+}
+
+type commandInterceptorAction int
+
+const (
+	interceptWarn commandInterceptorAction = iota
+	interceptBlock
+	interceptRouteToFileTool
+)
+
+type commandInterceptorRule struct {
+	pattern *regexp.Regexp
+	action  commandInterceptorAction
+	message string
+}
+
+type commandInterception struct {
+	blockReason string
+	routeReason string
+	warnings    []string
+}
+
+var defaultShellInterceptionRules = []commandInterceptorRule{
+	{
+		pattern: regexp.MustCompile(`^$`), // handled via token-aware parser in inspectShellCommand
+		action:  interceptRouteToFileTool,
+		message: "apply_patch shell commands must be routed through the file tool",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\b(?:echo|cat)\b[^;\n]*\s(?:>>?)\s*[^\s;]+`),
+		action:  interceptWarn,
+		message: "command redirects output to a file",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\bsed\b[^;\n]*\s-i(?:\s|$)`),
+		action:  interceptWarn,
+		message: "command uses sed -i for in-place file edits",
+	},
+	{
+		pattern: regexp.MustCompile(`^$`), // handled via path-aware parser in inspectShellCommand
+		action:  interceptBlock,
+		message: "recursive rm is blocked by shell safety interceptor",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\b(?:chmod|chown)\b`),
+		action:  interceptWarn,
+		message: "command changes file ownership/permissions",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\b(?:mv|cp)\b[^;\n]*(?:\s/\S+|\s\.\./\S+)`),
+		action:  interceptWarn,
+		message: "command may move/copy files outside the working directory",
+	},
 }
 
 // ShellTool executes shell commands with timeout and output truncation.
@@ -62,6 +117,19 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
+	interception := inspectShellCommand(in.Command, s.workDir)
+	if interception.routeReason != "" {
+		return ToolResult{
+			Content: fmt.Sprintf("command requires routing: %s. Use the file tool for this operation.", interception.routeReason),
+			IsError: true,
+		}, nil
+	}
+	if interception.blockReason != "" {
+		return ToolResult{
+			Content: fmt.Sprintf("command blocked: %s. Use the file tool for file edits.", interception.blockReason),
+			IsError: true,
+		}, nil
+	}
 
 	// Capture a baseline of dirty paths before execution so we only attribute
 	// genuinely new changes to this command, not pre-existing dirty files.
@@ -86,10 +154,10 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 
 	// Check if the timeout context (not the parent) triggered a deadline exceeded
 	if timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-		return ToolResult{
+		return withInterceptionWarnings(ToolResult{
 			Content: fmt.Sprintf("command timed out after %s", s.timeout),
 			IsError: true,
-		}, nil
+		}, interception.warnings), nil
 	}
 
 	// Truncate output for LLM; optionally set richer DisplayContent for user.
@@ -107,10 +175,322 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 
 	// Non-zero exit code
 	if err != nil {
-		return ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, nil
+		return withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, interception.warnings), nil
 	}
 
-	return ToolResult{Content: content, DisplayContent: displayContent}, nil
+	return withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent}, interception.warnings), nil
+}
+
+func inspectShellCommand(command, workDir string) commandInterception {
+	out := commandInterception{}
+
+	if containsCommandToken(command, "apply_patch") {
+		out.routeReason = "apply_patch shell commands must be routed through the file tool"
+	}
+	if outsideTargets := findRecursiveRMOutsideWorkdir(command, workDir); len(outsideTargets) > 0 {
+		out.blockReason = fmt.Sprintf("recursive rm target(s) escape working directory: %s", strings.Join(outsideTargets, ", "))
+	}
+
+	for _, rule := range defaultShellInterceptionRules {
+		if !rule.pattern.MatchString(command) {
+			continue
+		}
+		switch rule.action {
+		case interceptWarn:
+			out.warnings = append(out.warnings, rule.message)
+		case interceptBlock, interceptRouteToFileTool:
+			if out.blockReason == "" && out.routeReason == "" {
+				out.blockReason = rule.message
+			}
+		}
+	}
+	return out
+}
+
+func containsCommandToken(command, want string) bool {
+	segments := splitShellSegments(command)
+	for _, segment := range segments {
+		exe, args := parseCommandExecutable(segment)
+		if exe == "" {
+			continue
+		}
+		if exe == want {
+			return true
+		}
+		if isShellWrapper(exe) && len(args) >= 2 {
+			// Handle nested shell executions like: sh -c "..."
+			for i := 0; i < len(args)-1; i++ {
+				if strings.HasPrefix(args[i], "-") && strings.Contains(args[i], "c") {
+					if containsCommandToken(args[i+1], want) {
+						return true
+					}
+					break
+				}
+			}
+		}
+		if isCommandPrefixWrapper(exe) {
+			for i := 0; i < len(args); i++ {
+				n := args[i]
+				if strings.Contains(n, "=") && !strings.HasPrefix(n, "=") {
+					continue
+				}
+				joined := strings.Join(args[i:], " ")
+				if containsCommandToken(joined, want) {
+					return true
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+
+func findRecursiveRMOutsideWorkdir(command, workDir string) []string {
+	var outside []string
+	segments := splitShellSegments(command)
+
+	for _, segment := range segments {
+		exe, fields := parseCommandExecutable(segment)
+		if exe == "" {
+			continue
+		}
+		if isShellWrapper(exe) && len(fields) >= 2 {
+			for i := 0; i < len(fields)-1; i++ {
+				if strings.HasPrefix(fields[i], "-") && strings.Contains(fields[i], "c") {
+					outside = append(outside, findRecursiveRMOutsideWorkdir(fields[i+1], workDir)...)
+					break
+				}
+			}
+			continue
+		}
+		if isCommandPrefixWrapper(exe) {
+			start := 0
+			for start < len(fields) {
+				n := fields[start]
+				if strings.Contains(n, "=") && !strings.HasPrefix(n, "=") {
+					start++
+					continue
+				}
+				break
+			}
+			if start < len(fields) {
+				outside = append(outside, findRecursiveRMOutsideWorkdir(strings.Join(fields[start:], " "), workDir)...)
+			}
+			continue
+		}
+		if exe != "rm" {
+			continue
+		}
+
+		recursive := false
+		targets := make([]string, 0, len(fields))
+		parseTargets := false
+		for _, token := range fields {
+			if token == "" {
+				continue
+			}
+			if parseTargets {
+				targets = append(targets, token)
+				continue
+			}
+			if token == "--" {
+				parseTargets = true
+				continue
+			}
+			if strings.HasPrefix(token, "--") {
+				if token == "--recursive" {
+					recursive = true
+				}
+				continue
+			}
+			if strings.HasPrefix(token, "-") {
+				if strings.Contains(token, "r") {
+					recursive = true
+				}
+				continue
+			}
+			targets = append(targets, token)
+		}
+
+		if !recursive {
+			continue
+		}
+		for _, target := range targets {
+			if isOutsideWorkdir(target, workDir) {
+				outside = append(outside, target)
+			}
+		}
+	}
+
+	return outside
+}
+
+func splitShellSegments(command string) []string {
+	var segments []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func() {
+		part := strings.TrimSpace(current.String())
+		if part != "" {
+			segments = append(segments, part)
+		}
+		current.Reset()
+	}
+
+	for _, r := range command {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			current.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			current.WriteRune(r)
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			current.WriteRune(r)
+			continue
+		}
+		if !inSingle && !inDouble && (r == ';' || r == '\n' || r == '\r') {
+			flush()
+			continue
+		}
+		current.WriteRune(r)
+	}
+	flush()
+	return segments
+}
+
+func parseCommandExecutable(segment string) (string, []string) {
+	fields := parseShellWords(segment)
+	if len(fields) == 0 {
+		return "", nil
+	}
+	idx := 0
+	for idx < len(fields) {
+		n := fields[idx]
+		if strings.Contains(n, "=") && !strings.HasPrefix(n, "=") {
+			idx++
+			continue
+		}
+		exe := n
+		args := make([]string, 0, len(fields)-(idx+1))
+		for _, field := range fields[idx+1:] {
+			args = append(args, field)
+		}
+		return exe, args
+	}
+	return "", nil
+}
+
+func parseShellWords(s string) []string {
+	var out []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		out = append(out, current.String())
+		current.Reset()
+	}
+
+	for _, r := range s {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if !inSingle && !inDouble && (r == ' ' || r == '\t') {
+			flush()
+			continue
+		}
+		current.WriteRune(r)
+	}
+	flush()
+	return out
+}
+
+func isShellWrapper(exe string) bool {
+	switch exe {
+	case "sh", "bash", "zsh", "/bin/sh", "/bin/bash", "/bin/zsh":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCommandPrefixWrapper(exe string) bool {
+	switch exe {
+	case "env", "command", "sudo":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOutsideWorkdir(target, workDir string) bool {
+	if target == "" || target == "-" {
+		return false
+	}
+	if strings.HasPrefix(target, "~") {
+		return true
+	}
+
+	var absTarget string
+	if filepath.IsAbs(target) {
+		absTarget = filepath.Clean(target)
+	} else {
+		absTarget = filepath.Clean(filepath.Join(workDir, target))
+	}
+	absWorkDir := filepath.Clean(workDir)
+
+	return !strings.HasPrefix(absTarget, absWorkDir+string(filepath.Separator)) && absTarget != absWorkDir
+}
+
+func withInterceptionWarnings(result ToolResult, warnings []string) ToolResult {
+	if len(warnings) == 0 {
+		return result
+	}
+	var b strings.Builder
+	b.WriteString("warning: shell safety interceptor detected file-modifying pattern(s):\n")
+	for _, warning := range warnings {
+		b.WriteString("- ")
+		b.WriteString(warning)
+		b.WriteByte('\n')
+	}
+	prefix := b.String()
+
+	result.Content = prefix + result.Content
+	if result.DisplayContent != "" {
+		result.DisplayContent = prefix + result.DisplayContent
+	}
+	return result
 }
 
 // detectChangesTimeout caps how long git status may run inside detectChanges.
