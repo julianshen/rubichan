@@ -91,6 +91,17 @@ type CommandArgDef struct {
 	Required    bool   `yaml:"required"`
 }
 
+// AgentDefManifest describes an agent definition contributed by a skill.
+type AgentDefManifest struct {
+	Name         string   `yaml:"name"`
+	Description  string   `yaml:"description"`
+	SystemPrompt string   `yaml:"system_prompt"`
+	Tools        []string `yaml:"tools"`
+	MaxTurns     int      `yaml:"max_turns"`
+	MaxDepth     int      `yaml:"max_depth"`
+	Model        string   `yaml:"model"`
+}
+
 // SkillManifest represents a parsed SKILL.yaml file.
 type SkillManifest struct {
 	Name           string               `yaml:"name"`
@@ -107,6 +118,7 @@ type SkillManifest struct {
 	Prompt         PromptConfig         `yaml:"prompt"`
 	Tools          []ToolDef            `yaml:"tools"`
 	Commands       []CommandDef         `yaml:"commands"`
+	Agents         []AgentDefManifest   `yaml:"agents"`
 	SecurityRules  SecurityRuleConfig   `yaml:"security_rules"`
 	Wiki           WikiConfig           `yaml:"wiki"`
 	Compatibility  CompatibilityConfig  `yaml:"compatibility"`

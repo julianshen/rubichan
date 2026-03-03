@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseManifestMinimal(t *testing.T) {
@@ -424,4 +425,31 @@ implementation:
 	require.NotNil(t, m)
 	assert.Equal(t, BackendMCP, m.Implementation.Backend)
 	assert.Empty(t, m.Implementation.Entrypoint)
+}
+
+func TestManifestWithAgentDefs(t *testing.T) {
+	yamlData := `
+name: k8s-tools
+version: "1.0"
+description: "K8s debugging tools"
+types: [tool]
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+agents:
+  - name: k8s-debugger
+    description: "Debug Kubernetes issues"
+    system_prompt: "You specialize in K8s troubleshooting."
+    tools: ["shell", "file"]
+    max_turns: 8
+`
+	var manifest SkillManifest
+	err := yaml.Unmarshal([]byte(yamlData), &manifest)
+	require.NoError(t, err)
+	require.Len(t, manifest.Agents, 1)
+	assert.Equal(t, "k8s-debugger", manifest.Agents[0].Name)
+	assert.Equal(t, "Debug Kubernetes issues", manifest.Agents[0].Description)
+	assert.Equal(t, "You specialize in K8s troubleshooting.", manifest.Agents[0].SystemPrompt)
+	assert.Equal(t, []string{"shell", "file"}, manifest.Agents[0].Tools)
+	assert.Equal(t, 8, manifest.Agents[0].MaxTurns)
 }

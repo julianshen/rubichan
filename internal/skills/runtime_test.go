@@ -38,6 +38,8 @@ func (m *mockBackend) Hooks() map[HookPhase]HookHandler {
 
 func (m *mockBackend) Commands() []commands.SlashCommand { return nil }
 
+func (m *mockBackend) Agents() []*AgentDefinition { return nil }
+
 func (m *mockBackend) Unload() error {
 	m.unloadCalled = true
 	return nil
