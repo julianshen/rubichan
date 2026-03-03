@@ -56,6 +56,9 @@ func (b *CoreToolsBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 // Commands returns nil — core-tools does not provide slash commands.
 func (b *CoreToolsBackend) Commands() []commands.SlashCommand { return nil }
 
+// Agents returns nil — core-tools does not provide agent definitions.
+func (b *CoreToolsBackend) Agents() []*skills.AgentDefinition { return nil }
+
 // Unload is a no-op for core-tools.
 func (b *CoreToolsBackend) Unload() error {
 	return nil

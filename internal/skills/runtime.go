@@ -42,21 +42,22 @@ func sourcePriority(src Source) int {
 // (LifecycleManager), tool registration (tools.Registry), and backend
 // creation (BackendFactory).
 type Runtime struct {
-	mu              sync.RWMutex
-	loader          *Loader
-	store           *store.Store
-	lifecycle       *LifecycleManager
-	registry        *tools.Registry
-	skills          map[string]*Skill
-	active          map[string]*Skill
-	autoApprove     []string
-	backendFactory  BackendFactory
-	sandboxFactory  SandboxFactory
-	promptCollector *PromptCollector
-	workflowRunner  *WorkflowRunner
-	securityAdapter *SecurityRuleAdapter
-	contextBudget   *ContextBudget
-	cmdRegistry     *commands.Registry
+	mu                sync.RWMutex
+	loader            *Loader
+	store             *store.Store
+	lifecycle         *LifecycleManager
+	registry          *tools.Registry
+	skills            map[string]*Skill
+	active            map[string]*Skill
+	autoApprove       []string
+	backendFactory    BackendFactory
+	sandboxFactory    SandboxFactory
+	promptCollector   *PromptCollector
+	workflowRunner    *WorkflowRunner
+	securityAdapter   *SecurityRuleAdapter
+	contextBudget     *ContextBudget
+	cmdRegistry       *commands.Registry
+	agentDefRegistrar AgentDefRegistrar
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -274,6 +275,31 @@ func (rt *Runtime) Activate(name string) error {
 		}
 	}
 
+	// Register agent definitions from backend.
+	var registeredAgentDefs []string
+	if rt.agentDefRegistrar != nil {
+		for _, def := range backend.Agents() {
+			if err := rt.agentDefRegistrar.Register(def); err != nil {
+				// Roll back agent defs.
+				for _, n := range registeredAgentDefs {
+					_ = rt.agentDefRegistrar.Unregister(n)
+				}
+				// Roll back commands.
+				for _, c := range registeredCmds {
+					_ = rt.cmdRegistry.Unregister(c.Name())
+				}
+				// Roll back tools.
+				for _, t := range registeredTools {
+					_ = rt.registry.Unregister(t.Name())
+				}
+				_ = sk.TransitionTo(SkillStateError)
+				_ = sk.TransitionTo(SkillStateInactive)
+				return fmt.Errorf("register agent def for skill %q: %w", name, err)
+			}
+			registeredAgentDefs = append(registeredAgentDefs, def.Name)
+		}
+	}
+
 	priority := sourcePriority(source)
 	for phase, handler := range backend.Hooks() {
 		rt.lifecycle.Register(phase, name, priority, handler)
@@ -326,6 +352,13 @@ func (rt *Runtime) Deactivate(name string) error {
 	if rt.cmdRegistry != nil && sk.Backend != nil {
 		for _, cmd := range sk.Backend.Commands() {
 			_ = rt.cmdRegistry.Unregister(cmd.Name())
+		}
+	}
+
+	// Unregister agent definitions.
+	if rt.agentDefRegistrar != nil && sk.Backend != nil {
+		for _, def := range sk.Backend.Agents() {
+			_ = rt.agentDefRegistrar.Unregister(def.Name)
 		}
 	}
 
@@ -429,6 +462,13 @@ func (rt *Runtime) SetCommandRegistry(reg *commands.Registry) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.cmdRegistry = reg
+}
+
+// SetAgentDefRegistrar sets the agent definition registrar for the runtime.
+func (rt *Runtime) SetAgentDefRegistrar(reg AgentDefRegistrar) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.agentDefRegistrar = reg
 }
 
 // GetBudgetedPromptFragments returns prompt fragments constrained by the

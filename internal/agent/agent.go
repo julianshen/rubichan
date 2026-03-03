@@ -44,14 +44,15 @@ func (AlwaysAutoApprove) CheckApproval(_ string, _ json.RawMessage) ApprovalResu
 
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
-	Type         string           // "text_delta", "tool_call", "tool_result", "error", "done"
-	Text         string           // text content for text_delta events
-	ToolCall     *ToolCallEvent   // populated for tool_call events
-	ToolResult   *ToolResultEvent // populated for tool_result events
-	Error        error            // populated for error events
-	InputTokens  int              // populated for done events: total input tokens used
-	OutputTokens int              // populated for done events: total output tokens used
-	DiffSummary  string           // populated for done events: markdown-formatted cumulative file change summary
+	Type           string           // "text_delta", "tool_call", "tool_result", "error", "done", "subagent_done"
+	Text           string           // text content for text_delta events
+	ToolCall       *ToolCallEvent   // populated for tool_call events
+	ToolResult     *ToolResultEvent // populated for tool_result events
+	Error          error            // populated for error events
+	InputTokens    int              // populated for done events: total input tokens used
+	OutputTokens   int              // populated for done events: total output tokens used
+	DiffSummary    string           // populated for done events: markdown-formatted cumulative file change summary
+	SubagentResult *SubagentResult  // populated for subagent_done events
 }
 
 // ToolCallEvent contains details about a tool being called.
@@ -147,6 +148,14 @@ func WithDiffTracker(dt *tools.DiffTracker) AgentOption {
 	}
 }
 
+// WithWakeManager attaches a WakeManager for receiving background subagent
+// completion events during the agent loop.
+func WithWakeManager(wm *WakeManager) AgentOption {
+	return func(a *Agent) {
+		a.wakeManager = wm
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -196,6 +205,7 @@ type Agent struct {
 	deferral         *tools.DeferralManager
 	diffTracker      *tools.DiffTracker
 	turnMu           sync.Mutex // serializes Turn() calls to prevent DiffTracker race
+	wakeManager      *WakeManager
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -690,6 +700,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			return
 		}
 
+		// Drain any pending wake events from background subagents.
+		a.drainWakeEvents(ch)
+
 		// Continue to the next turn after tool results.
 	}
 
@@ -941,6 +954,26 @@ func (a *Agent) executeSingleTool(ctx context.Context, tc provider.ToolUseBlock)
 		content:   toolResult.Content,
 		isError:   toolResult.IsError,
 		event:     makeToolResultEvent(tc.ID, tc.Name, toolResult.Content, toolResult.DisplayContent, toolResult.IsError),
+	}
+}
+
+// drainWakeEvents non-blockingly reads all pending wake events from the
+// WakeManager, injects them into the conversation as user messages, and
+// emits subagent_done TurnEvents.
+func (a *Agent) drainWakeEvents(ch chan<- TurnEvent) {
+	if a.wakeManager == nil {
+		return
+	}
+	for {
+		select {
+		case wake := <-a.wakeManager.Events():
+			wakeMsg := fmt.Sprintf("[Background task %q completed (agent: %s)]\n%s",
+				wake.TaskID, wake.AgentName, wake.Result.Output)
+			a.conversation.AddUser(wakeMsg)
+			ch <- TurnEvent{Type: "subagent_done", Text: wakeMsg, SubagentResult: wake.Result}
+		default:
+			return
+		}
 	}
 }
 

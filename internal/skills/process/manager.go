@@ -151,6 +151,9 @@ func (b *ProcessBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 // Commands returns nil — process skills do not provide slash commands.
 func (b *ProcessBackend) Commands() []commands.SlashCommand { return nil }
 
+// Agents returns nil — process skills do not provide agent definitions.
+func (b *ProcessBackend) Agents() []*skills.AgentDefinition { return nil }
+
 // Unload implements skills.SkillBackend. Sends a "shutdown" request and
 // stops the child process.
 func (b *ProcessBackend) Unload() error {

@@ -55,6 +55,9 @@ func (b *GitBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 // Commands returns nil — git does not provide slash commands.
 func (b *GitBackend) Commands() []commands.SlashCommand { return nil }
 
+// Agents returns nil — git does not provide agent definitions.
+func (b *GitBackend) Agents() []*skills.AgentDefinition { return nil }
+
 // Unload is a no-op for the git skill.
 func (b *GitBackend) Unload() error {
 	return nil

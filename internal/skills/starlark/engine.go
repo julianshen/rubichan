@@ -227,6 +227,9 @@ func (e *Engine) Hooks() map[skills.HookPhase]skills.HookHandler {
 // Commands returns nil — Starlark skills do not provide slash commands.
 func (e *Engine) Commands() []commands.SlashCommand { return nil }
 
+// Agents returns nil — Starlark skills do not provide agent definitions.
+func (e *Engine) Agents() []*skills.AgentDefinition { return nil }
+
 // Workflows returns workflow handlers registered by this skill, keyed by name.
 // This is populated by register_workflow() calls in the Starlark code.
 func (e *Engine) Workflows() map[string]WorkflowHandler {

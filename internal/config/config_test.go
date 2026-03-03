@@ -364,3 +364,81 @@ func TestSaveCreatesDirectory(t *testing.T) {
 	_, err = os.Stat(path)
 	assert.NoError(t, err)
 }
+
+func TestConfigAgentDefinitions(t *testing.T) {
+	tomlData := `
+[provider]
+default = "anthropic"
+model = "claude-3"
+
+[agent]
+max_turns = 10
+
+[[agent.definitions]]
+name = "explorer"
+description = "Explore codebase"
+system_prompt = "You are an explorer."
+tools = ["file", "search"]
+max_turns = 5
+max_depth = 2
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.Agent.Definitions, 1)
+	assert.Equal(t, "explorer", cfg.Agent.Definitions[0].Name)
+	assert.Equal(t, "Explore codebase", cfg.Agent.Definitions[0].Description)
+	assert.Equal(t, "You are an explorer.", cfg.Agent.Definitions[0].SystemPrompt)
+	assert.Equal(t, []string{"file", "search"}, cfg.Agent.Definitions[0].Tools)
+	assert.Equal(t, 5, cfg.Agent.Definitions[0].MaxTurns)
+	assert.Equal(t, 2, cfg.Agent.Definitions[0].MaxDepth)
+}
+
+func TestConfigAgentDefinitionsMultiple(t *testing.T) {
+	tomlData := `
+[agent]
+max_turns = 10
+
+[[agent.definitions]]
+name = "explorer"
+tools = ["file"]
+
+[[agent.definitions]]
+name = "coder"
+tools = ["file", "shell"]
+model = "claude-sonnet-4-5"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.Agent.Definitions, 2)
+	assert.Equal(t, "explorer", cfg.Agent.Definitions[0].Name)
+	assert.Equal(t, "coder", cfg.Agent.Definitions[1].Name)
+	assert.Equal(t, "claude-sonnet-4-5", cfg.Agent.Definitions[1].Model)
+}
+
+func TestConfigAgentDefinitionsDefaultEmpty(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Nil(t, cfg.Agent.Definitions)
+}
+
+func TestConfigCacheSection(t *testing.T) {
+	tomlData := `
+[provider]
+default = "ollama"
+model = "llama3"
+
+[agent.cache]
+ollama_keep_alive = "15m"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "15m", cfg.Agent.Cache.OllamaKeepAlive)
+}

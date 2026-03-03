@@ -74,6 +74,35 @@ func (r *Registry) All() []provider.ToolDef {
 	return defs
 }
 
+// Filter creates a new Registry containing only the tools whose names appear
+// in the given slice. Unknown names are silently ignored. If names is nil,
+// all tools are copied into the new registry. The returned registry is
+// independent — registering or unregistering tools in it does not affect
+// the original.
+func (r *Registry) Filter(names []string) *Registry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	filtered := NewRegistry()
+	if names == nil {
+		for _, tool := range r.tools {
+			_ = filtered.Register(tool)
+		}
+		return filtered
+	}
+
+	nameSet := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		nameSet[n] = struct{}{}
+	}
+	for name, tool := range r.tools {
+		if _, ok := nameSet[name]; ok {
+			_ = filtered.Register(tool)
+		}
+	}
+	return filtered
+}
+
 // SelectForContext returns tool definitions filtered for relevance to the
 // current conversation context. Uses keyword heuristics and recent tool
 // usage to select relevant tools, falling back to all tools when no

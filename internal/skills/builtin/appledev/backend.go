@@ -70,6 +70,9 @@ func (b *Backend) Hooks() map[skills.HookPhase]skills.HookHandler {
 // Commands returns nil — apple-dev does not provide slash commands.
 func (b *Backend) Commands() []commands.SlashCommand { return nil }
 
+// Agents returns nil — apple-dev does not provide agent definitions.
+func (b *Backend) Agents() []*skills.AgentDefinition { return nil }
+
 // Unload is a no-op for apple-dev.
 func (b *Backend) Unload() error {
 	return nil

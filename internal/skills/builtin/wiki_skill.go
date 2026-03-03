@@ -51,6 +51,9 @@ func (b *WikiBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 // Commands returns nil — wiki does not provide slash commands.
 func (b *WikiBackend) Commands() []commands.SlashCommand { return nil }
 
+// Agents returns nil — wiki does not provide agent definitions.
+func (b *WikiBackend) Agents() []*skills.AgentDefinition { return nil }
+
 // Unload is a no-op for wiki.
 func (b *WikiBackend) Unload() error {
 	return nil

@@ -197,6 +197,9 @@ func (b *GoPluginBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 // Commands returns nil — Go plugins do not provide slash commands.
 func (b *GoPluginBackend) Commands() []commands.SlashCommand { return nil }
 
+// Agents returns nil — Go plugins do not provide agent definitions.
+func (b *GoPluginBackend) Agents() []*skills.AgentDefinition { return nil }
+
 // Unload implements skills.SkillBackend. Calls Deactivate on the plugin
 // and releases all resources.
 func (b *GoPluginBackend) Unload() error {

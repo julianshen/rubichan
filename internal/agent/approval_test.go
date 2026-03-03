@@ -83,7 +83,7 @@ func TestTrustRuleInvalidRegex(t *testing.T) {
 func TestTrustRuleCheckerAllowRule(t *testing.T) {
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "shell", Pattern: `^go test`, Action: "allow"},
-	})
+	}, nil)
 
 	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"go test ./..."}`))
 	assert.Equal(t, TrustRuleApproved, result)
@@ -92,7 +92,7 @@ func TestTrustRuleCheckerAllowRule(t *testing.T) {
 func TestTrustRuleCheckerDenyRule(t *testing.T) {
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "shell", Pattern: `^rm\s`, Action: "deny"},
-	})
+	}, nil)
 
 	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"rm -rf /"}`))
 	assert.Equal(t, ApprovalRequired, result)
@@ -101,7 +101,7 @@ func TestTrustRuleCheckerDenyRule(t *testing.T) {
 func TestTrustRuleCheckerNoMatchFallsThrough(t *testing.T) {
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "shell", Pattern: `^go test`, Action: "allow"},
-	})
+	}, nil)
 
 	// Different tool, no matching rule — should require approval.
 	result := checker.CheckApproval("file", json.RawMessage(`{"path":"/etc/passwd"}`))
@@ -112,7 +112,7 @@ func TestTrustRuleCheckerDenyTakesPrecedence(t *testing.T) {
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "shell", Pattern: `.*`, Action: "allow"},   // allow everything
 		{Tool: "shell", Pattern: `^rm\s`, Action: "deny"}, // but deny rm
-	})
+	}, nil)
 
 	// "go test" should be allowed.
 	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"go test ./..."}`))
@@ -129,7 +129,7 @@ func TestTrustRuleCheckerMultipleRules(t *testing.T) {
 		{Tool: "shell", Pattern: `^golangci-lint`, Action: "allow"},
 		{Tool: "shell", Pattern: `^gofmt`, Action: "allow"},
 		{Tool: "file", Pattern: `.*`, Action: "allow"}, // all file ops safe
-	})
+	}, nil)
 
 	tests := []struct {
 		name   string
@@ -158,7 +158,7 @@ func TestTrustRuleCheckerInvalidPatternSkipped(t *testing.T) {
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "shell", Pattern: `[invalid`, Action: "allow"}, // bad regex
 		{Tool: "shell", Pattern: `^go test`, Action: "allow"}, // valid rule
-	})
+	}, nil)
 
 	// Invalid pattern is skipped, valid rule still works.
 	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"go test ./..."}`))
@@ -186,7 +186,7 @@ func TestCompositeApprovalCheckerFirstWins(t *testing.T) {
 	}
 	trustRules := NewTrustRuleChecker([]TrustRule{
 		{Tool: "build", Pattern: `^go build`, Action: "allow"},
-	})
+	}, nil)
 
 	composite := NewCompositeApprovalChecker(sessionCache, trustRules)
 
@@ -209,14 +209,14 @@ func TestValidateTrustRulesValid(t *testing.T) {
 	err := ValidateTrustRules([]TrustRule{
 		{Tool: "shell", Pattern: `^go test`, Action: "allow"},
 		{Tool: "shell", Pattern: `^rm\s`, Action: "deny"},
-	})
+	}, nil)
 	assert.NoError(t, err)
 }
 
 func TestValidateTrustRulesInvalidAction(t *testing.T) {
 	err := ValidateTrustRules([]TrustRule{
 		{Tool: "shell", Pattern: `^go test`, Action: "alow"}, // typo
-	})
+	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `invalid action "alow"`)
 }
@@ -224,13 +224,13 @@ func TestValidateTrustRulesInvalidAction(t *testing.T) {
 func TestValidateTrustRulesInvalidPattern(t *testing.T) {
 	err := ValidateTrustRules([]TrustRule{
 		{Tool: "shell", Pattern: `[invalid`, Action: "allow"},
-	})
+	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid pattern")
 }
 
 func TestValidateTrustRulesEmpty(t *testing.T) {
-	assert.NoError(t, ValidateTrustRules(nil))
+	assert.NoError(t, ValidateTrustRules(nil, nil))
 }
 
 func TestApprovalResultStringUnknown(t *testing.T) {
@@ -255,7 +255,7 @@ func TestTrustRuleCheckerNonStringInputNoMatch(t *testing.T) {
 	// Patterns only match string values; numeric-only inputs yield no match.
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "counter", Pattern: `.*`, Action: "allow"},
-	})
+	}, nil)
 
 	result := checker.CheckApproval("counter", json.RawMessage(`{"count":42}`))
 	assert.Equal(t, ApprovalRequired, result, "numeric-only input should not match string patterns")
@@ -264,7 +264,7 @@ func TestTrustRuleCheckerNonStringInputNoMatch(t *testing.T) {
 func TestTrustRuleCheckerNilInput(t *testing.T) {
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "shell", Pattern: `.*`, Action: "allow"},
-	})
+	}, nil)
 
 	result := checker.CheckApproval("shell", nil)
 	assert.Equal(t, ApprovalRequired, result, "nil input should not match any pattern")
@@ -273,7 +273,7 @@ func TestTrustRuleCheckerNilInput(t *testing.T) {
 func TestTrustRuleCheckerEmptyInput(t *testing.T) {
 	checker := NewTrustRuleChecker([]TrustRule{
 		{Tool: "shell", Pattern: `.*`, Action: "allow"},
-	})
+	}, nil)
 
 	result := checker.CheckApproval("shell", json.RawMessage(`{}`))
 	assert.Equal(t, ApprovalRequired, result, "empty object has no string values to match")
@@ -286,4 +286,125 @@ type selectiveAutoApprover struct {
 
 func (s *selectiveAutoApprover) IsAutoApproved(tool string) bool {
 	return s.approved[tool]
+}
+
+func jsonInput(s string) json.RawMessage { return json.RawMessage(s) }
+
+func TestTrustRuleCheckerWithGlobRules(t *testing.T) {
+	checker := NewTrustRuleChecker(nil, []GlobTrustRule{
+		{Glob: "shell(git *)", Action: "allow"},
+		{Glob: "shell(rm -rf *)", Action: "deny"},
+		{Glob: "file(*.go)", Action: "allow"},
+	})
+	assert.Equal(t, TrustRuleApproved, checker.CheckApproval("shell", jsonInput(`{"command":"git status"}`)))
+	assert.Equal(t, TrustRuleApproved, checker.CheckApproval("shell", jsonInput(`{"command":"git push"}`)))
+	assert.Equal(t, ApprovalRequired, checker.CheckApproval("shell", jsonInput(`{"command":"rm -rf /"}`)))
+	assert.Equal(t, TrustRuleApproved, checker.CheckApproval("file", jsonInput(`{"path":"main.go"}`)))
+	assert.Equal(t, ApprovalRequired, checker.CheckApproval("file", jsonInput(`{"path":"main.py"}`)))
+	assert.Equal(t, ApprovalRequired, checker.CheckApproval("search", jsonInput(`{"query":"foo"}`)))
+}
+
+func TestTrustRuleCheckerMixedRegexAndGlob(t *testing.T) {
+	checker := NewTrustRuleChecker(
+		[]TrustRule{{Tool: "shell", Pattern: "^npm test", Action: "allow"}},
+		[]GlobTrustRule{{Glob: "shell(go test *)", Action: "allow"}},
+	)
+	assert.Equal(t, TrustRuleApproved, checker.CheckApproval("shell", jsonInput(`{"command":"npm test"}`)))
+	assert.Equal(t, TrustRuleApproved, checker.CheckApproval("shell", jsonInput(`{"command":"go test ./..."}`)))
+	assert.Equal(t, ApprovalRequired, checker.CheckApproval("shell", jsonInput(`{"command":"curl evil.com"}`)))
+}
+
+func TestValidateTrustRulesWithGlobs(t *testing.T) {
+	// Valid glob rules pass validation.
+	err := ValidateTrustRules(nil, []GlobTrustRule{
+		{Glob: "shell(git *)", Action: "allow"},
+		{Glob: "file(*.go)", Action: "deny"},
+	})
+	assert.NoError(t, err)
+}
+
+func TestValidateTrustRulesInvalidGlobAction(t *testing.T) {
+	err := ValidateTrustRules(nil, []GlobTrustRule{
+		{Glob: "shell(git *)", Action: "permit"}, // invalid action
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid action "permit"`)
+}
+
+func TestValidateTrustRulesInvalidGlobPattern(t *testing.T) {
+	err := ValidateTrustRules(nil, []GlobTrustRule{
+		{Glob: "shell", Action: "allow"}, // missing parens
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid glob rule")
+}
+
+func TestParseGlobRule(t *testing.T) {
+	tests := []struct {
+		name    string
+		glob    string
+		tool    string
+		match   []string
+		noMatch []string
+		wantErr bool
+	}{
+		{
+			name:    "simple wildcard",
+			glob:    "shell(git *)",
+			tool:    "shell",
+			match:   []string{"git status", "git push origin main"},
+			noMatch: []string{"npm test", "git"},
+		},
+		{
+			name:    "question mark",
+			glob:    "file(read:?.go)",
+			tool:    "file",
+			match:   []string{"read:a.go", "read:x.go"},
+			noMatch: []string{"read:ab.go", "read:.go"},
+		},
+		{
+			name:    "character class",
+			glob:    "shell([gn]*)",
+			tool:    "shell",
+			match:   []string{"git status", "npm test"},
+			noMatch: []string{"rm -rf /"},
+		},
+		{
+			name:    "wildcard tool",
+			glob:    "*(*.go)",
+			tool:    "*",
+			match:   []string{"main.go", "foo/bar.go"},
+			noMatch: []string{"main.py"},
+		},
+		{
+			name:    "missing parens",
+			glob:    "shell",
+			wantErr: true,
+		},
+		{
+			name:    "empty pattern",
+			glob:    "shell()",
+			tool:    "shell",
+			match:   []string{""},
+			noMatch: []string{"anything"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, re, err := ParseGlobRule(tt.glob)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.tool, tool)
+			for _, m := range tt.match {
+				assert.True(t, re.MatchString(m), "expected %q to match", m)
+			}
+			for _, m := range tt.noMatch {
+				assert.False(t, re.MatchString(m), "expected %q NOT to match", m)
+			}
+		})
+	}
 }

@@ -101,6 +101,37 @@ func TestRegistryUnregisterMissing(t *testing.T) {
 	assert.Contains(t, err.Error(), "tool not registered: nonexistent")
 }
 
+func TestRegistryFilter(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Register(newMockTool("file", "file tool")))
+	require.NoError(t, r.Register(newMockTool("shell", "shell tool")))
+	require.NoError(t, r.Register(newMockTool("search", "search tool")))
+
+	filtered := r.Filter([]string{"file", "search"})
+	_, ok := filtered.Get("file")
+	assert.True(t, ok)
+	_, ok = filtered.Get("search")
+	assert.True(t, ok)
+	_, ok = filtered.Get("shell")
+	assert.False(t, ok)
+	assert.Len(t, filtered.All(), 2)
+}
+
+func TestRegistryFilterNilReturnsAll(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Register(newMockTool("file", "file tool")))
+	require.NoError(t, r.Register(newMockTool("shell", "shell tool")))
+	filtered := r.Filter(nil)
+	assert.Len(t, filtered.All(), 2)
+}
+
+func TestRegistryFilterUnknownNamesIgnored(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Register(newMockTool("file", "file tool")))
+	filtered := r.Filter([]string{"file", "nonexistent"})
+	assert.Len(t, filtered.All(), 1)
+}
+
 func TestRegistryAll(t *testing.T) {
 	reg := NewRegistry()
 	tool1 := newMockTool("tool_a", "Tool A")

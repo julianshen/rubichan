@@ -121,6 +121,24 @@ func TestNewProviderOllama(t *testing.T) {
 	p, err := provider.NewProvider(cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, p)
+
+	kac, ok := p.(provider.KeepAliveConfigurer)
+	require.True(t, ok)
+	assert.Equal(t, "", kac.KeepAlive(), "unset keep_alive should return empty string")
+}
+
+func TestNewProviderOllamaKeepAlive(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "ollama"
+	cfg.Provider.Ollama.BaseURL = "http://localhost:11434"
+	cfg.Agent.Cache.OllamaKeepAlive = "30m"
+
+	p, err := provider.NewProvider(cfg)
+	require.NoError(t, err)
+
+	kac, ok := p.(provider.KeepAliveConfigurer)
+	require.True(t, ok, "ollama provider should implement KeepAliveConfigurer")
+	assert.Equal(t, "30m", kac.KeepAlive())
 }
 
 func TestNewProviderOllamaDefaultBaseURL(t *testing.T) {

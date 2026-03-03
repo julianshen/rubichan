@@ -65,6 +65,8 @@ func (m *fullMockBackend) Hooks() map[skills.HookPhase]skills.HookHandler {
 
 func (m *fullMockBackend) Commands() []commands.SlashCommand { return nil }
 
+func (m *fullMockBackend) Agents() []*skills.AgentDefinition { return nil }
+
 func (m *fullMockBackend) Unload() error {
 	m.unloadCalled = true
 	return nil

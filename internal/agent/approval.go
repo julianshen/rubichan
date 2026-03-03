@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // ApprovalResult represents the three-tier approval decision for a tool call.
@@ -80,16 +81,31 @@ func (r TrustRule) Matches(tool string, input json.RawMessage) (bool, error) {
 	return false, nil
 }
 
-// ValidateTrustRules checks that all trust rules have valid Action fields
-// ("allow" or "deny") and compilable regex patterns. Returns the first
-// validation error found.
-func ValidateTrustRules(rules []TrustRule) error {
+// GlobTrustRule defines a glob-based approval rule using "tool(pattern)" syntax.
+// It is a user-friendly alternative to TrustRule's regex patterns.
+type GlobTrustRule struct {
+	Glob   string `toml:"glob"`   // "tool(pattern)" glob syntax
+	Action string `toml:"action"` // "allow" or "deny"
+}
+
+// ValidateTrustRules checks that all trust rules (both regex and glob) have
+// valid Action fields ("allow" or "deny") and compilable patterns. Returns
+// the first validation error found.
+func ValidateTrustRules(rules []TrustRule, globs []GlobTrustRule) error {
 	for i, r := range rules {
 		if r.Action != "allow" && r.Action != "deny" {
 			return fmt.Errorf("trust rule %d: invalid action %q (must be \"allow\" or \"deny\")", i, r.Action)
 		}
 		if _, err := regexp.Compile(r.Pattern); err != nil {
 			return fmt.Errorf("trust rule %d: invalid pattern %q: %w", i, r.Pattern, err)
+		}
+	}
+	for i, g := range globs {
+		if g.Action != "allow" && g.Action != "deny" {
+			return fmt.Errorf("glob trust rule %d: invalid action %q (must be \"allow\" or \"deny\")", i, g.Action)
+		}
+		if _, _, err := ParseGlobRule(g.Glob); err != nil {
+			return fmt.Errorf("glob trust rule %d: %w", i, err)
 		}
 	}
 	return nil
@@ -126,6 +142,58 @@ func extractStringValues(data json.RawMessage) []string {
 	return nil
 }
 
+// ParseGlobRule parses a user-friendly glob trust rule in the format
+// "ToolName(glob_pattern)" and returns the tool name and a compiled
+// regex equivalent of the glob pattern.
+//
+// Supported glob syntax:
+//   - * matches any sequence of characters (including empty)
+//   - ? matches exactly one character
+//   - [abc] character classes (passed through to regex)
+//
+// Examples:
+//
+//	"shell(git *)"  -> tool="shell", regex=^git .*$
+//	"file(read:?.go)" -> tool="file", regex=^read:.\.go$
+func ParseGlobRule(glob string) (string, *regexp.Regexp, error) {
+	idx := strings.Index(glob, "(")
+	if idx < 0 || !strings.HasSuffix(glob, ")") {
+		return "", nil, fmt.Errorf("invalid glob rule %q: expected format ToolName(pattern)", glob)
+	}
+	tool := glob[:idx]
+	pattern := glob[idx+1 : len(glob)-1]
+
+	var sb strings.Builder
+	sb.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			sb.WriteString(".*")
+		case '?':
+			sb.WriteByte('.')
+		case '[':
+			j := strings.IndexByte(pattern[i:], ']')
+			if j < 0 {
+				return "", nil, fmt.Errorf("unclosed character class in glob %q", glob)
+			}
+			sb.WriteString(pattern[i : i+j+1])
+			i += j
+		case '.', '+', '^', '$', '|', '\\', '{', '}', '(', ')':
+			sb.WriteByte('\\')
+			sb.WriteByte(pattern[i])
+		default:
+			sb.WriteByte(pattern[i])
+		}
+	}
+	sb.WriteString("$")
+
+	re, err := regexp.Compile(sb.String())
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid glob pattern in %q: %w", glob, err)
+	}
+	return tool, re, nil
+}
+
 // compiledRule is a trust rule with its regex pre-compiled for efficiency.
 type compiledRule struct {
 	tool   string
@@ -141,9 +209,10 @@ type TrustRuleChecker struct {
 	rules []compiledRule
 }
 
-// NewTrustRuleChecker creates a checker with the given trust rules.
-// Rules with invalid regex patterns are silently skipped.
-func NewTrustRuleChecker(rules []TrustRule) *TrustRuleChecker {
+// NewTrustRuleChecker creates a checker from both regex and glob trust rules.
+// Rules with invalid patterns are silently skipped (they should be caught
+// earlier by ValidateTrustRules).
+func NewTrustRuleChecker(rules []TrustRule, globs []GlobTrustRule) *TrustRuleChecker {
 	var compiled []compiledRule
 	for _, r := range rules {
 		re, err := regexp.Compile(r.Pattern)
@@ -154,6 +223,17 @@ func NewTrustRuleChecker(rules []TrustRule) *TrustRuleChecker {
 			tool:   r.Tool,
 			re:     re,
 			action: r.Action,
+		})
+	}
+	for _, g := range globs {
+		tool, re, err := ParseGlobRule(g.Glob)
+		if err != nil {
+			continue // skip invalid globs (validated earlier by ValidateTrustRules)
+		}
+		compiled = append(compiled, compiledRule{
+			tool:   tool,
+			re:     re,
+			action: g.Action,
 		})
 	}
 	return &TrustRuleChecker{rules: compiled}
