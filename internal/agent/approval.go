@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // ApprovalResult represents the three-tier approval decision for a tool call.
@@ -124,6 +125,58 @@ func extractStringValues(data json.RawMessage) []string {
 	}
 
 	return nil
+}
+
+// ParseGlobRule parses a user-friendly glob trust rule in the format
+// "ToolName(glob_pattern)" and returns the tool name and a compiled
+// regex equivalent of the glob pattern.
+//
+// Supported glob syntax:
+//   - * matches any sequence of characters (including empty)
+//   - ? matches exactly one character
+//   - [abc] character classes (passed through to regex)
+//
+// Examples:
+//
+//	"shell(git *)"  -> tool="shell", regex=^git .*$
+//	"file(read:?.go)" -> tool="file", regex=^read:.\.go$
+func ParseGlobRule(glob string) (string, *regexp.Regexp, error) {
+	idx := strings.Index(glob, "(")
+	if idx < 0 || !strings.HasSuffix(glob, ")") {
+		return "", nil, fmt.Errorf("invalid glob rule %q: expected format ToolName(pattern)", glob)
+	}
+	tool := glob[:idx]
+	pattern := glob[idx+1 : len(glob)-1]
+
+	var sb strings.Builder
+	sb.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			sb.WriteString(".*")
+		case '?':
+			sb.WriteByte('.')
+		case '[':
+			j := strings.IndexByte(pattern[i:], ']')
+			if j < 0 {
+				return "", nil, fmt.Errorf("unclosed character class in glob %q", glob)
+			}
+			sb.WriteString(pattern[i : i+j+1])
+			i += j
+		case '.', '+', '^', '$', '|', '\\', '{', '}', '(', ')':
+			sb.WriteByte('\\')
+			sb.WriteByte(pattern[i])
+		default:
+			sb.WriteByte(pattern[i])
+		}
+	}
+	sb.WriteString("$")
+
+	re, err := regexp.Compile(sb.String())
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid glob pattern in %q: %w", glob, err)
+	}
+	return tool, re, nil
 }
 
 // compiledRule is a trust rule with its regex pre-compiled for efficiency.

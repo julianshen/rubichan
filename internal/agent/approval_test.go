@@ -287,3 +287,73 @@ type selectiveAutoApprover struct {
 func (s *selectiveAutoApprover) IsAutoApproved(tool string) bool {
 	return s.approved[tool]
 }
+
+func TestParseGlobRule(t *testing.T) {
+	tests := []struct {
+		name    string
+		glob    string
+		tool    string
+		match   []string
+		noMatch []string
+		wantErr bool
+	}{
+		{
+			name:    "simple wildcard",
+			glob:    "shell(git *)",
+			tool:    "shell",
+			match:   []string{"git status", "git push origin main"},
+			noMatch: []string{"npm test", "git"},
+		},
+		{
+			name:    "question mark",
+			glob:    "file(read:?.go)",
+			tool:    "file",
+			match:   []string{"read:a.go", "read:x.go"},
+			noMatch: []string{"read:ab.go", "read:.go"},
+		},
+		{
+			name:    "character class",
+			glob:    "shell([gn]*)",
+			tool:    "shell",
+			match:   []string{"git status", "npm test"},
+			noMatch: []string{"rm -rf /"},
+		},
+		{
+			name:    "wildcard tool",
+			glob:    "*(*.go)",
+			tool:    "*",
+			match:   []string{"main.go", "foo/bar.go"},
+			noMatch: []string{"main.py"},
+		},
+		{
+			name:    "missing parens",
+			glob:    "shell",
+			wantErr: true,
+		},
+		{
+			name:    "empty pattern",
+			glob:    "shell()",
+			tool:    "shell",
+			match:   []string{""},
+			noMatch: []string{"anything"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, re, err := ParseGlobRule(tt.glob)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.tool, tool)
+			for _, m := range tt.match {
+				assert.True(t, re.MatchString(m), "expected %q to match", m)
+			}
+			for _, m := range tt.noMatch {
+				assert.False(t, re.MatchString(m), "expected %q NOT to match", m)
+			}
+		})
+	}
+}
