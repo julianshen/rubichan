@@ -551,6 +551,50 @@ func runInteractive() error {
 		return err
 	}
 
+	// --- Subagent system wiring ---
+
+	// Create agent definition registry with built-in "general" definition.
+	agentDefReg := agent.NewAgentDefRegistry()
+	_ = agentDefReg.Register(&agent.AgentDef{
+		Name:        "general",
+		Description: "General-purpose agent with all available tools",
+	})
+	// Register config-defined agent definitions.
+	for _, defConf := range cfg.Agent.Definitions {
+		_ = agentDefReg.Register(&agent.AgentDef{
+			Name:         defConf.Name,
+			Description:  defConf.Description,
+			SystemPrompt: defConf.SystemPrompt,
+			Tools:        defConf.Tools,
+			MaxTurns:     defConf.MaxTurns,
+			MaxDepth:     defConf.MaxDepth,
+			Model:        defConf.Model,
+		})
+	}
+
+	// Create wake manager for background subagent notifications.
+	wakeManager := agent.NewWakeManager()
+
+	// Create spawner (provider will be set after agent creation).
+	spawner := &agent.DefaultSubagentSpawner{
+		Config:    cfg,
+		AgentDefs: agentDefReg,
+	}
+
+	// Register task and list_tasks tools.
+	taskTool := tools.NewTaskTool(
+		&spawnerAdapter{spawner: spawner},
+		&agentDefLookupAdapter{reg: agentDefReg},
+		0,
+	)
+	taskTool.SetBackgroundManager(&wakeManagerAdapter{wm: wakeManager})
+	if err := registry.Register(taskTool); err != nil {
+		return fmt.Errorf("registering task tool: %w", err)
+	}
+	if err := registry.Register(tools.NewListTasksTool(&wakeStatusAdapter{wm: wakeManager})); err != nil {
+		return fmt.Errorf("registering list_tasks tool: %w", err)
+	}
+
 	// Build the approval function. When --auto-approve is set, skip the TUI
 	// prompt entirely. Otherwise, defer to the TUI model's interactive prompt.
 	// The model is created first (with nil agent) so we can extract its
@@ -617,6 +661,7 @@ func runInteractive() error {
 	// are registered on activation and unregistered on deactivation.
 	if rt != nil {
 		rt.SetCommandRegistry(cmdRegistry)
+		rt.SetAgentDefRegistrar(&agentDefRegistrarAdapter{reg: agentDefReg})
 	}
 
 	// Create TUI model first (with nil agent) so we can extract the
@@ -646,25 +691,33 @@ func runInteractive() error {
 
 		// Build the approval checker: compose session cache with trust rules.
 		// Session cache (TUI "always" decisions) is checked first, then
-		// config-based trust rules.
+		// config-based trust rules (both regex and glob).
 		var checkers []agent.ApprovalChecker
 		checkers = append(checkers, model) // session cache
 		if len(cfg.Agent.TrustRules) > 0 {
-			trustRules := configToTrustRules(cfg.Agent.TrustRules)
-			if err := agent.ValidateTrustRules(trustRules, nil); err != nil {
+			regexRules, globRules := splitTrustRules(cfg.Agent.TrustRules)
+			if err := agent.ValidateTrustRules(regexRules, globRules); err != nil {
 				return fmt.Errorf("invalid trust rules in config: %w", err)
 			}
-			checkers = append(checkers, agent.NewTrustRuleChecker(trustRules, nil))
+			checkers = append(checkers, agent.NewTrustRuleChecker(regexRules, globRules))
 		}
-		opts = append(opts, agent.WithApprovalChecker(
-			agent.NewCompositeApprovalChecker(checkers...),
-		))
+		composite := agent.NewCompositeApprovalChecker(checkers...)
+		opts = append(opts, agent.WithApprovalChecker(composite))
+		spawner.ApprovalChecker = composite
 	} else {
 		opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
+		spawner.ApprovalChecker = agent.AlwaysAutoApprove{}
 	}
+
+	// Attach the wake manager for background subagent notifications.
+	opts = append(opts, agent.WithWakeManager(wakeManager))
 
 	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
+
+	// Wire spawner dependencies that need the agent and provider.
+	spawner.Provider = p
+	spawner.ParentTools = registry
 
 	// Register notes tool backed by agent's scratchpad.
 	if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
@@ -1181,15 +1234,129 @@ func (a *storeMemoryAdapter) LoadMemories(workingDir string) ([]agent.MemoryEntr
 	return entries, nil
 }
 
-// configToTrustRules converts config trust rule entries to agent TrustRules.
-func configToTrustRules(rules []config.TrustRuleConf) []agent.TrustRule {
-	result := make([]agent.TrustRule, len(rules))
-	for i, r := range rules {
-		result[i] = agent.TrustRule{
-			Tool:    r.Tool,
-			Pattern: r.Pattern,
-			Action:  r.Action,
+// splitTrustRules separates config trust rules into regex and glob rule slices.
+// Rules with a Glob field are treated as glob rules; all others as regex rules.
+func splitTrustRules(rules []config.TrustRuleConf) ([]agent.TrustRule, []agent.GlobTrustRule) {
+	var regex []agent.TrustRule
+	var globs []agent.GlobTrustRule
+	for _, r := range rules {
+		if r.Glob != "" {
+			globs = append(globs, agent.GlobTrustRule{Glob: r.Glob, Action: r.Action})
+		} else {
+			regex = append(regex, agent.TrustRule{Tool: r.Tool, Pattern: r.Pattern, Action: r.Action})
+		}
+	}
+	return regex, globs
+}
+
+// --- Subagent system adapter types ---
+//
+// These adapters bridge the agent package (which has the real implementations)
+// to the local interfaces defined in the tools/ and skills/ packages, converting
+// between type-specific config/result structs to avoid import cycles.
+
+// spawnerAdapter bridges agent.DefaultSubagentSpawner to the tools.TaskSpawner
+// interface, converting between type-specific config/result structs.
+type spawnerAdapter struct {
+	spawner *agent.DefaultSubagentSpawner
+}
+
+func (a *spawnerAdapter) Spawn(ctx context.Context, cfg tools.TaskSpawnConfig, prompt string) (*tools.TaskSpawnResult, error) {
+	result, err := a.spawner.Spawn(ctx, agent.SubagentConfig{
+		Name:         cfg.Name,
+		SystemPrompt: cfg.SystemPrompt,
+		Tools:        cfg.Tools,
+		MaxTurns:     cfg.MaxTurns,
+		MaxTokens:    cfg.MaxTokens,
+		Model:        cfg.Model,
+		Depth:        cfg.Depth,
+		MaxDepth:     cfg.MaxDepth,
+	}, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return &tools.TaskSpawnResult{
+		Name:         result.Name,
+		Output:       result.Output,
+		ToolsUsed:    result.ToolsUsed,
+		TurnCount:    result.TurnCount,
+		InputTokens:  result.InputTokens,
+		OutputTokens: result.OutputTokens,
+		Error:        result.Error,
+	}, nil
+}
+
+// agentDefLookupAdapter bridges agent.AgentDefRegistry to tools.TaskAgentDefLookup.
+type agentDefLookupAdapter struct {
+	reg *agent.AgentDefRegistry
+}
+
+func (a *agentDefLookupAdapter) GetAgentDef(name string) (*tools.TaskAgentDef, bool) {
+	def, ok := a.reg.Get(name)
+	if !ok {
+		return nil, false
+	}
+	return &tools.TaskAgentDef{
+		Name:         def.Name,
+		SystemPrompt: def.SystemPrompt,
+		Tools:        def.Tools,
+		MaxTurns:     def.MaxTurns,
+		MaxDepth:     def.MaxDepth,
+		Model:        def.Model,
+	}, true
+}
+
+// wakeManagerAdapter bridges agent.WakeManager to tools.BackgroundTaskManager.
+type wakeManagerAdapter struct {
+	wm *agent.WakeManager
+}
+
+func (a *wakeManagerAdapter) SubmitBackground(name string, cancel context.CancelFunc) string {
+	return a.wm.Submit(name, cancel)
+}
+
+func (a *wakeManagerAdapter) CompleteBackground(taskID string, output string, err error) {
+	a.wm.Complete(taskID, &agent.SubagentResult{
+		Output: output,
+		Error:  err,
+	})
+}
+
+// wakeStatusAdapter bridges agent.WakeManager to tools.TaskStatusProvider.
+type wakeStatusAdapter struct {
+	wm *agent.WakeManager
+}
+
+func (a *wakeStatusAdapter) BackgroundTaskStatus() []tools.BackgroundTaskInfo {
+	statuses := a.wm.Status()
+	result := make([]tools.BackgroundTaskInfo, len(statuses))
+	for i, s := range statuses {
+		result[i] = tools.BackgroundTaskInfo{
+			ID:        s.ID,
+			AgentName: s.AgentName,
+			Status:    s.Status,
 		}
 	}
 	return result
+}
+
+// agentDefRegistrarAdapter bridges agent.AgentDefRegistry to skills.AgentDefRegistrar.
+type agentDefRegistrarAdapter struct {
+	reg *agent.AgentDefRegistry
+}
+
+func (a *agentDefRegistrarAdapter) Register(def *skills.AgentDefinition) error {
+	return a.reg.Register(&agent.AgentDef{
+		Name:         def.Name,
+		Description:  def.Description,
+		SystemPrompt: def.SystemPrompt,
+		Tools:        def.Tools,
+		MaxTurns:     def.MaxTurns,
+		MaxDepth:     def.MaxDepth,
+		Model:        def.Model,
+	})
+}
+
+func (a *agentDefRegistrarAdapter) Unregister(name string) error {
+	return a.reg.Unregister(name)
 }
