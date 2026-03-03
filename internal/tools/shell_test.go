@@ -208,6 +208,48 @@ func TestShellToolDetectChangesInGitRepo(t *testing.T) {
 	assert.Equal(t, OpCreated, pathSet["untracked.txt"], "untracked.txt should be created")
 }
 
+func TestShellToolDetectChangesRespectsOwnTimeout(t *testing.T) {
+	dir := t.TempDir()
+
+	// Initialize a git repo.
+	for _, cmd := range []string{
+		"git init",
+		"git config user.email test@test.com",
+		"git config user.name Test",
+		"echo initial > file.txt",
+		"git add file.txt",
+		"git commit -m init",
+	} {
+		input, _ := json.Marshal(map[string]string{"command": cmd})
+		st := NewShellTool(dir, 30*time.Second)
+		r, err := st.Execute(context.Background(), input)
+		require.NoError(t, err, "setup cmd %q", cmd)
+		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
+	}
+
+	dt := NewDiffTracker()
+	st := NewShellTool(dir, 30*time.Second)
+	st.SetDiffTracker(dt)
+
+	// Modify a file so git status has something to report.
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo changed > file.txt",
+	})
+	_, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	dt.Reset()
+
+	// Verify detectChanges succeeds even with an already-cancelled parent
+	// context. This proves it creates its own timeout context rather than
+	// relying solely on the parent.
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	st.detectChanges(cancelledCtx)
+
+	changes := dt.Changes()
+	assert.GreaterOrEqual(t, len(changes), 1, "detectChanges should use its own timeout, not the parent context")
+}
+
 func TestShellToolDetectChangesDeduplicates(t *testing.T) {
 	dir := t.TempDir()
 

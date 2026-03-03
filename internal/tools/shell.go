@@ -106,12 +106,22 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	return ToolResult{Content: content, DisplayContent: displayContent}, nil
 }
 
+// detectChangesTimeout caps how long git status may run inside detectChanges.
+// A short, fixed timeout prevents blocking the agent loop on large repos.
+const detectChangesTimeout = 2 * time.Second
+
 // detectChanges runs git status --porcelain to find files modified by the
 // shell command and records them in the DiffTracker. It uses porcelain format
 // to capture staged, unstaged, and untracked changes. Already-recorded paths
 // are skipped to avoid duplicates across multiple shell invocations per turn.
-func (s *ShellTool) detectChanges(ctx context.Context) {
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+//
+// A dedicated timeout is used so that a slow git status cannot block the
+// agent indefinitely, independent of the parent context's deadline.
+func (s *ShellTool) detectChanges(_ context.Context) {
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), detectChangesTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "git", "status", "--porcelain")
 	cmd.Dir = s.workDir
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
