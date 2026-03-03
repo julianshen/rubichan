@@ -764,3 +764,32 @@ func TestStreamToolCallWithNilArguments(t *testing.T) {
 	assert.Equal(t, json.RawMessage(`{}`), events[0].ToolUse.Input)
 	assert.Equal(t, "stop", events[1].Type)
 }
+
+func TestKeepAliveInRequest(t *testing.T) {
+	p := &Provider{baseURL: "http://localhost:11434", keepAlive: "10m"}
+
+	req := provider.CompletionRequest{
+		Model:  "llama3",
+		System: "You are helpful.",
+	}
+
+	body, err := p.buildRequestBody(req)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(body, &parsed))
+	assert.Equal(t, "10m", parsed["keep_alive"])
+}
+
+func TestKeepAliveDefault(t *testing.T) {
+	p := &Provider{baseURL: "http://localhost:11434"}
+
+	req := provider.CompletionRequest{Model: "llama3"}
+	body, err := p.buildRequestBody(req)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(body, &parsed))
+	// Default: "5m"
+	assert.Equal(t, "5m", parsed["keep_alive"])
+}

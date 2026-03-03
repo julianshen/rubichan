@@ -66,6 +66,12 @@ type AgentConfig struct {
 	ToolDeferralThreshold  float64         `toml:"tool_deferral_threshold"`
 	TrustRules             []TrustRuleConf `toml:"trust_rules"`
 	Definitions            []AgentDefConf  `toml:"definitions"`
+	Cache                  CacheConfig     `toml:"cache"`
+}
+
+// CacheConfig holds caching settings for providers.
+type CacheConfig struct {
+	OllamaKeepAlive string `toml:"ollama_keep_alive"`
 }
 
 // AgentDefConf describes a pre-configured subagent template in TOML config.

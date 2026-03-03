@@ -25,6 +25,7 @@ type Provider struct {
 	baseURL    string
 	client     *http.Client
 	nextToolID atomic.Int64
+	keepAlive  string
 }
 
 // New creates a new Ollama provider.
@@ -37,11 +38,12 @@ func New(baseURL string) *Provider {
 
 // apiRequest is the request body sent to the Ollama API.
 type apiRequest struct {
-	Model    string       `json:"model"`
-	Messages []apiMessage `json:"messages"`
-	Tools    []apiTool    `json:"tools,omitempty"`
-	Stream   bool         `json:"stream"`
-	Options  *apiOptions  `json:"options,omitempty"`
+	Model     string       `json:"model"`
+	Messages  []apiMessage `json:"messages"`
+	Tools     []apiTool    `json:"tools,omitempty"`
+	Stream    bool         `json:"stream"`
+	Options   *apiOptions  `json:"options,omitempty"`
+	KeepAlive string       `json:"keep_alive,omitempty"`
 }
 
 type apiOptions struct {
@@ -131,9 +133,15 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 }
 
 func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, error) {
+	keepAlive := p.keepAlive
+	if keepAlive == "" {
+		keepAlive = "5m"
+	}
+
 	apiReq := apiRequest{
-		Model:  req.Model,
-		Stream: true,
+		Model:     req.Model,
+		Stream:    true,
+		KeepAlive: keepAlive,
 	}
 
 	// Set options if max tokens or temperature are specified

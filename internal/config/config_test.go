@@ -425,3 +425,20 @@ func TestConfigAgentDefinitionsDefaultEmpty(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.Nil(t, cfg.Agent.Definitions)
 }
+
+func TestConfigCacheSection(t *testing.T) {
+	tomlData := `
+[provider]
+default = "ollama"
+model = "llama3"
+
+[agent.cache]
+ollama_keep_alive = "15m"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "15m", cfg.Agent.Cache.OllamaKeepAlive)
+}
