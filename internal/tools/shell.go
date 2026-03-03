@@ -36,6 +36,11 @@ type commandInterception struct {
 
 var defaultShellInterceptionRules = []commandInterceptorRule{
 	{
+		pattern: regexp.MustCompile(`(?m)^\s*apply_patch\b`),
+		action:  interceptRouteToFileTool,
+		message: "apply_patch shell commands must be routed through the file tool",
+	},
+	{
 		pattern: regexp.MustCompile(`(?i)\b(?:echo|cat)\b[^;\n]*\s(?:>>?)\s*[^\s;]+`),
 		action:  interceptWarn,
 		message: "command redirects output to a file",

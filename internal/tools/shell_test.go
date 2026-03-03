@@ -388,3 +388,17 @@ func TestShellToolInterceptorWarnsOnSedInPlace(t *testing.T) {
 	assert.Contains(t, result.Content, "warning: shell safety interceptor")
 	assert.Contains(t, result.Content, "sed -i")
 }
+
+func TestShellToolInterceptorRoutesApplyPatchToFileTool(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "apply_patch foo",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command blocked")
+	assert.Contains(t, result.Content, "routed through the file tool")
+}
