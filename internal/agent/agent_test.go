@@ -1565,3 +1565,134 @@ func TestAgentSaveSnapshotIfNeededWithoutStore(t *testing.T) {
 	// Should not panic when store is nil.
 	a.saveSnapshotIfNeeded()
 }
+
+func TestWithDiffTrackerOption(t *testing.T) {
+	dt := tools.NewDiffTracker()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(p, reg, autoApprove, cfg, WithDiffTracker(dt))
+	assert.Equal(t, dt, a.diffTracker)
+	assert.Equal(t, dt, a.DiffTracker())
+}
+
+func TestDiffTrackerResetOnTurn(t *testing.T) {
+	dt := tools.NewDiffTracker()
+	// Pre-populate with a change that should be cleared on new turn.
+	dt.Record(tools.FileChange{Path: "old.go", Operation: tools.OpModified, Tool: "file"})
+	require.Len(t, dt.Changes(), 1)
+
+	p := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop"},
+	}}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(p, reg, autoApprove, cfg, WithDiffTracker(dt))
+
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	// DiffTracker should have been reset at turn start.
+	assert.Empty(t, dt.Changes())
+}
+
+func TestDiffSummaryInDoneEvent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	dt := tools.NewDiffTracker()
+	fileTool := tools.NewFileTool(tmpDir)
+	fileTool.SetDiffTracker(dt)
+
+	// First call: LLM uses file tool to write
+	// Second call: LLM responds with text
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_w1",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"write","path":"new.txt","content":"hello"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "wrote the file"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(fileTool))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg, WithDiffTracker(dt))
+
+	ch, err := a.Turn(context.Background(), "create new.txt")
+	require.NoError(t, err)
+
+	var doneEvent *TurnEvent
+	for ev := range ch {
+		if ev.Type == "done" {
+			doneEvent = &ev
+		}
+	}
+
+	require.NotNil(t, doneEvent, "should have a done event")
+	assert.Contains(t, doneEvent.DiffSummary, "new.txt")
+	assert.Contains(t, doneEvent.DiffSummary, "created")
+}
+
+func TestDiffSummaryEmptyWhenNoChanges(t *testing.T) {
+	p := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "just text, no tools"},
+		{Type: "stop"},
+	}}
+
+	dt := tools.NewDiffTracker()
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(p, reg, autoApprove, cfg, WithDiffTracker(dt))
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var doneEvent *TurnEvent
+	for ev := range ch {
+		if ev.Type == "done" {
+			doneEvent = &ev
+		}
+	}
+
+	require.NotNil(t, doneEvent)
+	assert.Empty(t, doneEvent.DiffSummary)
+}
+
+func TestNoDiffTrackerNoPanic(t *testing.T) {
+	p := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop"},
+	}}
+
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(p, reg, autoApprove, cfg) // No WithDiffTracker
+
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var doneEvent *TurnEvent
+	for ev := range ch {
+		if ev.Type == "done" {
+			doneEvent = &ev
+		}
+	}
+
+	require.NotNil(t, doneEvent)
+	assert.Empty(t, doneEvent.DiffSummary)
+}

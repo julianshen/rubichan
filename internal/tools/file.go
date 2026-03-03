@@ -20,7 +20,8 @@ type fileInput struct {
 
 // FileTool provides file read, write, and patch operations.
 type FileTool struct {
-	rootDir string
+	rootDir     string
+	diffTracker *DiffTracker
 }
 
 // NewFileTool creates a new FileTool that operates within the given root directory.
@@ -37,6 +38,11 @@ func NewFileTool(rootDir string) *FileTool {
 		resolved = abs
 	}
 	return &FileTool{rootDir: resolved}
+}
+
+// SetDiffTracker attaches a DiffTracker to record file changes.
+func (f *FileTool) SetDiffTracker(dt *DiffTracker) {
+	f.diffTracker = dt
 }
 
 func (f *FileTool) Name() string {
@@ -177,6 +183,10 @@ func (f *FileTool) readFile(path string) (ToolResult, error) {
 }
 
 func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
+	// Check if the file already exists to determine create vs modify.
+	_, statErr := os.Stat(path)
+	existed := statErr == nil
+
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return ToolResult{Content: err.Error(), IsError: true}, nil
@@ -184,8 +194,21 @@ func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return ToolResult{Content: err.Error(), IsError: true}, nil
 	}
-	// Return the relative path for a cleaner message
+
 	relPath, _ := filepath.Rel(f.rootDir, path)
+
+	if f.diffTracker != nil {
+		op := OpCreated
+		if existed {
+			op = OpModified
+		}
+		f.diffTracker.Record(FileChange{
+			Path:      relPath,
+			Operation: op,
+			Tool:      "file",
+		})
+	}
+
 	return ToolResult{Content: fmt.Sprintf("wrote %s", relPath)}, nil
 }
 
@@ -214,5 +237,15 @@ func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, err
 	}
 
 	relPath, _ := filepath.Rel(f.rootDir, path)
+
+	if f.diffTracker != nil {
+		f.diffTracker.Record(FileChange{
+			Path:      relPath,
+			Operation: OpModified,
+			Diff:      fmt.Sprintf("-%s\n+%s", oldString, newString),
+			Tool:      "file",
+		})
+	}
+
 	return ToolResult{Content: fmt.Sprintf("patched %s", relPath)}, nil
 }
