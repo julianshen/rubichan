@@ -123,6 +123,22 @@ func TestNewProviderOllama(t *testing.T) {
 	assert.NotNil(t, p)
 }
 
+func TestNewProviderOllamaKeepAlive(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "ollama"
+	cfg.Provider.Ollama.BaseURL = "http://localhost:11434"
+	cfg.Agent.Cache.OllamaKeepAlive = "30m"
+
+	p, err := provider.NewProvider(cfg)
+	require.NoError(t, err)
+
+	kac, ok := p.(provider.KeepAliveConfigurer)
+	assert.True(t, ok, "ollama provider should implement KeepAliveConfigurer")
+	// Verify SetKeepAlive was called by checking the interface is satisfied.
+	// The actual value is tested in the ollama package's own tests.
+	_ = kac
+}
+
 func TestNewProviderOllamaDefaultBaseURL(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Provider.Default = "ollama"

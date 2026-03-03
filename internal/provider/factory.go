@@ -12,6 +12,13 @@ const anthropicBaseURL = "https://api.anthropic.com"
 // ProviderConstructor is a function that creates a new LLMProvider.
 type ProviderConstructor func(baseURL, apiKey string, extraHeaders map[string]string) LLMProvider
 
+// KeepAliveConfigurer is implemented by providers that support configurable
+// model keep-alive duration (e.g., Ollama). Defined here so the factory can
+// type-assert without importing provider sub-packages.
+type KeepAliveConfigurer interface {
+	SetKeepAlive(duration string)
+}
+
 // registry holds registered provider constructors.
 // This map is only written to during init() functions and read thereafter,
 // so it is safe for concurrent reads without a mutex.
@@ -64,7 +71,13 @@ func newOllamaProvider(cfg *config.Config) (LLMProvider, error) {
 		baseURL = "http://localhost:11434" // matches ollama.DefaultBaseURL (can't import due to cycle)
 	}
 
-	return constructor(baseURL, "", nil), nil
+	p := constructor(baseURL, "", nil)
+	if ka := cfg.Agent.Cache.OllamaKeepAlive; ka != "" {
+		if kac, ok := p.(KeepAliveConfigurer); ok {
+			kac.SetKeepAlive(ka)
+		}
+	}
+	return p, nil
 }
 
 func newOpenAIProvider(cfg *config.Config) (LLMProvider, error) {

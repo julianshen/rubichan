@@ -36,6 +36,12 @@ func New(baseURL string) *Provider {
 	}
 }
 
+// SetKeepAlive configures the keep_alive duration sent with each request.
+// An empty string means the provider default ("5m") will be used.
+func (p *Provider) SetKeepAlive(d string) {
+	p.keepAlive = d
+}
+
 // apiRequest is the request body sent to the Ollama API.
 type apiRequest struct {
 	Model     string       `json:"model"`
