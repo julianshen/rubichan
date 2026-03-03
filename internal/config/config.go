@@ -65,6 +65,18 @@ type AgentConfig struct {
 	ResultOffloadThreshold int             `toml:"result_offload_threshold"`
 	ToolDeferralThreshold  float64         `toml:"tool_deferral_threshold"`
 	TrustRules             []TrustRuleConf `toml:"trust_rules"`
+	Definitions            []AgentDefConf  `toml:"definitions"`
+}
+
+// AgentDefConf describes a pre-configured subagent template in TOML config.
+type AgentDefConf struct {
+	Name         string   `toml:"name"`
+	Description  string   `toml:"description"`
+	SystemPrompt string   `toml:"system_prompt"`
+	Tools        []string `toml:"tools"`
+	MaxTurns     int      `toml:"max_turns"`
+	MaxDepth     int      `toml:"max_depth"`
+	Model        string   `toml:"model"`
 }
 
 // TrustRuleConf defines a trust rule in the configuration file.
