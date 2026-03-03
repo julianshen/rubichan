@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -12,6 +13,53 @@ import (
 // shellInput represents the input for the shell tool.
 type shellInput struct {
 	Command string `json:"command"`
+}
+
+type commandInterceptorAction int
+
+const (
+	interceptWarn commandInterceptorAction = iota
+	interceptBlock
+	interceptRouteToFileTool
+)
+
+type commandInterceptorRule struct {
+	pattern *regexp.Regexp
+	action  commandInterceptorAction
+	message string
+}
+
+type commandInterception struct {
+	blockReason string
+	warnings    []string
+}
+
+var defaultShellInterceptionRules = []commandInterceptorRule{
+	{
+		pattern: regexp.MustCompile(`(?i)\b(?:echo|cat)\b[^;\n]*\s(?:>>?)\s*[^\s;]+`),
+		action:  interceptWarn,
+		message: "command redirects output to a file",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\bsed\b[^;\n]*\s-i(?:\s|$)`),
+		action:  interceptWarn,
+		message: "command uses sed -i for in-place file edits",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\brm\b[^;\n]*\s-[^\n;]*r[^\n;]*(?:\s|$)`),
+		action:  interceptBlock,
+		message: "recursive rm is blocked by shell safety interceptor",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\b(?:chmod|chown)\b`),
+		action:  interceptWarn,
+		message: "command changes file ownership/permissions",
+	},
+	{
+		pattern: regexp.MustCompile(`(?i)\b(?:mv|cp)\b[^;\n]*(?:\s/\S+|\s\.\./\S+)`),
+		action:  interceptWarn,
+		message: "command may move/copy files outside the working directory",
+	},
 }
 
 // ShellTool executes shell commands with timeout and output truncation.
@@ -62,6 +110,13 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
+	interception := inspectShellCommand(in.Command)
+	if interception.blockReason != "" {
+		return ToolResult{
+			Content: fmt.Sprintf("command blocked: %s. Use the file tool for file edits.", interception.blockReason),
+			IsError: true,
+		}, nil
+	}
 
 	// Capture a baseline of dirty paths before execution so we only attribute
 	// genuinely new changes to this command, not pre-existing dirty files.
@@ -86,10 +141,10 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 
 	// Check if the timeout context (not the parent) triggered a deadline exceeded
 	if timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-		return ToolResult{
+		return withInterceptionWarnings(ToolResult{
 			Content: fmt.Sprintf("command timed out after %s", s.timeout),
 			IsError: true,
-		}, nil
+		}, interception.warnings), nil
 	}
 
 	// Truncate output for LLM; optionally set richer DisplayContent for user.
@@ -107,10 +162,48 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 
 	// Non-zero exit code
 	if err != nil {
-		return ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, nil
+		return withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, interception.warnings), nil
 	}
 
-	return ToolResult{Content: content, DisplayContent: displayContent}, nil
+	return withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent}, interception.warnings), nil
+}
+
+func inspectShellCommand(command string) commandInterception {
+	out := commandInterception{}
+	for _, rule := range defaultShellInterceptionRules {
+		if !rule.pattern.MatchString(command) {
+			continue
+		}
+		switch rule.action {
+		case interceptWarn:
+			out.warnings = append(out.warnings, rule.message)
+		case interceptBlock, interceptRouteToFileTool:
+			if out.blockReason == "" {
+				out.blockReason = rule.message
+			}
+		}
+	}
+	return out
+}
+
+func withInterceptionWarnings(result ToolResult, warnings []string) ToolResult {
+	if len(warnings) == 0 {
+		return result
+	}
+	var b strings.Builder
+	b.WriteString("warning: shell safety interceptor detected file-modifying pattern(s):\n")
+	for _, warning := range warnings {
+		b.WriteString("- ")
+		b.WriteString(warning)
+		b.WriteByte('\n')
+	}
+	prefix := b.String()
+
+	result.Content = prefix + result.Content
+	if result.DisplayContent != "" {
+		result.DisplayContent = prefix + result.DisplayContent
+	}
+	return result
 }
 
 // detectChangesTimeout caps how long git status may run inside detectChanges.

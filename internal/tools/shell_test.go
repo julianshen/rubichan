@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -335,4 +336,55 @@ func TestShellToolDetectChangesRunsOnTimeout(t *testing.T) {
 		pathSet[c.Path] = true
 	}
 	assert.True(t, pathSet["file.txt"], "file.txt should be detected despite command timeout")
+}
+
+func TestShellToolInterceptorBlocksRecursiveRM(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	victim := dir + "/victim"
+	require.NoError(t, os.Mkdir(victim, 0755))
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "rm -rf victim",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command blocked")
+	assert.Contains(t, result.Content, "recursive rm")
+	_, statErr := os.Stat(victim)
+	assert.NoError(t, statErr, "blocked command should not execute")
+}
+
+func TestShellToolInterceptorWarnsOnRedirect(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo hi > redirected.txt",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "warning: shell safety interceptor")
+	assert.Contains(t, result.Content, "redirects output to a file")
+
+	data, readErr := os.ReadFile(dir + "/redirected.txt")
+	require.NoError(t, readErr)
+	assert.Equal(t, "hi\n", string(data))
+}
+
+func TestShellToolInterceptorWarnsOnSedInPlace(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "sed -i",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "warning: shell safety interceptor")
+	assert.Contains(t, result.Content, "sed -i")
 }
