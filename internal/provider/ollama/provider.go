@@ -42,6 +42,11 @@ func (p *Provider) SetKeepAlive(d string) {
 	p.keepAlive = d
 }
 
+// KeepAlive returns the configured keep_alive duration, or empty if unset.
+func (p *Provider) KeepAlive() string {
+	return p.keepAlive
+}
+
 // apiRequest is the request body sent to the Ollama API.
 type apiRequest struct {
 	Model     string       `json:"model"`

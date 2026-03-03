@@ -17,6 +17,7 @@ type ProviderConstructor func(baseURL, apiKey string, extraHeaders map[string]st
 // type-assert without importing provider sub-packages.
 type KeepAliveConfigurer interface {
 	SetKeepAlive(duration string)
+	KeepAlive() string
 }
 
 // registry holds registered provider constructors.

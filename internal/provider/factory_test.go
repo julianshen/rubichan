@@ -133,10 +133,8 @@ func TestNewProviderOllamaKeepAlive(t *testing.T) {
 	require.NoError(t, err)
 
 	kac, ok := p.(provider.KeepAliveConfigurer)
-	assert.True(t, ok, "ollama provider should implement KeepAliveConfigurer")
-	// Verify SetKeepAlive was called by checking the interface is satisfied.
-	// The actual value is tested in the ollama package's own tests.
-	_ = kac
+	require.True(t, ok, "ollama provider should implement KeepAliveConfigurer")
+	assert.Equal(t, "30m", kac.KeepAlive())
 }
 
 func TestNewProviderOllamaDefaultBaseURL(t *testing.T) {
