@@ -1696,3 +1696,138 @@ func TestNoDiffTrackerNoPanic(t *testing.T) {
 	require.NotNil(t, doneEvent)
 	assert.Empty(t, doneEvent.DiffSummary)
 }
+
+func TestAgentWithWakeManager(t *testing.T) {
+	wm := NewWakeManager()
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg, WithWakeManager(wm))
+	assert.NotNil(t, a.wakeManager)
+	assert.Equal(t, wm, a.wakeManager)
+}
+
+func TestAgentDrainWakeEventsNilManager(t *testing.T) {
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg)
+	// drainWakeEvents should be a no-op when wakeManager is nil.
+	ch := make(chan TurnEvent, 16)
+	a.drainWakeEvents(ch)
+	assert.Empty(t, ch)
+}
+
+func TestAgentDrainWakeEventsWithPending(t *testing.T) {
+	wm := NewWakeManager()
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg, WithWakeManager(wm))
+
+	// Submit and complete two background tasks to populate wake events.
+	_, cancel1 := context.WithCancel(context.Background())
+	id1 := wm.Submit("agent1", cancel1)
+	wm.Complete(id1, &SubagentResult{Name: "agent1", Output: "result1"})
+
+	_, cancel2 := context.WithCancel(context.Background())
+	id2 := wm.Submit("agent2", cancel2)
+	wm.Complete(id2, &SubagentResult{Name: "agent2", Output: "result2"})
+
+	ch := make(chan TurnEvent, 16)
+	a.drainWakeEvents(ch)
+
+	// Should have exactly 2 events drained.
+	assert.Len(t, ch, 2)
+
+	ev1 := <-ch
+	assert.Equal(t, "subagent_done", ev1.Type)
+	assert.NotNil(t, ev1.SubagentResult)
+	assert.Contains(t, ev1.Text, "completed")
+
+	ev2 := <-ch
+	assert.Equal(t, "subagent_done", ev2.Type)
+	assert.NotNil(t, ev2.SubagentResult)
+}
+
+func TestAgentDrainWakeEventsNoPending(t *testing.T) {
+	wm := NewWakeManager()
+	cfg := config.DefaultConfig()
+	p := &mockProvider{}
+	reg := tools.NewRegistry()
+
+	a := New(p, reg, autoApprove, cfg, WithWakeManager(wm))
+
+	ch := make(chan TurnEvent, 16)
+	a.drainWakeEvents(ch)
+	// No events should be emitted.
+	assert.Empty(t, ch)
+}
+
+func TestAgentRunLoopDrainsWakeAfterTools(t *testing.T) {
+	// Simulate: LLM returns a tool call -> tool executes -> wake event is drained.
+	wm := NewWakeManager()
+
+	// A mock tool that, when executed, completes a background task on the
+	// wake manager so there's a pending event to drain.
+	var triggered sync.Once
+	triggerTool := &mockTool{
+		name:        "trigger",
+		description: "triggers a wake event",
+		inputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			triggered.Do(func() {
+				_, cancel := context.WithCancel(context.Background())
+				taskID := wm.Submit("bg-agent", cancel)
+				wm.Complete(taskID, &SubagentResult{Name: "bg-agent", Output: "background done"})
+			})
+			return tools.ToolResult{Content: "triggered"}, nil
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(triggerTool))
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				// First response: tool use
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "trigger"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				// Second response: text after seeing tool result + wake message
+				{Type: "text_delta", Text: "All done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg, WithWakeManager(wm))
+
+	ch, err := a.Turn(context.Background(), "please trigger")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Find the subagent_done event.
+	var foundWake bool
+	for _, ev := range events {
+		if ev.Type == "subagent_done" {
+			foundWake = true
+			assert.Contains(t, ev.Text, "bg-agent")
+			assert.Contains(t, ev.Text, "background done")
+			assert.NotNil(t, ev.SubagentResult)
+			assert.Equal(t, "bg-agent", ev.SubagentResult.Name)
+		}
+	}
+	assert.True(t, foundWake, "should have a subagent_done event from wake manager drain")
+}
