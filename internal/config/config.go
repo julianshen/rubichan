@@ -73,6 +73,7 @@ type AgentConfig struct {
 type TrustRuleConf struct {
 	Tool    string `toml:"tool"`    // Tool name to match, or "*" for all tools
 	Pattern string `toml:"pattern"` // Regex pattern matched against tool input values
+	Glob    string `toml:"glob"`    // "tool(pattern)" glob syntax alternative to tool+pattern
 	Action  string `toml:"action"`  // "allow" or "deny"
 }
 
