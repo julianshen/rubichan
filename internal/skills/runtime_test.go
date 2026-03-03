@@ -616,3 +616,147 @@ func TestRuntimeActivateCommandRegistrationRollback(t *testing.T) {
 	_, ok := registry.Get("collision-skill-tool")
 	assert.False(t, ok, "tool should be rolled back after command registration failure")
 }
+
+// --- mock agent def registrar for testing ---
+
+type mockAgentDefRegistrar struct {
+	defs map[string]*AgentDefinition
+}
+
+func newMockAgentDefRegistrar() *mockAgentDefRegistrar {
+	return &mockAgentDefRegistrar{defs: make(map[string]*AgentDefinition)}
+}
+
+func (r *mockAgentDefRegistrar) Register(def *AgentDefinition) error {
+	if _, ok := r.defs[def.Name]; ok {
+		return fmt.Errorf("agent def %q already registered", def.Name)
+	}
+	r.defs[def.Name] = def
+	return nil
+}
+
+func (r *mockAgentDefRegistrar) Unregister(name string) error {
+	if _, ok := r.defs[name]; !ok {
+		return fmt.Errorf("agent def %q not found", name)
+	}
+	delete(r.defs, name)
+	return nil
+}
+
+// mockBackendWithAgents embeds mockBackend and overrides Agents() to
+// return actual agent definitions for testing agent def registration.
+type mockBackendWithAgents struct {
+	mockBackend
+	agentDefs []*AgentDefinition
+}
+
+func (m *mockBackendWithAgents) Agents() []*AgentDefinition {
+	return m.agentDefs
+}
+
+func TestRuntimeActivateRegistersAgentDefs(t *testing.T) {
+	agentReg := newMockAgentDefRegistrar()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	registry := tools.NewRegistry()
+
+	testDef := &AgentDefinition{
+		Name:         "test-agent",
+		Description:  "A test agent",
+		SystemPrompt: "You are a test agent.",
+		Tools:        []string{"file", "search"},
+		MaxTurns:     5,
+	}
+
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackendWithAgents{
+			mockBackend: mockBackend{
+				tools: []tools.Tool{
+					&runtimeMockTool{name: manifest.Name + "-tool", description: "from " + manifest.Name},
+				},
+				hooks: map[HookPhase]HookHandler{},
+			},
+			agentDefs: []*AgentDefinition{testDef},
+		}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &mockPermissionChecker{}
+	}
+
+	rt := NewRuntime(NewLoader("", ""), s, registry, []string{"agent-skill"}, backendFactory, sandboxFactory)
+	rt.SetAgentDefRegistrar(agentReg)
+
+	m := testManifest("agent-skill")
+	rt.loader.RegisterBuiltin(m)
+	require.NoError(t, rt.Discover(nil))
+
+	// Before activation, agent def should not exist.
+	_, exists := agentReg.defs["test-agent"]
+	assert.False(t, exists, "agent def should not exist before activation")
+
+	// Activate.
+	require.NoError(t, rt.Activate("agent-skill"))
+
+	// After activation, agent def should be registered.
+	def, exists := agentReg.defs["test-agent"]
+	require.True(t, exists, "agent def should exist after activation")
+	assert.Equal(t, "test-agent", def.Name)
+	assert.Equal(t, "A test agent", def.Description)
+
+	// Deactivate.
+	require.NoError(t, rt.Deactivate("agent-skill"))
+
+	// After deactivation, agent def should be unregistered.
+	_, exists = agentReg.defs["test-agent"]
+	assert.False(t, exists, "agent def should be removed after deactivation")
+}
+
+func TestRuntimeActivateAgentDefRegistrationRollback(t *testing.T) {
+	agentReg := newMockAgentDefRegistrar()
+
+	// Pre-register an agent def with the same name to cause a collision.
+	agentReg.defs["collision-agent"] = &AgentDefinition{Name: "collision-agent"}
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	registry := tools.NewRegistry()
+
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackendWithAgents{
+			mockBackend: mockBackend{
+				tools: []tools.Tool{
+					&runtimeMockTool{name: manifest.Name + "-tool", description: "from " + manifest.Name},
+				},
+				hooks: map[HookPhase]HookHandler{},
+			},
+			agentDefs: []*AgentDefinition{{Name: "collision-agent"}},
+		}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &mockPermissionChecker{}
+	}
+
+	rt := NewRuntime(NewLoader("", ""), s, registry, []string{"collision-agent-skill"}, backendFactory, sandboxFactory)
+	rt.SetAgentDefRegistrar(agentReg)
+
+	m := testManifest("collision-agent-skill")
+	rt.loader.RegisterBuiltin(m)
+	require.NoError(t, rt.Discover(nil))
+
+	// Activate should fail due to agent def collision.
+	err = rt.Activate("collision-agent-skill")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "register agent def")
+
+	// Skill should be back to Inactive.
+	assert.Equal(t, SkillStateInactive, rt.skills["collision-agent-skill"].State)
+
+	// The tool registered before the agent def collision should be rolled back.
+	_, ok := registry.Get("collision-agent-skill-tool")
+	assert.False(t, ok, "tool should be rolled back after agent def registration failure")
+}

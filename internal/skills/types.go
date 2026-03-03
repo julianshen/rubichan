@@ -143,6 +143,28 @@ type PermissionChecker interface {
 	ResetTurnLimits()
 }
 
+// AgentDefinition describes a pre-configured subagent template contributed
+// by a skill backend. This type mirrors agent.AgentDef but lives in the
+// skills package to avoid a circular import (agent imports skills).
+type AgentDefinition struct {
+	Name         string
+	Description  string
+	SystemPrompt string
+	Tools        []string
+	MaxTurns     int
+	MaxDepth     int
+	Model        string
+}
+
+// AgentDefRegistrar abstracts the agent definition registry so the skills
+// package can register/unregister agent definitions without importing the
+// agent package. This interface lives here to break the import cycle
+// (same pattern as PermissionChecker).
+type AgentDefRegistrar interface {
+	Register(def *AgentDefinition) error
+	Unregister(name string) error
+}
+
 // SkillBackend is the interface that all skill backends (Starlark, Go plugin,
 // external process) must implement. It handles loading, tool registration,
 // hook registration, and cleanup.
@@ -158,6 +180,9 @@ type SkillBackend interface {
 
 	// Commands returns slash commands provided by this backend.
 	Commands() []commands.SlashCommand
+
+	// Agents returns agent definitions contributed by this backend.
+	Agents() []*AgentDefinition
 
 	// Unload releases resources held by this backend.
 	Unload() error
