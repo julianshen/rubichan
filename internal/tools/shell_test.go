@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -338,7 +339,7 @@ func TestShellToolDetectChangesRunsOnTimeout(t *testing.T) {
 	assert.True(t, pathSet["file.txt"], "file.txt should be detected despite command timeout")
 }
 
-func TestShellToolInterceptorBlocksRecursiveRM(t *testing.T) {
+func TestShellToolInterceptorAllowsRecursiveRMInsideWorkdir(t *testing.T) {
 	dir := t.TempDir()
 	st := NewShellTool(dir, 30*time.Second)
 
@@ -350,11 +351,29 @@ func TestShellToolInterceptorBlocksRecursiveRM(t *testing.T) {
 	})
 	result, err := st.Execute(context.Background(), input)
 	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	_, statErr := os.Stat(victim)
+	assert.Error(t, statErr, "in-workdir recursive rm should execute")
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestShellToolInterceptorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
+	dir := t.TempDir()
+	parentVictim := filepath.Join(filepath.Dir(dir), "outside-victim")
+	require.NoError(t, os.Mkdir(parentVictim, 0755))
+	t.Cleanup(func() { _ = os.RemoveAll(parentVictim) })
+
+	st := NewShellTool(dir, 30*time.Second)
+	input, _ := json.Marshal(map[string]string{
+		"command": "rm -rf ../outside-victim",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "command blocked")
-	assert.Contains(t, result.Content, "recursive rm")
-	_, statErr := os.Stat(victim)
-	assert.NoError(t, statErr, "blocked command should not execute")
+	assert.Contains(t, result.Content, "escape working directory")
+	_, statErr := os.Stat(parentVictim)
+	assert.NoError(t, statErr, "outside target should remain because command is blocked")
 }
 
 func TestShellToolInterceptorWarnsOnRedirect(t *testing.T) {
@@ -399,6 +418,89 @@ func TestShellToolInterceptorRoutesApplyPatchToFileTool(t *testing.T) {
 	result, err := st.Execute(context.Background(), input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content, "command blocked")
+	assert.Contains(t, result.Content, "command requires routing")
 	assert.Contains(t, result.Content, "routed through the file tool")
+}
+
+func TestShellToolInterceptorRoutesApplyPatchAfterCommandSeparator(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo ok; apply_patch foo",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command requires routing")
+}
+
+func TestShellToolInterceptorRoutesApplyPatchWithEnvPrefix(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "FOO=1 apply_patch foo",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command requires routing")
+}
+
+func TestShellToolInterceptorRoutesApplyPatchViaShC(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": `sh -c 'apply_patch foo'`,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command requires routing")
+}
+
+func TestShellToolInterceptorRoutesApplyPatchInsideQuotedSeparator(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": `sh -c "echo \"a|b\"; apply_patch foo"`,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command requires routing")
+}
+
+func TestShellToolInterceptorRoutesApplyPatchViaEnv(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "env FOO=1 apply_patch foo",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command requires routing")
+}
+
+func TestShellToolInterceptorBlocksRecursiveRMViaShC(t *testing.T) {
+	dir := t.TempDir()
+	parentVictim := filepath.Join(filepath.Dir(dir), "outside-victim-shc")
+	require.NoError(t, os.Mkdir(parentVictim, 0755))
+	t.Cleanup(func() { _ = os.RemoveAll(parentVictim) })
+
+	st := NewShellTool(dir, 30*time.Second)
+	input, _ := json.Marshal(map[string]string{
+		"command": "sh -c 'rm -rf ../outside-victim-shc'",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command blocked")
+	_, statErr := os.Stat(parentVictim)
+	assert.NoError(t, statErr, "outside target should remain because command is blocked")
 }
