@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -144,9 +145,12 @@ func patternMatchesInput(pattern string, inputStrings []string) bool {
 	if pattern == "" {
 		return true
 	}
-	regex := globToRegex(pattern)
+	re, err := regexp.Compile(globToRegex(pattern))
+	if err != nil {
+		return false
+	}
 	for _, s := range inputStrings {
-		if matchGlob(regex, s) {
+		if re.MatchString(s) {
 			return true
 		}
 	}
@@ -189,84 +193,6 @@ func globToRegex(pattern string) string {
 	}
 	b.WriteString("$")
 	return b.String()
-}
-
-// matchGlob matches a string against a pre-compiled glob regex pattern.
-func matchGlob(regexPattern, s string) bool {
-	// Use simple character-by-character matching to avoid regexp import.
-	return matchRegex(regexPattern, s)
-}
-
-// matchRegex performs simple regex matching supporting:
-// ^, $, ., .*, character classes [abc], and escaped chars.
-// This is intentionally limited to the subset needed for glob patterns.
-func matchRegex(pattern, s string) bool {
-	// Strip anchors for the recursive matcher.
-	p := pattern
-	if strings.HasPrefix(p, "^") {
-		p = p[1:]
-	}
-	if strings.HasSuffix(p, "$") {
-		p = p[:len(p)-1]
-	}
-	return regexMatch(p, s)
-}
-
-// regexMatch recursively matches pattern p against string s.
-func regexMatch(p, s string) bool {
-	if p == "" {
-		return s == ""
-	}
-
-	// Handle .* (greedy match for any number of chars).
-	if strings.HasPrefix(p, ".*") {
-		rest := p[2:]
-		// Try matching rest against every suffix of s.
-		for i := len(s); i >= 0; i-- {
-			if regexMatch(rest, s[i:]) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Handle single . (any char).
-	if p[0] == '.' && (len(p) < 2 || p[1] != '*') {
-		if len(s) == 0 {
-			return false
-		}
-		return regexMatch(p[1:], s[1:])
-	}
-
-	// Handle character class [abc].
-	if p[0] == '[' {
-		end := strings.IndexByte(p, ']')
-		if end == -1 {
-			return false
-		}
-		if len(s) == 0 {
-			return false
-		}
-		chars := p[1:end]
-		if !strings.ContainsRune(chars, rune(s[0])) {
-			return false
-		}
-		return regexMatch(p[end+1:], s[1:])
-	}
-
-	// Handle escaped char.
-	if p[0] == '\\' && len(p) >= 2 {
-		if len(s) == 0 || s[0] != p[1] {
-			return false
-		}
-		return regexMatch(p[2:], s[1:])
-	}
-
-	// Literal match.
-	if len(s) == 0 || p[0] != s[0] {
-		return false
-	}
-	return regexMatch(p[1:], s[1:])
 }
 
 // extractStringValues recursively extracts all string values from a

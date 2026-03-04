@@ -572,15 +572,6 @@ func (a *Agent) getSkillPromptText() string {
 	return sb.String()
 }
 
-// dispatchHook dispatches a hook event via the skill runtime. If no runtime is
-// configured, it returns nil. This is safe to call even when skillRuntime is nil.
-func (a *Agent) dispatchHook(event skills.HookEvent) (*skills.HookResult, error) {
-	if a.skillRuntime == nil {
-		return nil, nil
-	}
-	return a.skillRuntime.DispatchHook(event)
-}
-
 // makeDoneEvent constructs a "done" TurnEvent, attaching the cumulative diff
 // summary from the DiffTracker if one is attached.
 func (a *Agent) makeDoneEvent(inputTokens, outputTokens int) TurnEvent {
