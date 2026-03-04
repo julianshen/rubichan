@@ -339,6 +339,28 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	}
 	a.promptBuilder = NewPromptBuilder()
 
+	// Ensure a pipeline is always available. When no pipeline is provided
+	// via WithPipeline, create a default one with hook and output middlewares
+	// matching the behavior of the former legacy execution path.
+	if a.pipeline == nil {
+		var middlewares []toolexec.Middleware
+
+		// Hook middleware for before-tool-call dispatch.
+		hookAdapter := &toolexec.SkillHookAdapter{Runtime: a.skillRuntime}
+		middlewares = append(middlewares, toolexec.HookMiddleware(hookAdapter))
+
+		// Post-hook middleware for after-tool-result dispatch.
+		middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
+
+		// Output offloader middleware when persistence is available.
+		if a.resultStore != nil {
+			offloader := &toolexec.ResultStoreAdapter{Offloader: a.resultStore}
+			middlewares = append(middlewares, toolexec.OutputManagerMiddleware(offloader))
+		}
+
+		a.pipeline = toolexec.NewPipeline(toolexec.RegistryExecutor(t), middlewares...)
+	}
+
 	// Initialize tool deferral manager.
 	deferralThreshold := cfg.Agent.ToolDeferralThreshold
 	if deferralThreshold <= 0 {
@@ -878,110 +900,17 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, tc provider.T
 	return a.executeSingleTool(ctx, tc)
 }
 
-// executeSingleTool dispatches hooks, looks up, and executes a tool.
-// Used by both the parallel and sequential paths. When a pipeline is
-// attached, tool execution is delegated to the pipeline. Otherwise the
-// legacy inline path is used.
+// executeSingleTool delegates tool execution to the pipeline.
+// Used by both the parallel and sequential paths.
 func (a *Agent) executeSingleTool(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-	if a.pipeline != nil {
-		result := a.pipeline.Execute(ctx, toolexec.ToolCall{
-			ID: tc.ID, Name: tc.Name, Input: tc.Input,
-		})
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result.Content,
-			isError:   result.IsError,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result.Content, result.DisplayContent, result.IsError),
-		}
-	}
-	return a.executeSingleToolLegacy(ctx, tc)
-}
-
-// executeSingleToolLegacy is the original inline tool execution path,
-// kept as a fallback when no pipeline is attached.
-func (a *Agent) executeSingleToolLegacy(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-	// Dispatch HookOnBeforeToolCall hook.
-	hookResult, hookErr := a.dispatchHook(skills.HookEvent{
-		Phase: skills.HookOnBeforeToolCall,
-		Data: map[string]any{
-			"tool_name": tc.Name,
-			"input":     string(tc.Input),
-		},
-		Ctx: ctx,
+	result := a.pipeline.Execute(ctx, toolexec.ToolCall{
+		ID: tc.ID, Name: tc.Name, Input: tc.Input,
 	})
-	if hookErr != nil {
-		result := fmt.Sprintf("hook error: %s", hookErr)
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
-	}
-	if hookResult != nil && hookResult.Cancel {
-		result := "tool call cancelled by skill"
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
-	}
-
-	tool, found := a.tools.Get(tc.Name)
-	if !found {
-		result := fmt.Sprintf("unknown tool: %s", tc.Name)
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
-	}
-
-	toolResult, execErr := tool.Execute(ctx, tc.Input)
-	if execErr != nil {
-		result := fmt.Sprintf("tool execution error: %s", execErr)
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
-	}
-
-	// Dispatch HookOnAfterToolResult hook.
-	afterResult, afterErr := a.dispatchHook(skills.HookEvent{
-		Phase: skills.HookOnAfterToolResult,
-		Data: map[string]any{
-			"tool_name": tc.Name,
-			"content":   toolResult.Content,
-			"is_error":  toolResult.IsError,
-		},
-		Ctx: ctx,
-	})
-	if afterErr == nil && afterResult != nil && afterResult.Modified != nil {
-		if modContent, ok := afterResult.Modified["content"].(string); ok {
-			toolResult.Content = modContent
-			// Clear DisplayContent so user sees modified content, not the
-			// original (e.g., when a security hook strips sensitive data).
-			toolResult.DisplayContent = ""
-		}
-	}
-
-	// Offload large tool results to disk if ResultStore is attached.
-	if a.resultStore != nil && !toolResult.IsError {
-		offloaded, offErr := a.resultStore.OffloadResult(tc.Name, tc.ID, toolResult.Content)
-		if offErr == nil {
-			toolResult.Content = offloaded
-		}
-	}
-
 	return toolExecResult{
 		toolUseID: tc.ID,
-		content:   toolResult.Content,
-		isError:   toolResult.IsError,
-		event:     makeToolResultEvent(tc.ID, tc.Name, toolResult.Content, toolResult.DisplayContent, toolResult.IsError),
+		content:   result.Content,
+		isError:   result.IsError,
+		event:     makeToolResultEvent(tc.ID, tc.Name, result.Content, result.DisplayContent, result.IsError),
 	}
 }
 
