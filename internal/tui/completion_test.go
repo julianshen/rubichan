@@ -181,7 +181,7 @@ func TestCompletionOverlayEscapeDismisses(t *testing.T) {
 	assert.True(t, consumed)
 	assert.False(t, co.Visible())
 
-	// Dismissed flag prevents re-show until input changes away from /
+	// Dismissed flag prevents re-show only for unchanged slash input
 	co.Update("/c")
 	assert.True(t, co.Visible(), "should re-open when slash prefix changes")
 
@@ -192,6 +192,24 @@ func TestCompletionOverlayEscapeDismisses(t *testing.T) {
 	// Now slash should work again
 	co.Update("/")
 	assert.True(t, co.Visible())
+}
+
+func TestCompletionOverlayEscapeKeepsHiddenForUnchangedSlashOnly(t *testing.T) {
+	reg := newTestRegistry()
+	co := NewCompletionOverlay(reg, 80)
+
+	co.Update("/")
+	require.True(t, co.Visible())
+
+	consumed := co.HandleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	assert.True(t, consumed)
+	assert.False(t, co.Visible())
+
+	co.Update("/")
+	assert.False(t, co.Visible(), "should remain hidden for unchanged '/' input")
+
+	co.Update("/c")
+	assert.True(t, co.Visible(), "should re-open after slash input changes")
 }
 
 func TestCompletionOverlayEscapeKeepsHiddenForSameInput(t *testing.T) {

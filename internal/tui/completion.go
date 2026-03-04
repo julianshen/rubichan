@@ -20,7 +20,7 @@ type CompletionOverlay struct {
 	candidates []commands.Candidate
 	selected   int
 	visible    bool
-	dismissed  bool // prevents re-show after Escape until input changes
+	dismissed  bool // prevents re-show after Escape for unchanged slash input
 	width      int
 	lastPrefix string
 }
