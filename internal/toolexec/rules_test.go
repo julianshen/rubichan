@@ -146,6 +146,66 @@ func TestRuleEngineSourceIsInformationalOnly(t *testing.T) {
 	assert.Equal(t, toolexec.ActionDeny, action, "deny from any source wins over allow from local source")
 }
 
+// --- Middleware tests ---
+
+func TestRuleEngineMiddlewareDenyShortCircuits(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{
+			Category: toolexec.CategoryBash,
+			Action:   toolexec.ActionDeny,
+		},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+	mw := toolexec.RuleEngineMiddleware(engine)
+
+	baseCalled := false
+	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+		baseCalled = true
+		return toolexec.Result{Content: "should not reach"}
+	}
+
+	handler := mw(base)
+	ctx := toolexec.WithCategory(context.Background(), toolexec.CategoryBash)
+	result := handler(ctx, toolexec.ToolCall{
+		ID:    "call-1",
+		Name:  "shell",
+		Input: json.RawMessage(`{"command":"rm -rf /"}`),
+	})
+
+	assert.False(t, baseCalled, "base handler should not be called when deny short-circuits")
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, `tool "shell" blocked by deny rule`)
+}
+
+func TestRuleEngineMiddlewareAllowPassesThrough(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{
+			Category: toolexec.CategoryFileRead,
+			Action:   toolexec.ActionAllow,
+		},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+	mw := toolexec.RuleEngineMiddleware(engine)
+
+	var capturedAction toolexec.RuleAction
+	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+		capturedAction = toolexec.RuleActionFromContext(ctx)
+		return toolexec.Result{Content: "file contents"}
+	}
+
+	handler := mw(base)
+	ctx := toolexec.WithCategory(context.Background(), toolexec.CategoryFileRead)
+	result := handler(ctx, toolexec.ToolCall{
+		ID:    "call-2",
+		Name:  "file",
+		Input: json.RawMessage(`{"path":"/tmp/test.go"}`),
+	})
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, "file contents", result.Content)
+	assert.Equal(t, toolexec.ActionAllow, capturedAction)
+}
+
 // --- Context helpers tests ---
 
 func TestRuleActionFromContext(t *testing.T) {

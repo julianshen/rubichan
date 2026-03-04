@@ -3,6 +3,7 @@ package toolexec
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -303,4 +304,27 @@ func extractStringValues(data json.RawMessage) []string {
 
 	// Numbers, booleans, null — no strings to extract.
 	return nil
+}
+
+// RuleEngineMiddleware returns a Middleware that evaluates the rule engine
+// before calling the next handler. If the engine returns ActionDeny, the
+// middleware short-circuits with an error result. Otherwise, the action
+// is stored in the context for downstream handlers.
+func RuleEngineMiddleware(engine *RuleEngine) Middleware {
+	return func(next HandlerFunc) HandlerFunc {
+		return func(ctx context.Context, tc ToolCall) Result {
+			cat := CategoryFromContext(ctx)
+			action := engine.Evaluate(cat, tc.Name, tc.Input)
+
+			if action == ActionDeny {
+				return Result{
+					Content: fmt.Sprintf("tool %q blocked by deny rule", tc.Name),
+					IsError: true,
+				}
+			}
+
+			ctx = WithRuleAction(ctx, action)
+			return next(ctx, tc)
+		}
+	}
 }
