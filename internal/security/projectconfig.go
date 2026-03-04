@@ -11,9 +11,18 @@ import (
 
 // ProjectSecurityConfig represents a project-level .security.yaml file.
 type ProjectSecurityConfig struct {
-	Rules     []CustomRule `yaml:"rules"`
-	Overrides []Override   `yaml:"overrides"`
-	CI        CIConfig     `yaml:"ci"`
+	Rules     []CustomRule   `yaml:"rules"`
+	Overrides []Override     `yaml:"overrides"`
+	CI        CIConfig       `yaml:"ci"`
+	ToolRules []ToolRuleYAML `yaml:"tool_rules"`
+}
+
+// ToolRuleYAML defines a tool permission rule in .security.yaml.
+type ToolRuleYAML struct {
+	Category string `yaml:"category"`
+	Tool     string `yaml:"tool"`
+	Pattern  string `yaml:"pattern"`
+	Action   string `yaml:"action"`
 }
 
 // CustomRule defines a project-specific regex-based security rule.
