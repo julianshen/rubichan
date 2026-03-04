@@ -16,6 +16,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
@@ -156,6 +157,13 @@ func WithWakeManager(wm *WakeManager) AgentOption {
 	}
 }
 
+// WithPipeline attaches a tool execution pipeline to the agent.
+func WithPipeline(p *toolexec.Pipeline) AgentOption {
+	return func(a *Agent) {
+		a.pipeline = p
+	}
+}
+
 // WithAgentMD injects project-level AGENT.md content into the system prompt.
 func WithAgentMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -206,6 +214,7 @@ type Agent struct {
 	diffTracker      *tools.DiffTracker
 	turnMu           sync.Mutex // serializes Turn() calls to prevent DiffTracker race
 	wakeManager      *WakeManager
+	pipeline         *toolexec.Pipeline
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -870,8 +879,27 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, tc provider.T
 }
 
 // executeSingleTool dispatches hooks, looks up, and executes a tool.
-// Used by both the parallel and sequential paths.
+// Used by both the parallel and sequential paths. When a pipeline is
+// attached, tool execution is delegated to the pipeline. Otherwise the
+// legacy inline path is used.
 func (a *Agent) executeSingleTool(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+	if a.pipeline != nil {
+		result := a.pipeline.Execute(ctx, toolexec.ToolCall{
+			ID: tc.ID, Name: tc.Name, Input: tc.Input,
+		})
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result.Content,
+			isError:   result.IsError,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result.Content, result.DisplayContent, result.IsError),
+		}
+	}
+	return a.executeSingleToolLegacy(ctx, tc)
+}
+
+// executeSingleToolLegacy is the original inline tool execution path,
+// kept as a fallback when no pipeline is attached.
+func (a *Agent) executeSingleToolLegacy(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
 	// Dispatch HookOnBeforeToolCall hook.
 	hookResult, hookErr := a.dispatchHook(skills.HookEvent{
 		Phase: skills.HookOnBeforeToolCall,
