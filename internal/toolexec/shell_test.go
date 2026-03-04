@@ -1,6 +1,8 @@
 package toolexec_test
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/toolexec"
@@ -104,4 +106,103 @@ func TestParseCommandSemicolon(t *testing.T) {
 
 	assert.Equal(t, "rm", parts[1].Prefix)
 	assert.Equal(t, "rm -rf /", parts[1].Full)
+}
+
+// --- Validator tests ---
+
+func TestShellValidatorDeniesSubCommand(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{
+			Category: toolexec.CategoryBash,
+			Pattern:  "rm *",
+			Action:   toolexec.ActionDeny,
+		},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+	validator := toolexec.NewShellValidator(engine)
+
+	// Compound command where second part is denied.
+	err := validator.Validate(context.Background(), "ls -la && rm -rf /")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "rm")
+}
+
+func TestShellValidatorAllowsCleanCommand(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{
+			Category: toolexec.CategoryBash,
+			Pattern:  "rm *",
+			Action:   toolexec.ActionDeny,
+		},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+	validator := toolexec.NewShellValidator(engine)
+
+	err := validator.Validate(context.Background(), "ls -la")
+	assert.NoError(t, err)
+}
+
+// --- Middleware tests ---
+
+func TestShellSafetyMiddlewareBlocksDangerousCommand(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{
+			Category: toolexec.CategoryBash,
+			Pattern:  "rm *",
+			Action:   toolexec.ActionDeny,
+		},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+	validator := toolexec.NewShellValidator(engine)
+	mw := toolexec.ShellSafetyMiddleware(validator)
+
+	baseCalled := false
+	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+		baseCalled = true
+		return toolexec.Result{Content: "executed"}
+	}
+
+	handler := mw(base)
+	ctx := toolexec.WithCategory(context.Background(), toolexec.CategoryBash)
+	result := handler(ctx, toolexec.ToolCall{
+		ID:    "call-1",
+		Name:  "shell",
+		Input: json.RawMessage(`{"command":"echo ok && rm -rf /"}`),
+	})
+
+	assert.False(t, baseCalled, "base should not be called when command is blocked")
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "shell command blocked")
+}
+
+func TestShellSafetyMiddlewareSkipsNonBash(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{
+			Category: toolexec.CategoryBash,
+			Pattern:  "rm *",
+			Action:   toolexec.ActionDeny,
+		},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+	validator := toolexec.NewShellValidator(engine)
+	mw := toolexec.ShellSafetyMiddleware(validator)
+
+	baseCalled := false
+	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+		baseCalled = true
+		return toolexec.Result{Content: "file contents"}
+	}
+
+	handler := mw(base)
+	// Use CategoryFileRead — middleware should pass through.
+	ctx := toolexec.WithCategory(context.Background(), toolexec.CategoryFileRead)
+	result := handler(ctx, toolexec.ToolCall{
+		ID:    "call-2",
+		Name:  "file",
+		Input: json.RawMessage(`{"path":"/tmp/test.go"}`),
+	})
+
+	assert.True(t, baseCalled, "base should be called for non-bash categories")
+	assert.False(t, result.IsError)
+	assert.Equal(t, "file contents", result.Content)
 }

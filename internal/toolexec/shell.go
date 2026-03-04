@@ -1,6 +1,8 @@
 package toolexec
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -103,4 +105,70 @@ func wordToString(w *syntax.Word) string {
 		}
 	}
 	return b.String()
+}
+
+// ShellValidator validates shell commands by parsing them into sub-commands
+// and checking each against the rule engine.
+type ShellValidator struct {
+	engine *RuleEngine
+}
+
+// NewShellValidator creates a ShellValidator backed by the given RuleEngine.
+func NewShellValidator(engine *RuleEngine) *ShellValidator {
+	return &ShellValidator{engine: engine}
+}
+
+// Validate parses the command string and checks each sub-command against the
+// rule engine with CategoryBash. Returns an error if any sub-command is denied.
+func (v *ShellValidator) Validate(_ context.Context, command string) error {
+	parts, err := ParseCommand(command)
+	if err != nil {
+		return fmt.Errorf("shell validation parse error: %w", err)
+	}
+
+	for _, part := range parts {
+		input := json.RawMessage(fmt.Sprintf(`{"command":%q}`, part.Full))
+		action := v.engine.Evaluate(CategoryBash, "shell", input)
+		if action == ActionDeny {
+			return fmt.Errorf("sub-command denied: %s", part.Full)
+		}
+	}
+	return nil
+}
+
+// ShellSafetyMiddleware returns a Middleware that validates shell commands
+// before execution. It only activates for CategoryBash tool calls.
+func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
+	return func(next HandlerFunc) HandlerFunc {
+		return func(ctx context.Context, tc ToolCall) Result {
+			if CategoryFromContext(ctx) != CategoryBash {
+				return next(ctx, tc)
+			}
+
+			command := extractCommandField(tc.Input)
+			if command == "" {
+				return next(ctx, tc)
+			}
+
+			if err := validator.Validate(ctx, command); err != nil {
+				return Result{
+					Content: fmt.Sprintf("shell command blocked: %s", err),
+					IsError: true,
+				}
+			}
+
+			return next(ctx, tc)
+		}
+	}
+}
+
+// extractCommandField extracts the "command" string value from JSON input.
+func extractCommandField(input json.RawMessage) string {
+	var obj struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(input, &obj); err != nil {
+		return ""
+	}
+	return obj.Command
 }
