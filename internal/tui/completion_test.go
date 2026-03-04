@@ -183,7 +183,7 @@ func TestCompletionOverlayEscapeDismisses(t *testing.T) {
 
 	// Dismissed flag prevents re-show until input changes away from /
 	co.Update("/c")
-	assert.False(t, co.Visible(), "should stay hidden while dismissed")
+	assert.True(t, co.Visible(), "should re-open when slash prefix changes")
 
 	// Typing something without / clears dismissed
 	co.Update("hello")
@@ -192,6 +192,21 @@ func TestCompletionOverlayEscapeDismisses(t *testing.T) {
 	// Now slash should work again
 	co.Update("/")
 	assert.True(t, co.Visible())
+}
+
+func TestCompletionOverlayEscapeKeepsHiddenForSameInput(t *testing.T) {
+	reg := newTestRegistry()
+	co := NewCompletionOverlay(reg, 80)
+
+	co.Update("/c")
+	require.True(t, co.Visible())
+
+	consumed := co.HandleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	assert.True(t, consumed)
+	assert.False(t, co.Visible())
+
+	co.Update("/c")
+	assert.False(t, co.Visible(), "should remain hidden for unchanged slash input")
 }
 
 func TestCompletionOverlaySelectedResetOnFilterChange(t *testing.T) {

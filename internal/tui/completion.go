@@ -49,9 +49,14 @@ func (co *CompletionOverlay) Update(input string) {
 		return
 	}
 
-	// If dismissed, stay hidden until input no longer starts with /.
+	// If dismissed, keep hidden until the user changes the slash input.
+	// This lets Escape close the menu for the current prefix while still
+	// allowing completion to re-open as the user keeps typing.
 	if co.dismissed {
-		return
+		if rest := input[1:]; rest == co.lastPrefix {
+			return
+		}
+		co.dismissed = false
 	}
 
 	// Extract the text after "/".
