@@ -360,11 +360,19 @@ func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
 	return e
 }
 
+// pipelineComponents holds the pipeline and its key components for
+// integration with the approval system.
+type pipelineComponents struct {
+	Pipeline   *toolexec.Pipeline
+	Classifier *toolexec.Classifier
+	RuleEngine *toolexec.RuleEngine
+}
+
 // buildPipeline constructs a tool execution pipeline from config rules,
 // project .security.yaml, and the skill runtime. The cwd parameter is the
 // project root (used for loading .security.yaml files). The rt parameter
 // may be nil when no skill runtime is configured.
-func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt *skills.Runtime) *toolexec.Pipeline {
+func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt *skills.Runtime) pipelineComponents {
 	classifier := toolexec.NewClassifier(nil)
 
 	// Collect permission rules from all sources.
@@ -398,7 +406,7 @@ func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt 
 	shellValidator := toolexec.NewShellValidator(ruleEngine)
 	hookAdapter := &toolexec.SkillHookAdapter{Runtime: rt}
 
-	return toolexec.NewPipeline(
+	p := toolexec.NewPipeline(
 		toolexec.RegistryExecutor(registry),
 		toolexec.ClassifierMiddleware(classifier),
 		toolexec.RuleEngineMiddleware(ruleEngine),
@@ -407,6 +415,25 @@ func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt 
 		toolexec.PostHookMiddleware(hookAdapter),
 		toolexec.OutputManagerMiddleware(&toolexec.ResultStoreAdapter{Offloader: nil}),
 	)
+	return pipelineComponents{Pipeline: p, Classifier: classifier, RuleEngine: ruleEngine}
+}
+
+// ruleEngineChecker adapts the toolexec.RuleEngine to the agent.ApprovalChecker
+// interface. ActionAllow maps to TrustRuleApproved (auto-approve); all other
+// actions map to ApprovalRequired (deny is already handled by the pipeline
+// middleware before approval is consulted).
+type ruleEngineChecker struct {
+	classifier *toolexec.Classifier
+	engine     *toolexec.RuleEngine
+}
+
+func (c *ruleEngineChecker) CheckApproval(tool string, input json.RawMessage) agent.ApprovalResult {
+	cat := c.classifier.Classify(tool)
+	action := c.engine.Evaluate(cat, tool, input)
+	if action == toolexec.ActionAllow {
+		return agent.TrustRuleApproved
+	}
+	return agent.ApprovalRequired
 }
 
 // autoDetectProvider checks if Ollama should be auto-selected.
@@ -736,14 +763,24 @@ func runInteractive() error {
 		return fmt.Errorf("register built-in command %q: %w", "model", err)
 	}
 
+	// Build tool execution pipeline first so its rule engine can feed
+	// the approval system.
+	pc := buildPipeline(registry, cfg, cwd, rt)
+	opts = append(opts, agent.WithPipeline(pc.Pipeline))
+
 	if !autoApprove {
 		approvalFunc = model.MakeApprovalFunc()
 
-		// Build the approval checker: compose session cache with trust rules.
-		// Session cache (TUI "always" decisions) is checked first, then
-		// config-based trust rules (both regex and glob).
+		// Build the approval checker: compose session cache, pipeline rule
+		// engine, and config-based trust rules. Session cache (TUI "always"
+		// decisions) is checked first, then the pipeline's rule engine
+		// (category-based allow rules), then config trust rules.
 		var checkers []agent.ApprovalChecker
 		checkers = append(checkers, model) // session cache
+		checkers = append(checkers, &ruleEngineChecker{
+			classifier: pc.Classifier,
+			engine:     pc.RuleEngine,
+		})
 		if len(cfg.Agent.TrustRules) > 0 {
 			regexRules, globRules := splitTrustRules(cfg.Agent.TrustRules)
 			if err := agent.ValidateTrustRules(regexRules, globRules); err != nil {
@@ -761,10 +798,6 @@ func runInteractive() error {
 
 	// Attach the wake manager for background subagent notifications.
 	opts = append(opts, agent.WithWakeManager(wakeManager))
-
-	// Build tool execution pipeline.
-	interactivePipeline := buildPipeline(registry, cfg, cwd, rt)
-	opts = append(opts, agent.WithPipeline(interactivePipeline))
 
 	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
@@ -944,8 +977,8 @@ func runHeadless() error {
 	opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
 
 	// Build tool execution pipeline.
-	headlessPipeline := buildPipeline(registry, cfg, cwd, rt)
-	opts = append(opts, agent.WithPipeline(headlessPipeline))
+	hpc := buildPipeline(registry, cfg, cwd, rt)
+	opts = append(opts, agent.WithPipeline(hpc.Pipeline))
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
