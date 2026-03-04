@@ -223,3 +223,166 @@ func TestRuleActionFromContext(t *testing.T) {
 	action = toolexec.RuleActionFromContext(ctx)
 	assert.Equal(t, toolexec.ActionAllow, action)
 }
+
+// --- Glob pattern coverage tests ---
+
+func TestRuleEngineGlobQuestionMark(t *testing.T) {
+	// '?' matches a single character.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "ca?", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	// "cat" matches "ca?"
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"cat"}`))
+	assert.Equal(t, toolexec.ActionDeny, action, "'cat' should match 'ca?'")
+
+	// "ca" does not match "ca?" (? requires exactly one char)
+	action = engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"ca"}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "'ca' should not match 'ca?'")
+}
+
+func TestRuleEngineGlobCharacterClass(t *testing.T) {
+	// '[abc]' matches any single character in the set.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "[abc]at", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"bat"}`))
+	assert.Equal(t, toolexec.ActionDeny, action, "'bat' should match '[abc]at'")
+
+	action = engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"dat"}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "'dat' should not match '[abc]at'")
+}
+
+func TestRuleEngineGlobCharacterClassNoMatch(t *testing.T) {
+	// Character class with empty string input.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "[xy]", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":""}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "empty string should not match '[xy]'")
+}
+
+func TestRuleEngineGlobUnclosedBracket(t *testing.T) {
+	// '[abc' with no closing bracket is treated as literal '['.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "[abc", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	// Should not match "a" because the bracket is escaped to literal.
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"a"}`))
+	assert.Equal(t, toolexec.ActionAsk, action)
+}
+
+func TestRuleEngineGlobEscapedSpecialChars(t *testing.T) {
+	// Patterns containing regex special chars should be escaped.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "file.txt", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	// '.' in the pattern should be literal, not regex wildcard.
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"file.txt"}`))
+	assert.Equal(t, toolexec.ActionDeny, action, "'file.txt' should match literal dot pattern")
+
+	action = engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"fileXtxt"}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "'fileXtxt' should not match literal dot pattern")
+}
+
+func TestRuleEngineRegexSingleDotNoMatch(t *testing.T) {
+	// Single '?' at end of pattern with empty remaining string.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "x?", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	// "x" should not match "x?" — '?' needs exactly one char.
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"x"}`))
+	assert.Equal(t, toolexec.ActionAsk, action)
+}
+
+func TestRuleEngineExtractStringValuesArray(t *testing.T) {
+	// JSON with array values.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "secret*", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	input := json.RawMessage(`{"args":["safe-cmd","secret-file"]}`)
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", input)
+	assert.Equal(t, toolexec.ActionDeny, action, "should match string inside JSON array")
+}
+
+func TestRuleEngineExtractStringValuesNestedObject(t *testing.T) {
+	// JSON with nested objects.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "password*", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	input := json.RawMessage(`{"config":{"key":"password123"}}`)
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", input)
+	assert.Equal(t, toolexec.ActionDeny, action, "should match string inside nested JSON object")
+}
+
+func TestRuleEngineExtractStringValuesEmptyInput(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "*", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	// Empty JSON input has no string values, so the pattern with
+	// empty patternMatchesInput returns true (empty pattern matches all).
+	// But here the pattern is "*", not empty, so it checks extracted strings.
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "no strings in input means pattern doesn't match")
+}
+
+func TestRuleEngineExtractStringValuesNonStringJSON(t *testing.T) {
+	// JSON with only non-string types (numbers and booleans).
+	// Note: JSON null unmarshals to empty string in Go, so we only use
+	// numbers and bools which produce Unmarshal errors.
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Pattern: "hello*", Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	input := json.RawMessage(`{"count":42,"active":true}`)
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", input)
+	assert.Equal(t, toolexec.ActionAsk, action, "non-string JSON values should not produce matches")
+}
+
+func TestRuleEngineAskOverridesAllow(t *testing.T) {
+	rules := []toolexec.PermissionRule{
+		{Category: toolexec.CategoryBash, Action: toolexec.ActionAllow},
+		{Category: toolexec.CategoryBash, Action: toolexec.ActionAsk},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"ls"}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "ask should take precedence over allow")
+}
+
+func TestRuleEngineUnknownCategoryDefaultsToAsk(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+
+	// A category that does not exist in categoryDefaults.
+	action := engine.Evaluate(toolexec.Category("unknown_category"), "tool", json.RawMessage(`{}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "unknown category should default to ask")
+}
+
+func TestRuleEngineEmptyCategoryAndToolSkipsRule(t *testing.T) {
+	// Rule with both Category and Tool empty should not match anything.
+	rules := []toolexec.PermissionRule{
+		{Action: toolexec.ActionDeny},
+	}
+	engine := toolexec.NewRuleEngine(rules)
+
+	action := engine.Evaluate(toolexec.CategoryBash, "shell", json.RawMessage(`{"command":"rm -rf /"}`))
+	assert.Equal(t, toolexec.ActionAsk, action, "rule with empty category and tool should be skipped")
+}
