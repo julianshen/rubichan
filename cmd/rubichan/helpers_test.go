@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -81,10 +82,18 @@ func TestToolsConfigShouldEnableRespectsAppleProjectContext(t *testing.T) {
 		},
 	}
 	assert.False(t, tc.ShouldEnable("xcode_build"))
+	assert.False(t, tc.ShouldEnable("swift_test"))
+	assert.False(t, tc.ShouldEnable("sim_boot"))
+	assert.False(t, tc.ShouldEnable("codesign_verify"))
+	assert.False(t, tc.ShouldEnable("xcrun"))
 	assert.True(t, tc.ShouldEnable("file"))
 
 	tc.ProjectContext.AppleSkillRequested = true
 	assert.True(t, tc.ShouldEnable("xcode_build"))
+	assert.True(t, tc.ShouldEnable("swift_test"))
+	assert.True(t, tc.ShouldEnable("sim_boot"))
+	assert.True(t, tc.ShouldEnable("codesign_verify"))
+	assert.True(t, tc.ShouldEnable("xcrun"))
 }
 
 func TestToolsConfigShouldEnableRespectsFeatureFlags(t *testing.T) {
@@ -94,6 +103,31 @@ func TestToolsConfigShouldEnableRespectsFeatureFlags(t *testing.T) {
 	}
 	assert.False(t, tc.ShouldEnable("shell"))
 	assert.True(t, tc.ShouldEnable("file"))
+}
+
+func TestIsAppleOnlyTool(t *testing.T) {
+	assert.True(t, isAppleOnlyTool("xcode_build"))
+	assert.True(t, isAppleOnlyTool("swift_test"))
+	assert.True(t, isAppleOnlyTool("sim_boot"))
+	assert.True(t, isAppleOnlyTool("codesign_verify"))
+	assert.True(t, isAppleOnlyTool("xcrun"))
+	assert.False(t, isAppleOnlyTool("file"))
+}
+
+func TestDetectModelCapabilities(t *testing.T) {
+	assert.True(t, detectModelCapabilities(nil).SupportsToolUse)
+
+	cfg := config.DefaultConfig()
+	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
+
+	cfg.Provider.Default = "ollama"
+	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
+
+	cfg.Provider.Default = "openrouter"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{Name: "openrouter"},
+	}
+	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
 }
 
 func TestParseSkillsFlagEmpty(t *testing.T) {

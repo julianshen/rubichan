@@ -592,9 +592,7 @@ func runInteractive() error {
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{
-			SupportsToolUse: true,
-		},
+		ModelCapabilities: detectModelCapabilities(cfg),
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -905,9 +903,7 @@ func runHeadless() error {
 	allowed := parseToolsFlag(toolsFlag)
 	headlessDiffTracker := tools.NewDiffTracker()
 	headlessToolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{
-			SupportsToolUse: true,
-		},
+		ModelCapabilities: detectModelCapabilities(cfg),
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -1187,6 +1183,31 @@ type ToolsConfig struct {
 	CLIOverrides      map[string]bool
 }
 
+// detectModelCapabilities derives tool-related model capability flags from
+// runtime config/provider metadata. When capability metadata is not explicit,
+// it defaults to allowing tool use for compatibility with existing providers.
+func detectModelCapabilities(cfg *config.Config) ModelCapabilities {
+	if cfg == nil {
+		return ModelCapabilities{SupportsToolUse: true}
+	}
+
+	switch cfg.Provider.Default {
+	case "anthropic", "ollama":
+		return ModelCapabilities{SupportsToolUse: true}
+	default:
+		// OpenAI-compatible providers are configured by name under
+		// provider.openai_compatible. If the default provider matches one of
+		// those configured entries, treat it as tool-capable.
+		for _, oc := range cfg.Provider.OpenAI {
+			if oc.Name == cfg.Provider.Default {
+				return ModelCapabilities{SupportsToolUse: true}
+			}
+		}
+		// Unknown provider type: preserve current behavior.
+		return ModelCapabilities{SupportsToolUse: true}
+	}
+}
+
 // ShouldEnable returns true if a tool should be registered.
 func (tc ToolsConfig) ShouldEnable(name string) bool {
 	if !tc.ModelCapabilities.SupportsToolUse {
@@ -1206,8 +1227,8 @@ func (tc ToolsConfig) ShouldEnable(name string) bool {
 		return false
 	}
 
-	// xcode_* tools are only enabled for Apple projects or explicit apple-dev opt-in.
-	if strings.HasPrefix(name, "xcode_") &&
+	// Apple-only tools are enabled only for Apple projects or explicit apple-dev opt-in.
+	if isAppleOnlyTool(name) &&
 		!tc.ProjectContext.AppleProjectDetected &&
 		!tc.ProjectContext.AppleSkillRequested {
 		return false
@@ -1218,6 +1239,15 @@ func (tc ToolsConfig) ShouldEnable(name string) bool {
 		return tc.CLIOverrides[name]
 	}
 	return true
+}
+
+func isAppleOnlyTool(name string) bool {
+	return strings.HasPrefix(name, "xcode_") ||
+		strings.HasPrefix(name, "swift_") ||
+		strings.HasPrefix(name, "sim_") ||
+		strings.HasPrefix(name, "codesign_") ||
+		name == "xcrun" ||
+		strings.HasPrefix(name, "xcrun_")
 }
 
 // removeSkill removes a skill name from a comma-separated flag value.
@@ -1247,6 +1277,10 @@ func containsSkill(name, flagValue string) bool {
 // The Apple system prompt is now registered as a built-in skill via
 // appledev.RegisterPrompt and injected through the skill runtime's PromptCollector.
 func wireAppleDev(cwd string, registry *tools.Registry, toolsCfg ToolsConfig) error {
+	if !toolsCfg.ProjectContext.AppleProjectDetected && !toolsCfg.ProjectContext.AppleSkillRequested {
+		return nil
+	}
+
 	pc := xcode.NewRealPlatformChecker()
 	appleBackend := &appledev.Backend{WorkDir: cwd, Platform: pc}
 	if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
