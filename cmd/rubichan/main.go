@@ -591,12 +591,14 @@ func runInteractive() error {
 
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
+	allowed := parseToolsFlag(toolsFlag)
 	toolsCfg := ToolsConfig{
 		ModelCapabilities: detectModelCapabilities(cfg),
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
 		},
+		CLIOverrides: allowed,
 	}
 
 	if toolsCfg.ShouldEnable("file") {
@@ -1184,11 +1186,10 @@ type ToolsConfig struct {
 }
 
 // detectModelCapabilities derives tool-related model capability flags from
-// runtime config/provider metadata. When capability metadata is not explicit,
-// it defaults to allowing tool use for compatibility with existing providers.
+// runtime config/provider metadata.
 func detectModelCapabilities(cfg *config.Config) ModelCapabilities {
 	if cfg == nil {
-		return ModelCapabilities{SupportsToolUse: true}
+		return ModelCapabilities{SupportsToolUse: false}
 	}
 
 	switch cfg.Provider.Default {
@@ -1203,8 +1204,8 @@ func detectModelCapabilities(cfg *config.Config) ModelCapabilities {
 				return ModelCapabilities{SupportsToolUse: true}
 			}
 		}
-		// Unknown provider type: preserve current behavior.
-		return ModelCapabilities{SupportsToolUse: true}
+		// Unknown provider type: treat as not tool-capable.
+		return ModelCapabilities{SupportsToolUse: false}
 	}
 }
 

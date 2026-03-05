@@ -115,7 +115,7 @@ func TestIsAppleOnlyTool(t *testing.T) {
 }
 
 func TestDetectModelCapabilities(t *testing.T) {
-	assert.True(t, detectModelCapabilities(nil).SupportsToolUse)
+	assert.False(t, detectModelCapabilities(nil).SupportsToolUse)
 
 	cfg := config.DefaultConfig()
 	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
@@ -128,6 +128,10 @@ func TestDetectModelCapabilities(t *testing.T) {
 		{Name: "openrouter"},
 	}
 	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
+
+	cfg.Provider.Default = "unknown-provider"
+	cfg.Provider.OpenAI = nil
+	assert.False(t, detectModelCapabilities(cfg).SupportsToolUse)
 }
 
 func TestParseSkillsFlagEmpty(t *testing.T) {
