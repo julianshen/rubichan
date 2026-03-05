@@ -65,6 +65,7 @@ type AgentConfig struct {
 	ResultOffloadThreshold int             `toml:"result_offload_threshold"`
 	ToolDeferralThreshold  float64         `toml:"tool_deferral_threshold"`
 	TrustRules             []TrustRuleConf `toml:"trust_rules"`
+	ToolRules              []ToolRuleConf  `toml:"tool_rules"`
 	Definitions            []AgentDefConf  `toml:"definitions"`
 	Cache                  CacheConfig     `toml:"cache"`
 }
@@ -93,6 +94,14 @@ type TrustRuleConf struct {
 	Pattern string `toml:"pattern"` // Regex pattern matched against tool input values
 	Glob    string `toml:"glob"`    // "tool(pattern)" glob syntax alternative to tool+pattern
 	Action  string `toml:"action"`  // "allow" or "deny"
+}
+
+// ToolRuleConf defines a tool permission rule in config.
+type ToolRuleConf struct {
+	Category string `toml:"category"`
+	Tool     string `toml:"tool"`
+	Pattern  string `toml:"pattern"`
+	Action   string `toml:"action"`
 }
 
 // SkillsConfig holds settings for the skill system.

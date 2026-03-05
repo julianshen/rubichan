@@ -39,6 +39,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills/sandbox"
 	starengine "github.com/julianshen/rubichan/internal/skills/starlark"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
@@ -357,6 +358,82 @@ func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
 	e.AddScanner(scanner.NewLicenseScanner())
 	e.AddScanner(scanner.NewAppleScanner())
 	return e
+}
+
+// pipelineComponents holds the pipeline and its key components for
+// integration with the approval system.
+type pipelineComponents struct {
+	Pipeline   *toolexec.Pipeline
+	Classifier *toolexec.Classifier
+	RuleEngine *toolexec.RuleEngine
+}
+
+// buildPipeline constructs a tool execution pipeline from config rules,
+// project .security.yaml, and the skill runtime. The cwd parameter is the
+// project root (used for loading .security.yaml files). The rt parameter
+// may be nil when no skill runtime is configured.
+func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt *skills.Runtime) pipelineComponents {
+	classifier := toolexec.NewClassifier(nil)
+
+	// Collect permission rules from all sources.
+	var tomlConfs []toolexec.ToolRuleConf
+	for _, r := range cfg.Agent.ToolRules {
+		tomlConfs = append(tomlConfs, toolexec.ToolRuleConf{
+			Category: r.Category,
+			Tool:     r.Tool,
+			Pattern:  r.Pattern,
+			Action:   r.Action,
+		})
+	}
+	userRules := toolexec.TOMLRulesToPermissionRules(tomlConfs, toolexec.SourceUser)
+
+	// Load project .security.yaml rules.
+	var projectRules []toolexec.PermissionRule
+	if cwd != "" {
+		projRules, _ := toolexec.LoadSecurityYAMLRules(filepath.Join(cwd, ".security.yaml"))
+		projectRules = append(projectRules, projRules...)
+
+		// Load local overrides (gitignored).
+		localRules, _ := toolexec.LoadSecurityYAMLRules(filepath.Join(cwd, ".security.local.yaml"))
+		for i := range localRules {
+			localRules[i].Source = toolexec.SourceLocal
+		}
+		projectRules = append(projectRules, localRules...)
+	}
+
+	allRules := toolexec.MergeRules(userRules, projectRules)
+	ruleEngine := toolexec.NewRuleEngine(allRules)
+	shellValidator := toolexec.NewShellValidator(ruleEngine)
+	hookAdapter := &toolexec.SkillHookAdapter{Runtime: rt}
+
+	p := toolexec.NewPipeline(
+		toolexec.RegistryExecutor(registry),
+		toolexec.ClassifierMiddleware(classifier),
+		toolexec.RuleEngineMiddleware(ruleEngine),
+		toolexec.HookMiddleware(hookAdapter),
+		toolexec.ShellSafetyMiddleware(shellValidator),
+		toolexec.PostHookMiddleware(hookAdapter),
+		toolexec.OutputManagerMiddleware(&toolexec.ResultStoreAdapter{Offloader: nil}),
+	)
+	return pipelineComponents{Pipeline: p, Classifier: classifier, RuleEngine: ruleEngine}
+}
+
+// ruleEngineChecker adapts the toolexec.RuleEngine to the agent.ApprovalChecker
+// interface. ActionAllow maps to TrustRuleApproved (auto-approve); all other
+// actions map to ApprovalRequired (deny is already handled by the pipeline
+// middleware before approval is consulted).
+type ruleEngineChecker struct {
+	classifier *toolexec.Classifier
+	engine     *toolexec.RuleEngine
+}
+
+func (c *ruleEngineChecker) CheckApproval(tool string, input json.RawMessage) agent.ApprovalResult {
+	cat := c.classifier.Classify(tool)
+	action := c.engine.Evaluate(cat, tool, input)
+	if action == toolexec.ActionAllow {
+		return agent.TrustRuleApproved
+	}
+	return agent.ApprovalRequired
 }
 
 // autoDetectProvider checks if Ollama should be auto-selected.
@@ -686,14 +763,24 @@ func runInteractive() error {
 		return fmt.Errorf("register built-in command %q: %w", "model", err)
 	}
 
+	// Build tool execution pipeline first so its rule engine can feed
+	// the approval system.
+	pc := buildPipeline(registry, cfg, cwd, rt)
+	opts = append(opts, agent.WithPipeline(pc.Pipeline))
+
 	if !autoApprove {
 		approvalFunc = model.MakeApprovalFunc()
 
-		// Build the approval checker: compose session cache with trust rules.
-		// Session cache (TUI "always" decisions) is checked first, then
-		// config-based trust rules (both regex and glob).
+		// Build the approval checker: compose session cache, pipeline rule
+		// engine, and config-based trust rules. Session cache (TUI "always"
+		// decisions) is checked first, then the pipeline's rule engine
+		// (category-based allow rules), then config trust rules.
 		var checkers []agent.ApprovalChecker
 		checkers = append(checkers, model) // session cache
+		checkers = append(checkers, &ruleEngineChecker{
+			classifier: pc.Classifier,
+			engine:     pc.RuleEngine,
+		})
 		if len(cfg.Agent.TrustRules) > 0 {
 			regexRules, globRules := splitTrustRules(cfg.Agent.TrustRules)
 			if err := agent.ValidateTrustRules(regexRules, globRules); err != nil {
@@ -888,6 +975,10 @@ func runHeadless() error {
 
 	// Headless always auto-approves, so all tools can run in parallel.
 	opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
+
+	// Build tool execution pipeline.
+	hpc := buildPipeline(registry, cfg, cwd, rt)
+	opts = append(opts, agent.WithPipeline(hpc.Pipeline))
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
