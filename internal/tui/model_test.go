@@ -125,6 +125,16 @@ func TestModelHandleSlashOnlyShowsHelp(t *testing.T) {
 	assert.Contains(t, m.content.String(), "Available commands:")
 }
 
+func TestModelHandleSlashOnlyWithoutHelpCommand(t *testing.T) {
+	reg := commands.NewRegistry()
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, reg)
+	cmd := m.handleCommand("/")
+
+	assert.Nil(t, cmd)
+	assert.NotContains(t, m.content.String(), "Unknown command")
+	assert.Contains(t, m.content.String(), "Type /help to show available commands.")
+}
+
 // --- Task 24 Tests ---
 
 func TestModelInit(t *testing.T) {

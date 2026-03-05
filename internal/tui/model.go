@@ -253,27 +253,18 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 	}
 
 	name := strings.ToLower(strings.TrimPrefix(parts[0], "/"))
-	if name == "" {
-		if helpCmd, ok := m.cmdRegistry.Get("help"); ok {
-			result, err := helpCmd.Execute(context.Background(), nil)
-			if err != nil {
-				m.content.WriteString(fmt.Sprintf("Error: %s\n", err.Error()))
-				m.viewport.SetContent(m.content.String())
-				return nil
-			}
-			if result.Output != "" {
-				m.content.WriteString(result.Output + "\n")
-				m.viewport.SetContent(m.content.String())
-			}
-			return nil
-		}
-		m.content.WriteString("Type /help to show available commands.\n")
-		m.viewport.SetContent(m.content.String())
-		return nil
+	slashOnly := name == ""
+	if slashOnly {
+		name = "help"
 	}
 
 	slashCmd, ok := m.cmdRegistry.Get(name)
 	if !ok {
+		if slashOnly {
+			m.content.WriteString("Type /help to show available commands.\n")
+			m.viewport.SetContent(m.content.String())
+			return nil
+		}
 		m.content.WriteString(fmt.Sprintf("Unknown command: %s\n", parts[0]))
 		m.viewport.SetContent(m.content.String())
 		return nil
