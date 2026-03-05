@@ -20,7 +20,7 @@ type CompletionOverlay struct {
 	candidates []commands.Candidate
 	selected   int
 	visible    bool
-	dismissed  bool // prevents re-show after Escape until input changes
+	dismissed  bool // prevents re-show after Escape for unchanged slash input
 	width      int
 	lastPrefix string
 }
@@ -38,7 +38,8 @@ func NewCompletionOverlay(registry *commands.Registry, width int) *CompletionOve
 // If input starts with "/", it extracts the prefix after "/" and queries
 // the registry. If a space is found after the command name, the overlay
 // hides (argument completion is deferred). The dismissed flag prevents
-// re-showing after Escape until the input no longer starts with "/".
+// re-showing after Escape for the unchanged slash input until the user
+// edits the slash text.
 func (co *CompletionOverlay) Update(input string) {
 	// If input doesn't start with /, clear everything and reset dismissed.
 	if !strings.HasPrefix(input, "/") {
@@ -49,13 +50,18 @@ func (co *CompletionOverlay) Update(input string) {
 		return
 	}
 
-	// If dismissed, stay hidden until input no longer starts with /.
-	if co.dismissed {
-		return
-	}
-
 	// Extract the text after "/".
 	rest := input[1:]
+
+	// If dismissed, keep hidden until the user changes the slash input.
+	// This lets Escape close the menu for the current prefix while still
+	// allowing completion to re-open as the user keeps typing.
+	if co.dismissed {
+		if rest == co.lastPrefix {
+			return
+		}
+		co.dismissed = false
+	}
 
 	// If there's a space, we're in argument phase — hide overlay.
 	if strings.Contains(rest, " ") {
