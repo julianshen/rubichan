@@ -35,15 +35,65 @@ func TestParseToolsFlagWithSpaces(t *testing.T) {
 	assert.True(t, result["shell"])
 }
 
-func TestShouldRegisterAllAllowed(t *testing.T) {
-	assert.True(t, shouldRegister("file", nil))
-	assert.True(t, shouldRegister("shell", nil))
+func TestToolsConfigShouldEnableDefaultsToTrue(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+	}
+	assert.True(t, tc.ShouldEnable("file"))
+	assert.True(t, tc.ShouldEnable("shell"))
 }
 
-func TestShouldRegisterFiltered(t *testing.T) {
-	allowed := map[string]bool{"file": true}
-	assert.True(t, shouldRegister("file", allowed))
-	assert.False(t, shouldRegister("shell", allowed))
+func TestToolsConfigShouldEnableWithCLIOverrides(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		CLIOverrides:      map[string]bool{"file": true},
+	}
+	assert.True(t, tc.ShouldEnable("file"))
+	assert.False(t, tc.ShouldEnable("shell"))
+}
+
+func TestToolsConfigShouldEnableRespectsModelCapability(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: false},
+	}
+	assert.False(t, tc.ShouldEnable("file"))
+}
+
+func TestToolsConfigShouldEnableRespectsUserPrefs(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		UserPreferences: UserToolPrefs{
+			Disabled: map[string]bool{"shell": true},
+			Enabled:  map[string]bool{"file": true, "shell": true},
+		},
+	}
+	assert.True(t, tc.ShouldEnable("file"))
+	assert.False(t, tc.ShouldEnable("shell"))
+	assert.False(t, tc.ShouldEnable("search"))
+}
+
+func TestToolsConfigShouldEnableRespectsAppleProjectContext(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ProjectContext: ProjectContext{
+			AppleProjectDetected: false,
+			AppleSkillRequested:  false,
+		},
+	}
+	assert.False(t, tc.ShouldEnable("xcode_build"))
+	assert.True(t, tc.ShouldEnable("file"))
+
+	tc.ProjectContext.AppleSkillRequested = true
+	assert.True(t, tc.ShouldEnable("xcode_build"))
+}
+
+func TestToolsConfigShouldEnableRespectsFeatureFlags(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		FeatureFlags:      map[string]bool{"tools.shell": false},
+	}
+	assert.False(t, tc.ShouldEnable("shell"))
+	assert.True(t, tc.ShouldEnable("file"))
 }
 
 func TestParseSkillsFlagEmpty(t *testing.T) {
