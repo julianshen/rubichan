@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -847,4 +848,37 @@ func TestSnapshotReplaceExisting(t *testing.T) {
 	require.Len(t, loaded, 2)
 	assert.Equal(t, "second snapshot", loaded[0].Content[0].Text)
 	assert.Equal(t, "extra message", loaded[1].Content[0].Text)
+}
+
+func TestApproveFolderAccessAndIsFolderApproved(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.False(t, approved)
+
+	require.NoError(t, s.ApproveFolderAccess("/tmp/project"))
+	approved, err = s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
+
+	otherApproved, err := s.IsFolderApproved("/tmp/other")
+	require.NoError(t, err)
+	assert.False(t, otherApproved)
+}
+
+func TestFolderApprovalPathNormalization(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	dir := t.TempDir()
+	withDot := filepath.Join(dir, ".")
+	require.NoError(t, s.ApproveFolderAccess(withDot))
+
+	approved, err := s.IsFolderApproved(dir)
+	require.NoError(t, err)
+	assert.True(t, approved)
 }

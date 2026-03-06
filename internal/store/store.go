@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -187,11 +188,56 @@ func createTables(db *sql.DB) error {
 			token_count INTEGER NOT NULL,
 			created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS folder_access_approvals (
+			working_dir TEXT PRIMARY KEY,
+			approved_at DATETIME NOT NULL DEFAULT (datetime('now'))
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("exec %q: %w", stmt[:40], err)
 		}
+	}
+	return nil
+}
+
+func normalizeWorkingDirPath(workingDir string) string {
+	abs, err := filepath.Abs(workingDir)
+	if err != nil {
+		return filepath.Clean(workingDir)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(abs)
+}
+
+// IsFolderApproved returns true if the working directory has already been
+// approved by the user.
+func (s *Store) IsFolderApproved(workingDir string) (bool, error) {
+	normalized := normalizeWorkingDirPath(workingDir)
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM folder_access_approvals WHERE working_dir = ?`,
+		normalized,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("query folder approval: %w", err)
+	}
+	return count > 0, nil
+}
+
+// ApproveFolderAccess records that the user approved access to the working
+// directory.
+func (s *Store) ApproveFolderAccess(workingDir string) error {
+	normalized := normalizeWorkingDirPath(workingDir)
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO folder_access_approvals (working_dir, approved_at)
+		 VALUES (?, datetime('now'))`,
+		normalized,
+	)
+	if err != nil {
+		return fmt.Errorf("approve folder access: %w", err)
 	}
 	return nil
 }

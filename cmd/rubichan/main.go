@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -344,6 +345,60 @@ func configDir() (string, error) {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "rubichan"), nil
+}
+
+func promptFolderAccess(workingDir string, in io.Reader, out io.Writer) (bool, error) {
+	if _, err := fmt.Fprintf(out, "Allow rubichan to access this folder?\n  %s\nType 'yes' to continue: ", workingDir); err != nil {
+		return false, fmt.Errorf("writing folder access prompt: %w", err)
+	}
+
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("reading folder access response: %w", err)
+	}
+	return strings.EqualFold(strings.TrimSpace(line), "yes"), nil
+}
+
+func ensureFolderAccessApproved(s *store.Store, workingDir string, in io.Reader, out io.Writer) error {
+	approved, err := s.IsFolderApproved(workingDir)
+	if err != nil {
+		return fmt.Errorf("checking folder access approval: %w", err)
+	}
+	if approved {
+		return nil
+	}
+
+	allow, err := promptFolderAccess(workingDir, in, out)
+	if err != nil {
+		return err
+	}
+	if !allow {
+		return fmt.Errorf("folder access denied by user")
+	}
+
+	if err := s.ApproveFolderAccess(workingDir); err != nil {
+		return fmt.Errorf("saving folder access approval: %w", err)
+	}
+	return nil
+}
+
+func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string, autoApprove bool) error {
+	approved, err := s.IsFolderApproved(workingDir)
+	if err != nil {
+		return fmt.Errorf("checking folder access approval: %w", err)
+	}
+	if approved {
+		return nil
+	}
+
+	if !autoApprove {
+		return fmt.Errorf("folder access for %q is not approved; rerun interactively to approve or use --auto-approve", workingDir)
+	}
+
+	if err := s.ApproveFolderAccess(workingDir); err != nil {
+		return fmt.Errorf("saving folder access approval: %w", err)
+	}
+	return nil
 }
 
 // newDefaultSecurityEngine creates a security engine pre-configured with all
@@ -710,6 +765,9 @@ func runInteractive() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+	if err := ensureFolderAccessApproved(s, cwd, os.Stdin, os.Stderr); err != nil {
+		return err
+	}
 	opts = append(opts, agent.WithStore(s))
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
@@ -969,6 +1027,9 @@ func runHeadless() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+	if err := ensureFolderAccessApprovedNonInteractive(s, cwd, autoApprove); err != nil {
+		return err
+	}
 	opts = append(opts, agent.WithStore(s))
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
