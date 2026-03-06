@@ -388,7 +388,7 @@ func TestTurnWithStreamingToolProgress(t *testing.T) {
 	var progressStages []string
 	for ev := range ch {
 		if ev.Type == "tool_progress" && ev.ToolProgress != nil {
-			progressStages = append(progressStages, ev.ToolProgress.StageID)
+			progressStages = append(progressStages, ev.ToolProgress.Stage.String())
 		}
 	}
 

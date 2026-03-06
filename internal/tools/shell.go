@@ -207,9 +207,6 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 				emitToolEvent(emit, ToolEvent{Stage: EventDelta, Content: chunk, IsError: isErr})
 			}
 			if readErr != nil {
-				if readErr == io.EOF {
-					return
-				}
 				return
 			}
 		}

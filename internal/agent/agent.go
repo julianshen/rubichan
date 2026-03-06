@@ -78,7 +78,6 @@ type ToolProgressEvent struct {
 	ID      string
 	Name    string
 	Stage   tools.EventStage
-	StageID string
 	Content string
 	IsError bool
 }
@@ -912,7 +911,6 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 				ID:      tc.ID,
 				Name:    tc.Name,
 				Stage:   ev.Stage,
-				StageID: toolEventStageID(ev.Stage),
 				Content: ev.Content,
 				IsError: ev.IsError,
 			},
@@ -926,19 +924,6 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		content:   result.Content,
 		isError:   result.IsError,
 		event:     makeToolResultEvent(tc.ID, tc.Name, result.Content, result.DisplayContent, result.IsError),
-	}
-}
-
-func toolEventStageID(stage tools.EventStage) string {
-	switch stage {
-	case tools.EventBegin:
-		return "begin"
-	case tools.EventDelta:
-		return "delta"
-	case tools.EventEnd:
-		return "end"
-	default:
-		return "unknown"
 	}
 }
 

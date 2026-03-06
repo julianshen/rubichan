@@ -324,7 +324,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.ToolProgress != nil {
 			m.content.WriteString(m.toolBox.RenderToolProgress(
 				msg.ToolProgress.Name,
-				msg.ToolProgress.StageID,
+				msg.ToolProgress.Stage.String(),
 				msg.ToolProgress.Content,
 				msg.ToolProgress.IsError,
 			))

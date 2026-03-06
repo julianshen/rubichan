@@ -34,9 +34,11 @@ func (s *stubTool) Execute(ctx context.Context, input json.RawMessage) (tools.To
 type streamingStubTool struct {
 	stubTool
 	streamEvents []tools.ToolEvent
+	streamCalled bool
 }
 
 func (s *streamingStubTool) ExecuteStream(_ context.Context, _ json.RawMessage, emit tools.ToolEventEmitter) (tools.ToolResult, error) {
+	s.streamCalled = true
 	for _, ev := range s.streamEvents {
 		emit(ev)
 	}
@@ -143,4 +145,33 @@ func TestRegistryExecutorStreamingToolEmitsEvents(t *testing.T) {
 	assert.Equal(t, tools.EventBegin, got[0].Stage)
 	assert.Equal(t, "chunk", got[1].Content)
 	assert.Equal(t, tools.EventEnd, got[2].Stage)
+}
+
+func TestRegistryExecutorStreamingToolFallsBackWithoutEmitter(t *testing.T) {
+	stub := &streamingStubTool{
+		stubTool: stubTool{
+			name:   "shell",
+			schema: json.RawMessage(`{}`),
+			execResult: tools.ToolResult{
+				Content: "done",
+			},
+		},
+		streamEvents: []tools.ToolEvent{
+			{Stage: tools.EventBegin, Content: "start"},
+		},
+	}
+	registry := tools.NewRegistry()
+	err := registry.Register(stub)
+	assert.NoError(t, err)
+
+	handler := toolexec.RegistryExecutor(registry)
+	result := handler(context.Background(), toolexec.ToolCall{
+		ID:    "call-fallback",
+		Name:  "shell",
+		Input: json.RawMessage(`{"command":"echo hi"}`),
+	})
+
+	assert.Equal(t, "done", result.Content)
+	assert.False(t, stub.streamCalled)
+	assert.JSONEq(t, `{"command":"echo hi"}`, string(stub.execInput))
 }

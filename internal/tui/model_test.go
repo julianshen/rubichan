@@ -15,6 +15,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/tools"
 )
 
 func TestUIStateConstants(t *testing.T) {
@@ -289,7 +290,7 @@ func TestModelHandleTurnEventToolProgress(t *testing.T) {
 		ToolProgress: &agent.ToolProgressEvent{
 			ID:      "tool-1",
 			Name:    "shell",
-			StageID: "delta",
+			Stage:   tools.EventDelta,
 			Content: "partial output",
 		},
 	})

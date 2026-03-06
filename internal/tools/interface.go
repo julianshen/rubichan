@@ -25,6 +25,20 @@ const (
 	EventEnd
 )
 
+// String returns the stable wire/debug name for a streaming event stage.
+func (s EventStage) String() string {
+	switch s {
+	case EventBegin:
+		return "begin"
+	case EventDelta:
+		return "delta"
+	case EventEnd:
+		return "end"
+	default:
+		return "unknown"
+	}
+}
+
 // ToolEvent is emitted by StreamingTool implementations during execution.
 type ToolEvent struct {
 	Stage   EventStage
