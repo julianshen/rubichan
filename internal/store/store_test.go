@@ -848,3 +848,22 @@ func TestSnapshotReplaceExisting(t *testing.T) {
 	assert.Equal(t, "second snapshot", loaded[0].Content[0].Text)
 	assert.Equal(t, "extra message", loaded[1].Content[0].Text)
 }
+
+func TestApproveFolderAccessAndIsFolderApproved(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.False(t, approved)
+
+	require.NoError(t, s.ApproveFolderAccess("/tmp/project"))
+	approved, err = s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
+
+	otherApproved, err := s.IsFolderApproved("/tmp/other")
+	require.NoError(t, err)
+	assert.False(t, otherApproved)
+}

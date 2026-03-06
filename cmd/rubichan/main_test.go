@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,9 +10,11 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"strings"
 )
 
 func TestVersionString(t *testing.T) {
@@ -212,4 +215,46 @@ func TestResolveOllamaModel_ConnectionError(t *testing.T) {
 	_, err := resolveOllamaModel("http://localhost:1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listing Ollama models")
+}
+
+func TestEnsureFolderAccessApproved_FirstTimeApprove(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader("yes\n"), &out)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "Allow rubichan to access this folder?")
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
+}
+
+func TestEnsureFolderAccessApproved_Denied(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader("no\n"), &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "folder access denied")
+}
+
+func TestEnsureFolderAccessApproved_AlreadyApprovedSkipsPrompt(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+	require.NoError(t, s.ApproveFolderAccess("/tmp/project"))
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader(""), &out)
+	require.NoError(t, err)
+	assert.Empty(t, out.String())
+}
+
+func mustOpenStore(t *testing.T) *store.Store {
+	t.Helper()
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	return s
 }

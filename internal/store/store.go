@@ -187,11 +187,43 @@ func createTables(db *sql.DB) error {
 			token_count INTEGER NOT NULL,
 			created_at  DATETIME NOT NULL DEFAULT (datetime('now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS folder_access_approvals (
+			working_dir TEXT PRIMARY KEY,
+			approved_at DATETIME NOT NULL DEFAULT (datetime('now'))
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("exec %q: %w", stmt[:40], err)
 		}
+	}
+	return nil
+}
+
+// IsFolderApproved returns true if the working directory has already been
+// approved by the user.
+func (s *Store) IsFolderApproved(workingDir string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM folder_access_approvals WHERE working_dir = ?`,
+		workingDir,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("query folder approval: %w", err)
+	}
+	return count > 0, nil
+}
+
+// ApproveFolderAccess records that the user approved access to the working
+// directory.
+func (s *Store) ApproveFolderAccess(workingDir string) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO folder_access_approvals (working_dir, approved_at)
+		 VALUES (?, datetime('now'))`,
+		workingDir,
+	)
+	if err != nil {
+		return fmt.Errorf("approve folder access: %w", err)
 	}
 	return nil
 }
