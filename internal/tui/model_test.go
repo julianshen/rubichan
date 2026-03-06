@@ -277,6 +277,31 @@ func TestModelHandleTurnEventToolResult(t *testing.T) {
 	assert.Contains(t, content, "\u256d") // rounded border top-left
 }
 
+func TestModelHandleTurnEventToolProgress(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_progress",
+		ToolProgress: &agent.ToolProgressEvent{
+			ID:      "tool-1",
+			Name:    "shell",
+			StageID: "delta",
+			Content: "partial output",
+		},
+	})
+
+	updated, _ := m.Update(evt)
+
+	um := updated.(*Model)
+	content := um.content.String()
+	assert.Contains(t, content, "shell:delta")
+	assert.Contains(t, content, "partial output")
+}
+
 func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming

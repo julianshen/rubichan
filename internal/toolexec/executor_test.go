@@ -31,6 +31,18 @@ func (s *stubTool) Execute(ctx context.Context, input json.RawMessage) (tools.To
 	return s.execResult, s.execErr
 }
 
+type streamingStubTool struct {
+	stubTool
+	streamEvents []tools.ToolEvent
+}
+
+func (s *streamingStubTool) ExecuteStream(_ context.Context, _ json.RawMessage, emit tools.ToolEventEmitter) (tools.ToolResult, error) {
+	for _, ev := range s.streamEvents {
+		emit(ev)
+	}
+	return s.execResult, s.execErr
+}
+
 func TestRegistryExecutorCallsTool(t *testing.T) {
 	stub := &stubTool{
 		name:        "read_file",
@@ -94,4 +106,41 @@ func TestRegistryExecutorToolError(t *testing.T) {
 
 	assert.Equal(t, "tool execution error: permission denied", result.Content)
 	assert.True(t, result.IsError)
+}
+
+func TestRegistryExecutorStreamingToolEmitsEvents(t *testing.T) {
+	stub := &streamingStubTool{
+		stubTool: stubTool{
+			name:   "shell",
+			schema: json.RawMessage(`{}`),
+			execResult: tools.ToolResult{
+				Content: "done",
+			},
+		},
+		streamEvents: []tools.ToolEvent{
+			{Stage: tools.EventBegin, Content: "start"},
+			{Stage: tools.EventDelta, Content: "chunk"},
+			{Stage: tools.EventEnd, Content: "end"},
+		},
+	}
+	registry := tools.NewRegistry()
+	err := registry.Register(stub)
+	assert.NoError(t, err)
+
+	handler := toolexec.RegistryExecutor(registry)
+	var got []tools.ToolEvent
+	ctx := toolexec.WithToolEventEmitter(context.Background(), func(ev tools.ToolEvent) {
+		got = append(got, ev)
+	})
+	result := handler(ctx, toolexec.ToolCall{
+		ID:    "call-stream",
+		Name:  "shell",
+		Input: json.RawMessage(`{"command":"echo hi"}`),
+	})
+
+	assert.Equal(t, "done", result.Content)
+	assert.Len(t, got, 3)
+	assert.Equal(t, tools.EventBegin, got[0].Stage)
+	assert.Equal(t, "chunk", got[1].Content)
+	assert.Equal(t, tools.EventEnd, got[2].Stage)
 }
