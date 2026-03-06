@@ -382,6 +382,25 @@ func ensureFolderAccessApproved(s *store.Store, workingDir string, in io.Reader,
 	return nil
 }
 
+func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string, autoApprove bool) error {
+	approved, err := s.IsFolderApproved(workingDir)
+	if err != nil {
+		return fmt.Errorf("checking folder access approval: %w", err)
+	}
+	if approved {
+		return nil
+	}
+
+	if !autoApprove {
+		return fmt.Errorf("folder access for %q is not approved; rerun interactively to approve or use --auto-approve", workingDir)
+	}
+
+	if err := s.ApproveFolderAccess(workingDir); err != nil {
+		return fmt.Errorf("saving folder access approval: %w", err)
+	}
+	return nil
+}
+
 // newDefaultSecurityEngine creates a security engine pre-configured with all
 // built-in static scanners. This lives in main.go to avoid an import cycle
 // between security/ and security/scanner/.
@@ -1008,7 +1027,7 @@ func runHeadless() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
-	if err := ensureFolderAccessApproved(s, cwd, os.Stdin, os.Stderr); err != nil {
+	if err := ensureFolderAccessApprovedNonInteractive(s, cwd, autoApprove); err != nil {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))

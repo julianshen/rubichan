@@ -258,3 +258,24 @@ func mustOpenStore(t *testing.T) *store.Store {
 	require.NoError(t, err)
 	return s
 }
+
+func TestEnsureFolderAccessApprovedNonInteractive_DeniedWithoutAutoApprove(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not approved")
+}
+
+func TestEnsureFolderAccessApprovedNonInteractive_AutoApproves(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", true)
+	require.NoError(t, err)
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
+}
