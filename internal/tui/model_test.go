@@ -15,6 +15,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/tools"
 )
 
 func TestUIStateConstants(t *testing.T) {
@@ -275,6 +276,31 @@ func TestModelHandleTurnEventToolResult(t *testing.T) {
 	// Should render in a bordered box
 	assert.Contains(t, content, "file contents here")
 	assert.Contains(t, content, "\u256d") // rounded border top-left
+}
+
+func TestModelHandleTurnEventToolProgress(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_progress",
+		ToolProgress: &agent.ToolProgressEvent{
+			ID:      "tool-1",
+			Name:    "shell",
+			Stage:   tools.EventDelta,
+			Content: "partial output",
+		},
+	})
+
+	updated, _ := m.Update(evt)
+
+	um := updated.(*Model)
+	content := um.content.String()
+	assert.Contains(t, content, "shell:delta")
+	assert.Contains(t, content, "partial output")
 }
 
 func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {

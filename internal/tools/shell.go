@@ -1,13 +1,16 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -113,22 +116,33 @@ func (s *ShellTool) InputSchema() json.RawMessage {
 }
 
 func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolResult, error) {
+	return s.ExecuteStream(ctx, input, nil)
+}
+
+// ExecuteStream executes shell commands while emitting incremental output.
+func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
 	var in shellInput
 	if err := json.Unmarshal(input, &in); err != nil {
-		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
+		res := ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+		return res, nil
 	}
 	interception := inspectShellCommand(in.Command, s.workDir)
 	if interception.routeReason != "" {
-		return ToolResult{
+		res := ToolResult{
 			Content: fmt.Sprintf("command requires routing: %s. Use the file tool for this operation.", interception.routeReason),
 			IsError: true,
-		}, nil
+		}
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+		return res, nil
 	}
 	if interception.blockReason != "" {
-		return ToolResult{
+		res := ToolResult{
 			Content: fmt.Sprintf("command blocked: %s. Use the file tool for file edits.", interception.blockReason),
 			IsError: true,
-		}, nil
+		}
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+		return res, nil
 	}
 
 	// Capture a baseline of dirty paths before execution so we only attribute
@@ -141,10 +155,71 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	timeoutCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
+	emitToolEvent(emit, ToolEvent{Stage: EventBegin, Content: in.Command})
+	if len(interception.warnings) > 0 {
+		emitToolEvent(emit, ToolEvent{Stage: EventDelta, Content: formatInterceptionWarnings(interception.warnings)})
+	}
+
 	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", in.Command)
 	cmd.Dir = s.workDir
 
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		res := withInterceptionWarnings(ToolResult{
+			Content: fmt.Sprintf("tool execution error: %s", err.Error()),
+			IsError: true,
+		}, interception.warnings)
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
+		return res, nil
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		res := withInterceptionWarnings(ToolResult{
+			Content: fmt.Sprintf("tool execution error: %s", err.Error()),
+			IsError: true,
+		}, interception.warnings)
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
+		return res, nil
+	}
+	if err := cmd.Start(); err != nil {
+		res := withInterceptionWarnings(ToolResult{
+			Content: fmt.Sprintf("tool execution error: %s", err.Error()),
+			IsError: true,
+		}, interception.warnings)
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
+		return res, nil
+	}
+
+	var (
+		allOutput bytes.Buffer
+		outMu     sync.Mutex
+	)
+	streamPipe := func(r io.Reader, isErr bool, wg *sync.WaitGroup) {
+		defer wg.Done()
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := r.Read(buf)
+			if n > 0 {
+				chunk := string(buf[:n])
+				outMu.Lock()
+				_, _ = allOutput.Write(buf[:n])
+				outMu.Unlock()
+				emitToolEvent(emit, ToolEvent{Stage: EventDelta, Content: chunk, IsError: isErr})
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go streamPipe(stdout, false, &wg)
+	go streamPipe(stderr, true, &wg)
+
+	waitErr := cmd.Wait()
+	wg.Wait()
+	output := allOutput.Bytes()
 
 	// Detect file changes regardless of exit code or timeout — a command can
 	// modify files before timing out or exiting non-zero.
@@ -154,10 +229,12 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 
 	// Check if the timeout context (not the parent) triggered a deadline exceeded
 	if timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-		return withInterceptionWarnings(ToolResult{
+		res := withInterceptionWarnings(ToolResult{
 			Content: fmt.Sprintf("command timed out after %s", s.timeout),
 			IsError: true,
-		}, interception.warnings), nil
+		}, interception.warnings)
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
+		return res, nil
 	}
 
 	// Truncate output for LLM; optionally set richer DisplayContent for user.
@@ -174,11 +251,15 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	}
 
 	// Non-zero exit code
-	if err != nil {
-		return withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, interception.warnings), nil
+	if waitErr != nil {
+		res := withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, interception.warnings)
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
+		return res, nil
 	}
 
-	return withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent}, interception.warnings), nil
+	res := withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent}, interception.warnings)
+	emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display()})
+	return res, nil
 }
 
 func inspectShellCommand(command, workDir string) commandInterception {
@@ -477,6 +558,15 @@ func withInterceptionWarnings(result ToolResult, warnings []string) ToolResult {
 	if len(warnings) == 0 {
 		return result
 	}
+	prefix := formatInterceptionWarnings(warnings)
+	result.Content = prefix + result.Content
+	if result.DisplayContent != "" {
+		result.DisplayContent = prefix + result.DisplayContent
+	}
+	return result
+}
+
+func formatInterceptionWarnings(warnings []string) string {
 	var b strings.Builder
 	b.WriteString("warning: shell safety interceptor detected file-modifying pattern(s):\n")
 	for _, warning := range warnings {
@@ -484,13 +574,14 @@ func withInterceptionWarnings(result ToolResult, warnings []string) ToolResult {
 		b.WriteString(warning)
 		b.WriteByte('\n')
 	}
-	prefix := b.String()
+	return b.String()
+}
 
-	result.Content = prefix + result.Content
-	if result.DisplayContent != "" {
-		result.DisplayContent = prefix + result.DisplayContent
+func emitToolEvent(emit ToolEventEmitter, ev ToolEvent) {
+	if emit == nil {
+		return
 	}
-	return result
+	emit(ev)
 }
 
 // detectChangesTimeout caps how long git status may run inside detectChanges.
