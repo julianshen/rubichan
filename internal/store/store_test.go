@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -866,4 +867,18 @@ func TestApproveFolderAccessAndIsFolderApproved(t *testing.T) {
 	otherApproved, err := s.IsFolderApproved("/tmp/other")
 	require.NoError(t, err)
 	assert.False(t, otherApproved)
+}
+
+func TestFolderApprovalPathNormalization(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	dir := t.TempDir()
+	withDot := filepath.Join(dir, ".")
+	require.NoError(t, s.ApproveFolderAccess(withDot))
+
+	approved, err := s.IsFolderApproved(dir)
+	require.NoError(t, err)
+	assert.True(t, approved)
 }
