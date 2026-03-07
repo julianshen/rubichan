@@ -167,7 +167,6 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlG && m.state == StateInput && m.diffSummary != "" {
 		m.diffSummaryOpen = !m.diffSummaryOpen
 		m.updateDiffPanel()
-		m.setContentAndAutoScroll(m.content.String())
 		return m, nil
 	}
 
