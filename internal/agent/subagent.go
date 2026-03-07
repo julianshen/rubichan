@@ -44,6 +44,9 @@ type SubagentSpawner interface {
 	Spawn(ctx context.Context, cfg SubagentConfig, prompt string) (*SubagentResult, error)
 }
 
+// IsolationWorktree is the constant for worktree-based subagent isolation.
+const IsolationWorktree = "worktree"
+
 // WorktreeHandle represents an isolated worktree created for a subagent.
 type WorktreeHandle struct {
 	Dir  string // Filesystem path to the worktree
@@ -95,7 +98,7 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	// Handle worktree isolation: create an isolated worktree for this subagent.
 	var wtCleanup func()
 	var workDir string
-	if cfg.Isolation == "worktree" {
+	if cfg.Isolation == IsolationWorktree {
 		if s.WorktreeProvider == nil {
 			return nil, fmt.Errorf("worktree isolation requested but no WorktreeProvider configured")
 		}

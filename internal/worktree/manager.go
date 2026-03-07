@@ -138,6 +138,9 @@ func (m *Manager) SetHookFunc(fn HookFunc) {
 // --- internal (unlocked) methods ---
 
 func (m *Manager) create(ctx context.Context, name string) (*Worktree, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
 	wt := &Worktree{Name: name, RepoRoot: m.repoRoot, CreatedAt: time.Now()}
 	wtDir := wt.Dir()
 
@@ -255,12 +258,39 @@ func (m *Manager) list(ctx context.Context) ([]Worktree, error) {
 	return worktrees, nil
 }
 
-// baseBranch returns the configured base branch, defaulting to "main".
+// baseBranch returns the configured base branch, auto-detecting from
+// origin/HEAD if not explicitly configured, falling back to "main".
 func (m *Manager) baseBranch() string {
 	if m.config.BaseBranch != "" {
 		return m.config.BaseBranch
 	}
+	// Auto-detect from origin/HEAD (e.g., "refs/remotes/origin/main").
+	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd.Dir = m.repoRoot
+	if out, err := cmd.Output(); err == nil {
+		ref := strings.TrimSpace(string(out))
+		// Extract branch name from "refs/remotes/origin/main".
+		if parts := strings.SplitN(ref, "refs/remotes/origin/", 2); len(parts) == 2 {
+			return parts[1]
+		}
+	}
 	return "main"
+}
+
+// validateName checks that a worktree name is safe for use as a directory
+// name and git branch name. Rejects path traversal, special characters, and
+// empty names.
+func validateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("worktree name cannot be empty")
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("worktree name %q contains path traversal", name)
+	}
+	if strings.ContainsAny(name, "/\\: \t\n") {
+		return fmt.Errorf("worktree name %q contains invalid characters", name)
+	}
+	return nil
 }
 
 // git runs a git command in the given directory and returns its stdout.

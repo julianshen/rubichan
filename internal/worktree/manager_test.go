@@ -471,6 +471,58 @@ func TestLock_UnlockNil(t *testing.T) {
 	}
 }
 
+func TestValidateName(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{"feature-a", false},
+		{"my-worktree", false},
+		{"fix_123", false},
+		{"", true},
+		{"../escape", true},
+		{"foo..bar", true},
+		{"has space", true},
+		{"has/slash", true},
+		{"has\\backslash", true},
+		{"has:colon", true},
+		{"has\ttab", true},
+		{"has\nnewline", true},
+	}
+	for _, tt := range tests {
+		err := validateName(tt.name)
+		if tt.wantErr && err == nil {
+			t.Errorf("validateName(%q) = nil, want error", tt.name)
+		}
+		if !tt.wantErr && err != nil {
+			t.Errorf("validateName(%q) = %v, want nil", tt.name, err)
+		}
+	}
+}
+
+func TestCreate_InvalidName(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	_, err := mgr.Create(context.Background(), "../escape")
+	if err == nil {
+		t.Error("expected error for path traversal name")
+	}
+}
+
+func TestLock_InvalidPath(t *testing.T) {
+	// Lock on path under a file (not a directory) should fail.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "afile")
+	os.WriteFile(filePath, []byte("x"), 0o644)
+
+	l := &fileLock{path: filepath.Join(filePath, "sub", "lock")}
+	err := l.Lock()
+	if err == nil {
+		l.Unlock()
+		t.Error("expected error when lock parent is a file")
+	}
+}
+
 func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
 	repo := initTestRepo(t)
 	cfg := DefaultConfig()

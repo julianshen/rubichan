@@ -87,16 +87,24 @@ func versionString() string {
 	return fmt.Sprintf("rubichan %s (commit: %s, built: %s)", version, commit, date)
 }
 
-// initWorktree creates or reuses a worktree and returns its path and manager.
-// Returns empty path if --worktree was not specified.
-func initWorktree(cfg *config.Config) (string, *worktree.Manager, error) {
+// setupWorkingDir determines the effective working directory. When --worktree
+// is specified, it creates/reuses a worktree and returns a cleanup function
+// that auto-removes the worktree if it has no changes. The returned manager
+// is non-nil only when a worktree is active.
+func setupWorkingDir(cfg *config.Config) (cwd string, mgr *worktree.Manager, cleanup func(), err error) {
+	cleanup = func() {} // no-op default
+
 	if worktreeFlag == "" {
-		return "", nil, nil
+		cwd, err = os.Getwd()
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("getting working directory: %w", err)
+		}
+		return cwd, nil, cleanup, nil
 	}
 
-	out, err := runGitCommand("rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", nil, fmt.Errorf("not in a git repository: %w", err)
+	out, gitErr := runGitCommand("rev-parse", "--show-toplevel")
+	if gitErr != nil {
+		return "", nil, nil, fmt.Errorf("not in a git repository: %w", gitErr)
 	}
 	root := strings.TrimSpace(out)
 
@@ -105,14 +113,26 @@ func initWorktree(cfg *config.Config) (string, *worktree.Manager, error) {
 		BaseBranch:   cfg.Worktree.BaseBranch,
 		AutoCleanup:  cfg.Worktree.AutoCleanup,
 	}
-	mgr := worktree.NewManager(root, wtCfg)
+	mgr = worktree.NewManager(root, wtCfg)
 
-	wt, err := mgr.Create(context.Background(), worktreeFlag)
-	if err != nil {
-		return "", nil, fmt.Errorf("creating worktree: %w", err)
+	wt, createErr := mgr.Create(context.Background(), worktreeFlag)
+	if createErr != nil {
+		return "", nil, nil, fmt.Errorf("creating worktree: %w", createErr)
 	}
 
-	return wt.Dir(), mgr, nil
+	wtDir := wt.Dir()
+	cleanup = func() {
+		hasChanges, _ := mgr.HasChanges(context.Background(), worktreeFlag)
+		if hasChanges {
+			fmt.Fprintf(os.Stderr, "Worktree %q preserved at %s (has uncommitted changes)\n", worktreeFlag, wtDir)
+		} else if cfg.Worktree.AutoCleanup {
+			if err := mgr.Remove(context.Background(), worktreeFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to clean up worktree %q: %v\n", worktreeFlag, err)
+			}
+		}
+	}
+
+	return wtDir, mgr, cleanup, nil
 }
 
 // runGitCommand executes a git command and returns its stdout.
@@ -694,34 +714,12 @@ func runInteractive() error {
 		return fmt.Errorf("creating provider: %w", err)
 	}
 
-	// Set up worktree if --worktree flag was provided.
-	wtDir, wtMgr, err := initWorktree(cfg)
+	// Set up effective working directory (creates worktree if --worktree is set).
+	cwd, wtMgr, wtCleanup, err := setupWorkingDir(cfg)
 	if err != nil {
 		return fmt.Errorf("worktree setup: %w", err)
 	}
-
-	// Determine effective working directory.
-	cwd := wtDir
-	if cwd == "" {
-		cwd, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
-		}
-	}
-
-	// If worktree is active, defer cleanup.
-	if wtMgr != nil {
-		defer func() {
-			hasChanges, _ := wtMgr.HasChanges(context.Background(), worktreeFlag)
-			if hasChanges {
-				fmt.Fprintf(os.Stderr, "Worktree %q preserved at %s (has uncommitted changes)\n", worktreeFlag, wtDir)
-			} else if cfg.Worktree.AutoCleanup {
-				if err := wtMgr.Remove(context.Background(), worktreeFlag); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to clean up worktree %q: %v\n", worktreeFlag, err)
-				}
-			}
-		}()
-	}
+	defer wtCleanup()
 
 	// Create tool registry
 	registry := tools.NewRegistry()
@@ -767,8 +765,8 @@ func runInteractive() error {
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
-	if wtDir != "" {
-		opts = append(opts, agent.WithWorkingDir(wtDir))
+	if worktreeFlag != "" {
+		opts = append(opts, agent.WithWorkingDir(cwd))
 	}
 	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
@@ -1013,34 +1011,12 @@ func runHeadless() error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
 	defer cancel()
 
-	// Set up worktree if --worktree flag was provided.
-	wtDir, wtMgr, err := initWorktree(cfg)
+	// Set up effective working directory (creates worktree if --worktree is set).
+	cwd, _, wtCleanup, err := setupWorkingDir(cfg)
 	if err != nil {
 		return fmt.Errorf("worktree setup: %w", err)
 	}
-
-	// Determine effective working directory.
-	cwd := wtDir
-	if cwd == "" {
-		cwd, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getting working directory: %w", err)
-		}
-	}
-
-	// If worktree is active, defer cleanup.
-	if wtMgr != nil {
-		defer func() {
-			hasChanges, _ := wtMgr.HasChanges(context.Background(), worktreeFlag)
-			if hasChanges {
-				fmt.Fprintf(os.Stderr, "Worktree %q preserved at %s (has uncommitted changes)\n", worktreeFlag, wtDir)
-			} else if cfg.Worktree.AutoCleanup {
-				if err := wtMgr.Remove(context.Background(), worktreeFlag); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to clean up worktree %q: %v\n", worktreeFlag, err)
-				}
-			}
-		}()
-	}
+	defer wtCleanup()
 
 	// Resolve input: code-review mode builds prompt from diff, others need explicit input.
 	var promptText string
@@ -1111,8 +1087,8 @@ func runHeadless() error {
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
-	if wtDir != "" {
-		opts = append(opts, agent.WithWorkingDir(wtDir))
+	if worktreeFlag != "" {
+		opts = append(opts, agent.WithWorkingDir(cwd))
 	}
 	if err := wireAppleDev(cwd, registry, headlessToolsCfg); err != nil {
 		return err
