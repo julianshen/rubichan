@@ -13,6 +13,7 @@ import (
 	"github.com/sourcegraph/conc/pool"
 
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
@@ -395,8 +396,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 
 // buildSystemPrompt constructs the system prompt from configuration.
 func buildSystemPrompt(_ *config.Config) string {
-	return "You are a helpful AI coding assistant. You can read and write files, " +
-		"execute shell commands, and help with software development tasks."
+	return persona.SystemPrompt()
 }
 
 // agentCompactor adapts the Agent's ForceCompact to the tools.Compactor interface,
