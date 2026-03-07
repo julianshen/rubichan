@@ -167,6 +167,22 @@ func WithWakeManager(wm *WakeManager) AgentOption {
 	}
 }
 
+// WithWorkingDir overrides the working directory for all directory-scoped
+// operations (file tool, shell tool, skill discovery, session, memories).
+// If empty, os.Getwd() is used as fallback.
+func WithWorkingDir(dir string) AgentOption {
+	return func(a *Agent) { a.workingDir = dir }
+}
+
+// WorkingDir returns the agent's effective working directory.
+func (a *Agent) WorkingDir() string {
+	if a.workingDir != "" {
+		return a.workingDir
+	}
+	wd, _ := os.Getwd()
+	return wd
+}
+
 // WithPipeline attaches a tool execution pipeline to the agent.
 func WithPipeline(p *toolexec.Pipeline) AgentOption {
 	return func(a *Agent) {
@@ -225,6 +241,7 @@ type Agent struct {
 	turnMu           sync.Mutex // serializes Turn() calls to prevent DiffTracker race
 	wakeManager      *WakeManager
 	pipeline         *toolexec.Pipeline
+	workingDir       string // override working directory (empty = os.Getwd)
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -261,7 +278,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	}
 	// Load cross-session memories into system prompt.
 	if a.memoryStore != nil {
-		wd, _ := os.Getwd()
+		wd := a.WorkingDir()
 		memories, err := a.memoryStore.LoadMemories(wd)
 		if err != nil {
 			log.Printf("warning: failed to load memories: %v", err)
@@ -319,7 +336,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		if a.sessionID == "" {
 			// Create new session (either no resume requested, or resume failed).
 			a.sessionID = uuid.New().String()
-			wd, _ := os.Getwd()
+			wd := a.WorkingDir()
 			sess := store.Session{
 				ID:           a.sessionID,
 				Model:        a.model,
@@ -449,7 +466,7 @@ func (a *Agent) SaveMemories(ctx context.Context) error {
 		return fmt.Errorf("extracting memories: %w", err)
 	}
 
-	wd, _ := os.Getwd()
+	wd := a.WorkingDir()
 	for _, m := range memories {
 		if err := a.memoryStore.SaveMemory(wd, m.Tag, m.Content); err != nil {
 			return fmt.Errorf("saving memory %q: %w", m.Tag, err)

@@ -121,6 +121,26 @@ func TestNewAgentSystemPrompt(t *testing.T) {
 	assert.NotEmpty(t, agent.conversation.SystemPrompt())
 }
 
+func TestWithWorkingDir(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg, WithWorkingDir("/custom/dir"))
+	assert.Equal(t, "/custom/dir", a.WorkingDir())
+}
+
+func TestWithWorkingDir_Fallback(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg)
+	// Should fall back to os.Getwd().
+	wd := a.WorkingDir()
+	assert.NotEmpty(t, wd)
+}
+
 func TestWithAgentMD(t *testing.T) {
 	mp := &mockProvider{}
 	reg := tools.NewRegistry()
