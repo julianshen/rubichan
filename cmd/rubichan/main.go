@@ -171,6 +171,7 @@ func main() {
 	rootCmd.AddCommand(skillCmd())
 	// wiki is now a built-in skill (generate_wiki tool), not a CLI subcommand.
 	rootCmd.AddCommand(ollamaCmd())
+	rootCmd.AddCommand(worktreeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *runner.ExitError
