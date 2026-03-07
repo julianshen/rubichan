@@ -70,11 +70,15 @@ func TestTaskToolWithAgentType(t *testing.T) {
 	spawner := &fakeSpawner{
 		result: &TaskSpawnResult{Name: "explorer", Output: "done"},
 	}
+	inheritFalse := false
 	defs := &fakeAgentDefLookup{
 		defs: map[string]*TaskAgentDef{
 			"explorer": {
 				Name: "explorer", SystemPrompt: "You explore code.",
 				Tools: []string{"file", "search"}, MaxTurns: 5,
+				InheritSkills: &inheritFalse,
+				ExtraSkills:   []string{"repo-map"},
+				DisableSkills: []string{"security"},
 			},
 		},
 	}
@@ -86,6 +90,10 @@ func TestTaskToolWithAgentType(t *testing.T) {
 	assert.Equal(t, "explorer", spawner.lastCfg.Name)
 	assert.Equal(t, []string{"file", "search"}, spawner.lastCfg.Tools)
 	assert.Equal(t, 5, spawner.lastCfg.MaxTurns)
+	require.NotNil(t, spawner.lastCfg.InheritSkills)
+	assert.False(t, *spawner.lastCfg.InheritSkills)
+	assert.Equal(t, []string{"repo-map"}, spawner.lastCfg.ExtraSkills)
+	assert.Equal(t, []string{"security"}, spawner.lastCfg.DisableSkills)
 }
 
 func TestTaskToolMaxTurnsOverride(t *testing.T) {

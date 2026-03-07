@@ -355,8 +355,12 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			case ch <- provider.StreamEvent{Type: "stop"}:
 			case <-ctx.Done():
 			}
-			return
+			break
 		}
+	}
+
+	if gotDone {
+		return
 	}
 
 	if err := scanner.Err(); err != nil {

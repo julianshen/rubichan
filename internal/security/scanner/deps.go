@@ -241,7 +241,7 @@ func classifyOSVSeverity(vuln osvVuln) security.Severity {
 // The string may be a plain number ("7.5") or a full CVSS vector string.
 func parseCVSSScore(s string) float64 {
 	var score float64
-	fmt.Sscanf(s, "%f", &score)
+	_, _ = fmt.Sscanf(s, "%f", &score)
 	return score
 }
 

@@ -15,7 +15,7 @@ import (
 func TestHTTPFetcherSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("hello from server"))
+		_, _ = w.Write([]byte("hello from server"))
 	}))
 	defer server.Close()
 
@@ -29,7 +29,7 @@ func TestHTTPFetcherResponseSizeLimit(t *testing.T) {
 	bigBody := strings.Repeat("x", 1024*1024+100)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(bigBody))
+		_, _ = w.Write([]byte(bigBody))
 	}))
 	defer server.Close()
 

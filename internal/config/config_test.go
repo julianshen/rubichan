@@ -97,6 +97,8 @@ func TestConfigWithSkillsSection(t *testing.T) {
 [skills]
 registry_url = "https://custom.registry.dev"
 user_dir = "/tmp/skills"
+dirs = ["/tmp/pack-a", "/tmp/pack-b"]
+activation_threshold = 25
 max_llm_calls_per_turn = 5
 max_shell_exec_per_turn = 15
 max_net_fetch_per_turn = 8
@@ -109,6 +111,8 @@ approved_skills = ["code-review", "doc-gen"]
 	require.NoError(t, err)
 	assert.Equal(t, "https://custom.registry.dev", cfg.Skills.RegistryURL)
 	assert.Equal(t, "/tmp/skills", cfg.Skills.UserDir)
+	assert.Equal(t, []string{"/tmp/pack-a", "/tmp/pack-b"}, cfg.Skills.Dirs)
+	assert.Equal(t, 25, cfg.Skills.ActivationThreshold)
 	assert.Equal(t, 5, cfg.Skills.MaxLLMCallsPerTurn)
 	assert.Equal(t, 15, cfg.Skills.MaxShellExecPerTurn)
 	assert.Equal(t, 8, cfg.Skills.MaxNetFetchPerTurn)
@@ -120,6 +124,8 @@ func TestConfigSkillsDefaults(t *testing.T) {
 	assert.Equal(t, "https://registry.rubichan.dev", cfg.Skills.RegistryURL)
 	assert.Nil(t, cfg.Skills.ApprovedSkills)
 	assert.Equal(t, "", cfg.Skills.UserDir)
+	assert.Nil(t, cfg.Skills.Dirs)
+	assert.Equal(t, 1, cfg.Skills.ActivationThreshold)
 	assert.Equal(t, 10, cfg.Skills.MaxLLMCallsPerTurn)
 	assert.Equal(t, 20, cfg.Skills.MaxShellExecPerTurn)
 	assert.Equal(t, 10, cfg.Skills.MaxNetFetchPerTurn)
@@ -297,6 +303,7 @@ func TestSaveAndReload(t *testing.T) {
 	cfg.Provider.Default = "ollama"
 	cfg.Provider.Model = "llama3"
 	cfg.Agent.MaxTurns = 25
+	cfg.Skills.Dirs = []string{"/tmp/pack-a", "/tmp/pack-b"}
 
 	err := Save(path, cfg)
 	require.NoError(t, err)
@@ -306,6 +313,7 @@ func TestSaveAndReload(t *testing.T) {
 	assert.Equal(t, "ollama", loaded.Provider.Default)
 	assert.Equal(t, "llama3", loaded.Provider.Model)
 	assert.Equal(t, 25, loaded.Agent.MaxTurns)
+	assert.Equal(t, []string{"/tmp/pack-a", "/tmp/pack-b"}, loaded.Skills.Dirs)
 }
 
 func TestTrustRulesDefaultEmpty(t *testing.T) {

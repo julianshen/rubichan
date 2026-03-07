@@ -13,6 +13,8 @@ import (
 type Source string
 
 const (
+	// SourceConfigured is a skill found in an extra configured skills directory.
+	SourceConfigured Source = "configured"
 	// SourceBuiltin is a skill registered in code via RegisterBuiltin.
 	SourceBuiltin Source = "builtin"
 	// SourceUser is a skill found in the user-level skills directory.
@@ -31,6 +33,7 @@ type DiscoveredSkill struct {
 	Manifest *SkillManifest
 	Dir      string
 	Source   Source
+	RootDir  string
 
 	// InstructionBody holds the markdown body for instruction skills (SKILL.md).
 	// Empty for regular SKILL.yaml skills.
@@ -42,6 +45,7 @@ type DiscoveredSkill struct {
 type Loader struct {
 	userDir    string
 	projectDir string
+	skillDirs  []string
 	builtins   map[string]*SkillManifest
 	mcpServers []config.MCPServerConfig
 }
@@ -67,6 +71,12 @@ func (l *Loader) AddMCPServers(servers []config.MCPServerConfig) {
 	l.mcpServers = servers
 }
 
+// AddSkillDirs registers extra configured skill roots. These are scanned
+// recursively and have lower precedence than project and user skill dirs.
+func (l *Loader) AddSkillDirs(dirs []string) {
+	l.skillDirs = append(l.skillDirs[:0], dirs...)
+}
+
 // Discover finds all available skills and returns them in a deduplicated list.
 // The explicit parameter lists skill names explicitly requested (e.g. via --skills flag);
 // these are marked as SourceInline if found.
@@ -85,7 +95,20 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	// We build a map keyed by skill name; higher-priority sources overwrite lower ones.
 	byName := make(map[string]DiscoveredSkill)
 
-	// 1. Project skills (lowest directory priority).
+	// 1. Configured skill roots (lowest directory priority).
+	for _, dir := range l.skillDirs {
+		configuredSkills, err := scanDir(dir, SourceConfigured)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, ds := range configuredSkills {
+			if _, exists := byName[ds.Manifest.Name]; !exists {
+				byName[ds.Manifest.Name] = ds
+			}
+		}
+	}
+
+	// 2. Project skills override configured skill roots.
 	projectSkills, err := scanDir(l.projectDir, SourceProject)
 	if err != nil {
 		return nil, nil, err
@@ -94,7 +117,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 		byName[ds.Manifest.Name] = ds
 	}
 
-	// 2. User skills override project skills.
+	// 3. User skills override project skills.
 	userSkills, err := scanDir(l.userDir, SourceUser)
 	if err != nil {
 		return nil, nil, err
@@ -103,7 +126,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 		byName[ds.Manifest.Name] = ds
 	}
 
-	// 3. Built-in skills override everything from directories.
+	// 4. Built-in skills override everything from directories.
 	for name, m := range l.builtins {
 		byName[name] = DiscoveredSkill{
 			Manifest: m,
@@ -112,7 +135,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 		}
 	}
 
-	// 3.5. MCP servers from config become synthetic skills.
+	// 4.5. MCP servers from config become synthetic skills.
 	for _, srv := range l.mcpServers {
 		name := "mcp-" + srv.Name
 		// Skip if a higher-priority skill already has this name.
@@ -144,7 +167,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 		}
 	}
 
-	// 4. Mark explicitly requested skills as SourceInline.
+	// 5. Mark explicitly requested skills as SourceInline.
 	for name := range explicitSet {
 		ds, ok := byName[name]
 		if !ok {
@@ -192,65 +215,80 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	return result, warnings, nil
 }
 
-// scanDir walks a directory looking for <name>/SKILL.yaml files (and SKILL.md
-// instruction skills as a fallback). If the directory does not exist, it
-// returns an empty slice (not an error).
+// scanDir walks a directory tree recursively looking for directories that
+// contain SKILL.yaml files (and SKILL.md instruction skills as a fallback).
+// If a directory contains a skill manifest, it is treated as a skill root and
+// its descendants are not scanned for nested skills. If the directory does not
+// exist, it returns an empty slice (not an error).
 func scanDir(dir string, source Source) ([]DiscoveredSkill, error) {
-	entries, err := os.ReadDir(dir)
+	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("scan skills dir %q: %w", dir, err)
 	}
+	if !info.IsDir() {
+		return nil, nil
+	}
 
 	var results []DiscoveredSkill
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path == dir {
+			return nil
 		}
 
-		skillDir := filepath.Join(dir, entry.Name())
-
 		// Try SKILL.yaml first.
-		yamlPath := filepath.Join(skillDir, "SKILL.yaml")
+		yamlPath := filepath.Join(path, "SKILL.yaml")
 		data, err := os.ReadFile(yamlPath)
 		if err == nil {
-			manifest, err := ParseManifest(data)
-			if err != nil {
-				return nil, fmt.Errorf("parse skill %q: %w", entry.Name(), err)
+			manifest, parseErr := ParseManifest(data)
+			if parseErr != nil {
+				return fmt.Errorf("parse skill %q: %w", filepath.Base(path), parseErr)
 			}
 			results = append(results, DiscoveredSkill{
 				Manifest: manifest,
-				Dir:      skillDir,
+				Dir:      path,
 				Source:   source,
+				RootDir:  dir,
 			})
-			continue
+			return filepath.SkipDir
 		}
 		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read skill manifest %q: %w", yamlPath, err)
+			return fmt.Errorf("read skill manifest %q: %w", yamlPath, err)
 		}
 
 		// Fall back to SKILL.md (instruction skill).
-		mdPath := filepath.Join(skillDir, "SKILL.md")
+		mdPath := filepath.Join(path, "SKILL.md")
 		mdData, err := os.ReadFile(mdPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				continue
+				return nil
 			}
-			return nil, fmt.Errorf("read instruction skill %q: %w", mdPath, err)
+			return fmt.Errorf("read instruction skill %q: %w", mdPath, err)
 		}
 
-		manifest, body, err := ParseInstructionSkill(mdData)
-		if err != nil {
-			return nil, fmt.Errorf("parse instruction skill %q: %w", entry.Name(), err)
+		manifest, body, parseErr := ParseInstructionSkill(mdData)
+		if parseErr != nil {
+			return fmt.Errorf("parse instruction skill %q: %w", filepath.Base(path), parseErr)
 		}
 		results = append(results, DiscoveredSkill{
 			Manifest:        manifest,
-			Dir:             skillDir,
+			Dir:             path,
 			Source:          source,
+			RootDir:         dir,
 			InstructionBody: body,
 		})
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan skills dir %q: %w", dir, err)
 	}
 
 	return results, nil

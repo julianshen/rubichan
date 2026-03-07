@@ -1,2 +1,4 @@
 /rubichan
 .worktrees/
+coverage.out
+coverage_xcode.out

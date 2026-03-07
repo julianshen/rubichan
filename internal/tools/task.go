@@ -15,14 +15,17 @@ type TaskSpawner interface {
 // TaskSpawnConfig captures the configuration for spawning a subagent.
 // Mirrors agent.SubagentConfig but lives in tools/ to avoid the cycle.
 type TaskSpawnConfig struct {
-	Name         string
-	SystemPrompt string
-	Tools        []string
-	MaxTurns     int
-	MaxTokens    int
-	Model        string
-	Depth        int
-	MaxDepth     int
+	Name          string
+	SystemPrompt  string
+	Tools         []string
+	MaxTurns      int
+	MaxTokens     int
+	Model         string
+	Depth         int
+	MaxDepth      int
+	InheritSkills *bool
+	ExtraSkills   []string
+	DisableSkills []string
 }
 
 // TaskSpawnResult is the output of a subagent execution.
@@ -40,12 +43,15 @@ type TaskSpawnResult struct {
 // TaskAgentDef describes a pre-configured subagent template for use by
 // the TaskTool. Mirrors the fields needed from agent.AgentDef.
 type TaskAgentDef struct {
-	Name         string
-	SystemPrompt string
-	Tools        []string
-	MaxTurns     int
-	MaxDepth     int
-	Model        string
+	Name          string
+	SystemPrompt  string
+	Tools         []string
+	MaxTurns      int
+	MaxDepth      int
+	Model         string
+	InheritSkills *bool
+	ExtraSkills   []string
+	DisableSkills []string
 }
 
 // TaskAgentDefLookup retrieves named agent definitions for the TaskTool.
@@ -128,6 +134,9 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 			cfg.MaxTurns = def.MaxTurns
 			cfg.MaxDepth = def.MaxDepth
 			cfg.Model = def.Model
+			cfg.InheritSkills = def.InheritSkills
+			cfg.ExtraSkills = append([]string(nil), def.ExtraSkills...)
+			cfg.DisableSkills = append([]string(nil), def.DisableSkills...)
 		}
 	}
 

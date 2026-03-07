@@ -69,6 +69,24 @@ func TestDiscoverProjectSkills(t *testing.T) {
 	assert.Equal(t, filepath.Join(projectDir, "proj-skill"), skills[0].Dir)
 }
 
+func TestDiscoverConfiguredSkillDirs(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+	configuredDir := t.TempDir()
+
+	writeSkillYAML(t, configuredDir, "configured-skill", minimalManifestYAML("configured-skill"))
+
+	loader := NewLoader(userDir, projectDir)
+	loader.AddSkillDirs([]string{configuredDir})
+	discovered, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, discovered, 1)
+	assert.Equal(t, SourceConfigured, discovered[0].Source)
+	assert.Equal(t, filepath.Join(configuredDir, "configured-skill"), discovered[0].Dir)
+	assert.Equal(t, configuredDir, discovered[0].RootDir)
+}
+
 func TestDiscoverExplicitSkills(t *testing.T) {
 	userDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -114,6 +132,35 @@ types:
 	assert.Equal(t, "shared-skill", skills[0].Manifest.Name)
 	assert.Equal(t, "2.0.0", skills[0].Manifest.Version)
 	assert.Equal(t, SourceUser, skills[0].Source)
+}
+
+func TestDiscoverConfiguredDirPrecedence(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+	configuredA := t.TempDir()
+	configuredB := t.TempDir()
+
+	writeSkillYAML(t, configuredA, "shared-skill", `name: shared-skill
+version: 1.0.0
+description: "Configured A"
+types:
+  - prompt
+`)
+	writeSkillYAML(t, configuredB, "shared-skill", `name: shared-skill
+version: 2.0.0
+description: "Configured B"
+types:
+  - prompt
+`)
+
+	loader := NewLoader(userDir, projectDir)
+	loader.AddSkillDirs([]string{configuredA, configuredB})
+	discovered, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, discovered, 1)
+	assert.Equal(t, "1.0.0", discovered[0].Manifest.Version)
+	assert.Equal(t, configuredA, discovered[0].RootDir)
 }
 
 func TestDiscoverDeduplicationBuiltinWins(t *testing.T) {
@@ -255,6 +302,84 @@ func TestDiscoverSkipsNonSkillEntries(t *testing.T) {
 	assert.Empty(t, warnings)
 	require.Len(t, skills, 1)
 	assert.Equal(t, "real-skill", skills[0].Manifest.Name)
+}
+
+func TestDiscoverRecursiveFindsNestedSkillYAML(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+	configuredDir := t.TempDir()
+
+	nested := filepath.Join(configuredDir, "frontend", "react", "component-audit")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "SKILL.yaml"), []byte(minimalManifestYAML("component-audit")), 0o644))
+
+	loader := NewLoader(userDir, projectDir)
+	loader.AddSkillDirs([]string{configuredDir})
+	discovered, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, discovered, 1)
+	assert.Equal(t, "component-audit", discovered[0].Manifest.Name)
+	assert.Equal(t, nested, discovered[0].Dir)
+}
+
+func TestDiscoverRecursiveFindsNestedSkillMD(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+	configuredDir := t.TempDir()
+
+	nested := filepath.Join(configuredDir, "frontend", "react", "docs-guide")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "SKILL.md"), []byte(`---
+name: docs-guide
+version: 1.0.0
+description: "Docs guidance"
+---
+
+Write concise docs.
+`), 0o644))
+
+	loader := NewLoader(userDir, projectDir)
+	loader.AddSkillDirs([]string{configuredDir})
+	discovered, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, discovered, 1)
+	assert.Equal(t, "docs-guide", discovered[0].Manifest.Name)
+	assert.Equal(t, nested, discovered[0].Dir)
+	assert.Equal(t, "Write concise docs.", discovered[0].InstructionBody)
+}
+
+func TestDiscoverRecursivePrefersSkillYAMLOverSkillMD(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+	configuredDir := t.TempDir()
+
+	nested := filepath.Join(configuredDir, "frontend", "react", "shared-skill")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "SKILL.yaml"), []byte(`name: shared-skill
+version: 2.0.0
+description: "YAML skill"
+types:
+  - prompt
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "SKILL.md"), []byte(`---
+name: shared-skill
+version: 1.0.0
+description: "Markdown skill"
+---
+
+Ignored body.
+`), 0o644))
+
+	loader := NewLoader(userDir, projectDir)
+	loader.AddSkillDirs([]string{configuredDir})
+	discovered, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, discovered, 1)
+	assert.Equal(t, "2.0.0", discovered[0].Manifest.Version)
+	assert.Empty(t, discovered[0].InstructionBody)
 }
 
 func TestDiscoverSatisfiedDependency(t *testing.T) {

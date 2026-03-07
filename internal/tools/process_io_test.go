@@ -14,7 +14,7 @@ func TestPipeProcessIOWriteAndRead(t *testing.T) {
 	pio, err := NewPipeProcessIO(cmd)
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
-	defer cmd.Process.Kill()
+	defer func() { _ = cmd.Process.Kill() }()
 
 	_, err = pio.Write([]byte("hello\n"))
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestPipeProcessIOCapturesStderr(t *testing.T) {
 func TestNewPipeProcessIOReturnsErrorAfterStart(t *testing.T) {
 	cmd := exec.Command("cat")
 	require.NoError(t, cmd.Start())
-	defer cmd.Process.Kill()
+	defer func() { _ = cmd.Process.Kill() }()
 
 	_, err := NewPipeProcessIO(cmd)
 	assert.Error(t, err)

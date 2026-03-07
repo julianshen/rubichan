@@ -466,9 +466,7 @@ func parseCommandExecutable(segment string) (string, []string) {
 		}
 		exe := n
 		args := make([]string, 0, len(fields)-(idx+1))
-		for _, field := range fields[idx+1:] {
-			args = append(args, field)
-		}
+		args = append(args, fields[idx+1:]...)
 		return exe, args
 	}
 	return "", nil

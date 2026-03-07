@@ -54,7 +54,7 @@ data: {"type":"message_stop"}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sseBody))
+		_, _ = w.Write([]byte(sseBody))
 	}))
 	defer server.Close()
 
@@ -130,7 +130,7 @@ data: {"type":"message_stop"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sseBody))
+		_, _ = w.Write([]byte(sseBody))
 	}))
 	defer server.Close()
 
@@ -182,7 +182,7 @@ func TestStreamAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}`))
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}`))
 	}))
 	defer server.Close()
 
@@ -293,7 +293,7 @@ data: {"type":"message_stop"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sseBody))
+		_, _ = w.Write([]byte(sseBody))
 	}))
 	defer server.Close()
 
@@ -330,7 +330,7 @@ data: {"type":"message_stop"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sseBody))
+		_, _ = w.Write([]byte(sseBody))
 	}))
 	defer server.Close()
 
@@ -367,7 +367,7 @@ data: {"type":"message_stop"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sseBody))
+		_, _ = w.Write([]byte(sseBody))
 	}))
 	defer server.Close()
 
@@ -405,7 +405,7 @@ data: {"type":"message_stop"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sseBody))
+		_, _ = w.Write([]byte(sseBody))
 	}))
 	defer server.Close()
 
@@ -445,7 +445,7 @@ func TestStreamContextCancelledDuringEventIteration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sseBody))
+		_, _ = w.Write([]byte(sseBody))
 	}))
 	defer server.Close()
 
@@ -498,7 +498,7 @@ func TestStreamRequestBody(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 	}))
 	defer server.Close()
 
@@ -557,7 +557,7 @@ func TestStreamToolResultUsesContentField(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 	}))
 	defer server.Close()
 

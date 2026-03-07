@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"testing"
 
@@ -17,19 +16,6 @@ import (
 )
 
 // --- mock types for skill runtime tests ---
-
-// skillMockTool is a simple mock tool that returns a fixed result.
-type skillMockTool struct {
-	name   string
-	result string
-}
-
-func (t *skillMockTool) Name() string                 { return t.name }
-func (t *skillMockTool) Description() string          { return "mock tool " + t.name }
-func (t *skillMockTool) InputSchema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
-func (t *skillMockTool) Execute(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
-	return tools.ToolResult{Content: t.result}, nil
-}
 
 // skillMockBackend is a mock SkillBackend for testing.
 type skillMockBackend struct {

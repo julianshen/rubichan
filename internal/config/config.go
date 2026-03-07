@@ -77,13 +77,16 @@ type CacheConfig struct {
 
 // AgentDefConf describes a pre-configured subagent template in TOML config.
 type AgentDefConf struct {
-	Name         string   `toml:"name"`
-	Description  string   `toml:"description"`
-	SystemPrompt string   `toml:"system_prompt"`
-	Tools        []string `toml:"tools"`
-	MaxTurns     int      `toml:"max_turns"`
-	MaxDepth     int      `toml:"max_depth"`
-	Model        string   `toml:"model"`
+	Name          string   `toml:"name"`
+	Description   string   `toml:"description"`
+	SystemPrompt  string   `toml:"system_prompt"`
+	Tools         []string `toml:"tools"`
+	MaxTurns      int      `toml:"max_turns"`
+	MaxDepth      int      `toml:"max_depth"`
+	Model         string   `toml:"model"`
+	InheritSkills *bool    `toml:"inherit_skills"`
+	ExtraSkills   []string `toml:"extra_skills"`
+	DisableSkills []string `toml:"disable_skills"`
 }
 
 // TrustRuleConf defines a trust rule in the configuration file.
@@ -109,6 +112,8 @@ type SkillsConfig struct {
 	RegistryURL         string   `toml:"registry_url"`
 	ApprovedSkills      []string `toml:"approved_skills"`
 	UserDir             string   `toml:"user_dir"`
+	Dirs                []string `toml:"dirs"`
+	ActivationThreshold int      `toml:"activation_threshold"`
 	MaxLLMCallsPerTurn  int      `toml:"max_llm_calls_per_turn"`
 	MaxShellExecPerTurn int      `toml:"max_shell_exec_per_turn"`
 	MaxNetFetchPerTurn  int      `toml:"max_net_fetch_per_turn"`
@@ -217,6 +222,7 @@ func DefaultConfig() *Config {
 		},
 		Skills: SkillsConfig{
 			RegistryURL:         "https://registry.rubichan.dev",
+			ActivationThreshold: 1,
 			MaxLLMCallsPerTurn:  10,
 			MaxShellExecPerTurn: 20,
 			MaxNetFetchPerTurn:  10,

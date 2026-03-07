@@ -10,13 +10,16 @@ import (
 // identity, capabilities, and constraints of a specialized agent that can
 // be spawned by the orchestrator.
 type AgentDef struct {
-	Name         string   `toml:"name" yaml:"name"`
-	Description  string   `toml:"description" yaml:"description"`
-	SystemPrompt string   `toml:"system_prompt" yaml:"system_prompt"`
-	Tools        []string `toml:"tools" yaml:"tools"`
-	MaxTurns     int      `toml:"max_turns" yaml:"max_turns"`
-	MaxDepth     int      `toml:"max_depth" yaml:"max_depth"`
-	Model        string   `toml:"model" yaml:"model"`
+	Name          string   `toml:"name" yaml:"name"`
+	Description   string   `toml:"description" yaml:"description"`
+	SystemPrompt  string   `toml:"system_prompt" yaml:"system_prompt"`
+	Tools         []string `toml:"tools" yaml:"tools"`
+	MaxTurns      int      `toml:"max_turns" yaml:"max_turns"`
+	MaxDepth      int      `toml:"max_depth" yaml:"max_depth"`
+	Model         string   `toml:"model" yaml:"model"`
+	InheritSkills *bool    `toml:"inherit_skills" yaml:"inherit_skills"`
+	ExtraSkills   []string `toml:"extra_skills" yaml:"extra_skills"`
+	DisableSkills []string `toml:"disable_skills" yaml:"disable_skills"`
 }
 
 // AgentDefRegistry is a thread-safe registry of named agent definitions.

@@ -2,6 +2,7 @@ package skills
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -11,6 +12,9 @@ import (
 type TriggerContext struct {
 	// ProjectFiles is the list of filenames (basenames) present in the project.
 	ProjectFiles []string
+
+	// CurrentPath is the currently focused file path, if known.
+	CurrentPath string
 
 	// DetectedLangs is the list of programming languages detected in the project.
 	DetectedLangs []string
@@ -28,6 +32,29 @@ type TriggerContext struct {
 	ExplicitSkills []string
 }
 
+// ActivationScore breaks down how strongly a skill matches the current trigger context.
+type ActivationScore struct {
+	Explicit    int
+	CurrentPath int
+	Files       int
+	Keywords    int
+	Languages   int
+	Modes       int
+	Total       int
+}
+
+// ActivationReport describes whether and why a skill activated for a trigger context.
+type ActivationReport struct {
+	Skill     DiscoveredSkill
+	Activated bool
+	Score     ActivationScore
+
+	MatchedFiles     []string
+	MatchedKeywords  []string
+	MatchedLanguages []string
+	MatchedModes     []string
+}
+
 // EvaluateTriggers filters a list of discovered skills to those that should
 // be activated given the current trigger context.
 //
@@ -40,23 +67,49 @@ type TriggerContext struct {
 //
 // A skill with no triggers defined is never auto-activated (unless it is inline/explicit).
 func EvaluateTriggers(skills []DiscoveredSkill, ctx TriggerContext) []DiscoveredSkill {
-	var matched []DiscoveredSkill
-
-	for _, skill := range skills {
-		if shouldActivate(skill, ctx) {
-			matched = append(matched, skill)
+	reports := EvaluateTriggerReports(skills, ctx, 1)
+	matched := make([]DiscoveredSkill, 0, len(reports))
+	for _, report := range reports {
+		if report.Activated {
+			matched = append(matched, report.Skill)
 		}
 	}
-
 	return matched
 }
 
-// shouldActivate determines whether a single skill should be activated
-// given the current trigger context.
-func shouldActivate(skill DiscoveredSkill, ctx TriggerContext) bool {
-	// Explicit (inline) skills always activate.
+// EvaluateTriggerReports scores each skill and returns an ordered report. Skills
+// at or above threshold are marked Activated. Reports are sorted by score
+// descending and then by name for deterministic behavior.
+func EvaluateTriggerReports(skills []DiscoveredSkill, ctx TriggerContext, threshold int) []ActivationReport {
+	if threshold <= 0 {
+		threshold = 1
+	}
+
+	reports := make([]ActivationReport, 0, len(skills))
+	for _, skill := range skills {
+		report := scoreSkillActivation(skill, ctx)
+		report.Activated = report.Score.Total >= threshold
+		reports = append(reports, report)
+	}
+
+	sort.SliceStable(reports, func(i, j int) bool {
+		if reports[i].Score.Total == reports[j].Score.Total {
+			return reports[i].Skill.Manifest.Name < reports[j].Skill.Manifest.Name
+		}
+		return reports[i].Score.Total > reports[j].Score.Total
+	})
+
+	return reports
+}
+
+func scoreSkillActivation(skill DiscoveredSkill, ctx TriggerContext) ActivationReport {
+	report := ActivationReport{Skill: skill}
+
+	// Explicit (inline) skills always activate and should dominate sort order.
 	if skill.Source == SourceInline {
-		return true
+		report.Score.Explicit = 1000
+		report.Score.Total = 1000
+		return report
 	}
 
 	triggers := skill.Manifest.Triggers
@@ -66,72 +119,113 @@ func shouldActivate(skill DiscoveredSkill, ctx TriggerContext) bool {
 		len(triggers.Keywords) == 0 &&
 		len(triggers.Languages) == 0 &&
 		len(triggers.Modes) == 0 {
-		return false
+		return report
 	}
 
-	// Any matching trigger activates the skill.
-	if matchesFiles(triggers.Files, ctx.ProjectFiles) {
-		return true
-	}
-	if matchesKeywords(triggers.Keywords, ctx.LastUserMessage) {
-		return true
-	}
-	if matchesExact(triggers.Languages, ctx.DetectedLangs) {
-		return true
-	}
-	if matchesMode(triggers.Modes, ctx.Mode) {
-		return true
+	report.MatchedFiles = matchedFiles(triggers.Files, ctx.ProjectFiles)
+	if len(report.MatchedFiles) > 0 {
+		report.Score.Files = len(report.MatchedFiles) * 100
 	}
 
-	return false
+	report.Score.CurrentPath = currentPathScore(triggers.Files, ctx.CurrentPath)
+
+	report.MatchedKeywords = matchedKeywords(triggers.Keywords, ctx.LastUserMessage)
+	if len(report.MatchedKeywords) > 0 {
+		report.Score.Keywords = len(report.MatchedKeywords) * 80
+	}
+
+	report.MatchedLanguages = matchedExact(triggers.Languages, ctx.DetectedLangs)
+	if len(report.MatchedLanguages) > 0 {
+		report.Score.Languages = len(report.MatchedLanguages) * 60
+	}
+
+	report.MatchedModes = matchedModes(triggers.Modes, ctx.Mode)
+	if len(report.MatchedModes) > 0 {
+		report.Score.Modes = len(report.MatchedModes) * 40
+	}
+
+	report.Score.Total = report.Score.Explicit +
+		report.Score.CurrentPath +
+		report.Score.Files +
+		report.Score.Keywords +
+		report.Score.Languages +
+		report.Score.Modes
+	return report
 }
 
 // matchesFiles returns true if any trigger pattern matches any project file
 // using filepath.Match (shell glob semantics).
-func matchesFiles(patterns, projectFiles []string) bool {
+func matchedFiles(patterns, projectFiles []string) []string {
+	seen := make(map[string]bool)
+	var matched []string
 	for _, pattern := range patterns {
 		for _, file := range projectFiles {
 			// filepath.Match matches against the basename only.
-			matched, err := filepath.Match(pattern, filepath.Base(file))
-			if err == nil && matched {
-				return true
+			ok, err := filepath.Match(pattern, filepath.Base(file))
+			if err == nil && ok && !seen[pattern] {
+				seen[pattern] = true
+				matched = append(matched, pattern)
 			}
 		}
 	}
-	return false
+	return matched
+}
+
+func currentPathScore(patterns []string, currentPath string) int {
+	if currentPath == "" {
+		return 0
+	}
+	base := filepath.Base(currentPath)
+	for _, pattern := range patterns {
+		if pattern == base || pattern == currentPath {
+			return 150
+		}
+		if ok, err := filepath.Match(pattern, base); err == nil && ok {
+			return 100
+		}
+		if ok, err := filepath.Match(pattern, currentPath); err == nil && ok {
+			return 100
+		}
+	}
+	return 0
 }
 
 // matchesKeywords returns true if any keyword is found in the message
 // using case-insensitive substring matching.
-func matchesKeywords(keywords []string, message string) bool {
+func matchedKeywords(keywords []string, message string) []string {
 	lowerMsg := strings.ToLower(message)
+	var matched []string
 	for _, kw := range keywords {
 		if strings.Contains(lowerMsg, strings.ToLower(kw)) {
-			return true
+			matched = append(matched, kw)
 		}
 	}
-	return false
+	return matched
 }
 
 // matchesExact returns true if any trigger value matches any detected value
 // using exact string comparison.
-func matchesExact(triggerValues, detectedValues []string) bool {
+func matchedExact(triggerValues, detectedValues []string) []string {
+	seen := make(map[string]bool)
+	var matched []string
 	for _, tv := range triggerValues {
 		for _, dv := range detectedValues {
-			if tv == dv {
-				return true
+			if tv == dv && !seen[tv] {
+				seen[tv] = true
+				matched = append(matched, tv)
 			}
 		}
 	}
-	return false
+	return matched
 }
 
 // matchesMode returns true if any trigger mode matches the current mode exactly.
-func matchesMode(modes []string, currentMode string) bool {
+func matchedModes(modes []string, currentMode string) []string {
+	var matched []string
 	for _, m := range modes {
 		if m == currentMode {
-			return true
+			matched = append(matched, m)
 		}
 	}
-	return false
+	return matched
 }
