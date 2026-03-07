@@ -303,6 +303,13 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 
+	case "tool_progress":
+		if msg.ToolProgress != nil {
+			m.content.WriteString(msg.ToolProgress.Content)
+			m.setContentAndAutoScroll(m.content.String())
+		}
+		return m, m.waitForEvent()
+
 	case "tool_result":
 		resultContent := ""
 		resultName := ""
