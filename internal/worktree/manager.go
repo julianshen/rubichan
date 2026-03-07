@@ -3,8 +3,11 @@ package worktree
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Manager manages git worktrees within a repository.
@@ -47,6 +50,56 @@ func (m *Manager) HasChanges(ctx context.Context, name string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// Create creates a new git worktree with a named branch. If the worktree
+// already exists, it returns the existing one.
+func (m *Manager) Create(ctx context.Context, name string) (*Worktree, error) {
+	wt := &Worktree{Name: name, RepoRoot: m.repoRoot, CreatedAt: time.Now()}
+	wtDir := wt.Dir()
+
+	// If worktree already exists, return it.
+	if _, err := os.Stat(filepath.Join(wtDir, ".git")); err == nil {
+		changed, _ := m.HasChanges(ctx, name)
+		wt.HasChanges = changed
+		return wt, nil
+	}
+
+	// Ensure parent directory exists.
+	if err := os.MkdirAll(filepath.Dir(wtDir), 0o755); err != nil {
+		return nil, fmt.Errorf("creating worktree parent dir: %w", err)
+	}
+
+	base := m.baseBranch()
+	branch := wt.BranchName()
+
+	_, err := m.git(ctx, m.repoRoot, "worktree", "add", "-b", branch, wtDir, base)
+	if err != nil {
+		return nil, fmt.Errorf("creating worktree %q: %w", name, err)
+	}
+
+	return wt, nil
+}
+
+// Remove removes a worktree and deletes its branch.
+func (m *Manager) Remove(ctx context.Context, name string) error {
+	wt := Worktree{Name: name, RepoRoot: m.repoRoot}
+	wtDir := wt.Dir()
+
+	// Verify the worktree exists.
+	if _, err := os.Stat(wtDir); os.IsNotExist(err) {
+		return fmt.Errorf("worktree %q not found", name)
+	}
+
+	// Remove the worktree.
+	if _, err := m.git(ctx, m.repoRoot, "worktree", "remove", "--force", wtDir); err != nil {
+		return fmt.Errorf("removing worktree %q: %w", name, err)
+	}
+
+	// Delete the branch (may already be gone).
+	m.git(ctx, m.repoRoot, "branch", "-D", wt.BranchName()) //nolint:errcheck
+
+	return nil
 }
 
 // baseBranch returns the configured base branch, defaulting to "main".
