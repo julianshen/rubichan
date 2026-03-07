@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,6 +46,7 @@ import (
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/internal/wiki"
+	"github.com/julianshen/rubichan/internal/worktree"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
 
 	// Register providers via init() side effects.
@@ -76,12 +78,51 @@ var (
 	skillsFlag        string
 	approveSkillsFlag bool
 
-	resumeFlag string
-	failOnFlag string
+	resumeFlag    string
+	failOnFlag    string
+	worktreeFlag  string
 )
 
 func versionString() string {
 	return fmt.Sprintf("rubichan %s (commit: %s, built: %s)", version, commit, date)
+}
+
+// initWorktree creates or reuses a worktree and returns its path and manager.
+// Returns empty path if --worktree was not specified.
+func initWorktree(cfg *config.Config) (string, *worktree.Manager, error) {
+	if worktreeFlag == "" {
+		return "", nil, nil
+	}
+
+	out, err := runGitCommand("rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", nil, fmt.Errorf("not in a git repository: %w", err)
+	}
+	root := strings.TrimSpace(out)
+
+	wtCfg := worktree.Config{
+		MaxWorktrees: cfg.Worktree.MaxCount,
+		BaseBranch:   cfg.Worktree.BaseBranch,
+		AutoCleanup:  cfg.Worktree.AutoCleanup,
+	}
+	mgr := worktree.NewManager(root, wtCfg)
+
+	wt, err := mgr.Create(context.Background(), worktreeFlag)
+	if err != nil {
+		return "", nil, fmt.Errorf("creating worktree: %w", err)
+	}
+
+	return wt.Dir(), mgr, nil
+}
+
+// runGitCommand executes a git command and returns its stdout.
+func runGitCommand(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func main() {
@@ -116,6 +157,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&approveSkillsFlag, "approve-skills", false, "auto-approve skill permissions")
 	rootCmd.PersistentFlags().StringVar(&resumeFlag, "resume", "", "resume a previous session by ID")
 	rootCmd.PersistentFlags().StringVar(&failOnFlag, "fail-on", "", "exit non-zero if findings at/above severity (critical, high, medium, low)")
+	rootCmd.PersistentFlags().StringVar(&worktreeFlag, "worktree", "", "run in an isolated git worktree with the given name")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -179,7 +221,7 @@ func (*noopPromptBackend) Unload() error                                  { retu
 //
 // The returned io.Closer must be closed by the caller to release the SQLite
 // store.
-func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config, mode string) (*skills.Runtime, io.Closer, error) {
+func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config, mode string, workDir string) (*skills.Runtime, io.Closer, error) {
 	skillNames := parseSkillsFlag(skillsFlag)
 
 	if cfg == nil {
@@ -211,12 +253,7 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	}
 
 	// Project-level skill directory.
-	cwd, err := os.Getwd()
-	if err != nil {
-		s.Close()
-		return nil, nil, fmt.Errorf("getting working directory: %w", err)
-	}
-	projectDir := filepath.Join(cwd, ".rubichan", "skills")
+	projectDir := filepath.Join(workDir, ".rubichan", "skills")
 
 	loader := skills.NewLoader(userDir, projectDir)
 	loader.AddSkillDirs(cfg.Skills.Dirs)
@@ -228,7 +265,7 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	// Create integration objects shared across all skill backends.
 	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
 	httpFetcher := integrations.NewHTTPFetcher(30 * time.Second)
-	gitRunner := integrations.NewGitRunner(cwd)
+	gitRunner := integrations.NewGitRunner(workDir)
 
 	// SkillInvoker needs the runtime, which we haven't created yet. Create it
 	// with nil and set the invoker after runtime creation to break the cycle.
@@ -312,7 +349,7 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	}
 
 	// Collect top-level project files for trigger evaluation.
-	entries, _ := os.ReadDir(cwd)
+	entries, _ := os.ReadDir(workDir)
 	projectFiles := make([]string, 0, len(entries))
 	for _, e := range entries {
 		projectFiles = append(projectFiles, e.Name())
@@ -656,12 +693,36 @@ func runInteractive() error {
 		return fmt.Errorf("creating provider: %w", err)
 	}
 
-	// Create tool registry
-	cwd, err := os.Getwd()
+	// Set up worktree if --worktree flag was provided.
+	wtDir, wtMgr, err := initWorktree(cfg)
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return fmt.Errorf("worktree setup: %w", err)
 	}
 
+	// Determine effective working directory.
+	cwd := wtDir
+	if cwd == "" {
+		cwd, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("getting working directory: %w", err)
+		}
+	}
+
+	// If worktree is active, defer cleanup.
+	if wtMgr != nil {
+		defer func() {
+			hasChanges, _ := wtMgr.HasChanges(context.Background(), worktreeFlag)
+			if hasChanges {
+				fmt.Fprintf(os.Stderr, "Worktree %q preserved at %s (has uncommitted changes)\n", worktreeFlag, wtDir)
+			} else if cfg.Worktree.AutoCleanup {
+				if err := wtMgr.Remove(context.Background(), worktreeFlag); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clean up worktree %q: %v\n", worktreeFlag, err)
+				}
+			}
+		}()
+	}
+
+	// Create tool registry
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
 	allowed := parseToolsFlag(toolsFlag)
@@ -705,6 +766,9 @@ func runInteractive() error {
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
+	if wtDir != "" {
+		opts = append(opts, agent.WithWorkingDir(wtDir))
+	}
 	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
 	}
@@ -803,7 +867,7 @@ func runInteractive() error {
 	}
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.
-	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg, "interactive")
+	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg, "interactive", cwd)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
@@ -943,14 +1007,38 @@ func runHeadless() error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
 	defer cancel()
 
-	// Resolve input: code-review mode builds prompt from diff, others need explicit input.
-	var promptText string
-	if modeFlag == "code-review" {
-		cwd, err := os.Getwd()
+	// Set up worktree if --worktree flag was provided.
+	wtDir, wtMgr, err := initWorktree(cfg)
+	if err != nil {
+		return fmt.Errorf("worktree setup: %w", err)
+	}
+
+	// Determine effective working directory.
+	cwd := wtDir
+	if cwd == "" {
+		cwd, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getting working directory: %w", err)
 		}
+	}
 
+	// If worktree is active, defer cleanup.
+	if wtMgr != nil {
+		defer func() {
+			hasChanges, _ := wtMgr.HasChanges(context.Background(), worktreeFlag)
+			if hasChanges {
+				fmt.Fprintf(os.Stderr, "Worktree %q preserved at %s (has uncommitted changes)\n", worktreeFlag, wtDir)
+			} else if cfg.Worktree.AutoCleanup {
+				if err := wtMgr.Remove(context.Background(), worktreeFlag); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clean up worktree %q: %v\n", worktreeFlag, err)
+				}
+			}
+		}()
+	}
+
+	// Resolve input: code-review mode builds prompt from diff, others need explicit input.
+	var promptText string
+	if modeFlag == "code-review" {
 		diff, err := pipeline.ExtractDiff(ctx, cwd, diffFlag)
 		if err != nil {
 			return fmt.Errorf("extracting diff: %w", err)
@@ -973,12 +1061,6 @@ func runHeadless() error {
 	p, err := provider.NewProvider(cfg)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
-	}
-
-	// Create tool registry with optional whitelist
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
 	}
 
 	registry := tools.NewRegistry()
@@ -1023,6 +1105,9 @@ func runHeadless() error {
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
+	if wtDir != "" {
+		opts = append(opts, agent.WithWorkingDir(wtDir))
+	}
 	if err := wireAppleDev(cwd, registry, headlessToolsCfg); err != nil {
 		return err
 	}
@@ -1071,7 +1156,7 @@ func runHeadless() error {
 	if headlessMode == "" {
 		headlessMode = "headless"
 	}
-	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg, headlessMode)
+	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg, headlessMode, cwd)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
