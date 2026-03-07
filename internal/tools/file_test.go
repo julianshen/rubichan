@@ -383,6 +383,67 @@ func TestFileToolReadDoesNotRecordDiffTracker(t *testing.T) {
 	assert.Empty(t, dt.Changes())
 }
 
+func TestFileToolImplementsStreamingTool(t *testing.T) {
+	ft := NewFileTool(t.TempDir())
+	var tool Tool = ft
+	_, ok := tool.(StreamingTool)
+	assert.True(t, ok, "FileTool should implement StreamingTool")
+}
+
+func TestFileToolExecuteStreamRead(t *testing.T) {
+	dir := t.TempDir()
+	content := "line one\nline two\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644))
+
+	ft := NewFileTool(dir)
+	input, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "test.txt",
+	})
+
+	var events []ToolEvent
+	result, err := ft.ExecuteStream(context.Background(), input, func(ev ToolEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Equal(t, content, result.Content)
+
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventBegin, events[0].Stage)
+	assert.Equal(t, EventEnd, events[len(events)-1].Stage)
+}
+
+func TestFileToolExecuteStreamWrite(t *testing.T) {
+	dir := t.TempDir()
+	ft := NewFileTool(dir)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "out.txt",
+		"content":   "written",
+	})
+
+	var events []ToolEvent
+	result, err := ft.ExecuteStream(context.Background(), input, func(ev ToolEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "out.txt")
+
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventBegin, events[0].Stage)
+	assert.Equal(t, EventEnd, events[len(events)-1].Stage)
+}
+
+func TestFileToolExecuteStreamInvalidInput(t *testing.T) {
+	ft := NewFileTool(t.TempDir())
+	result, err := ft.ExecuteStream(context.Background(), json.RawMessage(`{bad`), func(ev ToolEvent) {})
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+}
+
 func TestFileToolNoDiffTrackerDoesNotPanic(t *testing.T) {
 	dir := t.TempDir()
 	ft := NewFileTool(dir) // No DiffTracker set
