@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +50,7 @@ func TestSSETransportSendReceive(t *testing.T) {
 		<-r.Context().Done()
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -98,7 +98,7 @@ func TestSSETransportClose(t *testing.T) {
 		<-r.Context().Done()
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -128,7 +128,7 @@ func TestSSETransportReceiveEOFOnStreamDrop(t *testing.T) {
 		// Close immediately — simulates stream drop.
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -152,7 +152,7 @@ func TestSSETransportStreamClosedBeforeEndpoint(t *testing.T) {
 		// Close immediately without sending endpoint event.
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -174,7 +174,7 @@ func TestSSETransportContextCancelledDuringConnect(t *testing.T) {
 		<-r.Context().Done()
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -199,7 +199,7 @@ func TestSSETransportSendPostError(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -225,7 +225,7 @@ func TestSSETransportReceiveContextDone(t *testing.T) {
 		<-r.Context().Done()
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -256,7 +256,7 @@ func TestSSETransportSendConnectionError(t *testing.T) {
 		<-r.Context().Done()
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -278,7 +278,7 @@ func TestSSETransportServerError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	server := httptest.NewServer(mux)
+	server := testutil.NewServer(t, mux)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

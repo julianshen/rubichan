@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +25,7 @@ func TestRegistrySearch(t *testing.T) {
 		{Name: "code-format", Version: "2.1.0", Description: "Code formatting skill"},
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "code", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
@@ -51,7 +51,7 @@ description: "Automated code review"
 types:
   - prompt
 `
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/skills/code-review/1.0.0/manifest", r.URL.Path)
 		w.Header().Set("Content-Type", "application/x-yaml")
 		_, _ = w.Write([]byte(manifestYAML))
@@ -76,7 +76,7 @@ description: "Downloaded skill"
 types:
   - prompt
 `
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/skills/dl-skill/1.0.0/download", r.URL.Path)
 		w.Header().Set("Content-Type", "application/gzip")
 
@@ -126,7 +126,7 @@ types:
 }
 
 func TestRegistryDownloadError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -138,7 +138,7 @@ func TestRegistryDownloadError(t *testing.T) {
 }
 
 func TestRegistryGetManifestError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -157,7 +157,7 @@ types:
   - prompt
 `
 	var requestCount atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		w.Header().Set("Content-Type", "application/x-yaml")
 		_, _ = w.Write([]byte(manifestYAML))
@@ -193,7 +193,7 @@ types:
   - prompt
 `
 	var requestCount atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		w.Header().Set("Content-Type", "application/x-yaml")
 		_, _ = w.Write([]byte(manifestYAML))
@@ -223,7 +223,7 @@ types:
 func TestRegistryListVersions(t *testing.T) {
 	versions := []string{"1.0.0", "1.1.0", "1.2.0", "2.0.0"}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/skills/my-tool/versions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(versions)
@@ -239,7 +239,7 @@ func TestRegistryListVersions(t *testing.T) {
 }
 
 func TestRegistryListVersionsError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -252,7 +252,7 @@ func TestRegistryListVersionsError(t *testing.T) {
 }
 
 func TestRegistryListVersionsMalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("not json"))
 	}))
@@ -265,7 +265,7 @@ func TestRegistryListVersionsMalformedJSON(t *testing.T) {
 }
 
 func TestRegistrySearchError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server error", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -277,7 +277,7 @@ func TestRegistrySearchError(t *testing.T) {
 }
 
 func TestRegistrySearchMalformedJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("{invalid"))
 	}))

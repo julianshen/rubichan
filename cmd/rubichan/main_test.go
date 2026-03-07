@@ -3,18 +3,18 @@ package main
 import (
 	"bytes"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"strings"
 )
 
 func TestVersionString(t *testing.T) {
@@ -143,7 +143,7 @@ func TestRemoveSkill(t *testing.T) {
 func TestAutoDetectProvider_OllamaRunning(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "") // ensure env doesn't interfere
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"version": "0.5.1"}`))
 	}))
 	defer srv.Close()
@@ -176,7 +176,7 @@ func TestAutoDetectProvider_APIKeyExists(t *testing.T) {
 }
 
 func TestResolveOllamaModel_SingleModel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"models": [{"name": "llama3.2:latest", "size": 4294967296}]}`))
 	}))
 	defer srv.Close()
@@ -187,7 +187,7 @@ func TestResolveOllamaModel_SingleModel(t *testing.T) {
 }
 
 func TestResolveOllamaModel_NoModels(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"models": []}`))
 	}))
 	defer srv.Close()
@@ -198,7 +198,7 @@ func TestResolveOllamaModel_NoModels(t *testing.T) {
 }
 
 func TestResolveOllamaModel_MultipleModels(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"models": [
 			{"name": "llama3.2:latest", "size": 4294967296},
 			{"name": "codellama:7b", "size": 3758096384}
