@@ -15,6 +15,14 @@ type Config struct {
 	Skills   SkillsConfig   `toml:"skills"`
 	MCP      MCPConfig      `toml:"mcp"`
 	Security SecurityConfig `toml:"security"`
+	Worktree WorktreeConfig `toml:"worktree"`
+}
+
+// WorktreeConfig holds settings for git worktree management.
+type WorktreeConfig struct {
+	MaxCount    int    `toml:"max_count"`
+	BaseBranch  string `toml:"base_branch"`
+	AutoCleanup bool   `toml:"auto_cleanup"`
 }
 
 // SecurityConfig holds settings for the security scanning engine.
@@ -230,6 +238,10 @@ func DefaultConfig() *Config {
 		Security: SecurityConfig{
 			FailOn:      "high",
 			MaxLLMCalls: 10,
+		},
+		Worktree: WorktreeConfig{
+			MaxCount:    5,
+			AutoCleanup: true,
 		},
 	}
 }
