@@ -78,9 +78,9 @@ var (
 	skillsFlag        string
 	approveSkillsFlag bool
 
-	resumeFlag    string
-	failOnFlag    string
-	worktreeFlag  string
+	resumeFlag   string
+	failOnFlag   string
+	worktreeFlag string
 )
 
 func versionString() string {

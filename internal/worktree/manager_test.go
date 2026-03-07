@@ -392,6 +392,85 @@ func TestRemove_FiresHook(t *testing.T) {
 	}
 }
 
+func TestCreate_CustomBaseBranch(t *testing.T) {
+	repo := initTestRepo(t)
+	cfg := DefaultConfig()
+	cfg.BaseBranch = "develop"
+	mgr := NewManager(repo, cfg)
+	ctx := context.Background()
+
+	// Create the develop branch first.
+	addWorktree(t, repo, "tmp-develop")
+	tmpDir := filepath.Join(repo, ".rubichan", "worktrees", "tmp-develop")
+	cmd := exec.Command("git", "checkout", "-b", "develop")
+	cmd.Dir = tmpDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("creating develop branch: %s", string(out))
+	}
+	// Remove the temp worktree so we can test create with develop as base.
+	removeCmd := exec.Command("git", "worktree", "remove", "--force", tmpDir)
+	removeCmd.Dir = repo
+	removeCmd.CombinedOutput()
+
+	wt, err := mgr.Create(ctx, "from-develop")
+	if err != nil {
+		t.Fatalf("Create with custom base branch: %v", err)
+	}
+	if wt.Name != "from-develop" {
+		t.Errorf("Name = %q, want %q", wt.Name, "from-develop")
+	}
+
+	mgr.Remove(ctx, "from-develop")
+}
+
+func TestHasChanges_NonExistent(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+
+	_, err := mgr.HasChanges(context.Background(), "does-not-exist")
+	if err == nil {
+		t.Error("expected error for non-existent worktree")
+	}
+}
+
+func TestLock_BasicLockUnlock(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "test.lock")
+	l := &fileLock{path: lockPath}
+
+	if err := l.Lock(); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	if err := l.Unlock(); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+}
+
+func TestLock_TryLockConflict(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "test.lock")
+
+	l1 := &fileLock{path: lockPath}
+	if err := l1.Lock(); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	defer l1.Unlock()
+
+	l2 := &fileLock{path: lockPath}
+	err := l2.TryLock()
+	if err == nil {
+		l2.Unlock()
+		t.Error("expected TryLock to fail when lock is held")
+	}
+}
+
+func TestLock_UnlockNil(t *testing.T) {
+	l := &fileLock{path: "/tmp/unused.lock"}
+	if err := l.Unlock(); err != nil {
+		t.Errorf("Unlock on nil file should not error: %v", err)
+	}
+}
+
 func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
 	repo := initTestRepo(t)
 	cfg := DefaultConfig()
