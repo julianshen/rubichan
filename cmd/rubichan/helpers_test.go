@@ -169,7 +169,7 @@ func TestCreateSkillRuntimeNilConfig(t *testing.T) {
 	skillsFlag = ""
 	defer func() { skillsFlag = oldFlag }()
 
-	rt, closer, err := createSkillRuntime(context.Background(), nil, nil, nil, "interactive")
+	rt, closer, err := createSkillRuntime(context.Background(), nil, nil, nil, "interactive", t.TempDir())
 	assert.Error(t, err)
 	assert.Nil(t, rt)
 	assert.Nil(t, closer)
