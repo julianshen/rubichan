@@ -71,6 +71,8 @@ func TestHookPhaseString(t *testing.T) {
 		{HookOnAfterResponse, "OnAfterResponse"},
 		{HookOnBeforeWikiSection, "OnBeforeWikiSection"},
 		{HookOnSecurityScanComplete, "OnSecurityScanComplete"},
+		{HookOnWorktreeCreate, "OnWorktreeCreate"},
+		{HookOnWorktreeRemove, "OnWorktreeRemove"},
 	}
 
 	for _, tt := range tests {
