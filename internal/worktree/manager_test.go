@@ -530,8 +530,46 @@ func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
 	mgr := NewManager(repo, cfg)
 	ctx := context.Background()
 
-	// Create 3 dirty worktrees
-	for _, name := range []string{"oldest", "middle", "newest"} {
+	// Create 4 worktrees: 2 clean + 2 dirty. Only clean ones should be removed.
+	for _, name := range []string{"oldest", "middle", "newer", "newest"} {
+		mgr.Create(ctx, name)
+	}
+	// Make "middle" and "newest" dirty.
+	for _, name := range []string{"middle", "newest"} {
+		wtDir := filepath.Join(repo, ".rubichan", "worktrees", name)
+		os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("dirty"), 0o644)
+	}
+
+	err := mgr.Cleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the 2 dirty worktrees should remain (clean ones removed first).
+	if len(list) != 2 {
+		t.Errorf("After cleanup with max=2, expected 2 worktrees, got %d", len(list))
+	}
+	// Verify the remaining ones are the dirty ones.
+	for _, wt := range list {
+		if wt.Name != "middle" && wt.Name != "newest" {
+			t.Errorf("Expected dirty worktree to survive, got %q", wt.Name)
+		}
+	}
+}
+
+func TestCleanup_PreservesDirtyWorktrees(t *testing.T) {
+	repo := initTestRepo(t)
+	cfg := DefaultConfig()
+	cfg.MaxWorktrees = 1
+	mgr := NewManager(repo, cfg)
+	ctx := context.Background()
+
+	// Create 3 dirty worktrees. None should be removed since all are dirty.
+	for _, name := range []string{"a", "b", "c"} {
 		mgr.Create(ctx, name)
 		wtDir := filepath.Join(repo, ".rubichan", "worktrees", name)
 		os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("dirty"), 0o644)
@@ -546,7 +584,7 @@ func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) > 2 {
-		t.Errorf("After cleanup with max=2, got %d worktrees", len(list))
+	if len(list) != 3 {
+		t.Errorf("All dirty worktrees should be preserved, got %d", len(list))
 	}
 }

@@ -122,7 +122,12 @@ func setupWorkingDir(cfg *config.Config) (cwd string, mgr *worktree.Manager, cle
 
 	wtDir := wt.Dir()
 	cleanup = func() {
-		hasChanges, _ := mgr.HasChanges(context.Background(), worktreeFlag)
+		hasChanges, err := mgr.HasChanges(context.Background(), worktreeFlag)
+		if err != nil {
+			// Treat status-check failure as dirty — preserve worktree.
+			fmt.Fprintf(os.Stderr, "Warning: cannot check worktree %q status: %v (preserving)\n", worktreeFlag, err)
+			return
+		}
 		if hasChanges {
 			fmt.Fprintf(os.Stderr, "Worktree %q preserved at %s (has uncommitted changes)\n", worktreeFlag, wtDir)
 		} else if cfg.Worktree.AutoCleanup {
@@ -813,9 +818,19 @@ func runInteractive() error {
 		AgentDefs: agentDefReg,
 	}
 
-	// Wire worktree provider for subagent isolation if worktree is active.
+	// Wire worktree provider for subagent isolation.
+	// Always create a manager so subagents can use isolation: "worktree"
+	// even when the parent isn't running in a worktree.
 	if wtMgr != nil {
 		spawner.WorktreeProvider = &worktreeProviderAdapter{mgr: wtMgr}
+	} else if out, gitErr := runGitCommand("rev-parse", "--show-toplevel"); gitErr == nil {
+		root := strings.TrimSpace(out)
+		wtCfg := worktree.Config{
+			MaxWorktrees: cfg.Worktree.MaxCount,
+			BaseBranch:   cfg.Worktree.BaseBranch,
+			AutoCleanup:  cfg.Worktree.AutoCleanup,
+		}
+		spawner.WorktreeProvider = &worktreeProviderAdapter{mgr: worktree.NewManager(root, wtCfg)}
 	}
 
 	// Register task and list_tasks tools.

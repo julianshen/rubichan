@@ -102,18 +102,22 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 		if s.WorktreeProvider == nil {
 			return nil, fmt.Errorf("worktree isolation requested but no WorktreeProvider configured")
 		}
-		wtName := fmt.Sprintf("subagent-%s-%d", cfg.Name, time.Now().UnixMilli())
+		wtName := fmt.Sprintf("subagent-%s-%d", cfg.Name, time.Now().UnixNano())
 		wt, err := s.WorktreeProvider.CreateWorktree(ctx, wtName)
 		if err != nil {
 			return nil, fmt.Errorf("creating worktree for subagent: %w", err)
 		}
 		workDir = wt.Dir
 		wtCleanup = func() {
-			changed, _ := s.WorktreeProvider.HasWorktreeChanges(ctx, wtName)
-			if !changed {
-				_ = s.WorktreeProvider.RemoveWorktree(ctx, wtName)
+			changed, err := s.WorktreeProvider.HasWorktreeChanges(ctx, wtName)
+			if err != nil || changed {
+				return // Preserve on error or dirty state.
 			}
+			_ = s.WorktreeProvider.RemoveWorktree(ctx, wtName)
 		}
+	}
+	if wtCleanup != nil {
+		defer wtCleanup()
 	}
 
 	// Filter tools.
@@ -199,11 +203,6 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 
 	result.Output = output.String()
 	result.ToolsUsed = toolsUsed
-
-	// Clean up worktree if it was created and has no changes.
-	if wtCleanup != nil {
-		wtCleanup()
-	}
 
 	return result, nil
 }

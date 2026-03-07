@@ -117,12 +117,19 @@ func (m *Manager) Cleanup(ctx context.Context) error {
 		worktrees = remaining
 	}
 
-	// Phase 2: Enforce retention limit by removing oldest idle worktrees.
+	// Phase 2: Enforce retention limit by removing oldest clean worktrees.
 	if m.config.MaxWorktrees > 0 && len(worktrees) > m.config.MaxWorktrees {
-		excess := len(worktrees) - m.config.MaxWorktrees
-		for i := range excess {
-			if err := m.remove(ctx, worktrees[i].Name); err != nil {
-				return fmt.Errorf("enforcing limit, removing %q: %w", worktrees[i].Name, err)
+		removed := 0
+		needed := len(worktrees) - m.config.MaxWorktrees
+		for i := range len(worktrees) {
+			if removed >= needed {
+				break
+			}
+			if !worktrees[i].HasChanges {
+				if err := m.remove(ctx, worktrees[i].Name); err != nil {
+					return fmt.Errorf("enforcing limit, removing %q: %w", worktrees[i].Name, err)
+				}
+				removed++
 			}
 		}
 	}
@@ -146,7 +153,10 @@ func (m *Manager) create(ctx context.Context, name string) (*Worktree, error) {
 
 	// If worktree already exists, return it.
 	if _, err := os.Stat(filepath.Join(wtDir, ".git")); err == nil {
-		changed, _ := m.HasChanges(ctx, name)
+		changed, chErr := m.HasChanges(ctx, name)
+		if chErr != nil {
+			changed = true // Treat status-check failure as dirty.
+		}
 		wt.HasChanges = changed
 		return wt, nil
 	}
@@ -246,7 +256,10 @@ func (m *Manager) list(ctx context.Context) ([]Worktree, error) {
 		if info != nil {
 			wt.CreatedAt = info.ModTime()
 		}
-		changed, _ := m.HasChanges(ctx, name)
+		changed, chErr := m.HasChanges(ctx, name)
+		if chErr != nil {
+			changed = true // Treat status-check failure as dirty.
+		}
 		wt.HasChanges = changed
 		worktrees = append(worktrees, wt)
 	}

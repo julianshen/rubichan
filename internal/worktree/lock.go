@@ -55,9 +55,11 @@ func (l *fileLock) Unlock() error {
 	if l.f == nil {
 		return nil
 	}
-	if err := syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN); err != nil {
-		l.f.Close()
+	f := l.f
+	l.f = nil
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		f.Close()
 		return fmt.Errorf("releasing lock: %w", err)
 	}
-	return l.f.Close()
+	return f.Close()
 }

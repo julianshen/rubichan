@@ -175,12 +175,9 @@ func WithWorkingDir(dir string) AgentOption {
 }
 
 // WorkingDir returns the agent's effective working directory.
+// The value is frozen at construction time and never changes.
 func (a *Agent) WorkingDir() string {
-	if a.workingDir != "" {
-		return a.workingDir
-	}
-	wd, _ := os.Getwd()
-	return wd
+	return a.workingDir
 }
 
 // WithPipeline attaches a tool execution pipeline to the agent.
@@ -261,6 +258,10 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	}
 	for _, opt := range opts {
 		opt(a)
+	}
+	// Freeze working directory at construction time.
+	if a.workingDir == "" {
+		a.workingDir, _ = os.Getwd()
 	}
 	// Rebuild system prompt if AGENT.md content was provided.
 	if a.agentMD != "" {
