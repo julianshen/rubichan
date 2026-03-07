@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -98,6 +99,80 @@ func (m *Manager) Remove(ctx context.Context, name string) error {
 
 	// Delete the branch (may already be gone).
 	m.git(ctx, m.repoRoot, "branch", "-D", wt.BranchName()) //nolint:errcheck
+
+	return nil
+}
+
+// List returns all managed worktrees with their current status.
+func (m *Manager) List(ctx context.Context) ([]Worktree, error) {
+	wtBase := filepath.Join(m.repoRoot, ".rubichan", "worktrees")
+	entries, err := os.ReadDir(wtBase)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading worktree directory: %w", err)
+	}
+
+	var worktrees []Worktree
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		gitFile := filepath.Join(wtBase, name, ".git")
+		if _, err := os.Stat(gitFile); os.IsNotExist(err) {
+			continue
+		}
+
+		wt := Worktree{Name: name, RepoRoot: m.repoRoot}
+		info, _ := entry.Info()
+		if info != nil {
+			wt.CreatedAt = info.ModTime()
+		}
+		changed, _ := m.HasChanges(ctx, name)
+		wt.HasChanges = changed
+		worktrees = append(worktrees, wt)
+	}
+
+	sort.Slice(worktrees, func(i, j int) bool {
+		return worktrees[i].CreatedAt.Before(worktrees[j].CreatedAt)
+	})
+
+	return worktrees, nil
+}
+
+// Cleanup removes clean worktrees and enforces the MaxWorktrees retention limit.
+func (m *Manager) Cleanup(ctx context.Context) error {
+	worktrees, err := m.List(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Phase 1: Remove all clean worktrees if AutoCleanup is enabled.
+	if m.config.AutoCleanup {
+		var remaining []Worktree
+		for _, wt := range worktrees {
+			if !wt.HasChanges {
+				if err := m.Remove(ctx, wt.Name); err != nil {
+					return fmt.Errorf("cleaning %q: %w", wt.Name, err)
+				}
+			} else {
+				remaining = append(remaining, wt)
+			}
+		}
+		worktrees = remaining
+	}
+
+	// Phase 2: Enforce retention limit by removing oldest idle worktrees.
+	if m.config.MaxWorktrees > 0 && len(worktrees) > m.config.MaxWorktrees {
+		excess := len(worktrees) - m.config.MaxWorktrees
+		for i := range excess {
+			if err := m.Remove(ctx, worktrees[i].Name); err != nil {
+				return fmt.Errorf("enforcing limit, removing %q: %w", worktrees[i].Name, err)
+			}
+		}
+	}
 
 	return nil
 }

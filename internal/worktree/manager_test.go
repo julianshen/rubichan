@@ -221,3 +221,121 @@ func TestRemove_NotFound(t *testing.T) {
 		t.Error("Remove nonexistent should return error")
 	}
 }
+
+func TestList_Empty(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+
+	list, err := mgr.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("List() returned %d items, want 0", len(list))
+	}
+}
+
+func TestList_WithWorktrees(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	mgr.Create(ctx, "alpha")
+	mgr.Create(ctx, "beta")
+
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("List() returned %d items, want 2", len(list))
+	}
+
+	names := map[string]bool{}
+	for _, wt := range list {
+		names[wt.Name] = true
+	}
+	if !names["alpha"] || !names["beta"] {
+		t.Errorf("List() missing expected names, got %v", names)
+	}
+}
+
+func TestCleanup_RemovesClean(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	mgr.Create(ctx, "clean-one")
+	mgr.Create(ctx, "clean-two")
+
+	err := mgr.Cleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("After cleanup, List() returned %d items, want 0", len(list))
+	}
+}
+
+func TestCleanup_PreservesDirty(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	mgr.Create(ctx, "dirty")
+	mgr.Create(ctx, "clean")
+
+	// Make dirty worktree actually dirty
+	wtDir := filepath.Join(repo, ".rubichan", "worktrees", "dirty")
+	os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("changed"), 0o644)
+
+	err := mgr.Cleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != "dirty" {
+		names := make([]string, len(list))
+		for i, wt := range list {
+			names[i] = wt.Name
+		}
+		t.Errorf("After cleanup, expected only 'dirty' to remain, got %v", names)
+	}
+}
+
+func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
+	repo := initTestRepo(t)
+	cfg := DefaultConfig()
+	cfg.MaxWorktrees = 2
+	mgr := NewManager(repo, cfg)
+	ctx := context.Background()
+
+	// Create 3 dirty worktrees
+	for _, name := range []string{"oldest", "middle", "newest"} {
+		mgr.Create(ctx, name)
+		wtDir := filepath.Join(repo, ".rubichan", "worktrees", name)
+		os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("dirty"), 0o644)
+	}
+
+	err := mgr.Cleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) > 2 {
+		t.Errorf("After cleanup with max=2, got %d worktrees", len(list))
+	}
+}
