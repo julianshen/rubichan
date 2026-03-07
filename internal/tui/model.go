@@ -14,6 +14,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/persona"
 )
 
 // approvalRequest carries a tool approval request from the agent goroutine
@@ -272,7 +273,7 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 
 	result, err := slashCmd.Execute(context.Background(), parts[1:])
 	if err != nil {
-		m.content.WriteString(fmt.Sprintf("Error: %s\n", err.Error()))
+		m.content.WriteString(persona.ErrorMessage(err.Error()))
 		m.viewport.SetContent(m.content.String())
 		return nil
 	}

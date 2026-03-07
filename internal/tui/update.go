@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/persona"
 )
 
 // TurnEventMsg wraps an agent.TurnEvent as a Bubble Tea message so streaming
@@ -337,7 +338,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil {
 			errMsg = msg.Error.Error()
 		}
-		m.content.WriteString(fmt.Sprintf("Error: %s\n", errMsg))
+		m.content.WriteString(persona.ErrorMessage(errMsg))
 		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 

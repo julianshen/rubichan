@@ -11,7 +11,7 @@ func TestApprovalPromptView(t *testing.T) {
 	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60)
 	view := ap.View()
 	assert.Contains(t, view, "shell")
-	assert.Contains(t, view, "Allow")
+	assert.Contains(t, view, "Ruby")
 	assert.Contains(t, view, "(y)es")
 }
 
@@ -79,7 +79,7 @@ func TestApprovalPromptMinWidth(t *testing.T) {
 	ap := NewApprovalPrompt("shell", `"ls"`, 10)
 	view := ap.View()
 	assert.Contains(t, view, "shell")
-	assert.Contains(t, view, "Allow")
+	assert.Contains(t, view, "Ruby")
 }
 
 func TestApprovalResultConstants(t *testing.T) {
