@@ -11,11 +11,19 @@ import (
 	"time"
 )
 
+// HookFunc is called during worktree lifecycle events.
+// phase is "worktree.create" or "worktree.remove".
+// data contains event-specific fields (name, path, base_branch, repo_root).
+// Returns (handled bool, err error). If handled is true, the default git
+// operation is skipped.
+type HookFunc func(phase string, data map[string]any) (handled bool, err error)
+
 // Manager manages git worktrees within a repository.
 type Manager struct {
 	repoRoot string
 	config   Config
 	lock     fileLock
+	hookFn   HookFunc
 }
 
 // NewManager creates a Manager for the given repo root and configuration.
@@ -122,6 +130,11 @@ func (m *Manager) Cleanup(ctx context.Context) error {
 	return nil
 }
 
+// SetHookFunc sets the lifecycle hook function.
+func (m *Manager) SetHookFunc(fn HookFunc) {
+	m.hookFn = fn
+}
+
 // --- internal (unlocked) methods ---
 
 func (m *Manager) create(ctx context.Context, name string) (*Worktree, error) {
@@ -141,8 +154,25 @@ func (m *Manager) create(ctx context.Context, name string) (*Worktree, error) {
 	}
 
 	base := m.baseBranch()
-	branch := wt.BranchName()
 
+	// Fire worktree.create hook. If it handles creation, skip git command.
+	if m.hookFn != nil {
+		data := map[string]any{
+			"name":        name,
+			"path":        wtDir,
+			"base_branch": base,
+			"repo_root":   m.repoRoot,
+		}
+		handled, err := m.hookFn("worktree.create", data)
+		if err != nil {
+			return nil, fmt.Errorf("worktree.create hook: %w", err)
+		}
+		if handled {
+			return wt, nil
+		}
+	}
+
+	branch := wt.BranchName()
 	_, err := m.git(ctx, m.repoRoot, "worktree", "add", "-b", branch, wtDir, base)
 	if err != nil {
 		return nil, fmt.Errorf("creating worktree %q: %w", name, err)
@@ -158,6 +188,22 @@ func (m *Manager) remove(ctx context.Context, name string) error {
 	// Verify the worktree exists.
 	if _, err := os.Stat(wtDir); os.IsNotExist(err) {
 		return fmt.Errorf("worktree %q not found", name)
+	}
+
+	// Fire worktree.remove hook. If it handles removal, skip git command.
+	if m.hookFn != nil {
+		data := map[string]any{
+			"name":      name,
+			"path":      wtDir,
+			"repo_root": m.repoRoot,
+		}
+		handled, err := m.hookFn("worktree.remove", data)
+		if err != nil {
+			return fmt.Errorf("worktree.remove hook: %w", err)
+		}
+		if handled {
+			return nil
+		}
 	}
 
 	// Remove the worktree.

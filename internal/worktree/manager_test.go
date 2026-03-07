@@ -312,6 +312,86 @@ func TestCleanup_PreservesDirty(t *testing.T) {
 	}
 }
 
+func TestCreate_FiresHook(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+
+	var hookCalled bool
+	var hookPhase, hookName string
+	mgr.SetHookFunc(func(phase string, data map[string]any) (bool, error) {
+		hookCalled = true
+		hookPhase = phase
+		hookName, _ = data["name"].(string)
+		return false, nil // don't override default behavior
+	})
+
+	_, err := mgr.Create(context.Background(), "hooked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hookCalled {
+		t.Error("hook was not called")
+	}
+	if hookPhase != "worktree.create" {
+		t.Errorf("hook phase = %q, want %q", hookPhase, "worktree.create")
+	}
+	if hookName != "hooked" {
+		t.Errorf("hook name = %q, want %q", hookName, "hooked")
+	}
+}
+
+func TestCreate_HookOverrides(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+
+	mgr.SetHookFunc(func(phase string, data map[string]any) (bool, error) {
+		// Override: create directory ourselves instead of git worktree add.
+		dir, _ := data["path"].(string)
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, ".git"), []byte("custom vcs"), 0o644)
+		return true, nil
+	})
+
+	wt, err := mgr.Create(context.Background(), "custom-vcs")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the custom hook created the directory.
+	if _, err := os.Stat(wt.Dir()); err != nil {
+		t.Fatalf("custom hook didn't create directory: %v", err)
+	}
+
+	// Verify git branch was NOT created (hook overrode default).
+	out, _ := exec.Command("git", "-C", repo, "branch", "--list", "worktree-custom-vcs").CombinedOutput()
+	if strings.Contains(string(out), "worktree-custom-vcs") {
+		t.Error("branch should not exist when hook overrides creation")
+	}
+}
+
+func TestRemove_FiresHook(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+
+	mgr.Create(context.Background(), "hook-rm")
+
+	var hookCalled bool
+	var hookPhase string
+	mgr.SetHookFunc(func(phase string, data map[string]any) (bool, error) {
+		hookCalled = true
+		hookPhase = phase
+		return false, nil
+	})
+
+	mgr.Remove(context.Background(), "hook-rm")
+	if !hookCalled {
+		t.Error("remove hook was not called")
+	}
+	if hookPhase != "worktree.remove" {
+		t.Errorf("hook phase = %q, want %q", hookPhase, "worktree.remove")
+	}
+}
+
 func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
 	repo := initTestRepo(t)
 	cfg := DefaultConfig()
