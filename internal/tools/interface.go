@@ -48,6 +48,22 @@ type StreamingTool interface {
 	ExecuteStream(ctx context.Context, input json.RawMessage, emit func(ToolEvent)) (ToolResult, error)
 }
 
+type emitterContextKey struct{}
+
+// WithEmitter returns a new context carrying the given emit function.
+func WithEmitter(ctx context.Context, emit func(ToolEvent)) context.Context {
+	return context.WithValue(ctx, emitterContextKey{}, emit)
+}
+
+// EmitterFromContext extracts the emit function from the context.
+// Returns nil if no emitter was set.
+func EmitterFromContext(ctx context.Context) func(ToolEvent) {
+	if emit, ok := ctx.Value(emitterContextKey{}).(func(ToolEvent)); ok {
+		return emit
+	}
+	return nil
+}
+
 // Display returns the content intended for user display. It returns
 // DisplayContent when set, otherwise falls back to Content.
 func (r ToolResult) Display() string {
