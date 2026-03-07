@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/worktree"
 )
 
@@ -128,4 +129,25 @@ func newWorktreeManager() (*worktree.Manager, error) {
 		AutoCleanup:  cfg.Worktree.AutoCleanup,
 	}
 	return worktree.NewManager(root, wtCfg), nil
+}
+
+// worktreeProviderAdapter bridges worktree.Manager to agent.WorktreeProvider.
+type worktreeProviderAdapter struct {
+	mgr *worktree.Manager
+}
+
+func (a *worktreeProviderAdapter) CreateWorktree(ctx context.Context, name string) (*agent.WorktreeHandle, error) {
+	wt, err := a.mgr.Create(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &agent.WorktreeHandle{Dir: wt.Dir(), Name: wt.Name}, nil
+}
+
+func (a *worktreeProviderAdapter) HasWorktreeChanges(ctx context.Context, name string) (bool, error) {
+	return a.mgr.HasChanges(ctx, name)
+}
+
+func (a *worktreeProviderAdapter) RemoveWorktree(ctx context.Context, name string) error {
+	return a.mgr.Remove(ctx, name)
 }

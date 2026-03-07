@@ -815,6 +815,11 @@ func runInteractive() error {
 		AgentDefs: agentDefReg,
 	}
 
+	// Wire worktree provider for subagent isolation if worktree is active.
+	if wtMgr != nil {
+		spawner.WorktreeProvider = &worktreeProviderAdapter{mgr: wtMgr}
+	}
+
 	// Register task and list_tasks tools.
 	taskTool := tools.NewTaskTool(
 		&spawnerAdapter{spawner: spawner},

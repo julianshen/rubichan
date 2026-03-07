@@ -59,6 +59,82 @@ func TestMockSpawnerSatisfiesInterface(t *testing.T) {
 	var _ SubagentSpawner = (*DefaultSubagentSpawner)(nil)
 }
 
+func TestDefaultSubagentSpawnerWorktreeIsolation_NoProvider(t *testing.T) {
+	recorder := &recordingProvider{}
+	spawner := &DefaultSubagentSpawner{
+		Provider:    recorder,
+		ParentTools: tools.NewRegistry(),
+		Config:      &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		// WorktreeProvider intentionally nil
+	}
+	_, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "isolated",
+		Isolation: "worktree",
+	}, "hello")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "WorktreeProvider")
+}
+
+func TestDefaultSubagentSpawnerWorktreeIsolation_Success(t *testing.T) {
+	recorder := &recordingProvider{}
+	mockWT := &mockWorktreeProvider{dir: t.TempDir()}
+	spawner := &DefaultSubagentSpawner{
+		Provider:         recorder,
+		ParentTools:      tools.NewRegistry(),
+		Config:           &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider: mockWT,
+	}
+	result, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "worker",
+		Isolation: "worktree",
+	}, "hello")
+	require.NoError(t, err)
+	assert.Equal(t, "worker", result.Name)
+	assert.True(t, mockWT.created, "worktree should have been created")
+	assert.True(t, mockWT.removed, "clean worktree should have been removed")
+}
+
+func TestDefaultSubagentSpawnerWorktreeIsolation_PreserveDirty(t *testing.T) {
+	recorder := &recordingProvider{}
+	mockWT := &mockWorktreeProvider{dir: t.TempDir(), hasChanges: true}
+	spawner := &DefaultSubagentSpawner{
+		Provider:         recorder,
+		ParentTools:      tools.NewRegistry(),
+		Config:           &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider: mockWT,
+	}
+	result, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "worker",
+		Isolation: "worktree",
+	}, "hello")
+	require.NoError(t, err)
+	assert.Equal(t, "worker", result.Name)
+	assert.True(t, mockWT.created, "worktree should have been created")
+	assert.False(t, mockWT.removed, "dirty worktree should NOT have been removed")
+}
+
+// mockWorktreeProvider implements WorktreeProvider for testing.
+type mockWorktreeProvider struct {
+	dir        string
+	hasChanges bool
+	created    bool
+	removed    bool
+}
+
+func (m *mockWorktreeProvider) CreateWorktree(_ context.Context, _ string) (*WorktreeHandle, error) {
+	m.created = true
+	return &WorktreeHandle{Dir: m.dir, Name: "test-wt"}, nil
+}
+
+func (m *mockWorktreeProvider) HasWorktreeChanges(_ context.Context, _ string) (bool, error) {
+	return m.hasChanges, nil
+}
+
+func (m *mockWorktreeProvider) RemoveWorktree(_ context.Context, _ string) error {
+	m.removed = true
+	return nil
+}
+
 type recordingProvider struct {
 	system string
 }
