@@ -35,8 +35,14 @@ func TestRenderBannerContainsAllLines(t *testing.T) {
 func TestRenderBannerPreservesLineCount(t *testing.T) {
 	bannerLines := strings.Split(Banner, "\n")
 	renderedLines := strings.Split(RenderBanner(), "\n")
-	assert.Equal(t, len(bannerLines), len(renderedLines),
-		"rendered banner should have same number of lines as original")
+	// +1 for the welcome subtitle line appended by RenderBanner
+	assert.Equal(t, len(bannerLines)+1, len(renderedLines),
+		"rendered banner should have original lines plus welcome subtitle")
+}
+
+func TestRenderBannerContainsWelcome(t *testing.T) {
+	rendered := RenderBanner()
+	assert.Contains(t, rendered, "Ruby")
 }
 
 func TestNewModelInitialContent(t *testing.T) {

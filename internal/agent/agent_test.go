@@ -117,8 +117,10 @@ func TestNewAgentSystemPrompt(t *testing.T) {
 
 	agent := New(mp, reg, autoApprove, cfg)
 
-	// System prompt should be non-empty
-	assert.NotEmpty(t, agent.conversation.SystemPrompt())
+	prompt := agent.conversation.SystemPrompt()
+	assert.NotEmpty(t, prompt)
+	assert.Contains(t, prompt, "Ruby")
+	assert.Contains(t, prompt, "Ganbaruby")
 }
 
 func TestWithAgentMD(t *testing.T) {

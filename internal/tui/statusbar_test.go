@@ -35,6 +35,13 @@ func TestFormatTokens(t *testing.T) {
 	assert.Equal(t, "1000k", formatTokens(1000000))
 }
 
+func TestStatusBarContainsPersona(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetModel("claude-sonnet-4-5")
+	result := sb.View()
+	assert.Contains(t, result, "Ruby")
+}
+
 func TestStatusBarDefaults(t *testing.T) {
 	sb := NewStatusBar(80)
 	result := sb.View()
