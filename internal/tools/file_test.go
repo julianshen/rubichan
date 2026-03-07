@@ -444,6 +444,31 @@ func TestFileToolExecuteStreamInvalidInput(t *testing.T) {
 	assert.True(t, result.IsError)
 }
 
+func TestFileToolExecuteStreamWriteRecordsDiffTracker(t *testing.T) {
+	dir := t.TempDir()
+	dt := NewDiffTracker()
+	ft := NewFileTool(dir)
+	ft.SetDiffTracker(dt)
+
+	input, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "streamed.txt",
+		"content":   "hello",
+	})
+	var events []ToolEvent
+	result, err := ft.ExecuteStream(context.Background(), input, func(ev ToolEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	changes := dt.Changes()
+	require.Len(t, changes, 1)
+	assert.Equal(t, "streamed.txt", changes[0].Path)
+	assert.Equal(t, OpCreated, changes[0].Operation)
+	assert.Equal(t, "file", changes[0].Tool)
+}
+
 func TestFileToolNoDiffTrackerDoesNotPanic(t *testing.T) {
 	dir := t.TempDir()
 	ft := NewFileTool(dir) // No DiffTracker set

@@ -232,6 +232,7 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	}
 
 	var output strings.Builder
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	wg.Add(2)
@@ -240,7 +241,9 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text() + "\n"
+			mu.Lock()
 			output.WriteString(line)
+			mu.Unlock()
 			emit(ToolEvent{Stage: EventDelta, Content: line})
 		}
 	}()
@@ -249,7 +252,9 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text() + "\n"
+			mu.Lock()
 			output.WriteString(line)
+			mu.Unlock()
 			emit(ToolEvent{Stage: EventDelta, Content: line, IsError: true})
 		}
 	}()

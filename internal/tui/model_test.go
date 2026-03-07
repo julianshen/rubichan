@@ -277,6 +277,51 @@ func TestModelHandleTurnEventToolResult(t *testing.T) {
 	assert.Contains(t, content, "\u256d") // rounded border top-left
 }
 
+func TestModelHandleTurnEventToolProgress(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_progress",
+		ToolProgress: &agent.ToolProgressEvent{
+			ID:      "tool-1",
+			Name:    "shell",
+			Content: "streaming line output\n",
+		},
+	})
+
+	updated, cmd := m.Update(evt)
+
+	um := updated.(*Model)
+	assert.Contains(t, um.content.String(), "streaming line output")
+	// Should continue waiting for events
+	assert.NotNil(t, cmd)
+}
+
+func TestModelHandleTurnEventToolProgressNilIsNoOp(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	contentBefore := m.content.String()
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type:         "tool_progress",
+		ToolProgress: nil,
+	})
+
+	updated, cmd := m.Update(evt)
+
+	um := updated.(*Model)
+	assert.Equal(t, contentBefore, um.content.String())
+	assert.NotNil(t, cmd)
+}
+
 func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming
