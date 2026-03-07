@@ -159,7 +159,8 @@ func TestModelViewQuitting(t *testing.T) {
 	m.quitting = true
 	view := m.View()
 
-	assert.Equal(t, "Goodbye!\n", view)
+	assert.Contains(t, view, "bye")
+	assert.Contains(t, view, "Ruby")
 }
 
 func TestModelUpdateCtrlC(t *testing.T) {
@@ -453,8 +454,9 @@ func TestModelViewStreaming(t *testing.T) {
 	m.state = StateStreaming
 	view := m.View()
 
-	// During streaming, should show spinner/thinking indicator
-	assert.Contains(t, view, "Thinking")
+	// During streaming, should show spinner/thinking indicator with persona
+	assert.Contains(t, view, "thinking")
+	assert.Contains(t, view, "Ruby")
 }
 
 func TestModelViewAwaitingApproval(t *testing.T) {
@@ -1244,6 +1246,21 @@ func TestModelSwitchModel(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.SwitchModel("gpt-4")
 	assert.Equal(t, "gpt-4", m.modelName)
+}
+
+func TestViewGoodbyeMessage(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.quitting = true
+	view := m.View()
+	assert.Contains(t, view, "Ruby")
+	assert.Contains(t, view, "bye")
+}
+
+func TestViewThinkingMessage(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	view := m.View()
+	assert.Contains(t, view, "Ruby")
 }
 
 func TestModelCompletionTabAccept(t *testing.T) {
