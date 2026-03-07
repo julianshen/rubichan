@@ -15,6 +15,7 @@ import (
 type Manager struct {
 	repoRoot string
 	config   Config
+	lock     fileLock
 }
 
 // NewManager creates a Manager for the given repo root and configuration.
@@ -22,6 +23,7 @@ func NewManager(repoRoot string, cfg Config) *Manager {
 	return &Manager{
 		repoRoot: repoRoot,
 		config:   cfg,
+		lock:     fileLock{path: filepath.Join(repoRoot, ".rubichan", "worktrees", ".lock")},
 	}
 }
 
@@ -56,6 +58,73 @@ func (m *Manager) HasChanges(ctx context.Context, name string) (bool, error) {
 // Create creates a new git worktree with a named branch. If the worktree
 // already exists, it returns the existing one.
 func (m *Manager) Create(ctx context.Context, name string) (*Worktree, error) {
+	if err := m.lock.Lock(); err != nil {
+		return nil, fmt.Errorf("acquiring lock: %w", err)
+	}
+	defer m.lock.Unlock()
+
+	return m.create(ctx, name)
+}
+
+// Remove removes a worktree and deletes its branch.
+func (m *Manager) Remove(ctx context.Context, name string) error {
+	if err := m.lock.Lock(); err != nil {
+		return fmt.Errorf("acquiring lock: %w", err)
+	}
+	defer m.lock.Unlock()
+
+	return m.remove(ctx, name)
+}
+
+// List returns all managed worktrees with their current status.
+func (m *Manager) List(ctx context.Context) ([]Worktree, error) {
+	return m.list(ctx)
+}
+
+// Cleanup removes clean worktrees and enforces the MaxWorktrees retention limit.
+// Acquires the lock once for the entire cleanup operation.
+func (m *Manager) Cleanup(ctx context.Context) error {
+	if err := m.lock.Lock(); err != nil {
+		return fmt.Errorf("acquiring lock: %w", err)
+	}
+	defer m.lock.Unlock()
+
+	worktrees, err := m.list(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Phase 1: Remove all clean worktrees if AutoCleanup is enabled.
+	if m.config.AutoCleanup {
+		var remaining []Worktree
+		for _, wt := range worktrees {
+			if !wt.HasChanges {
+				if err := m.remove(ctx, wt.Name); err != nil {
+					return fmt.Errorf("cleaning %q: %w", wt.Name, err)
+				}
+			} else {
+				remaining = append(remaining, wt)
+			}
+		}
+		worktrees = remaining
+	}
+
+	// Phase 2: Enforce retention limit by removing oldest idle worktrees.
+	if m.config.MaxWorktrees > 0 && len(worktrees) > m.config.MaxWorktrees {
+		excess := len(worktrees) - m.config.MaxWorktrees
+		for i := range excess {
+			if err := m.remove(ctx, worktrees[i].Name); err != nil {
+				return fmt.Errorf("enforcing limit, removing %q: %w", worktrees[i].Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// --- internal (unlocked) methods ---
+
+func (m *Manager) create(ctx context.Context, name string) (*Worktree, error) {
 	wt := &Worktree{Name: name, RepoRoot: m.repoRoot, CreatedAt: time.Now()}
 	wtDir := wt.Dir()
 
@@ -82,8 +151,7 @@ func (m *Manager) Create(ctx context.Context, name string) (*Worktree, error) {
 	return wt, nil
 }
 
-// Remove removes a worktree and deletes its branch.
-func (m *Manager) Remove(ctx context.Context, name string) error {
+func (m *Manager) remove(ctx context.Context, name string) error {
 	wt := Worktree{Name: name, RepoRoot: m.repoRoot}
 	wtDir := wt.Dir()
 
@@ -103,8 +171,7 @@ func (m *Manager) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-// List returns all managed worktrees with their current status.
-func (m *Manager) List(ctx context.Context) ([]Worktree, error) {
+func (m *Manager) list(ctx context.Context) ([]Worktree, error) {
 	wtBase := filepath.Join(m.repoRoot, ".rubichan", "worktrees")
 	entries, err := os.ReadDir(wtBase)
 	if err != nil {
@@ -140,41 +207,6 @@ func (m *Manager) List(ctx context.Context) ([]Worktree, error) {
 	})
 
 	return worktrees, nil
-}
-
-// Cleanup removes clean worktrees and enforces the MaxWorktrees retention limit.
-func (m *Manager) Cleanup(ctx context.Context) error {
-	worktrees, err := m.List(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Phase 1: Remove all clean worktrees if AutoCleanup is enabled.
-	if m.config.AutoCleanup {
-		var remaining []Worktree
-		for _, wt := range worktrees {
-			if !wt.HasChanges {
-				if err := m.Remove(ctx, wt.Name); err != nil {
-					return fmt.Errorf("cleaning %q: %w", wt.Name, err)
-				}
-			} else {
-				remaining = append(remaining, wt)
-			}
-		}
-		worktrees = remaining
-	}
-
-	// Phase 2: Enforce retention limit by removing oldest idle worktrees.
-	if m.config.MaxWorktrees > 0 && len(worktrees) > m.config.MaxWorktrees {
-		excess := len(worktrees) - m.config.MaxWorktrees
-		for i := range excess {
-			if err := m.Remove(ctx, worktrees[i].Name); err != nil {
-				return fmt.Errorf("enforcing limit, removing %q: %w", worktrees[i].Name, err)
-			}
-		}
-	}
-
-	return nil
 }
 
 // baseBranch returns the configured base branch, defaulting to "main".
