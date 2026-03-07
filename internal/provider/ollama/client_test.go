@@ -16,7 +16,7 @@ func TestClient_ListModels(t *testing.T) {
 		assert.Equal(t, "/api/tags", r.URL.Path)
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"models": [
 				{
 					"name": "llama3.2:latest",
@@ -46,7 +46,7 @@ func TestClient_ListModels(t *testing.T) {
 
 func TestClient_ListModels_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"models": []}`))
+		_, _ = w.Write([]byte(`{"models": []}`))
 	}))
 	defer srv.Close()
 
@@ -76,7 +76,7 @@ func TestClient_ListModels_ConnectionError(t *testing.T) {
 
 func TestClient_ListModels_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`not json`))
+		_, _ = w.Write([]byte(`not json`))
 	}))
 	defer srv.Close()
 
@@ -89,7 +89,7 @@ func TestClient_ListModels_InvalidJSON(t *testing.T) {
 func TestClient_Version(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/version", r.URL.Path)
-		w.Write([]byte(`{"version": "0.5.1"}`))
+		_, _ = w.Write([]byte(`{"version": "0.5.1"}`))
 	}))
 	defer srv.Close()
 
@@ -112,7 +112,7 @@ func TestClient_Version_Error(t *testing.T) {
 
 func TestClient_IsRunning_True(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"version": "0.5.1"}`))
+		_, _ = w.Write([]byte(`{"version": "0.5.1"}`))
 	}))
 	defer srv.Close()
 
@@ -133,7 +133,7 @@ func TestClient_DeleteModel(t *testing.T) {
 		var body struct {
 			Name string `json:"name"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		capturedName = body.Name
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -164,14 +164,14 @@ func TestClient_PullModel(t *testing.T) {
 		var body struct {
 			Name string `json:"name"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		assert.Equal(t, "llama3.2", body.Name)
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{\"status\":\"pulling manifest\"}\n"))
-		w.Write([]byte("{\"status\":\"downloading\",\"total\":1000,\"completed\":500}\n"))
-		w.Write([]byte("{\"status\":\"success\"}\n"))
+		_, _ = w.Write([]byte("{\"status\":\"pulling manifest\"}\n"))
+		_, _ = w.Write([]byte("{\"status\":\"downloading\",\"total\":1000,\"completed\":500}\n"))
+		_, _ = w.Write([]byte("{\"status\":\"success\"}\n"))
 	}))
 	defer srv.Close()
 
@@ -205,7 +205,7 @@ func TestClient_PullModel_ContextCancellation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{\"status\":\"pulling manifest\"}\n"))
+		_, _ = w.Write([]byte("{\"status\":\"pulling manifest\"}\n"))
 		// Server would keep sending, but client cancels.
 	}))
 	defer srv.Close()

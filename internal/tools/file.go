@@ -86,7 +86,7 @@ func (f *FileTool) InputSchema() json.RawMessage {
 // ExecuteStream implements StreamingTool. It emits Begin/End events
 // around file operations. For read operations on large files, it
 // emits the content as Delta events.
-func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit func(ToolEvent)) (ToolResult, error) {
+func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
 	var in fileInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil

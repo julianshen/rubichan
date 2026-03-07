@@ -193,3 +193,43 @@ func TestEvaluateMultipleSkills(t *testing.T) {
 	assert.False(t, names["rust-skill"], "rust-skill should not match")
 	assert.False(t, names["passive-skill"], "passive-skill should not match")
 }
+
+func TestEvaluateTriggerReportsExplicitWins(t *testing.T) {
+	explicitSkill := makeSkill("explicit-skill", SourceInline, TriggerConfig{})
+	fileSkill := makeSkill("file-skill", SourceProject, TriggerConfig{Files: []string{"go.mod"}})
+
+	reports := EvaluateTriggerReports([]DiscoveredSkill{fileSkill, explicitSkill}, TriggerContext{
+		ProjectFiles: []string{"go.mod"},
+	}, 1)
+
+	require.Len(t, reports, 2)
+	assert.Equal(t, "explicit-skill", reports[0].Skill.Manifest.Name)
+	assert.True(t, reports[0].Activated)
+	assert.Greater(t, reports[0].Score.Total, reports[1].Score.Total)
+}
+
+func TestEvaluateTriggerReportsCurrentPathBeatsGenericFileMatch(t *testing.T) {
+	currentFileSkill := makeSkill("current-file", SourceProject, TriggerConfig{Files: []string{"handler.go"}})
+	genericFileSkill := makeSkill("generic-file", SourceProject, TriggerConfig{Files: []string{"*.go"}})
+
+	reports := EvaluateTriggerReports([]DiscoveredSkill{genericFileSkill, currentFileSkill}, TriggerContext{
+		ProjectFiles: []string{"main.go", "handler.go"},
+		CurrentPath:  "handler.go",
+	}, 1)
+
+	require.Len(t, reports, 2)
+	assert.Equal(t, "current-file", reports[0].Skill.Manifest.Name)
+	assert.True(t, reports[0].Score.CurrentPath > reports[1].Score.CurrentPath)
+}
+
+func TestEvaluateTriggerReportsBelowThresholdSkipsSkill(t *testing.T) {
+	skill := makeSkill("go-skill", SourceProject, TriggerConfig{Languages: []string{"go"}})
+
+	reports := EvaluateTriggerReports([]DiscoveredSkill{skill}, TriggerContext{
+		DetectedLangs: []string{"go"},
+	}, 100)
+
+	require.Len(t, reports, 1)
+	assert.False(t, reports[0].Activated)
+	assert.Equal(t, 60, reports[0].Score.Languages)
+}

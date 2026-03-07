@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,6 +137,72 @@ Body text.
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not allowed")
 	assert.Contains(t, err.Error(), "tool")
+}
+
+func TestParseInstructionSkillExtendedFrontmatter(t *testing.T) {
+	input := []byte(`---
+name: review-helper
+version: 1.2.0
+description: Review instructions
+priority: 7
+tools_allow: [read_file, search]
+tools_deny: [shell]
+references:
+  - path: references/checklist.md
+    when: review requested
+commands:
+  - name: review-plan
+    description: Draft a review plan
+    arguments:
+      - name: scope
+        description: Review scope
+        required: true
+agents:
+  - name: review-subagent
+    description: Focused reviewer
+    system_prompt: Review carefully.
+    tools: [read_file]
+    max_turns: 4
+    max_depth: 2
+    model: test-model
+---
+Review with discipline.
+`)
+
+	manifest, body, err := ParseInstructionSkill(input)
+	require.NoError(t, err)
+
+	assert.Equal(t, 7, manifest.Priority)
+	assert.Equal(t, []string{"read_file", "search"}, manifest.ToolsAllow)
+	assert.Equal(t, []string{"shell"}, manifest.ToolsDeny)
+	require.Len(t, manifest.References, 1)
+	assert.Equal(t, "references/checklist.md", manifest.References[0].Path)
+	assert.Equal(t, "review requested", manifest.References[0].When)
+	require.Len(t, manifest.Commands, 1)
+	assert.Equal(t, "review-plan", manifest.Commands[0].Name)
+	require.Len(t, manifest.Commands[0].Arguments, 1)
+	assert.True(t, manifest.Commands[0].Arguments[0].Required)
+	require.Len(t, manifest.Agents, 1)
+	assert.Equal(t, "review-subagent", manifest.Agents[0].Name)
+	assert.Equal(t, 4, manifest.Agents[0].MaxTurns)
+	assert.Equal(t, 2, manifest.Agents[0].MaxDepth)
+	assert.Equal(t, "test-model", manifest.Agents[0].Model)
+	assert.Contains(t, body, "Review with discipline.")
+}
+
+func TestParseInstructionSkillStrictRejectsUnknownFields(t *testing.T) {
+	input := []byte(`---
+name: strict-skill
+version: 1.0.0
+description: Strict parsing
+unknown_field: nope
+---
+Body.
+`)
+
+	_, _, err := ParseInstructionSkillStrict(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown_field")
 }
 
 func TestScanDirDiscoversInstructionSkills(t *testing.T) {
@@ -308,4 +375,35 @@ func TestInstructionSkillPromptFragmentContent(t *testing.T) {
 	fragment, ok := result.Modified["prompt_fragment"].(string)
 	require.True(t, ok)
 	assert.Equal(t, expectedBody, fragment)
+}
+
+func TestLintInstructionSkillDir(t *testing.T) {
+	skillDir := t.TempDir()
+	repeated := strings.Repeat("word ", 501)
+	content := `---
+name: lint-skill
+version: 1.0.0
+description: Lint me
+references:
+  - path: references/missing.md
+commands:
+  - name: repeat
+    description: once
+  - name: repeat
+    description: twice
+agents:
+  - name: helper
+    description: one
+  - name: helper
+    description: two
+---
+` + repeated
+
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644))
+
+	issues := LintSkillDir(skillDir)
+	assert.Contains(t, issues, `instruction skill body exceeds 500 words`)
+	assert.Contains(t, issues, `duplicate command name "repeat"`)
+	assert.Contains(t, issues, `duplicate agent name "helper"`)
+	assert.Contains(t, issues, `missing reference file "references/missing.md"`)
 }

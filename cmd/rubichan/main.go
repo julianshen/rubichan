@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -205,6 +206,9 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	}
 
 	userDir := filepath.Join(configDir, "skills")
+	if cfg.Skills.UserDir != "" {
+		userDir = cfg.Skills.UserDir
+	}
 
 	// Project-level skill directory.
 	cwd, err := os.Getwd()
@@ -215,12 +219,11 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	projectDir := filepath.Join(cwd, ".rubichan", "skills")
 
 	loader := skills.NewLoader(userDir, projectDir)
+	loader.AddSkillDirs(cfg.Skills.Dirs)
 	loader.AddMCPServers(cfg.MCP.Servers)
 
 	// Register built-in prompt skills. These auto-activate via mode triggers.
-	superpowers.Register(loader)
-	frontenddesign.Register(loader)
-	appledev.RegisterPrompt(loader)
+	registerBuiltinSkillPrompts(loader)
 
 	// Create integration objects shared across all skill backends.
 	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
@@ -296,6 +299,7 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	}
 
 	rt := skills.NewRuntime(loader, s, registry, autoApproveSkills, backendFactory, sandboxFactory)
+	rt.SetActivationThreshold(cfg.Skills.ActivationThreshold)
 
 	// Now that the runtime exists, wire the SkillInvoker to close the circular
 	// dependency. The invoker delegates to rt.InvokeWorkflow.
@@ -327,6 +331,21 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	return rt, s, nil
 }
 
+func registerBuiltinSkillPrompts(loader *skills.Loader) {
+	superpowers.Register(loader)
+	frontenddesign.Register(loader)
+	appledev.RegisterPrompt(loader)
+}
+
+func emitSkillDiscoveryWarnings(w io.Writer, rt *skills.Runtime) {
+	if w == nil || rt == nil {
+		return
+	}
+	for _, warning := range rt.GetDiscoveryWarnings() {
+		fmt.Fprintf(w, "warning: %s\n", warning)
+	}
+}
+
 // openStore opens (or creates) the conversation persistence database in the
 // given config directory. It creates the directory if it doesn't exist.
 func openStore(configDir string) (*store.Store, error) {
@@ -344,6 +363,60 @@ func configDir() (string, error) {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "rubichan"), nil
+}
+
+func promptFolderAccess(workingDir string, in io.Reader, out io.Writer) (bool, error) {
+	if _, err := fmt.Fprintf(out, "Allow rubichan to access this folder?\n  %s\nType 'yes' to continue: ", workingDir); err != nil {
+		return false, fmt.Errorf("writing folder access prompt: %w", err)
+	}
+
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("reading folder access response: %w", err)
+	}
+	return strings.EqualFold(strings.TrimSpace(line), "yes"), nil
+}
+
+func ensureFolderAccessApproved(s *store.Store, workingDir string, in io.Reader, out io.Writer) error {
+	approved, err := s.IsFolderApproved(workingDir)
+	if err != nil {
+		return fmt.Errorf("checking folder access approval: %w", err)
+	}
+	if approved {
+		return nil
+	}
+
+	allow, err := promptFolderAccess(workingDir, in, out)
+	if err != nil {
+		return err
+	}
+	if !allow {
+		return fmt.Errorf("folder access denied by user")
+	}
+
+	if err := s.ApproveFolderAccess(workingDir); err != nil {
+		return fmt.Errorf("saving folder access approval: %w", err)
+	}
+	return nil
+}
+
+func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string, autoApprove bool) error {
+	approved, err := s.IsFolderApproved(workingDir)
+	if err != nil {
+		return fmt.Errorf("checking folder access approval: %w", err)
+	}
+	if approved {
+		return nil
+	}
+
+	if !autoApprove {
+		return fmt.Errorf("folder access for %q is not approved; rerun interactively to approve or use --auto-approve", workingDir)
+	}
+
+	if err := s.ApproveFolderAccess(workingDir); err != nil {
+		return fmt.Errorf("saving folder access approval: %w", err)
+	}
+	return nil
 }
 
 // newDefaultSecurityEngine creates a security engine pre-configured with all
@@ -591,32 +664,48 @@ func runInteractive() error {
 
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
-
-	fileTool := tools.NewFileTool(cwd)
-	fileTool.SetDiffTracker(diffTracker)
-	if err := registry.Register(fileTool); err != nil {
-		return fmt.Errorf("registering file tool: %w", err)
+	allowed := parseToolsFlag(toolsFlag)
+	toolsCfg := ToolsConfig{
+		ModelCapabilities: detectModelCapabilities(cfg),
+		ProjectContext: ProjectContext{
+			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
+			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
+		},
+		CLIOverrides: allowed,
 	}
 
-	shellTool := tools.NewShellTool(cwd, 120*time.Second)
-	shellTool.SetDiffTracker(diffTracker)
-	if err := registry.Register(shellTool); err != nil {
-		return fmt.Errorf("registering shell tool: %w", err)
+	if toolsCfg.ShouldEnable("file") {
+		fileTool := tools.NewFileTool(cwd)
+		fileTool.SetDiffTracker(diffTracker)
+		if err := registry.Register(fileTool); err != nil {
+			return fmt.Errorf("registering file tool: %w", err)
+		}
 	}
 
-	if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
-		return fmt.Errorf("registering search tool: %w", err)
+	if toolsCfg.ShouldEnable("shell") {
+		shellTool := tools.NewShellTool(cwd, 120*time.Second)
+		shellTool.SetDiffTracker(diffTracker)
+		if err := registry.Register(shellTool); err != nil {
+			return fmt.Errorf("registering shell tool: %w", err)
+		}
 	}
-	procMgr := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
-	defer procMgr.Shutdown(context.Background())
-	if err := registry.Register(tools.NewProcessTool(procMgr)); err != nil {
-		return fmt.Errorf("registering process tool: %w", err)
+	if toolsCfg.ShouldEnable("search") {
+		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
+			return fmt.Errorf("registering search tool: %w", err)
+		}
+	}
+	if toolsCfg.ShouldEnable("process") {
+		procMgr := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
+		defer func() { _ = procMgr.Shutdown(context.Background()) }()
+		if err := registry.Register(tools.NewProcessTool(procMgr)); err != nil {
+			return fmt.Errorf("registering process tool: %w", err)
+		}
 	}
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
-	if err := wireAppleDev(cwd, registry, nil); err != nil {
+	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
 	}
 	// Prevent createSkillRuntime from trying to discover apple-dev again.
@@ -624,7 +713,7 @@ func runInteractive() error {
 
 	// Wire wiki skill (generate_wiki tool).
 	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
-	if err := wireWiki(cwd, registry, llmCompleter, nil); err != nil {
+	if err := wireWiki(cwd, registry, llmCompleter, toolsCfg); err != nil {
 		return err
 	}
 
@@ -639,13 +728,16 @@ func runInteractive() error {
 	// Register config-defined agent definitions.
 	for _, defConf := range cfg.Agent.Definitions {
 		_ = agentDefReg.Register(&agent.AgentDef{
-			Name:         defConf.Name,
-			Description:  defConf.Description,
-			SystemPrompt: defConf.SystemPrompt,
-			Tools:        defConf.Tools,
-			MaxTurns:     defConf.MaxTurns,
-			MaxDepth:     defConf.MaxDepth,
-			Model:        defConf.Model,
+			Name:          defConf.Name,
+			Description:   defConf.Description,
+			SystemPrompt:  defConf.SystemPrompt,
+			Tools:         defConf.Tools,
+			MaxTurns:      defConf.MaxTurns,
+			MaxDepth:      defConf.MaxDepth,
+			Model:         defConf.Model,
+			InheritSkills: defConf.InheritSkills,
+			ExtraSkills:   defConf.ExtraSkills,
+			DisableSkills: defConf.DisableSkills,
 		})
 	}
 
@@ -665,11 +757,15 @@ func runInteractive() error {
 		0,
 	)
 	taskTool.SetBackgroundManager(&wakeManagerAdapter{wm: wakeManager})
-	if err := registry.Register(taskTool); err != nil {
-		return fmt.Errorf("registering task tool: %w", err)
+	if toolsCfg.ShouldEnable("task") {
+		if err := registry.Register(taskTool); err != nil {
+			return fmt.Errorf("registering task tool: %w", err)
+		}
 	}
-	if err := registry.Register(tools.NewListTasksTool(&wakeStatusAdapter{wm: wakeManager})); err != nil {
-		return fmt.Errorf("registering list_tasks tool: %w", err)
+	if toolsCfg.ShouldEnable("list_tasks") {
+		if err := registry.Register(tools.NewListTasksTool(&wakeStatusAdapter{wm: wakeManager})); err != nil {
+			return fmt.Errorf("registering list_tasks tool: %w", err)
+		}
 	}
 
 	// Build the approval function. When --auto-approve is set, skip the TUI
@@ -689,6 +785,9 @@ func runInteractive() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+	if err := ensureFolderAccessApproved(s, cwd, os.Stdin, os.Stderr); err != nil {
+		return err
+	}
 	opts = append(opts, agent.WithStore(s))
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
@@ -712,6 +811,7 @@ func runInteractive() error {
 		defer storeCloser.Close()
 	}
 	if rt != nil {
+		emitSkillDiscoveryWarnings(os.Stderr, rt)
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
@@ -805,10 +905,13 @@ func runInteractive() error {
 	// Wire spawner dependencies that need the agent and provider.
 	spawner.Provider = p
 	spawner.ParentTools = registry
+	spawner.ParentSkillRuntime = rt
 
 	// Register notes tool backed by agent's scratchpad.
-	if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
-		return fmt.Errorf("registering notes tool: %w", err)
+	if toolsCfg.ShouldEnable("notes") {
+		if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
+			return fmt.Errorf("registering notes tool: %w", err)
+		}
 	}
 
 	// Wire the agent into the TUI model now that both exist.
@@ -881,29 +984,37 @@ func runHeadless() error {
 	registry := tools.NewRegistry()
 	allowed := parseToolsFlag(toolsFlag)
 	headlessDiffTracker := tools.NewDiffTracker()
+	headlessToolsCfg := ToolsConfig{
+		ModelCapabilities: detectModelCapabilities(cfg),
+		ProjectContext: ProjectContext{
+			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
+			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
+		},
+		CLIOverrides: allowed,
+	}
 
-	if shouldRegister("file", allowed) {
+	if headlessToolsCfg.ShouldEnable("file") {
 		headlessFileTool := tools.NewFileTool(cwd)
 		headlessFileTool.SetDiffTracker(headlessDiffTracker)
 		if err := registry.Register(headlessFileTool); err != nil {
 			return fmt.Errorf("registering file tool: %w", err)
 		}
 	}
-	if shouldRegister("shell", allowed) {
+	if headlessToolsCfg.ShouldEnable("shell") {
 		headlessShellTool := tools.NewShellTool(cwd, timeoutFlag)
 		headlessShellTool.SetDiffTracker(headlessDiffTracker)
 		if err := registry.Register(headlessShellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
 	}
-	if shouldRegister("search", allowed) {
+	if headlessToolsCfg.ShouldEnable("search") {
 		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
 			return fmt.Errorf("registering search tool: %w", err)
 		}
 	}
-	if shouldRegister("process", allowed) {
+	if headlessToolsCfg.ShouldEnable("process") {
 		pm := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
-		defer pm.Shutdown(context.Background())
+		defer func() { _ = pm.Shutdown(context.Background()) }()
 		if err := registry.Register(tools.NewProcessTool(pm)); err != nil {
 			return fmt.Errorf("registering process tool: %w", err)
 		}
@@ -912,14 +1023,14 @@ func runHeadless() error {
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
-	if err := wireAppleDev(cwd, registry, allowed); err != nil {
+	if err := wireAppleDev(cwd, registry, headlessToolsCfg); err != nil {
 		return err
 	}
 	skillsFlag = removeSkill("apple-dev", skillsFlag)
 
 	// Wire wiki skill (generate_wiki tool).
 	headlessLLM := integrations.NewLLMCompleter(p, cfg.Provider.Model)
-	if err := wireWiki(cwd, registry, headlessLLM, allowed); err != nil {
+	if err := wireWiki(cwd, registry, headlessLLM, headlessToolsCfg); err != nil {
 		return err
 	}
 
@@ -938,6 +1049,9 @@ func runHeadless() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+	if err := ensureFolderAccessApprovedNonInteractive(s, cwd, autoApprove); err != nil {
+		return err
+	}
 	opts = append(opts, agent.WithStore(s))
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
@@ -965,6 +1079,7 @@ func runHeadless() error {
 		defer storeCloser.Close()
 	}
 	if rt != nil {
+		emitSkillDiscoveryWarnings(os.Stderr, rt)
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
@@ -983,7 +1098,7 @@ func runHeadless() error {
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Register notes tool backed by agent's scratchpad.
-	if shouldRegister("notes", allowed) {
+	if headlessToolsCfg.ShouldEnable("notes") {
 		if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
 			return fmt.Errorf("registering notes tool: %w", err)
 		}
@@ -1121,13 +1236,103 @@ func parseToolsFlag(s string) map[string]bool {
 	return m
 }
 
-// shouldRegister returns true if the tool should be registered.
-// If allowed is nil, all tools are allowed.
-func shouldRegister(name string, allowed map[string]bool) bool {
-	if allowed == nil {
-		return true
+// ModelCapabilities describes tool-related capabilities of the active model.
+type ModelCapabilities struct {
+	SupportsToolUse bool
+}
+
+// UserToolPrefs captures user-level tool preferences from config/runtime.
+type UserToolPrefs struct {
+	Enabled  map[string]bool
+	Disabled map[string]bool
+}
+
+// ProjectContext captures project-derived tool gating signals.
+type ProjectContext struct {
+	AppleProjectDetected bool
+	AppleSkillRequested  bool
+}
+
+// ToolsConfig centralizes tool enablement decisions.
+//
+// Decision order:
+// 1) Model capability gate
+// 2) Feature flags
+// 3) User preferences
+// 4) Project context constraints
+// 5) CLI whitelist overrides
+type ToolsConfig struct {
+	ModelCapabilities ModelCapabilities
+	UserPreferences   UserToolPrefs
+	ProjectContext    ProjectContext
+	FeatureFlags      map[string]bool
+	CLIOverrides      map[string]bool
+}
+
+// detectModelCapabilities derives tool-related model capability flags from
+// runtime config/provider metadata.
+func detectModelCapabilities(cfg *config.Config) ModelCapabilities {
+	if cfg == nil {
+		return ModelCapabilities{SupportsToolUse: false}
 	}
-	return allowed[name]
+
+	switch cfg.Provider.Default {
+	case "anthropic", "ollama":
+		return ModelCapabilities{SupportsToolUse: true}
+	default:
+		// OpenAI-compatible providers are configured by name under
+		// provider.openai_compatible. If the default provider matches one of
+		// those configured entries, treat it as tool-capable.
+		for _, oc := range cfg.Provider.OpenAI {
+			if oc.Name == cfg.Provider.Default {
+				return ModelCapabilities{SupportsToolUse: true}
+			}
+		}
+		// Unknown provider type: treat as not tool-capable.
+		return ModelCapabilities{SupportsToolUse: false}
+	}
+}
+
+// ShouldEnable returns true if a tool should be registered.
+func (tc ToolsConfig) ShouldEnable(name string) bool {
+	if !tc.ModelCapabilities.SupportsToolUse {
+		return false
+	}
+
+	if tc.FeatureFlags != nil {
+		if enabled, ok := tc.FeatureFlags["tools."+name]; ok && !enabled {
+			return false
+		}
+	}
+
+	if tc.UserPreferences.Disabled != nil && tc.UserPreferences.Disabled[name] {
+		return false
+	}
+	if len(tc.UserPreferences.Enabled) > 0 && !tc.UserPreferences.Enabled[name] {
+		return false
+	}
+
+	// Apple-only tools are enabled only for Apple projects or explicit apple-dev opt-in.
+	if isAppleOnlyTool(name) &&
+		!tc.ProjectContext.AppleProjectDetected &&
+		!tc.ProjectContext.AppleSkillRequested {
+		return false
+	}
+
+	// CLI overrides act as an explicit whitelist.
+	if tc.CLIOverrides != nil {
+		return tc.CLIOverrides[name]
+	}
+	return true
+}
+
+func isAppleOnlyTool(name string) bool {
+	return strings.HasPrefix(name, "xcode_") ||
+		strings.HasPrefix(name, "swift_") ||
+		strings.HasPrefix(name, "sim_") ||
+		strings.HasPrefix(name, "codesign_") ||
+		name == "xcrun" ||
+		strings.HasPrefix(name, "xcrun_")
 }
 
 // removeSkill removes a skill name from a comma-separated flag value.
@@ -1153,22 +1358,21 @@ func containsSkill(name, flagValue string) bool {
 	return false
 }
 
-// wireAppleDev detects Apple projects and registers Xcode tools.
-// The allowed map is used to filter tools in headless mode (nil means all allowed).
+// wireAppleDev registers Xcode tools and delegates enablement decisions to ToolsConfig.
 // The Apple system prompt is now registered as a built-in skill via
 // appledev.RegisterPrompt and injected through the skill runtime's PromptCollector.
-func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool) error {
-	appleProject := xcode.DiscoverProject(cwd)
-	if appleProject.Type == "none" && !containsSkill("apple-dev", skillsFlag) {
+func wireAppleDev(cwd string, registry *tools.Registry, toolsCfg ToolsConfig) error {
+	if !toolsCfg.ProjectContext.AppleProjectDetected && !toolsCfg.ProjectContext.AppleSkillRequested {
 		return nil
 	}
+
 	pc := xcode.NewRealPlatformChecker()
 	appleBackend := &appledev.Backend{WorkDir: cwd, Platform: pc}
 	if err := appleBackend.Load(appledev.Manifest(), nil); err != nil {
 		return fmt.Errorf("loading apple-dev skill: %w", err)
 	}
 	for _, tool := range appleBackend.Tools() {
-		if shouldRegister(tool.Name(), allowed) {
+		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {
 				return fmt.Errorf("registering xcode tool %s: %w", tool.Name(), err)
 			}
@@ -1179,13 +1383,13 @@ func wireAppleDev(cwd string, registry *tools.Registry, allowed map[string]bool)
 
 // wireWiki creates the wiki skill backend and registers its generate_wiki tool.
 // The llmCompleter is injected from the caller (created from the provider).
-func wireWiki(cwd string, registry *tools.Registry, llm wiki.LLMCompleter, allowed map[string]bool) error {
+func wireWiki(cwd string, registry *tools.Registry, llm wiki.LLMCompleter, toolsCfg ToolsConfig) error {
 	backend := &builtin.WikiBackend{WorkDir: cwd, LLM: llm}
 	if err := backend.Load(builtin.WikiManifest(), nil); err != nil {
 		return fmt.Errorf("loading wiki skill: %w", err)
 	}
 	for _, tool := range backend.Tools() {
-		if shouldRegister(tool.Name(), allowed) {
+		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {
 				return fmt.Errorf("registering wiki tool %s: %w", tool.Name(), err)
 			}
@@ -1354,14 +1558,17 @@ type spawnerAdapter struct {
 
 func (a *spawnerAdapter) Spawn(ctx context.Context, cfg tools.TaskSpawnConfig, prompt string) (*tools.TaskSpawnResult, error) {
 	result, err := a.spawner.Spawn(ctx, agent.SubagentConfig{
-		Name:         cfg.Name,
-		SystemPrompt: cfg.SystemPrompt,
-		Tools:        cfg.Tools,
-		MaxTurns:     cfg.MaxTurns,
-		MaxTokens:    cfg.MaxTokens,
-		Model:        cfg.Model,
-		Depth:        cfg.Depth,
-		MaxDepth:     cfg.MaxDepth,
+		Name:          cfg.Name,
+		SystemPrompt:  cfg.SystemPrompt,
+		Tools:         cfg.Tools,
+		MaxTurns:      cfg.MaxTurns,
+		MaxTokens:     cfg.MaxTokens,
+		Model:         cfg.Model,
+		Depth:         cfg.Depth,
+		MaxDepth:      cfg.MaxDepth,
+		InheritSkills: cfg.InheritSkills,
+		ExtraSkills:   cfg.ExtraSkills,
+		DisableSkills: cfg.DisableSkills,
 	}, prompt)
 	if err != nil {
 		return nil, err
@@ -1388,12 +1595,15 @@ func (a *agentDefLookupAdapter) GetAgentDef(name string) (*tools.TaskAgentDef, b
 		return nil, false
 	}
 	return &tools.TaskAgentDef{
-		Name:         def.Name,
-		SystemPrompt: def.SystemPrompt,
-		Tools:        def.Tools,
-		MaxTurns:     def.MaxTurns,
-		MaxDepth:     def.MaxDepth,
-		Model:        def.Model,
+		Name:          def.Name,
+		SystemPrompt:  def.SystemPrompt,
+		Tools:         def.Tools,
+		MaxTurns:      def.MaxTurns,
+		MaxDepth:      def.MaxDepth,
+		Model:         def.Model,
+		InheritSkills: def.InheritSkills,
+		ExtraSkills:   def.ExtraSkills,
+		DisableSkills: def.DisableSkills,
 	}, true
 }
 
@@ -1438,13 +1648,16 @@ type agentDefRegistrarAdapter struct {
 
 func (a *agentDefRegistrarAdapter) Register(def *skills.AgentDefinition) error {
 	return a.reg.Register(&agent.AgentDef{
-		Name:         def.Name,
-		Description:  def.Description,
-		SystemPrompt: def.SystemPrompt,
-		Tools:        def.Tools,
-		MaxTurns:     def.MaxTurns,
-		MaxDepth:     def.MaxDepth,
-		Model:        def.Model,
+		Name:          def.Name,
+		Description:   def.Description,
+		SystemPrompt:  def.SystemPrompt,
+		Tools:         def.Tools,
+		MaxTurns:      def.MaxTurns,
+		MaxDepth:      def.MaxDepth,
+		Model:         def.Model,
+		InheritSkills: def.InheritSkills,
+		ExtraSkills:   def.ExtraSkills,
+		DisableSkills: def.DisableSkills,
 	})
 }
 

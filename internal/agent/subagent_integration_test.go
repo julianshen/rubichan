@@ -46,14 +46,17 @@ type testSpawnerAdapter struct {
 
 func (a *testSpawnerAdapter) Spawn(ctx context.Context, cfg tools.TaskSpawnConfig, prompt string) (*tools.TaskSpawnResult, error) {
 	result, err := a.spawner.Spawn(ctx, agent.SubagentConfig{
-		Name:         cfg.Name,
-		SystemPrompt: cfg.SystemPrompt,
-		Tools:        cfg.Tools,
-		MaxTurns:     cfg.MaxTurns,
-		MaxTokens:    cfg.MaxTokens,
-		Model:        cfg.Model,
-		Depth:        cfg.Depth,
-		MaxDepth:     cfg.MaxDepth,
+		Name:          cfg.Name,
+		SystemPrompt:  cfg.SystemPrompt,
+		Tools:         cfg.Tools,
+		MaxTurns:      cfg.MaxTurns,
+		MaxTokens:     cfg.MaxTokens,
+		Model:         cfg.Model,
+		Depth:         cfg.Depth,
+		MaxDepth:      cfg.MaxDepth,
+		InheritSkills: cfg.InheritSkills,
+		ExtraSkills:   cfg.ExtraSkills,
+		DisableSkills: cfg.DisableSkills,
 	}, prompt)
 	if err != nil {
 		return nil, err
@@ -81,12 +84,15 @@ func (a *testDefLookupAdapter) GetAgentDef(name string) (*tools.TaskAgentDef, bo
 		return nil, false
 	}
 	return &tools.TaskAgentDef{
-		Name:         def.Name,
-		SystemPrompt: def.SystemPrompt,
-		Tools:        def.Tools,
-		MaxTurns:     def.MaxTurns,
-		MaxDepth:     def.MaxDepth,
-		Model:        def.Model,
+		Name:          def.Name,
+		SystemPrompt:  def.SystemPrompt,
+		Tools:         def.Tools,
+		MaxTurns:      def.MaxTurns,
+		MaxDepth:      def.MaxDepth,
+		Model:         def.Model,
+		InheritSkills: def.InheritSkills,
+		ExtraSkills:   def.ExtraSkills,
+		DisableSkills: def.DisableSkills,
 	}, true
 }
 

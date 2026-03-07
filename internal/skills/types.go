@@ -147,13 +147,16 @@ type PermissionChecker interface {
 // by a skill backend. This type mirrors agent.AgentDef but lives in the
 // skills package to avoid a circular import (agent imports skills).
 type AgentDefinition struct {
-	Name         string
-	Description  string
-	SystemPrompt string
-	Tools        []string
-	MaxTurns     int
-	MaxDepth     int
-	Model        string
+	Name          string
+	Description   string
+	SystemPrompt  string
+	Tools         []string
+	MaxTurns      int
+	MaxDepth      int
+	Model         string
+	InheritSkills *bool
+	ExtraSkills   []string
+	DisableSkills []string
 }
 
 // AgentDefRegistrar abstracts the agent definition registry so the skills
@@ -307,6 +310,8 @@ func sourceBudgetPriority(src Source) int {
 		return 30
 	case SourceProject:
 		return 20
+	case SourceConfigured:
+		return 15
 	case SourceMCP:
 		return 10
 	default:

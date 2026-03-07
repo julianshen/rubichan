@@ -30,7 +30,7 @@ func sourcePriority(src Source) int {
 		return PriorityBuiltin
 	case SourceUser, SourceInline:
 		return PriorityUser
-	case SourceProject, SourceMCP:
+	case SourceProject, SourceConfigured, SourceMCP:
 		return PriorityProject
 	default:
 		return PriorityProject
@@ -42,22 +42,26 @@ func sourcePriority(src Source) int {
 // (LifecycleManager), tool registration (tools.Registry), and backend
 // creation (BackendFactory).
 type Runtime struct {
-	mu                sync.RWMutex
-	loader            *Loader
-	store             *store.Store
-	lifecycle         *LifecycleManager
-	registry          *tools.Registry
-	skills            map[string]*Skill
-	active            map[string]*Skill
-	autoApprove       []string
-	backendFactory    BackendFactory
-	sandboxFactory    SandboxFactory
-	promptCollector   *PromptCollector
-	workflowRunner    *WorkflowRunner
-	securityAdapter   *SecurityRuleAdapter
-	contextBudget     *ContextBudget
-	cmdRegistry       *commands.Registry
-	agentDefRegistrar AgentDefRegistrar
+	mu                  sync.RWMutex
+	loader              *Loader
+	store               *store.Store
+	lifecycle           *LifecycleManager
+	registry            *tools.Registry
+	skills              map[string]*Skill
+	active              map[string]*Skill
+	autoApprove         []string
+	backendFactory      BackendFactory
+	sandboxFactory      SandboxFactory
+	promptCollector     *PromptCollector
+	workflowRunner      *WorkflowRunner
+	securityAdapter     *SecurityRuleAdapter
+	contextBudget       *ContextBudget
+	cmdRegistry         *commands.Registry
+	agentDefRegistrar   AgentDefRegistrar
+	discoveryWarnings   []string
+	activationReports   []ActivationReport
+	activationThreshold int
+	promptBudgetReport  []PromptFragment
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -73,18 +77,19 @@ func NewRuntime(
 	sandboxFactory SandboxFactory,
 ) *Runtime {
 	return &Runtime{
-		loader:          loader,
-		store:           s,
-		lifecycle:       NewLifecycleManager(),
-		registry:        registry,
-		skills:          make(map[string]*Skill),
-		active:          make(map[string]*Skill),
-		autoApprove:     autoApprove,
-		backendFactory:  backendFactory,
-		sandboxFactory:  sandboxFactory,
-		promptCollector: NewPromptCollector(),
-		workflowRunner:  NewWorkflowRunner(),
-		securityAdapter: NewSecurityRuleAdapter(),
+		loader:              loader,
+		store:               s,
+		lifecycle:           NewLifecycleManager(),
+		registry:            registry,
+		skills:              make(map[string]*Skill),
+		active:              make(map[string]*Skill),
+		autoApprove:         autoApprove,
+		backendFactory:      backendFactory,
+		sandboxFactory:      sandboxFactory,
+		promptCollector:     NewPromptCollector(),
+		workflowRunner:      NewWorkflowRunner(),
+		securityAdapter:     NewSecurityRuleAdapter(),
+		activationThreshold: 1,
 	}
 }
 
@@ -97,11 +102,10 @@ func (rt *Runtime) Discover(explicit []string) error {
 		return fmt.Errorf("discover skills: %w", err)
 	}
 
-	// Log warnings if any were returned (previously discarded).
-	_ = warnings // TODO: surface via logger or return value
-
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+
+	rt.discoveryWarnings = append(rt.discoveryWarnings[:0], warnings...)
 
 	for _, ds := range discovered {
 		rt.skills[ds.Manifest.Name] = &Skill{
@@ -127,14 +131,22 @@ func (rt *Runtime) EvaluateAndActivate(ctx TriggerContext) error {
 			Manifest: sk.Manifest,
 			Dir:      sk.Dir,
 			Source:   sk.Source,
+			RootDir:  sk.Dir,
 		})
 	}
 	rt.mu.RUnlock()
 
-	matched := EvaluateTriggers(candidates, ctx)
+	reports := EvaluateTriggerReports(candidates, ctx, rt.activationThreshold)
 
-	for _, ds := range matched {
-		name := ds.Manifest.Name
+	rt.mu.Lock()
+	rt.activationReports = append(rt.activationReports[:0], reports...)
+	rt.mu.Unlock()
+
+	for _, report := range reports {
+		if !report.Activated {
+			continue
+		}
+		name := report.Skill.Manifest.Name
 		rt.mu.RLock()
 		_, alreadyActive := rt.active[name]
 		rt.mu.RUnlock()
@@ -273,6 +285,20 @@ func (rt *Runtime) Activate(name string) error {
 			}
 			registeredCmds = append(registeredCmds, cmd)
 		}
+		for _, cmd := range manifestCommands(sk.Manifest) {
+			if err := rt.cmdRegistry.Register(cmd); err != nil {
+				for _, c := range registeredCmds {
+					_ = rt.cmdRegistry.Unregister(c.Name())
+				}
+				for _, t := range registeredTools {
+					_ = rt.registry.Unregister(t.Name())
+				}
+				_ = sk.TransitionTo(SkillStateError)
+				_ = sk.TransitionTo(SkillStateInactive)
+				return fmt.Errorf("register command for skill %q: %w", name, err)
+			}
+			registeredCmds = append(registeredCmds, cmd)
+		}
 	}
 
 	// Register agent definitions from backend.
@@ -285,10 +311,31 @@ func (rt *Runtime) Activate(name string) error {
 					_ = rt.agentDefRegistrar.Unregister(n)
 				}
 				// Roll back commands.
-				for _, c := range registeredCmds {
-					_ = rt.cmdRegistry.Unregister(c.Name())
+				if rt.cmdRegistry != nil {
+					for _, c := range registeredCmds {
+						_ = rt.cmdRegistry.Unregister(c.Name())
+					}
 				}
 				// Roll back tools.
+				for _, t := range registeredTools {
+					_ = rt.registry.Unregister(t.Name())
+				}
+				_ = sk.TransitionTo(SkillStateError)
+				_ = sk.TransitionTo(SkillStateInactive)
+				return fmt.Errorf("register agent def for skill %q: %w", name, err)
+			}
+			registeredAgentDefs = append(registeredAgentDefs, def.Name)
+		}
+		for _, def := range manifestAgentDefinitions(sk.Manifest) {
+			if err := rt.agentDefRegistrar.Register(def); err != nil {
+				for _, n := range registeredAgentDefs {
+					_ = rt.agentDefRegistrar.Unregister(n)
+				}
+				if rt.cmdRegistry != nil {
+					for _, c := range registeredCmds {
+						_ = rt.cmdRegistry.Unregister(c.Name())
+					}
+				}
 				for _, t := range registeredTools {
 					_ = rt.registry.Unregister(t.Name())
 				}
@@ -354,10 +401,20 @@ func (rt *Runtime) Deactivate(name string) error {
 			_ = rt.cmdRegistry.Unregister(cmd.Name())
 		}
 	}
+	if rt.cmdRegistry != nil {
+		for _, cmd := range manifestCommands(sk.Manifest) {
+			_ = rt.cmdRegistry.Unregister(cmd.Name())
+		}
+	}
 
 	// Unregister agent definitions.
 	if rt.agentDefRegistrar != nil && sk.Backend != nil {
 		for _, def := range sk.Backend.Agents() {
+			_ = rt.agentDefRegistrar.Unregister(def.Name)
+		}
+	}
+	if rt.agentDefRegistrar != nil {
+		for _, def := range manifestAgentDefinitions(sk.Manifest) {
 			_ = rt.agentDefRegistrar.Unregister(def.Name)
 		}
 	}
@@ -405,6 +462,50 @@ func (rt *Runtime) GetActiveSkills() []*Skill {
 	for _, sk := range rt.active {
 		result = append(result, sk)
 	}
+	return result
+}
+
+// SetActivationThreshold configures the minimum score required for automatic activation.
+func (rt *Runtime) SetActivationThreshold(threshold int) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if threshold <= 0 {
+		threshold = 1
+	}
+	rt.activationThreshold = threshold
+}
+
+// GetActivationReports returns the most recent scored trigger evaluation results.
+func (rt *Runtime) GetActivationReports() []ActivationReport {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	result := make([]ActivationReport, len(rt.activationReports))
+	copy(result, rt.activationReports)
+	return result
+}
+
+// GetActivationReport returns the most recent scored trigger evaluation for a named skill.
+func (rt *Runtime) GetActivationReport(name string) (ActivationReport, bool) {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	for _, report := range rt.activationReports {
+		if report.Skill.Manifest != nil && report.Skill.Manifest.Name == name {
+			return report, true
+		}
+	}
+	return ActivationReport{}, false
+}
+
+// GetDiscoveryWarnings returns optional discovery warnings captured during the
+// last Discover call, such as missing optional dependencies.
+func (rt *Runtime) GetDiscoveryWarnings() []string {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	result := make([]string, len(rt.discoveryWarnings))
+	copy(result, rt.discoveryWarnings)
 	return result
 }
 
@@ -476,7 +577,27 @@ func (rt *Runtime) SetAgentDefRegistrar(reg AgentDefRegistrar) {
 func (rt *Runtime) GetBudgetedPromptFragments() []PromptFragment {
 	rt.mu.RLock()
 	budget := rt.contextBudget
+	reports := make([]ActivationReport, len(rt.activationReports))
+	copy(reports, rt.activationReports)
 	rt.mu.RUnlock()
 
-	return rt.promptCollector.BudgetedFragments(budget)
+	rt.promptCollector.UpdateActivationScores(reports)
+	fragments := rt.promptCollector.BudgetedFragments(budget)
+	report := rt.promptCollector.BudgetReport(budget)
+
+	rt.mu.Lock()
+	rt.promptBudgetReport = append(rt.promptBudgetReport[:0], report...)
+	rt.mu.Unlock()
+
+	return fragments
+}
+
+// GetPromptBudgetReport returns the most recent prompt budgeting decisions.
+func (rt *Runtime) GetPromptBudgetReport() []PromptFragment {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	result := make([]PromptFragment, len(rt.promptBudgetReport))
+	copy(result, rt.promptBudgetReport)
+	return result
 }

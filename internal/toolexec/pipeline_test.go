@@ -131,7 +131,7 @@ func TestPipelineExecuteStreamFinalResult(t *testing.T) {
 
 func TestPipelineExecuteStreamWithProgressEvents(t *testing.T) {
 	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
-		emit := tools.EmitterFromContext(ctx)
+		emit := toolexec.ToolEventEmitterFromContext(ctx)
 		if emit != nil {
 			emit(tools.ToolEvent{Stage: tools.EventBegin, Content: "starting"})
 			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "line 1\n"})
@@ -165,7 +165,7 @@ func TestPipelineExecuteStreamWithProgressEvents(t *testing.T) {
 func TestPipelineExecuteStreamMiddlewarePreservesEmitter(t *testing.T) {
 	var progressReceived bool
 	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
-		emit := tools.EmitterFromContext(ctx)
+		emit := toolexec.ToolEventEmitterFromContext(ctx)
 		if emit != nil {
 			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "progress"})
 			progressReceived = true

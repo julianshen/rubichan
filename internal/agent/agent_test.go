@@ -76,13 +76,12 @@ func (m *mockTool) Execute(ctx context.Context, input json.RawMessage) (tools.To
 	return m.executeFn(ctx, input)
 }
 
-// mockStreamingTool extends mockTool with streaming capability.
 type mockStreamingTool struct {
 	mockTool
-	streamFn func(ctx context.Context, input json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error)
+	streamFn func(ctx context.Context, input json.RawMessage, emit tools.ToolEventEmitter) (tools.ToolResult, error)
 }
 
-func (m *mockStreamingTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error) {
+func (m *mockStreamingTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit tools.ToolEventEmitter) (tools.ToolResult, error) {
 	return m.streamFn(ctx, input, emit)
 }
 
@@ -345,6 +344,55 @@ func TestTurnWithToolCall(t *testing.T) {
 	assert.True(t, hasToolResult, "should have tool_result event")
 	assert.True(t, hasDone, "should have done event")
 	assert.Equal(t, "hello from file", toolResultContent)
+}
+
+func TestTurnWithStreamingToolProgress(t *testing.T) {
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_stream_1",
+					Name: "stream_tool",
+				}},
+				{Type: "text_delta", Text: `{"msg":"go"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "stream complete"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	streamingTool := &mockStreamingTool{
+		mockTool: mockTool{
+			name: "stream_tool",
+		},
+		streamFn: func(_ context.Context, _ json.RawMessage, emit tools.ToolEventEmitter) (tools.ToolResult, error) {
+			emit(tools.ToolEvent{Stage: tools.EventBegin, Content: "begin"})
+			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "delta-1"})
+			emit(tools.ToolEvent{Stage: tools.EventEnd, Content: "end"})
+			return tools.ToolResult{Content: "ok"}, nil
+		},
+	}
+	err := reg.Register(streamingTool)
+	require.NoError(t, err)
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "run stream_tool")
+	require.NoError(t, err)
+
+	var progressStages []string
+	for ev := range ch {
+		if ev.Type == "tool_progress" && ev.ToolProgress != nil {
+			progressStages = append(progressStages, ev.ToolProgress.Stage.String())
+		}
+	}
+
+	assert.Equal(t, []string{"begin", "delta", "end"}, progressStages)
 }
 
 func TestTurnWithDeniedTool(t *testing.T) {
@@ -1469,8 +1517,7 @@ func TestAgentToolResultOffloading(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg, WithStore(s))
 
 	tc := provider.ToolUseBlock{ID: "t1", Name: "big_output", Input: json.RawMessage(`{}`)}
-	ch := make(chan TurnEvent, 64)
-	result := a.executeSingleTool(context.Background(), ch, tc)
+	result := a.executeSingleTool(context.Background(), make(chan TurnEvent, 8), tc)
 
 	assert.Contains(t, result.content, "Tool result stored")
 	assert.Contains(t, result.content, "read_result")
@@ -1498,8 +1545,7 @@ func TestAgentToolResultOffloadingSkipsSmallResults(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg, WithStore(s))
 
 	tc := provider.ToolUseBlock{ID: "t2", Name: "small_output", Input: json.RawMessage(`{}`)}
-	ch := make(chan TurnEvent, 64)
-	result := a.executeSingleTool(context.Background(), ch, tc)
+	result := a.executeSingleTool(context.Background(), make(chan TurnEvent, 8), tc)
 
 	assert.Equal(t, "small", result.content, "small results should not be offloaded")
 }
@@ -1529,8 +1575,7 @@ func TestAgentToolResultOffloadingSkipsErrors(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg, WithStore(s))
 
 	tc := provider.ToolUseBlock{ID: "t3", Name: "error_tool", Input: json.RawMessage(`{}`)}
-	ch := make(chan TurnEvent, 64)
-	result := a.executeSingleTool(context.Background(), ch, tc)
+	result := a.executeSingleTool(context.Background(), make(chan TurnEvent, 8), tc)
 
 	// Error results should NOT be offloaded.
 	assert.NotContains(t, result.content, "Tool result stored")
@@ -1843,137 +1888,4 @@ func TestAgentRunLoopDrainsWakeAfterTools(t *testing.T) {
 		}
 	}
 	assert.True(t, foundWake, "should have a subagent_done event from wake manager drain")
-}
-
-func TestTurnEmitsToolProgressEvents(t *testing.T) {
-	streamTool := &mockStreamingTool{
-		mockTool: mockTool{
-			name:        "stream_test",
-			description: "streaming test tool",
-			inputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-			executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
-				return tools.ToolResult{Content: "sync fallback"}, nil
-			},
-		},
-		streamFn: func(_ context.Context, _ json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error) {
-			emit(tools.ToolEvent{Stage: tools.EventBegin, Content: "starting"})
-			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "line 1\n"})
-			emit(tools.ToolEvent{Stage: tools.EventEnd, Content: "done"})
-			return tools.ToolResult{Content: "streamed output"}, nil
-		},
-	}
-
-	reg := tools.NewRegistry()
-	require.NoError(t, reg.Register(streamTool))
-
-	mp := &dynamicMockProvider{
-		responses: [][]provider.StreamEvent{
-			{
-				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "tu-1", Name: "stream_test"}},
-				{Type: "text_delta", Text: "{}"},
-				{Type: "stop"},
-			},
-			{
-				{Type: "text_delta", Text: "All done"},
-				{Type: "stop"},
-			},
-		},
-	}
-
-	cfg := config.DefaultConfig()
-	a := New(mp, reg, autoApprove, cfg)
-
-	ch, err := a.Turn(context.Background(), "test streaming")
-	require.NoError(t, err)
-
-	var progressEvents []TurnEvent
-	var hasToolResult bool
-	for ev := range ch {
-		if ev.Type == "tool_progress" {
-			progressEvents = append(progressEvents, ev)
-		}
-		if ev.Type == "tool_result" {
-			hasToolResult = true
-		}
-	}
-
-	assert.True(t, hasToolResult, "should have a tool_result event")
-	assert.GreaterOrEqual(t, len(progressEvents), 1, "should have tool_progress events")
-	assert.NotNil(t, progressEvents[0].ToolProgress)
-	assert.Equal(t, "stream_test", progressEvents[0].ToolProgress.Name)
-}
-
-func TestStreamingToolIntegrationEndToEnd(t *testing.T) {
-	// Verify that a streaming tool produces tool_progress events
-	// between tool_call and tool_result in a full agent turn.
-	streamTool := &mockStreamingTool{
-		mockTool: mockTool{
-			name:        "stream_cmd",
-			description: "streaming command tool",
-			inputSchema: json.RawMessage(`{"type":"object","properties":{"cmd":{"type":"string"}}}`),
-			executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
-				return tools.ToolResult{Content: "sync"}, nil
-			},
-		},
-		streamFn: func(_ context.Context, _ json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error) {
-			emit(tools.ToolEvent{Stage: tools.EventBegin, Content: "begin"})
-			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "progress 1\n"})
-			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "progress 2\n"})
-			emit(tools.ToolEvent{Stage: tools.EventEnd, Content: ""})
-			return tools.ToolResult{Content: "completed"}, nil
-		},
-	}
-
-	reg := tools.NewRegistry()
-	require.NoError(t, reg.Register(streamTool))
-
-	mp := &dynamicMockProvider{
-		responses: [][]provider.StreamEvent{
-			{
-				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "tu-1", Name: "stream_cmd"}},
-				{Type: "text_delta", Text: `{"cmd":"test"}`},
-				{Type: "stop"},
-			},
-			{
-				{Type: "text_delta", Text: "Done."},
-				{Type: "stop"},
-			},
-		},
-	}
-
-	cfg := config.DefaultConfig()
-	a := New(mp, reg, autoApprove, cfg)
-
-	ch, err := a.Turn(context.Background(), "run stream_cmd")
-	require.NoError(t, err)
-
-	var eventTypes []string
-	for ev := range ch {
-		eventTypes = append(eventTypes, ev.Type)
-	}
-
-	// Expected order: tool_call, tool_progress(s), tool_result, text_delta, done
-	assert.Contains(t, eventTypes, "tool_call")
-	assert.Contains(t, eventTypes, "tool_progress")
-	assert.Contains(t, eventTypes, "tool_result")
-	assert.Contains(t, eventTypes, "done")
-
-	// tool_progress must come after tool_call and before tool_result.
-	toolCallIdx := -1
-	firstProgressIdx := -1
-	toolResultIdx := -1
-	for i, tp := range eventTypes {
-		if tp == "tool_call" && toolCallIdx == -1 {
-			toolCallIdx = i
-		}
-		if tp == "tool_progress" && firstProgressIdx == -1 {
-			firstProgressIdx = i
-		}
-		if tp == "tool_result" && toolResultIdx == -1 {
-			toolResultIdx = i
-		}
-	}
-
-	assert.Greater(t, firstProgressIdx, toolCallIdx, "tool_progress should come after tool_call")
-	assert.Less(t, firstProgressIdx, toolResultIdx, "tool_progress should come before tool_result")
 }

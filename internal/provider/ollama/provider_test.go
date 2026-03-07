@@ -35,7 +35,7 @@ func TestStreamTextResponse(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(ndjsonBody))
+		_, _ = w.Write([]byte(ndjsonBody))
 	}))
 	defer server.Close()
 
@@ -79,7 +79,7 @@ func TestStreamAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"model not found"}`))
+		_, _ = w.Write([]byte(`{"error":"model not found"}`))
 	}))
 	defer server.Close()
 
@@ -177,7 +177,7 @@ func TestStreamToolCallResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(ndjsonBody))
+		_, _ = w.Write([]byte(ndjsonBody))
 	}))
 	defer server.Close()
 
@@ -236,7 +236,7 @@ func TestBuildRequestBodyWithTools(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":""},"done":true}` + "\n"))
+		_, _ = w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":""},"done":true}` + "\n"))
 	}))
 	defer server.Close()
 
@@ -324,7 +324,7 @@ func TestBuildRequestBodyWithAssistantToolCalls(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":""},"done":true}` + "\n"))
+		_, _ = w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":""},"done":true}` + "\n"))
 	}))
 	defer server.Close()
 
@@ -393,7 +393,7 @@ func TestBuildRequestBodyWithToolResults(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true}` + "\n"))
+		_, _ = w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true}` + "\n"))
 	}))
 	defer server.Close()
 
@@ -451,7 +451,7 @@ func TestBuildRequestBodyWithToolResultsAndText(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true}` + "\n"))
+		_, _ = w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true}` + "\n"))
 	}))
 	defer server.Close()
 
@@ -508,7 +508,7 @@ func TestBuildRequestBodyWithUnknownRole(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
+		_, _ = w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"ok"},"done":true}` + "\n"))
 	}))
 	defer server.Close()
 
@@ -564,7 +564,7 @@ func TestBuildRequestBodyWithTemperature(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"hi"},"done":true}` + "\n"))
+		_, _ = w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"hi"},"done":true}` + "\n"))
 	}))
 	defer server.Close()
 
@@ -604,7 +604,7 @@ func TestStreamMalformedJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(ndjsonBody))
+		_, _ = w.Write([]byte(ndjsonBody))
 	}))
 	defer server.Close()
 
@@ -644,7 +644,7 @@ func TestStreamWithEmptyLines(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(ndjsonBody))
+		_, _ = w.Write([]byte(ndjsonBody))
 	}))
 	defer server.Close()
 
@@ -698,7 +698,7 @@ func TestStreamTruncatedWithoutDone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(ndjsonBody))
+		_, _ = w.Write([]byte(ndjsonBody))
 		// Server closes connection without sending done: true
 	}))
 	defer server.Close()
@@ -736,7 +736,7 @@ func TestStreamToolCallWithNilArguments(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(ndjsonBody))
+		_, _ = w.Write([]byte(ndjsonBody))
 	}))
 	defer server.Close()
 

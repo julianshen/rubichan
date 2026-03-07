@@ -161,7 +161,7 @@ func (s *SearchTool) Execute(ctx context.Context, input json.RawMessage) (ToolRe
 
 // ExecuteStream implements StreamingTool. It emits match lines as
 // EventDelta events during search execution.
-func (s *SearchTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit func(ToolEvent)) (ToolResult, error) {
+func (s *SearchTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
 	var in searchInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
@@ -245,7 +245,7 @@ func (s *SearchTool) ExecuteStream(ctx context.Context, input json.RawMessage, e
 	return ToolResult{Content: result, DisplayContent: displayContent}, nil
 }
 
-func (s *SearchTool) searchWithRipgrepStreaming(ctx context.Context, rgPath, searchDir string, in searchInput, emit func(ToolEvent)) (string, error) {
+func (s *SearchTool) searchWithRipgrepStreaming(ctx context.Context, rgPath, searchDir string, in searchInput, emit ToolEventEmitter) (string, error) {
 	args := []string{
 		"--no-heading", "--line-number", "--color", "never",
 	}

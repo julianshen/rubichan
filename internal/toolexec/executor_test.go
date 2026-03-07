@@ -9,7 +9,6 @@ import (
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // stubTool implements tools.Tool for testing.
@@ -29,6 +28,20 @@ func (s *stubTool) InputSchema() json.RawMessage { return s.schema }
 func (s *stubTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	s.execCalledCtx = ctx
 	s.execInput = input
+	return s.execResult, s.execErr
+}
+
+type streamingStubTool struct {
+	stubTool
+	streamEvents []tools.ToolEvent
+	streamCalled bool
+}
+
+func (s *streamingStubTool) ExecuteStream(_ context.Context, _ json.RawMessage, emit tools.ToolEventEmitter) (tools.ToolResult, error) {
+	s.streamCalled = true
+	for _, ev := range s.streamEvents {
+		emit(ev)
+	}
 	return s.execResult, s.execErr
 }
 
@@ -97,92 +110,68 @@ func TestRegistryExecutorToolError(t *testing.T) {
 	assert.True(t, result.IsError)
 }
 
-// streamingStubTool implements both tools.Tool and tools.StreamingTool.
-type streamingStubTool struct {
-	stubTool
-	streamResult tools.ToolResult
-	streamErr    error
-}
-
-func (s *streamingStubTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error) {
-	s.execInput = input
-	emit(tools.ToolEvent{Stage: tools.EventBegin, Content: "begin"})
-	emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "output line 1\n"})
-	emit(tools.ToolEvent{Stage: tools.EventEnd, Content: "end"})
-	return s.streamResult, s.streamErr
-}
-
-func TestRegistryExecutorUsesStreamingToolWhenEmitterPresent(t *testing.T) {
+func TestRegistryExecutorStreamingToolEmitsEvents(t *testing.T) {
 	stub := &streamingStubTool{
 		stubTool: stubTool{
-			name:   "streaming_shell",
+			name:   "shell",
 			schema: json.RawMessage(`{}`),
+			execResult: tools.ToolResult{
+				Content: "done",
+			},
 		},
-		streamResult: tools.ToolResult{Content: "streamed result"},
+		streamEvents: []tools.ToolEvent{
+			{Stage: tools.EventBegin, Content: "start"},
+			{Stage: tools.EventDelta, Content: "chunk"},
+			{Stage: tools.EventEnd, Content: "end"},
+		},
 	}
-
 	registry := tools.NewRegistry()
-	require.NoError(t, registry.Register(stub))
+	err := registry.Register(stub)
+	assert.NoError(t, err)
 
-	var received []tools.ToolEvent
-	emit := func(ev tools.ToolEvent) {
-		received = append(received, ev)
-	}
-
-	ctx := tools.WithEmitter(context.Background(), emit)
 	handler := toolexec.RegistryExecutor(registry)
+	var got []tools.ToolEvent
+	ctx := toolexec.WithToolEventEmitter(context.Background(), func(ev tools.ToolEvent) {
+		got = append(got, ev)
+	})
 	result := handler(ctx, toolexec.ToolCall{
-		ID: "call-s1", Name: "streaming_shell",
+		ID:    "call-stream",
+		Name:  "shell",
 		Input: json.RawMessage(`{"command":"echo hi"}`),
 	})
 
-	assert.Equal(t, "streamed result", result.Content)
-	assert.False(t, result.IsError)
-	require.Len(t, received, 3)
-	assert.Equal(t, tools.EventBegin, received[0].Stage)
-	assert.Equal(t, tools.EventDelta, received[1].Stage)
-	assert.Equal(t, tools.EventEnd, received[2].Stage)
+	assert.Equal(t, "done", result.Content)
+	assert.Len(t, got, 3)
+	assert.Equal(t, tools.EventBegin, got[0].Stage)
+	assert.Equal(t, "chunk", got[1].Content)
+	assert.Equal(t, tools.EventEnd, got[2].Stage)
 }
 
 func TestRegistryExecutorStreamingToolFallsBackWithoutEmitter(t *testing.T) {
 	stub := &streamingStubTool{
 		stubTool: stubTool{
-			name:   "streaming_shell",
+			name:   "shell",
 			schema: json.RawMessage(`{}`),
+			execResult: tools.ToolResult{
+				Content: "done",
+			},
 		},
-		streamResult: tools.ToolResult{Content: "streamed result"},
+		streamEvents: []tools.ToolEvent{
+			{Stage: tools.EventBegin, Content: "start"},
+		},
 	}
-
 	registry := tools.NewRegistry()
-	require.NoError(t, registry.Register(stub))
+	err := registry.Register(stub)
+	assert.NoError(t, err)
 
 	handler := toolexec.RegistryExecutor(registry)
 	result := handler(context.Background(), toolexec.ToolCall{
-		ID: "call-s2", Name: "streaming_shell",
-		Input: json.RawMessage(`{}`),
+		ID:    "call-fallback",
+		Name:  "shell",
+		Input: json.RawMessage(`{"command":"echo hi"}`),
 	})
 
-	assert.Equal(t, "streamed result", result.Content)
-	assert.False(t, result.IsError)
-}
-
-func TestRegistryExecutorStreamingToolError(t *testing.T) {
-	stub := &streamingStubTool{
-		stubTool: stubTool{
-			name:   "streaming_shell",
-			schema: json.RawMessage(`{}`),
-		},
-		streamErr: errors.New("stream failed"),
-	}
-
-	registry := tools.NewRegistry()
-	require.NoError(t, registry.Register(stub))
-
-	handler := toolexec.RegistryExecutor(registry)
-	result := handler(context.Background(), toolexec.ToolCall{
-		ID: "call-s3", Name: "streaming_shell",
-	})
-
-	assert.Contains(t, result.Content, "stream failed")
-	assert.True(t, result.IsError)
+	assert.Equal(t, "done", result.Content)
+	assert.False(t, stub.streamCalled)
+	assert.JSONEq(t, `{"command":"echo hi"}`, string(stub.execInput))
 }

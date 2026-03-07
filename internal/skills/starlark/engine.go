@@ -16,6 +16,7 @@ import (
 	"github.com/julianshen/rubichan/internal/tools"
 
 	starlib "go.starlark.net/starlark"
+	"go.starlark.net/syntax"
 )
 
 // LLMCompleter abstracts LLM completion for the llm_complete() built-in.
@@ -199,7 +200,8 @@ func (e *Engine) Load(manifest skills.SkillManifest, checker skills.PermissionCh
 		"register_scanner":  starlib.NewBuiltin("register_scanner", e.builtinRegisterScanner),
 	}
 
-	globals, err := starlib.ExecFile(
+	globals, err := starlib.ExecFileOptions(
+		syntax.LegacyFileOptions(),
 		e.thread,
 		path,
 		src,

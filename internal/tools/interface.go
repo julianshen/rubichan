@@ -13,55 +13,56 @@ type Tool interface {
 	Execute(ctx context.Context, input json.RawMessage) (ToolResult, error)
 }
 
-// ToolResult represents the result of executing a tool.
-type ToolResult struct {
-	Content        string // sent to LLM conversation history
-	DisplayContent string // shown to user; falls back to Content if empty
-	IsError        bool
-}
-
-// EventStage represents the lifecycle stage of a streaming tool event.
+// EventStage describes the lifecycle stage of a streaming tool event.
 type EventStage int
 
 const (
-	// EventBegin signals the start of a streaming tool execution.
+	// EventBegin marks the start of a streaming tool execution.
 	EventBegin EventStage = iota
-	// EventDelta carries incremental output during execution.
+	// EventDelta carries incremental output while the tool is running.
 	EventDelta
-	// EventEnd signals the completion of streaming execution.
+	// EventEnd marks the end of a streaming tool execution.
 	EventEnd
 )
 
-// ToolEvent represents a streaming event emitted during tool execution.
+// String returns the stable wire/debug name for a streaming event stage.
+func (s EventStage) String() string {
+	switch s {
+	case EventBegin:
+		return "begin"
+	case EventDelta:
+		return "delta"
+	case EventEnd:
+		return "end"
+	default:
+		return "unknown"
+	}
+}
+
+// ToolEvent is emitted by StreamingTool implementations during execution.
 type ToolEvent struct {
 	Stage   EventStage
 	Content string
 	IsError bool
 }
 
-// StreamingTool extends Tool with streaming execution capability.
-// Tools that implement this interface emit real-time progress events
-// during execution. Tools that don't implement it fall back to
-// synchronous Execute().
+// ToolEventEmitter handles streaming tool events.
+type ToolEventEmitter func(ToolEvent)
+
+// StreamingTool is an optional extension interface for tools that can emit
+// real-time progress events while executing.
+//
+// Tools that don't implement this interface continue to run through Execute.
 type StreamingTool interface {
 	Tool
-	ExecuteStream(ctx context.Context, input json.RawMessage, emit func(ToolEvent)) (ToolResult, error)
+	ExecuteStream(ctx context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error)
 }
 
-type emitterContextKey struct{}
-
-// WithEmitter returns a new context carrying the given emit function.
-func WithEmitter(ctx context.Context, emit func(ToolEvent)) context.Context {
-	return context.WithValue(ctx, emitterContextKey{}, emit)
-}
-
-// EmitterFromContext extracts the emit function from the context.
-// Returns nil if no emitter was set.
-func EmitterFromContext(ctx context.Context) func(ToolEvent) {
-	if emit, ok := ctx.Value(emitterContextKey{}).(func(ToolEvent)); ok {
-		return emit
-	}
-	return nil
+// ToolResult represents the result of executing a tool.
+type ToolResult struct {
+	Content        string // sent to LLM conversation history
+	DisplayContent string // shown to user; falls back to Content if empty
+	IsError        bool
 }
 
 // Display returns the content intended for user display. It returns

@@ -110,7 +110,7 @@ func TestProcessToolExecute(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	// Get the echo tool.
 	registeredTools := backend.Tools()
@@ -137,7 +137,7 @@ func TestProcessHookHandle(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	hooks := backend.Hooks()
 	require.Contains(t, hooks, skills.HookOnBeforeToolCall)
@@ -167,7 +167,7 @@ func TestProcessCrashRestart(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	// Verify tools are available before crash.
 	require.Len(t, backend.Tools(), 1)
@@ -200,7 +200,7 @@ func TestProcessTimeout(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	// Call the slow method which sleeps for 5 seconds.
 	// With a 100ms timeout, this should fail.
@@ -242,7 +242,7 @@ func TestProcessToolInputSchema(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	registeredTools := backend.Tools()
 	require.Len(t, registeredTools, 1)
@@ -289,7 +289,7 @@ func TestProcessHookHandleNilCtx(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	hooks := backend.Hooks()
 	require.Contains(t, hooks, skills.HookOnBeforeToolCall)
@@ -327,7 +327,7 @@ func TestProcessCallWithContextDeadline(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	// Use a context deadline shorter than the call timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -410,7 +410,7 @@ func TestProcessCallRPCError(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	// Call an unknown method -- the echo_skill responds with an RPC error.
 	ctx := context.Background()
@@ -508,7 +508,7 @@ func TestProcessCallCreateRequestError(t *testing.T) {
 
 	err := backend.Load(newTestManifest(echoSkillBinary), checker)
 	require.NoError(t, err)
-	defer backend.Unload()
+	defer func() { _ = backend.Unload() }()
 
 	// Passing a channel as params should trigger a marshal error in NewRequest.
 	ctx := context.Background()

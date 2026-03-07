@@ -29,6 +29,7 @@ func TestContextBudgetSourcePriority(t *testing.T) {
 	assert.Greater(t, sourceBudgetPriority(SourceInline), sourceBudgetPriority(SourceBuiltin))
 	assert.Greater(t, sourceBudgetPriority(SourceBuiltin), sourceBudgetPriority(SourceUser))
 	assert.Greater(t, sourceBudgetPriority(SourceUser), sourceBudgetPriority(SourceProject))
+	assert.Greater(t, sourceBudgetPriority(SourceProject), sourceBudgetPriority(SourceConfigured))
 	assert.Greater(t, sourceBudgetPriority(SourceProject), sourceBudgetPriority(SourceMCP))
 	assert.Greater(t, sourceBudgetPriority(SourceMCP), sourceBudgetPriority(Source("unknown")))
 }
@@ -36,14 +37,16 @@ func TestContextBudgetSourcePriority(t *testing.T) {
 func TestPromptCollectorBudgetedFragmentsUnderBudget(t *testing.T) {
 	pc := NewPromptCollector()
 	pc.Add(PromptFragment{
-		SkillName:      "skill-a",
-		ResolvedPrompt: "Short prompt.",
-		Source:         SourceUser,
+		SkillName:       "skill-a",
+		ResolvedPrompt:  "Short prompt.",
+		Source:          SourceUser,
+		ActivationScore: 20,
 	})
 	pc.Add(PromptFragment{
-		SkillName:      "skill-b",
-		ResolvedPrompt: "Another short prompt.",
-		Source:         SourceProject,
+		SkillName:       "skill-b",
+		ResolvedPrompt:  "Another short prompt.",
+		Source:          SourceProject,
+		ActivationScore: 10,
 	})
 
 	budget := &ContextBudget{MaxTotalTokens: 10000, MaxPerSkillTokens: 5000}
@@ -59,15 +62,17 @@ func TestPromptCollectorBudgetedFragmentsOverBudget(t *testing.T) {
 
 	// High priority skill.
 	pc.Add(PromptFragment{
-		SkillName:      "high-pri",
-		ResolvedPrompt: strings.Repeat("x", 400), // 100 tokens
-		Source:         SourceInline,
+		SkillName:       "high-pri",
+		ResolvedPrompt:  strings.Repeat("x", 400), // 100 tokens
+		Source:          SourceInline,
+		ActivationScore: 100,
 	})
 	// Low priority skill — should be excluded when budget is tight.
 	pc.Add(PromptFragment{
-		SkillName:      "low-pri",
-		ResolvedPrompt: strings.Repeat("y", 400), // 100 tokens
-		Source:         SourceMCP,
+		SkillName:       "low-pri",
+		ResolvedPrompt:  strings.Repeat("y", 400), // 100 tokens
+		Source:          SourceMCP,
+		ActivationScore: 10,
 	})
 
 	// Budget only allows ~100 tokens.
@@ -84,9 +89,10 @@ func TestPromptCollectorBudgetedFragmentsTruncation(t *testing.T) {
 
 	// 1200 chars = 300 tokens, but per-skill limit is 100 tokens.
 	pc.Add(PromptFragment{
-		SkillName:      "verbose-skill",
-		ResolvedPrompt: strings.Repeat("z", 1200),
-		Source:         SourceUser,
+		SkillName:       "verbose-skill",
+		ResolvedPrompt:  strings.Repeat("z", 1200),
+		Source:          SourceUser,
+		ActivationScore: 50,
 	})
 
 	budget := &ContextBudget{
@@ -104,26 +110,29 @@ func TestPromptCollectorBudgetedFragmentsPreservesOrder(t *testing.T) {
 	pc := NewPromptCollector()
 
 	pc.Add(PromptFragment{
-		SkillName:      "project-skill",
-		ResolvedPrompt: "Project prompt",
-		Source:         SourceProject,
+		SkillName:       "project-skill",
+		ResolvedPrompt:  "Project prompt",
+		Source:          SourceProject,
+		ActivationScore: 10,
 	})
 	pc.Add(PromptFragment{
-		SkillName:      "inline-skill",
-		ResolvedPrompt: "Inline prompt",
-		Source:         SourceInline,
+		SkillName:       "inline-skill",
+		ResolvedPrompt:  "Inline prompt",
+		Source:          SourceInline,
+		ActivationScore: 100,
 	})
 	pc.Add(PromptFragment{
-		SkillName:      "user-skill",
-		ResolvedPrompt: "User prompt",
-		Source:         SourceUser,
+		SkillName:       "user-skill",
+		ResolvedPrompt:  "User prompt",
+		Source:          SourceUser,
+		ActivationScore: 50,
 	})
 
 	budget := &ContextBudget{MaxTotalTokens: 10000}
 	result := pc.BudgetedFragments(budget)
 
 	require.Len(t, result, 3)
-	// Sorted by priority: inline > user > project.
+	// Sorted by activation score: inline > user > project.
 	assert.Equal(t, "inline-skill", result[0].SkillName)
 	assert.Equal(t, "user-skill", result[1].SkillName)
 	assert.Equal(t, "project-skill", result[2].SkillName)
@@ -132,9 +141,10 @@ func TestPromptCollectorBudgetedFragmentsPreservesOrder(t *testing.T) {
 func TestPromptCollectorBudgetedFragmentsNoBudget(t *testing.T) {
 	pc := NewPromptCollector()
 	pc.Add(PromptFragment{
-		SkillName:      "any-skill",
-		ResolvedPrompt: "Any prompt",
-		Source:         SourceUser,
+		SkillName:       "any-skill",
+		ResolvedPrompt:  "Any prompt",
+		Source:          SourceUser,
+		ActivationScore: 10,
 	})
 
 	t.Run("nil budget", func(t *testing.T) {
@@ -183,6 +193,10 @@ func TestRuntimeGetBudgetedPromptFragments(t *testing.T) {
 	rt.SetContextBudget(&budget)
 	fragments = rt.GetBudgetedPromptFragments()
 	require.Len(t, fragments, 1)
+
+	report := rt.GetPromptBudgetReport()
+	require.Len(t, report, 1)
+	assert.Equal(t, "included", report[0].BudgetDecision)
 }
 
 func TestContextBudgetEstimateTokens(t *testing.T) {
@@ -198,15 +212,17 @@ func TestPromptCollectorBudgetedFragmentsPartialFit(t *testing.T) {
 
 	// First skill: 200 chars = 50 tokens.
 	pc.Add(PromptFragment{
-		SkillName:      "fits-fully",
-		ResolvedPrompt: strings.Repeat("a", 200),
-		Source:         SourceInline,
+		SkillName:       "fits-fully",
+		ResolvedPrompt:  strings.Repeat("a", 200),
+		Source:          SourceInline,
+		ActivationScore: 100,
 	})
 	// Second skill: 400 chars = 100 tokens, but only ~50 tokens of budget remain.
 	pc.Add(PromptFragment{
-		SkillName:      "partially-fits",
-		ResolvedPrompt: strings.Repeat("b", 400),
-		Source:         SourceUser,
+		SkillName:       "partially-fits",
+		ResolvedPrompt:  strings.Repeat("b", 400),
+		Source:          SourceUser,
+		ActivationScore: 50,
 	})
 
 	budget := &ContextBudget{MaxTotalTokens: 100}
@@ -219,4 +235,53 @@ func TestPromptCollectorBudgetedFragmentsPartialFit(t *testing.T) {
 	// Second skill truncated to fit remaining 50 tokens = 200 chars.
 	assert.Equal(t, "partially-fits", result[1].SkillName)
 	assert.Equal(t, 200, len(result[1].ResolvedPrompt))
+}
+
+func TestPromptCollectorBudgetedFragmentsUsesActivationScore(t *testing.T) {
+	pc := NewPromptCollector()
+	pc.Add(PromptFragment{
+		SkillName:       "low-source-high-score",
+		ResolvedPrompt:  strings.Repeat("a", 400),
+		Source:          SourceProject,
+		ActivationScore: 200,
+	})
+	pc.Add(PromptFragment{
+		SkillName:       "high-source-low-score",
+		ResolvedPrompt:  strings.Repeat("b", 400),
+		Source:          SourceInline,
+		ActivationScore: 10,
+	})
+
+	result := pc.BudgetedFragments(&ContextBudget{MaxTotalTokens: 100})
+	require.Len(t, result, 1)
+	assert.Equal(t, "low-source-high-score", result[0].SkillName)
+}
+
+func TestPromptCollectorBudgetReportIncludesExclusionsAndTruncation(t *testing.T) {
+	pc := NewPromptCollector()
+	pc.Add(PromptFragment{
+		SkillName:       "top",
+		ResolvedPrompt:  strings.Repeat("a", 400),
+		Source:          SourceUser,
+		ActivationScore: 100,
+	})
+	pc.Add(PromptFragment{
+		SkillName:       "middle",
+		ResolvedPrompt:  strings.Repeat("b", 400),
+		Source:          SourceUser,
+		ActivationScore: 50,
+	})
+	pc.Add(PromptFragment{
+		SkillName:       "bottom",
+		ResolvedPrompt:  strings.Repeat("c", 400),
+		Source:          SourceUser,
+		ActivationScore: 10,
+	})
+
+	report := pc.BudgetReport(&ContextBudget{MaxTotalTokens: 150})
+	require.Len(t, report, 3)
+	assert.Equal(t, "included", report[0].BudgetDecision)
+	assert.Equal(t, "truncated", report[1].BudgetDecision)
+	assert.Equal(t, "excluded", report[2].BudgetDecision)
+	assert.Equal(t, 0, report[2].UsedTokens)
 }

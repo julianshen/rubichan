@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,9 +10,11 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"strings"
 )
 
 func TestVersionString(t *testing.T) {
@@ -141,7 +144,7 @@ func TestAutoDetectProvider_OllamaRunning(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "") // ensure env doesn't interfere
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"version": "0.5.1"}`))
+		_, _ = w.Write([]byte(`{"version": "0.5.1"}`))
 	}))
 	defer srv.Close()
 
@@ -174,7 +177,7 @@ func TestAutoDetectProvider_APIKeyExists(t *testing.T) {
 
 func TestResolveOllamaModel_SingleModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"models": [{"name": "llama3.2:latest", "size": 4294967296}]}`))
+		_, _ = w.Write([]byte(`{"models": [{"name": "llama3.2:latest", "size": 4294967296}]}`))
 	}))
 	defer srv.Close()
 
@@ -185,7 +188,7 @@ func TestResolveOllamaModel_SingleModel(t *testing.T) {
 
 func TestResolveOllamaModel_NoModels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"models": []}`))
+		_, _ = w.Write([]byte(`{"models": []}`))
 	}))
 	defer srv.Close()
 
@@ -196,7 +199,7 @@ func TestResolveOllamaModel_NoModels(t *testing.T) {
 
 func TestResolveOllamaModel_MultipleModels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"models": [
+		_, _ = w.Write([]byte(`{"models": [
 			{"name": "llama3.2:latest", "size": 4294967296},
 			{"name": "codellama:7b", "size": 3758096384}
 		]}`))
@@ -212,4 +215,67 @@ func TestResolveOllamaModel_ConnectionError(t *testing.T) {
 	_, err := resolveOllamaModel("http://localhost:1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listing Ollama models")
+}
+
+func TestEnsureFolderAccessApproved_FirstTimeApprove(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader("yes\n"), &out)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "Allow rubichan to access this folder?")
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
+}
+
+func TestEnsureFolderAccessApproved_Denied(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader("no\n"), &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "folder access denied")
+}
+
+func TestEnsureFolderAccessApproved_AlreadyApprovedSkipsPrompt(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+	require.NoError(t, s.ApproveFolderAccess("/tmp/project"))
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader(""), &out)
+	require.NoError(t, err)
+	assert.Empty(t, out.String())
+}
+
+func mustOpenStore(t *testing.T) *store.Store {
+	t.Helper()
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	return s
+}
+
+func TestEnsureFolderAccessApprovedNonInteractive_DeniedWithoutAutoApprove(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not approved")
+}
+
+func TestEnsureFolderAccessApprovedNonInteractive_AutoApproves(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", true)
+	require.NoError(t, err)
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
 }

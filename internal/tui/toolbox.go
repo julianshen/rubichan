@@ -67,3 +67,16 @@ func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) s
 	}
 	return box.Render(display) + "\n"
 }
+
+// RenderToolProgress renders streaming tool progress output.
+func (r *ToolBoxRenderer) RenderToolProgress(name, stage, content string, isError bool) string {
+	if content == "" {
+		return ""
+	}
+	prefix := fmt.Sprintf("[%s:%s]\n", name, stage)
+	box := r.normalBox
+	if isError {
+		box = r.errorBox
+	}
+	return box.Render(prefix+content) + "\n"
+}

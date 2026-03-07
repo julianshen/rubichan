@@ -74,10 +74,6 @@ type Model struct {
 	eventCh           <-chan agent.TurnEvent
 	cmdRegistry       *commands.Registry
 	completion        *CompletionOverlay
-	diffSummary       string
-	diffSummaryRender string
-	diffSummaryOpen   bool
-	diffPanelStartIdx int
 }
 
 // Ensure Model satisfies the tea.Model interface at compile time.
@@ -108,25 +104,24 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
 	m := &Model{
-		agent:             a,
-		cfg:               cfg,
-		configPath:        configPath,
-		input:             ia,
-		viewport:          vp,
-		spinner:           sp,
-		mdRenderer:        mdRenderer,
-		toolBox:           NewToolBoxRenderer(80),
-		statusBar:         sb,
-		approvalCh:        make(chan approvalRequest),
-		state:             StateInput,
-		appName:           appName,
-		modelName:         modelName,
-		maxTurns:          maxTurns,
-		width:             80,
-		height:            24,
-		cmdRegistry:       cmdRegistry,
-		completion:        NewCompletionOverlay(cmdRegistry, 80),
-		diffPanelStartIdx: -1,
+		agent:       a,
+		cfg:         cfg,
+		configPath:  configPath,
+		input:       ia,
+		viewport:    vp,
+		spinner:     sp,
+		mdRenderer:  mdRenderer,
+		toolBox:     NewToolBoxRenderer(80),
+		statusBar:   sb,
+		approvalCh:  make(chan approvalRequest),
+		state:       StateInput,
+		appName:     appName,
+		modelName:   modelName,
+		maxTurns:    maxTurns,
+		width:       80,
+		height:      24,
+		cmdRegistry: cmdRegistry,
+		completion:  NewCompletionOverlay(cmdRegistry, 80),
 	}
 
 	// When no registry was provided, populate with default built-in commands.

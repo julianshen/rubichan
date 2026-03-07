@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,7 +29,7 @@ func TestRegistrySearch(t *testing.T) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "code", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(results)
+		_ = json.NewEncoder(w).Encode(results)
 	}))
 	defer srv.Close()
 
@@ -55,7 +54,7 @@ types:
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/skills/code-review/1.0.0/manifest", r.URL.Path)
 		w.Header().Set("Content-Type", "application/x-yaml")
-		w.Write([]byte(manifestYAML))
+		_, _ = w.Write([]byte(manifestYAML))
 	}))
 	defer srv.Close()
 
@@ -161,7 +160,7 @@ types:
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		w.Header().Set("Content-Type", "application/x-yaml")
-		w.Write([]byte(manifestYAML))
+		_, _ = w.Write([]byte(manifestYAML))
 	}))
 	defer srv.Close()
 
@@ -197,7 +196,7 @@ types:
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
 		w.Header().Set("Content-Type", "application/x-yaml")
-		w.Write([]byte(manifestYAML))
+		_, _ = w.Write([]byte(manifestYAML))
 	}))
 	defer srv.Close()
 
@@ -227,7 +226,7 @@ func TestRegistryListVersions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/skills/my-tool/versions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(versions)
+		_ = json.NewEncoder(w).Encode(versions)
 	}))
 	defer srv.Close()
 
@@ -255,7 +254,7 @@ func TestRegistryListVersionsError(t *testing.T) {
 func TestRegistryListVersionsMalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
 
@@ -280,7 +279,7 @@ func TestRegistrySearchError(t *testing.T) {
 func TestRegistrySearchMalformedJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{invalid"))
+		_, _ = w.Write([]byte("{invalid"))
 	}))
 	defer srv.Close()
 
@@ -312,7 +311,7 @@ func TestRegistryGitInstall(t *testing.T) {
 
 	// Create a normal repo, add SKILL.yaml, then clone from it.
 	run(workDir, "git", "init")
-	skillContent := fmt.Sprintf("name: git-skill\nversion: 1.0.0\ndescription: \"Git skill\"\ntypes:\n  - prompt\n")
+	skillContent := "name: git-skill\nversion: 1.0.0\ndescription: \"Git skill\"\ntypes:\n  - prompt\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workDir, "SKILL.yaml"), []byte(skillContent), 0o644))
 	run(workDir, "git", "add", "SKILL.yaml")
 	run(workDir, "git", "commit", "-m", "initial")

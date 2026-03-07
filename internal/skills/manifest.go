@@ -3,7 +3,10 @@ package skills
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -93,13 +96,22 @@ type CommandArgDef struct {
 
 // AgentDefManifest describes an agent definition contributed by a skill.
 type AgentDefManifest struct {
-	Name         string   `yaml:"name"`
-	Description  string   `yaml:"description"`
-	SystemPrompt string   `yaml:"system_prompt"`
-	Tools        []string `yaml:"tools"`
-	MaxTurns     int      `yaml:"max_turns"`
-	MaxDepth     int      `yaml:"max_depth"`
-	Model        string   `yaml:"model"`
+	Name          string   `yaml:"name"`
+	Description   string   `yaml:"description"`
+	SystemPrompt  string   `yaml:"system_prompt"`
+	Tools         []string `yaml:"tools"`
+	MaxTurns      int      `yaml:"max_turns"`
+	MaxDepth      int      `yaml:"max_depth"`
+	Model         string   `yaml:"model"`
+	InheritSkills *bool    `yaml:"inherit_skills"`
+	ExtraSkills   []string `yaml:"extra_skills"`
+	DisableSkills []string `yaml:"disable_skills"`
+}
+
+// ReferenceDef describes an auxiliary file a skill may load on demand.
+type ReferenceDef struct {
+	Path string `yaml:"path"`
+	When string `yaml:"when"`
 }
 
 // SkillManifest represents a parsed SKILL.yaml file.
@@ -114,6 +126,10 @@ type SkillManifest struct {
 	Triggers       TriggerConfig        `yaml:"triggers"`
 	Permissions    []Permission         `yaml:"permissions"`
 	Dependencies   []Dependency         `yaml:"dependencies"`
+	Priority       int                  `yaml:"priority"`
+	ToolsAllow     []string             `yaml:"tools_allow"`
+	ToolsDeny      []string             `yaml:"tools_deny"`
+	References     []ReferenceDef       `yaml:"references"`
 	Implementation ImplementationConfig `yaml:"implementation"`
 	Prompt         PromptConfig         `yaml:"prompt"`
 	Tools          []ToolDef            `yaml:"tools"`
@@ -264,6 +280,17 @@ func validateManifest(m *SkillManifest) error {
 		}
 	}
 
+	for _, cmd := range m.Commands {
+		if cmd.Name == "" {
+			return fmt.Errorf("manifest validation: command name is required")
+		}
+	}
+	for _, agent := range m.Agents {
+		if agent.Name == "" {
+			return fmt.Errorf("manifest validation: agent name is required")
+		}
+	}
+
 	// Backend.
 	if m.Implementation.Backend != "" && !validBackends[m.Implementation.Backend] {
 		return fmt.Errorf("manifest validation: unknown backend %q", m.Implementation.Backend)
@@ -289,18 +316,34 @@ func validateManifest(m *SkillManifest) error {
 // instructionFrontmatter is the subset of fields allowed in a SKILL.md
 // frontmatter block. Instruction skills are always prompt-only.
 type instructionFrontmatter struct {
-	Name        string        `yaml:"name"`
-	Version     string        `yaml:"version"`
-	Description string        `yaml:"description"`
-	Types       []SkillType   `yaml:"types"`
-	Triggers    TriggerConfig `yaml:"triggers"`
-	Permissions []Permission  `yaml:"permissions"`
+	Name        string             `yaml:"name"`
+	Version     string             `yaml:"version"`
+	Description string             `yaml:"description"`
+	Types       []SkillType        `yaml:"types"`
+	Triggers    TriggerConfig      `yaml:"triggers"`
+	Permissions []Permission       `yaml:"permissions"`
+	Priority    int                `yaml:"priority"`
+	ToolsAllow  []string           `yaml:"tools_allow"`
+	ToolsDeny   []string           `yaml:"tools_deny"`
+	References  []ReferenceDef     `yaml:"references"`
+	Commands    []CommandDef       `yaml:"commands"`
+	Agents      []AgentDefManifest `yaml:"agents"`
 }
 
 // ParseInstructionSkill parses a SKILL.md file with YAML frontmatter delimited
 // by "---" lines. Returns the synthesized manifest (always type prompt), the
 // markdown body, and an error if parsing or validation fails.
 func ParseInstructionSkill(data []byte) (*SkillManifest, string, error) {
+	return parseInstructionSkill(data, false)
+}
+
+// ParseInstructionSkillStrict parses an instruction skill and rejects unknown
+// frontmatter fields. Intended for linting and authoring workflows.
+func ParseInstructionSkillStrict(data []byte) (*SkillManifest, string, error) {
+	return parseInstructionSkill(data, true)
+}
+
+func parseInstructionSkill(data []byte, strict bool) (*SkillManifest, string, error) {
 	// Split frontmatter from body.
 	frontmatter, body, err := splitFrontmatter(data)
 	if err != nil {
@@ -308,7 +351,14 @@ func ParseInstructionSkill(data []byte) (*SkillManifest, string, error) {
 	}
 
 	var fm instructionFrontmatter
-	if err := yaml.Unmarshal(frontmatter, &fm); err != nil {
+	if strict {
+		dec := yaml.NewDecoder(bytes.NewReader(frontmatter))
+		dec.KnownFields(true)
+		err = dec.Decode(&fm)
+	} else {
+		err = yaml.Unmarshal(frontmatter, &fm)
+	}
+	if err != nil {
 		return nil, "", fmt.Errorf("instruction skill: parse frontmatter: %w", err)
 	}
 
@@ -331,6 +381,12 @@ func ParseInstructionSkill(data []byte) (*SkillManifest, string, error) {
 		Types:       fm.Types,
 		Triggers:    fm.Triggers,
 		Permissions: fm.Permissions,
+		Priority:    fm.Priority,
+		ToolsAllow:  fm.ToolsAllow,
+		ToolsDeny:   fm.ToolsDeny,
+		References:  fm.References,
+		Commands:    fm.Commands,
+		Agents:      fm.Agents,
 	}
 
 	if err := validateManifest(m); err != nil {
@@ -338,6 +394,86 @@ func ParseInstructionSkill(data []byte) (*SkillManifest, string, error) {
 	}
 
 	return m, string(body), nil
+}
+
+// LintSkillDir performs author-facing validation for a skill directory.
+// It returns a slice of issues; an empty slice means the skill passed linting.
+func LintSkillDir(skillDir string) []string {
+	manifest, kind, body, err := loadManifestForLint(skillDir)
+	if err != nil {
+		return []string{err.Error()}
+	}
+
+	var issues []string
+	if kind == "instruction" {
+		if len(strings.Fields(body)) > 500 {
+			issues = append(issues, "instruction skill body exceeds 500 words")
+		}
+	}
+
+	seenCmds := make(map[string]bool)
+	for _, cmd := range manifest.Commands {
+		if cmd.Name == "" {
+			issues = append(issues, "command name is required")
+			continue
+		}
+		if seenCmds[cmd.Name] {
+			issues = append(issues, fmt.Sprintf("duplicate command name %q", cmd.Name))
+		}
+		seenCmds[cmd.Name] = true
+	}
+
+	seenAgents := make(map[string]bool)
+	for _, agent := range manifest.Agents {
+		if agent.Name == "" {
+			issues = append(issues, "agent name is required")
+			continue
+		}
+		if seenAgents[agent.Name] {
+			issues = append(issues, fmt.Sprintf("duplicate agent name %q", agent.Name))
+		}
+		seenAgents[agent.Name] = true
+	}
+
+	for _, ref := range manifest.References {
+		if ref.Path == "" {
+			issues = append(issues, "reference path is required")
+			continue
+		}
+		target := filepath.Join(skillDir, ref.Path)
+		if _, err := os.Stat(target); err != nil {
+			issues = append(issues, fmt.Sprintf("missing reference file %q", ref.Path))
+		}
+	}
+
+	return issues
+}
+
+func loadManifestForLint(skillDir string) (*SkillManifest, string, string, error) {
+	yamlPath := filepath.Join(skillDir, "SKILL.yaml")
+	if data, err := os.ReadFile(yamlPath); err == nil {
+		manifest, parseErr := ParseManifest(data)
+		if parseErr != nil {
+			return nil, "", "", fmt.Errorf("invalid manifest: %w", parseErr)
+		}
+		return manifest, "yaml", "", nil
+	} else if !os.IsNotExist(err) {
+		return nil, "", "", fmt.Errorf("reading skill manifest from %s: %w", skillDir, err)
+	}
+
+	mdPath := filepath.Join(skillDir, "SKILL.md")
+	data, err := os.ReadFile(mdPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", "", fmt.Errorf("reading skill manifest from %s: open %s: no such file or directory", skillDir, yamlPath)
+		}
+		return nil, "", "", fmt.Errorf("reading skill manifest from %s: %w", skillDir, err)
+	}
+	manifest, body, parseErr := ParseInstructionSkillStrict(data)
+	if parseErr != nil {
+		return nil, "", "", parseErr
+	}
+	return manifest, "instruction", body, nil
 }
 
 // splitFrontmatter extracts YAML frontmatter from markdown content.

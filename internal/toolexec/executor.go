@@ -26,27 +26,19 @@ func RegistryExecutor(lookup ToolLookup) HandlerFunc {
 			}
 		}
 
-		// Prefer streaming execution when the tool supports it.
+		var (
+			tr  tools.ToolResult
+			err error
+		)
 		if st, ok := tool.(tools.StreamingTool); ok {
-			emit := tools.EmitterFromContext(ctx)
-			if emit == nil {
-				emit = func(tools.ToolEvent) {}
+			if emit := ToolEventEmitterFromContext(ctx); emit != nil {
+				tr, err = st.ExecuteStream(ctx, tc.Input, emit)
+			} else {
+				tr, err = tool.Execute(ctx, tc.Input)
 			}
-			tr, err := st.ExecuteStream(ctx, tc.Input, emit)
-			if err != nil {
-				return Result{
-					Content: fmt.Sprintf("tool execution error: %s", err.Error()),
-					IsError: true,
-				}
-			}
-			return Result{
-				Content:        tr.Content,
-				DisplayContent: tr.DisplayContent,
-				IsError:        tr.IsError,
-			}
+		} else {
+			tr, err = tool.Execute(ctx, tc.Input)
 		}
-
-		tr, err := tool.Execute(ctx, tc.Input)
 		if err != nil {
 			return Result{
 				Content: fmt.Sprintf("tool execution error: %s", err.Error()),

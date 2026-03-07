@@ -45,16 +45,16 @@ func (AlwaysAutoApprove) CheckApproval(_ string, _ json.RawMessage) ApprovalResu
 
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
-	Type           string             // "text_delta", "tool_call", "tool_result", "tool_progress", "error", "done", "subagent_done"
-	Text           string             // text content for text_delta events
-	ToolCall       *ToolCallEvent     // populated for tool_call events
-	ToolResult     *ToolResultEvent   // populated for tool_result events
-	ToolProgress   *ToolProgressEvent // populated for tool_progress events
-	Error          error              // populated for error events
-	InputTokens    int                // populated for done events: total input tokens used
-	OutputTokens   int                // populated for done events: total output tokens used
-	DiffSummary    string             // populated for done events: markdown-formatted cumulative file change summary
-	SubagentResult *SubagentResult    // populated for subagent_done events
+	Type           string           // "text_delta", "tool_call", "tool_result", "error", "done", "subagent_done"
+	Text           string           // text content for text_delta events
+	ToolCall       *ToolCallEvent   // populated for tool_call events
+	ToolResult     *ToolResultEvent // populated for tool_result events
+	ToolProgress   *ToolProgressEvent
+	Error          error           // populated for error events
+	InputTokens    int             // populated for done events: total input tokens used
+	OutputTokens   int             // populated for done events: total output tokens used
+	DiffSummary    string          // populated for done events: markdown-formatted cumulative file change summary
+	SubagentResult *SubagentResult // populated for subagent_done events
 }
 
 // ToolCallEvent contains details about a tool being called.
@@ -73,11 +73,11 @@ type ToolResultEvent struct {
 	IsError        bool
 }
 
-// ToolProgressEvent contains details about streaming tool progress.
+// ToolProgressEvent contains a streaming progress chunk from a tool execution.
 type ToolProgressEvent struct {
 	ID      string
 	Name    string
-	Stage   int
+	Stage   tools.EventStage
 	Content string
 	IsError bool
 }
@@ -901,39 +901,29 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- Tur
 	return a.executeSingleTool(ctx, ch, tc)
 }
 
-// executeSingleTool delegates tool execution to the pipeline, forwarding
-// streaming progress events to the TurnEvent channel.
+// executeSingleTool delegates tool execution to the pipeline.
+// Used by both the parallel and sequential paths.
 func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) toolExecResult {
-	stream := a.pipeline.ExecuteStream(ctx, toolexec.ToolCall{
-		ID: tc.ID, Name: tc.Name, Input: tc.Input,
-	})
-	var finalResult toolexec.Result
-	for ev := range stream {
-		switch ev.Type {
-		case toolexec.StreamProgress:
-			if ev.Event != nil {
-				ch <- TurnEvent{
-					Type: "tool_progress",
-					ToolProgress: &ToolProgressEvent{
-						ID:      tc.ID,
-						Name:    tc.Name,
-						Stage:   int(ev.Event.Stage),
-						Content: ev.Event.Content,
-						IsError: ev.Event.IsError,
-					},
-				}
-			}
-		case toolexec.StreamFinal:
-			if ev.Result != nil {
-				finalResult = *ev.Result
-			}
+	emit := func(ev tools.ToolEvent) {
+		ch <- TurnEvent{
+			Type: "tool_progress",
+			ToolProgress: &ToolProgressEvent{
+				ID:      tc.ID,
+				Name:    tc.Name,
+				Stage:   ev.Stage,
+				Content: ev.Content,
+				IsError: ev.IsError,
+			},
 		}
 	}
+	result := a.pipeline.Execute(toolexec.WithToolEventEmitter(ctx, emit), toolexec.ToolCall{
+		ID: tc.ID, Name: tc.Name, Input: tc.Input,
+	})
 	return toolExecResult{
 		toolUseID: tc.ID,
-		content:   finalResult.Content,
-		isError:   finalResult.IsError,
-		event:     makeToolResultEvent(tc.ID, tc.Name, finalResult.Content, finalResult.DisplayContent, finalResult.IsError),
+		content:   result.Content,
+		isError:   result.IsError,
+		event:     makeToolResultEvent(tc.ID, tc.Name, result.Content, result.DisplayContent, result.IsError),
 	}
 }
 

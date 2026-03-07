@@ -81,7 +81,7 @@ func (p *Pipeline) ExecuteStream(ctx context.Context, tc ToolCall) <-chan Stream
 		emit := func(ev tools.ToolEvent) {
 			ch <- StreamEvent{Type: StreamProgress, Event: &ev}
 		}
-		emitCtx := tools.WithEmitter(ctx, emit)
+		emitCtx := WithToolEventEmitter(ctx, emit)
 		result := p.Execute(emitCtx, tc)
 		ch <- StreamEvent{Type: StreamFinal, Result: &result}
 	}()

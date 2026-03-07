@@ -81,7 +81,11 @@ type PromptFragment struct {
 	ResolvedPrompt   string // content read from SystemPromptFile
 	ContextFiles     []string
 	MaxContextTokens int
-	Source           Source // discovery source, used for budget priority
+	Source           Source // discovery source, used as a relevance tie-breaker
+	ActivationScore  int    // runtime-calculated relevance score for prompt budgeting
+	BudgetDecision   string // included, truncated, excluded
+	OriginalTokens   int
+	UsedTokens       int
 }
 
 // PromptCollector gathers prompt fragments from active prompt skills and
@@ -103,6 +107,22 @@ func (pc *PromptCollector) Add(fragment PromptFragment) {
 	pc.fragments = append(pc.fragments, fragment)
 }
 
+// UpdateActivationScores applies the latest activation scores to registered prompt fragments.
+func (pc *PromptCollector) UpdateActivationScores(reports []ActivationReport) {
+	scores := make(map[string]int, len(reports))
+	for _, report := range reports {
+		if report.Skill.Manifest != nil {
+			scores[report.Skill.Manifest.Name] = report.Score.Total
+		}
+	}
+
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	for i := range pc.fragments {
+		pc.fragments[i].ActivationScore = scores[pc.fragments[i].SkillName]
+	}
+}
+
 // Fragments returns all registered prompt fragments.
 func (pc *PromptCollector) Fragments() []PromptFragment {
 	pc.mu.RLock()
@@ -118,29 +138,49 @@ func (pc *PromptCollector) Fragments() []PromptFragment {
 // When over budget, lower-priority fragments are excluded first. A fragment
 // that partially fits is truncated to use the remaining budget.
 func (pc *PromptCollector) BudgetedFragments(budget *ContextBudget) []PromptFragment {
+	result, _ := pc.budgetFragments(budget)
+	return result
+}
+
+// BudgetReport returns the most recent budgeting decisions for every prompt fragment.
+func (pc *PromptCollector) BudgetReport(budget *ContextBudget) []PromptFragment {
+	_, report := pc.budgetFragments(budget)
+	return report
+}
+
+func (pc *PromptCollector) budgetFragments(budget *ContextBudget) ([]PromptFragment, []PromptFragment) {
 	pc.mu.RLock()
 	all := make([]PromptFragment, len(pc.fragments))
 	copy(all, pc.fragments)
 	pc.mu.RUnlock()
 
 	if budget == nil || budget.MaxTotalTokens <= 0 {
-		return all
+		for i := range all {
+			all[i].OriginalTokens = estimateTokens(all[i].ResolvedPrompt)
+			all[i].UsedTokens = all[i].OriginalTokens
+			all[i].BudgetDecision = "included"
+		}
+		return all, all
 	}
 
-	// Sort by source priority descending (highest priority first).
+	// Sort by activation score descending, then source priority as a tie-breaker.
 	sort.SliceStable(all, func(i, j int) bool {
-		return sourceBudgetPriority(all[i].Source) > sourceBudgetPriority(all[j].Source)
+		if all[i].ActivationScore == all[j].ActivationScore {
+			return sourceBudgetPriority(all[i].Source) > sourceBudgetPriority(all[j].Source)
+		}
+		return all[i].ActivationScore > all[j].ActivationScore
 	})
 
 	var result []PromptFragment
+	report := make([]PromptFragment, 0, len(all))
 	remainingTokens := budget.MaxTotalTokens
 
 	for _, f := range all {
-		if remainingTokens <= 0 {
-			break
-		}
-
 		prompt := f.ResolvedPrompt
+		originalTokens := estimateTokens(prompt)
+		f.OriginalTokens = originalTokens
+		decision := "included"
+		truncated := false
 
 		// Apply per-skill limit.
 		if budget.MaxPerSkillTokens > 0 {
@@ -148,24 +188,41 @@ func (pc *PromptCollector) BudgetedFragments(budget *ContextBudget) []PromptFrag
 			if perSkillTokens > budget.MaxPerSkillTokens {
 				maxChars := budget.MaxPerSkillTokens * 4
 				prompt = truncateUTF8(prompt, maxChars)
+				truncated = true
 			}
 		}
 
 		tokens := estimateTokens(prompt)
+		if remainingTokens <= 0 {
+			f.UsedTokens = 0
+			f.BudgetDecision = "excluded"
+			report = append(report, f)
+			continue
+		}
+
 		if tokens <= remainingTokens {
 			f.ResolvedPrompt = prompt
+			if truncated {
+				decision = "truncated"
+			}
+			f.UsedTokens = tokens
+			f.BudgetDecision = decision
 			result = append(result, f)
+			report = append(report, f)
 			remainingTokens -= tokens
 		} else {
 			// Partial fit: truncate to remaining budget.
 			maxChars := remainingTokens * 4
 			f.ResolvedPrompt = truncateUTF8(prompt, maxChars)
+			f.UsedTokens = estimateTokens(f.ResolvedPrompt)
+			f.BudgetDecision = "truncated"
 			result = append(result, f)
+			report = append(report, f)
 			remainingTokens = 0
 		}
 	}
 
-	return result
+	return result, report
 }
 
 // truncateUTF8 truncates s to at most maxBytes while preserving valid UTF-8.
