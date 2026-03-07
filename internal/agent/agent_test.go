@@ -76,6 +76,16 @@ func (m *mockTool) Execute(ctx context.Context, input json.RawMessage) (tools.To
 	return m.executeFn(ctx, input)
 }
 
+// mockStreamingTool extends mockTool with streaming capability.
+type mockStreamingTool struct {
+	mockTool
+	streamFn func(ctx context.Context, input json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error)
+}
+
+func (m *mockStreamingTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error) {
+	return m.streamFn(ctx, input, emit)
+}
+
 func autoApprove(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
 	return true, nil
 }
@@ -1459,7 +1469,8 @@ func TestAgentToolResultOffloading(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg, WithStore(s))
 
 	tc := provider.ToolUseBlock{ID: "t1", Name: "big_output", Input: json.RawMessage(`{}`)}
-	result := a.executeSingleTool(context.Background(), tc)
+	ch := make(chan TurnEvent, 64)
+	result := a.executeSingleTool(context.Background(), ch, tc)
 
 	assert.Contains(t, result.content, "Tool result stored")
 	assert.Contains(t, result.content, "read_result")
@@ -1487,7 +1498,8 @@ func TestAgentToolResultOffloadingSkipsSmallResults(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg, WithStore(s))
 
 	tc := provider.ToolUseBlock{ID: "t2", Name: "small_output", Input: json.RawMessage(`{}`)}
-	result := a.executeSingleTool(context.Background(), tc)
+	ch := make(chan TurnEvent, 64)
+	result := a.executeSingleTool(context.Background(), ch, tc)
 
 	assert.Equal(t, "small", result.content, "small results should not be offloaded")
 }
@@ -1517,7 +1529,8 @@ func TestAgentToolResultOffloadingSkipsErrors(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg, WithStore(s))
 
 	tc := provider.ToolUseBlock{ID: "t3", Name: "error_tool", Input: json.RawMessage(`{}`)}
-	result := a.executeSingleTool(context.Background(), tc)
+	ch := make(chan TurnEvent, 64)
+	result := a.executeSingleTool(context.Background(), ch, tc)
 
 	// Error results should NOT be offloaded.
 	assert.NotContains(t, result.content, "Tool result stored")
@@ -1830,4 +1843,62 @@ func TestAgentRunLoopDrainsWakeAfterTools(t *testing.T) {
 		}
 	}
 	assert.True(t, foundWake, "should have a subagent_done event from wake manager drain")
+}
+
+func TestTurnEmitsToolProgressEvents(t *testing.T) {
+	streamTool := &mockStreamingTool{
+		mockTool: mockTool{
+			name:        "stream_test",
+			description: "streaming test tool",
+			inputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+			executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+				return tools.ToolResult{Content: "sync fallback"}, nil
+			},
+		},
+		streamFn: func(_ context.Context, _ json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error) {
+			emit(tools.ToolEvent{Stage: tools.EventBegin, Content: "starting"})
+			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "line 1\n"})
+			emit(tools.ToolEvent{Stage: tools.EventEnd, Content: "done"})
+			return tools.ToolResult{Content: "streamed output"}, nil
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(streamTool))
+
+	mp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "tu-1", Name: "stream_test"}},
+				{Type: "text_delta", Text: "{}"},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "All done"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(mp, reg, autoApprove, cfg)
+
+	ch, err := a.Turn(context.Background(), "test streaming")
+	require.NoError(t, err)
+
+	var progressEvents []TurnEvent
+	var hasToolResult bool
+	for ev := range ch {
+		if ev.Type == "tool_progress" {
+			progressEvents = append(progressEvents, ev)
+		}
+		if ev.Type == "tool_result" {
+			hasToolResult = true
+		}
+	}
+
+	assert.True(t, hasToolResult, "should have a tool_result event")
+	assert.GreaterOrEqual(t, len(progressEvents), 1, "should have tool_progress events")
+	assert.NotNil(t, progressEvents[0].ToolProgress)
+	assert.Equal(t, "stream_test", progressEvents[0].ToolProgress.Name)
 }

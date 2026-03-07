@@ -45,15 +45,16 @@ func (AlwaysAutoApprove) CheckApproval(_ string, _ json.RawMessage) ApprovalResu
 
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
-	Type           string           // "text_delta", "tool_call", "tool_result", "error", "done", "subagent_done"
-	Text           string           // text content for text_delta events
-	ToolCall       *ToolCallEvent   // populated for tool_call events
-	ToolResult     *ToolResultEvent // populated for tool_result events
-	Error          error            // populated for error events
-	InputTokens    int              // populated for done events: total input tokens used
-	OutputTokens   int              // populated for done events: total output tokens used
-	DiffSummary    string           // populated for done events: markdown-formatted cumulative file change summary
-	SubagentResult *SubagentResult  // populated for subagent_done events
+	Type           string             // "text_delta", "tool_call", "tool_result", "tool_progress", "error", "done", "subagent_done"
+	Text           string             // text content for text_delta events
+	ToolCall       *ToolCallEvent     // populated for tool_call events
+	ToolResult     *ToolResultEvent   // populated for tool_result events
+	ToolProgress   *ToolProgressEvent // populated for tool_progress events
+	Error          error              // populated for error events
+	InputTokens    int                // populated for done events: total input tokens used
+	OutputTokens   int                // populated for done events: total output tokens used
+	DiffSummary    string             // populated for done events: markdown-formatted cumulative file change summary
+	SubagentResult *SubagentResult    // populated for subagent_done events
 }
 
 // ToolCallEvent contains details about a tool being called.
@@ -70,6 +71,15 @@ type ToolResultEvent struct {
 	Content        string
 	DisplayContent string // shown to user; falls back to Content if empty
 	IsError        bool
+}
+
+// ToolProgressEvent contains details about streaming tool progress.
+type ToolProgressEvent struct {
+	ID      string
+	Name    string
+	Stage   int
+	Content string
+	IsError bool
 }
 
 // AgentOption is a functional option for configuring an Agent.
@@ -800,7 +810,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 
 		for _, it := range autoApproved {
 			p.Go(func() {
-				res := a.executeSingleTool(ctx, it.tc)
+				res := a.executeSingleTool(ctx, ch, it.tc)
 				mu.Lock()
 				results[it.index] = res
 				mu.Unlock()
@@ -827,7 +837,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			},
 		}
 
-		results[it.index] = a.executeSingleToolWithApproval(ctx, it.tc)
+		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc)
 	}
 
 	// Emit all results and update conversation in original tool call order.
@@ -857,7 +867,7 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 			},
 		}
 
-		r := a.executeSingleToolWithApproval(ctx, tc)
+		r := a.executeSingleToolWithApproval(ctx, ch, tc)
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
@@ -866,7 +876,7 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 }
 
 // executeSingleToolWithApproval runs approval check then delegates to executeSingleTool.
-func (a *Agent) executeSingleToolWithApproval(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) toolExecResult {
 	// Check approval.
 	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
 	if approvalErr != nil {
@@ -888,20 +898,42 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, tc provider.T
 		}
 	}
 
-	return a.executeSingleTool(ctx, tc)
+	return a.executeSingleTool(ctx, ch, tc)
 }
 
-// executeSingleTool delegates tool execution to the pipeline.
-// Used by both the parallel and sequential paths.
-func (a *Agent) executeSingleTool(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-	result := a.pipeline.Execute(ctx, toolexec.ToolCall{
+// executeSingleTool delegates tool execution to the pipeline, forwarding
+// streaming progress events to the TurnEvent channel.
+func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) toolExecResult {
+	stream := a.pipeline.ExecuteStream(ctx, toolexec.ToolCall{
 		ID: tc.ID, Name: tc.Name, Input: tc.Input,
 	})
+	var finalResult toolexec.Result
+	for ev := range stream {
+		switch ev.Type {
+		case toolexec.StreamProgress:
+			if ev.Event != nil {
+				ch <- TurnEvent{
+					Type: "tool_progress",
+					ToolProgress: &ToolProgressEvent{
+						ID:      tc.ID,
+						Name:    tc.Name,
+						Stage:   int(ev.Event.Stage),
+						Content: ev.Event.Content,
+						IsError: ev.Event.IsError,
+					},
+				}
+			}
+		case toolexec.StreamFinal:
+			if ev.Result != nil {
+				finalResult = *ev.Result
+			}
+		}
+	}
 	return toolExecResult{
 		toolUseID: tc.ID,
-		content:   result.Content,
-		isError:   result.IsError,
-		event:     makeToolResultEvent(tc.ID, tc.Name, result.Content, result.DisplayContent, result.IsError),
+		content:   finalResult.Content,
+		isError:   finalResult.IsError,
+		event:     makeToolResultEvent(tc.ID, tc.Name, finalResult.Content, finalResult.DisplayContent, finalResult.IsError),
 	}
 }
 
