@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -179,6 +181,111 @@ func (s *ShellTool) Execute(ctx context.Context, input json.RawMessage) (ToolRes
 	}
 
 	return withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent}, interception.warnings), nil
+}
+
+// ExecuteStream implements StreamingTool. It streams stdout/stderr
+// line-by-line as EventDelta events during command execution.
+func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit func(ToolEvent)) (ToolResult, error) {
+	var in shellInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
+	}
+
+	interception := inspectShellCommand(in.Command, s.workDir)
+	if interception.routeReason != "" {
+		return ToolResult{
+			Content: fmt.Sprintf("command requires routing: %s. Use the file tool for this operation.", interception.routeReason),
+			IsError: true,
+		}, nil
+	}
+	if interception.blockReason != "" {
+		return ToolResult{
+			Content: fmt.Sprintf("command blocked: %s. Use the file tool for file edits.", interception.blockReason),
+			IsError: true,
+		}, nil
+	}
+
+	var baseline map[string]bool
+	if s.diffTracker != nil {
+		baseline = s.captureBaseline()
+	}
+
+	emit(ToolEvent{Stage: EventBegin, Content: fmt.Sprintf("$ %s\n", in.Command)})
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", in.Command)
+	cmd.Dir = s.workDir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return ToolResult{Content: fmt.Sprintf("failed to create stdout pipe: %s", err), IsError: true}, nil
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return ToolResult{Content: fmt.Sprintf("failed to create stderr pipe: %s", err), IsError: true}, nil
+	}
+
+	if err := cmd.Start(); err != nil {
+		return ToolResult{Content: fmt.Sprintf("failed to start command: %s", err), IsError: true}, nil
+	}
+
+	var output strings.Builder
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text() + "\n"
+			output.WriteString(line)
+			emit(ToolEvent{Stage: EventDelta, Content: line})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text() + "\n"
+			output.WriteString(line)
+			emit(ToolEvent{Stage: EventDelta, Content: line, IsError: true})
+		}
+	}()
+
+	wg.Wait()
+	cmdErr := cmd.Wait()
+
+	if s.diffTracker != nil {
+		s.detectChanges(baseline)
+	}
+
+	content := output.String()
+	var displayContent string
+
+	if timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+		emit(ToolEvent{Stage: EventEnd, Content: fmt.Sprintf("timed out after %s", s.timeout), IsError: true})
+		return withInterceptionWarnings(ToolResult{
+			Content: fmt.Sprintf("command timed out after %s", s.timeout),
+			IsError: true,
+		}, interception.warnings), nil
+	}
+
+	if len(content) > maxOutputBytes {
+		displayContent = content
+		if len(displayContent) > maxDisplayBytes {
+			displayContent = displayContent[:maxDisplayBytes] + "\n... output truncated"
+		}
+		content = content[:maxOutputBytes] + "\n... output truncated"
+	}
+
+	isError := cmdErr != nil
+	emit(ToolEvent{Stage: EventEnd, Content: "", IsError: isError})
+
+	return withInterceptionWarnings(ToolResult{
+		Content: content, DisplayContent: displayContent, IsError: isError,
+	}, interception.warnings), nil
 }
 
 func inspectShellCommand(command, workDir string) commandInterception {

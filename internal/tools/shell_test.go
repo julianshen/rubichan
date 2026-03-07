@@ -487,6 +487,139 @@ func TestShellToolInterceptorRoutesApplyPatchViaEnv(t *testing.T) {
 	assert.Contains(t, result.Content, "command requires routing")
 }
 
+func TestShellToolImplementsStreamingTool(t *testing.T) {
+	st := NewShellTool(t.TempDir(), 30*time.Second)
+	var tool Tool = st
+	_, ok := tool.(StreamingTool)
+	assert.True(t, ok, "ShellTool should implement StreamingTool")
+}
+
+func TestShellToolExecuteStreamEmitsEvents(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo hello && echo world",
+	})
+
+	var events []ToolEvent
+	emit := func(ev ToolEvent) {
+		events = append(events, ev)
+	}
+
+	result, err := st.ExecuteStream(context.Background(), input, emit)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "hello")
+	assert.Contains(t, result.Content, "world")
+
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventBegin, events[0].Stage)
+	assert.Equal(t, EventEnd, events[len(events)-1].Stage)
+
+	var deltas []ToolEvent
+	for _, ev := range events {
+		if ev.Stage == EventDelta {
+			deltas = append(deltas, ev)
+		}
+	}
+	assert.GreaterOrEqual(t, len(deltas), 1, "should have delta events with output lines")
+}
+
+func TestShellToolExecuteStreamTimeout(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 200*time.Millisecond)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo before && sleep 10",
+	})
+
+	var events []ToolEvent
+	emit := func(ev ToolEvent) {
+		events = append(events, ev)
+	}
+
+	result, err := st.ExecuteStream(context.Background(), input, emit)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "timed out")
+}
+
+func TestShellToolExecuteStreamExitCode(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo error >&2; exit 1",
+	})
+
+	var events []ToolEvent
+	emit := func(ev ToolEvent) {
+		events = append(events, ev)
+	}
+
+	result, err := st.ExecuteStream(context.Background(), input, emit)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventEnd, events[len(events)-1].Stage)
+	assert.True(t, events[len(events)-1].IsError)
+}
+
+func TestShellToolExecuteStreamInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	result, err := st.ExecuteStream(context.Background(), json.RawMessage(`{invalid`), func(ev ToolEvent) {})
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "invalid")
+}
+
+func TestShellToolExecuteStreamBlockedCommand(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "apply_patch foo",
+	})
+
+	var events []ToolEvent
+	result, err := st.ExecuteStream(context.Background(), input, func(ev ToolEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "routing")
+	assert.Empty(t, events)
+}
+
+func TestShellToolExecuteStreamDetectsChanges(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, "tracked.txt")
+
+	dt := NewDiffTracker()
+	st := NewShellTool(dir, 30*time.Second)
+	st.SetDiffTracker(dt)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo modified > tracked.txt",
+	})
+
+	result, err := st.ExecuteStream(context.Background(), input, func(ev ToolEvent) {})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	changes := dt.Changes()
+	require.GreaterOrEqual(t, len(changes), 1)
+	pathSet := make(map[string]bool)
+	for _, c := range changes {
+		pathSet[c.Path] = true
+	}
+	assert.True(t, pathSet["tracked.txt"])
+}
+
 func TestShellToolInterceptorBlocksRecursiveRMViaShC(t *testing.T) {
 	dir := t.TempDir()
 	parentVictim := filepath.Join(filepath.Dir(dir), "outside-victim-shc")
