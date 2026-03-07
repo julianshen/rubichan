@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/julianshen/rubichan/internal/persona"
 )
 
 // bannerColors is a rainbow gradient applied line-by-line to the banner.
@@ -40,5 +42,8 @@ func RenderBanner() string {
 		style := lipgloss.NewStyle().Foreground(color).Bold(true)
 		styled[i] = style.Render(line)
 	}
-	return strings.Join(styled, "\n")
+	welcomeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FF6B9D")).
+		Italic(true)
+	return strings.Join(styled, "\n") + "\n" + welcomeStyle.Render(persona.WelcomeMessage())
 }
