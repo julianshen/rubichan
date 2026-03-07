@@ -31,7 +31,7 @@ func RegistryExecutor(lookup ToolLookup) HandlerFunc {
 			err error
 		)
 		if st, ok := tool.(tools.StreamingTool); ok {
-			if emit := toolEventEmitterFromContext(ctx); emit != nil {
+			if emit := ToolEventEmitterFromContext(ctx); emit != nil {
 				tr, err = st.ExecuteStream(ctx, tc.Input, emit)
 			} else {
 				tr, err = tool.Execute(ctx, tc.Input)

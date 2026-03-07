@@ -3,6 +3,8 @@ package toolexec
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/julianshen/rubichan/internal/tools"
 )
 
 // ToolCall is the input to the pipeline.
@@ -50,4 +52,38 @@ func (p *Pipeline) Execute(ctx context.Context, tc ToolCall) Result {
 		handler = p.middlewares[i](handler)
 	}
 	return handler(ctx, tc)
+}
+
+// StreamEventType distinguishes progress events from the final result.
+type StreamEventType int
+
+const (
+	// StreamProgress carries a ToolEvent during execution.
+	StreamProgress StreamEventType = iota
+	// StreamFinal carries the completed Result.
+	StreamFinal
+)
+
+// StreamEvent is either a progress event or a final result from the pipeline.
+type StreamEvent struct {
+	Type   StreamEventType
+	Event  *tools.ToolEvent // set when Type == StreamProgress
+	Result *Result          // set when Type == StreamFinal
+}
+
+// ExecuteStream runs the pipeline in a goroutine and returns a channel
+// of StreamEvents. Progress events arrive first, followed by a single
+// StreamFinal event. The channel is closed after the final event.
+func (p *Pipeline) ExecuteStream(ctx context.Context, tc ToolCall) <-chan StreamEvent {
+	ch := make(chan StreamEvent, 32)
+	go func() {
+		defer close(ch)
+		emit := func(ev tools.ToolEvent) {
+			ch <- StreamEvent{Type: StreamProgress, Event: &ev}
+		}
+		emitCtx := WithToolEventEmitter(ctx, emit)
+		result := p.Execute(emitCtx, tc)
+		ch <- StreamEvent{Type: StreamFinal, Result: &result}
+	}()
+	return ch
 }

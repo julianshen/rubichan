@@ -303,6 +303,27 @@ func TestModelHandleTurnEventToolProgress(t *testing.T) {
 	assert.Contains(t, content, "partial output")
 }
 
+func TestModelHandleTurnEventToolProgressNilIsNoOp(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	contentBefore := m.content.String()
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type:         "tool_progress",
+		ToolProgress: nil,
+	})
+
+	updated, cmd := m.Update(evt)
+
+	um := updated.(*Model)
+	assert.Equal(t, contentBefore, um.content.String())
+	assert.NotNil(t, cmd)
+}
+
 func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming

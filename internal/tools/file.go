@@ -83,6 +83,44 @@ func (f *FileTool) InputSchema() json.RawMessage {
 	}`)
 }
 
+// ExecuteStream implements StreamingTool. It emits Begin/End events
+// around file operations. For read operations on large files, it
+// emits the content as Delta events.
+func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
+	var in fileInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
+	}
+
+	fullPath, err := f.resolvePath(in.Path)
+	if err != nil {
+		return ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+
+	emit(ToolEvent{Stage: EventBegin, Content: fmt.Sprintf("%s %s\n", in.Operation, in.Path)})
+
+	var result ToolResult
+	switch in.Operation {
+	case "read":
+		result, err = f.readFile(fullPath)
+		if err == nil && !result.IsError && len(result.Content) > 4096 {
+			emit(ToolEvent{Stage: EventDelta, Content: result.Content})
+		}
+	case "write":
+		result, err = f.writeFile(fullPath, in.Content)
+	case "patch":
+		result, err = f.patchFile(fullPath, in.OldString, in.NewString)
+	default:
+		result = ToolResult{
+			Content: fmt.Sprintf("unknown operation: %s", in.Operation),
+			IsError: true,
+		}
+	}
+
+	emit(ToolEvent{Stage: EventEnd, Content: "", IsError: result.IsError})
+	return result, err
+}
+
 func (f *FileTool) Execute(_ context.Context, input json.RawMessage) (ToolResult, error) {
 	var in fileInput
 	if err := json.Unmarshal(input, &in); err != nil {

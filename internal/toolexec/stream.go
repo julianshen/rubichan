@@ -16,7 +16,9 @@ func WithToolEventEmitter(ctx context.Context, emit tools.ToolEventEmitter) cont
 	return context.WithValue(ctx, toolEventEmitterKey{}, emit)
 }
 
-func toolEventEmitterFromContext(ctx context.Context) tools.ToolEventEmitter {
+// ToolEventEmitterFromContext extracts the tool event emitter from the context.
+// Returns nil if no emitter was set.
+func ToolEventEmitterFromContext(ctx context.Context) tools.ToolEventEmitter {
 	emit, _ := ctx.Value(toolEventEmitterKey{}).(tools.ToolEventEmitter)
 	return emit
 }
