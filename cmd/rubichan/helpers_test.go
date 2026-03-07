@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -169,4 +173,30 @@ func TestCreateSkillRuntimeNilConfig(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, rt)
 	assert.Nil(t, closer)
+}
+
+func TestEmitSkillDiscoveryWarnings(t *testing.T) {
+	userDir := t.TempDir()
+	skillDir := filepath.Join(userDir, "opt-dep-skill")
+	assert.NoError(t, os.MkdirAll(skillDir, 0o755))
+	assert.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.yaml"), []byte(`name: opt-dep-skill
+version: 1.0.0
+description: "skill with optional dependency"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+dependencies:
+  - name: missing-optional
+    optional: true
+`), 0o644))
+
+	loader := skills.NewLoader(userDir, "")
+	rt := skills.NewRuntime(loader, nil, nil, nil, nil, nil)
+	assert.NoError(t, rt.Discover(nil))
+
+	var buf bytes.Buffer
+	emitSkillDiscoveryWarnings(&buf, rt)
+	assert.Contains(t, buf.String(), "warning: skill \"opt-dep-skill\": optional dependency \"missing-optional\" not found")
 }

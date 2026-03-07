@@ -7,19 +7,23 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
 // SubagentConfig defines how a child agent is created.
 type SubagentConfig struct {
-	Name         string   // Identifier (e.g., "explorer")
-	SystemPrompt string   // Additional system prompt (appended to base)
-	Tools        []string // Whitelist of tool names (nil = all parent tools)
-	MaxTurns     int      // Turn limit (0 = default 10)
-	MaxTokens    int      // Output token budget (0 = inherit)
-	Model        string   // Override model (empty = inherit parent)
-	Depth        int      // Current nesting level (0 = top-level)
-	MaxDepth     int      // Maximum nesting (0 = default 3)
+	Name          string   // Identifier (e.g., "explorer")
+	SystemPrompt  string   // Additional system prompt (appended to base)
+	Tools         []string // Whitelist of tool names (nil = all parent tools)
+	MaxTurns      int      // Turn limit (0 = default 10)
+	MaxTokens     int      // Output token budget (0 = inherit)
+	Model         string   // Override model (empty = inherit parent)
+	Depth         int      // Current nesting level (0 = top-level)
+	MaxDepth      int      // Maximum nesting (0 = default 3)
+	InheritSkills *bool    // Nil/default = inherit currently active parent skills
+	ExtraSkills   []string
+	DisableSkills []string
 }
 
 // SubagentResult is returned when a child agent completes.
@@ -45,11 +49,12 @@ const (
 
 // DefaultSubagentSpawner creates real child Agent instances.
 type DefaultSubagentSpawner struct {
-	Provider        provider.LLMProvider
-	ParentTools     *tools.Registry
-	Config          *config.Config
-	ApprovalChecker ApprovalChecker
-	AgentDefs       *AgentDefRegistry
+	Provider           provider.LLMProvider
+	ParentTools        *tools.Registry
+	ParentSkillRuntime *skills.Runtime
+	Config             *config.Config
+	ApprovalChecker    ApprovalChecker
+	AgentDefs          *AgentDefRegistry
 }
 
 // Spawn creates and runs a child agent with the given configuration and
@@ -87,6 +92,16 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	}
 	if cfg.SystemPrompt != "" {
 		opts = append(opts, WithExtraSystemPrompt("Subagent Instructions", cfg.SystemPrompt))
+	}
+	if s.ParentSkillRuntime != nil {
+		snapshot := s.ParentSkillRuntime.SnapshotForSubagent(skills.SubagentSkillPolicy{
+			InheritActive: defaultInheritSkills(cfg.InheritSkills),
+			Include:       cfg.ExtraSkills,
+			Exclude:       cfg.DisableSkills,
+		})
+		if snapshot != nil {
+			opts = append(opts, WithSkillRuntime(snapshot))
+		}
 	}
 
 	// Create child agent (no store — ephemeral).
@@ -141,4 +156,11 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	result.Output = output.String()
 	result.ToolsUsed = toolsUsed
 	return result, nil
+}
+
+func defaultInheritSkills(inherit *bool) bool {
+	if inherit == nil {
+		return true
+	}
+	return *inherit
 }

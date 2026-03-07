@@ -206,6 +206,9 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	}
 
 	userDir := filepath.Join(configDir, "skills")
+	if cfg.Skills.UserDir != "" {
+		userDir = cfg.Skills.UserDir
+	}
 
 	// Project-level skill directory.
 	cwd, err := os.Getwd()
@@ -216,12 +219,11 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	projectDir := filepath.Join(cwd, ".rubichan", "skills")
 
 	loader := skills.NewLoader(userDir, projectDir)
+	loader.AddSkillDirs(cfg.Skills.Dirs)
 	loader.AddMCPServers(cfg.MCP.Servers)
 
 	// Register built-in prompt skills. These auto-activate via mode triggers.
-	superpowers.Register(loader)
-	frontenddesign.Register(loader)
-	appledev.RegisterPrompt(loader)
+	registerBuiltinSkillPrompts(loader)
 
 	// Create integration objects shared across all skill backends.
 	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
@@ -297,6 +299,7 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	}
 
 	rt := skills.NewRuntime(loader, s, registry, autoApproveSkills, backendFactory, sandboxFactory)
+	rt.SetActivationThreshold(cfg.Skills.ActivationThreshold)
 
 	// Now that the runtime exists, wire the SkillInvoker to close the circular
 	// dependency. The invoker delegates to rt.InvokeWorkflow.
@@ -326,6 +329,21 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	}
 
 	return rt, s, nil
+}
+
+func registerBuiltinSkillPrompts(loader *skills.Loader) {
+	superpowers.Register(loader)
+	frontenddesign.Register(loader)
+	appledev.RegisterPrompt(loader)
+}
+
+func emitSkillDiscoveryWarnings(w io.Writer, rt *skills.Runtime) {
+	if w == nil || rt == nil {
+		return
+	}
+	for _, warning := range rt.GetDiscoveryWarnings() {
+		fmt.Fprintf(w, "warning: %s\n", warning)
+	}
 }
 
 // openStore opens (or creates) the conversation persistence database in the
@@ -671,7 +689,6 @@ func runInteractive() error {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
 	}
-
 	if toolsCfg.ShouldEnable("search") {
 		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
 			return fmt.Errorf("registering search tool: %w", err)
@@ -679,7 +696,7 @@ func runInteractive() error {
 	}
 	if toolsCfg.ShouldEnable("process") {
 		procMgr := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
-		defer procMgr.Shutdown(context.Background())
+		defer func() { _ = procMgr.Shutdown(context.Background()) }()
 		if err := registry.Register(tools.NewProcessTool(procMgr)); err != nil {
 			return fmt.Errorf("registering process tool: %w", err)
 		}
@@ -711,13 +728,16 @@ func runInteractive() error {
 	// Register config-defined agent definitions.
 	for _, defConf := range cfg.Agent.Definitions {
 		_ = agentDefReg.Register(&agent.AgentDef{
-			Name:         defConf.Name,
-			Description:  defConf.Description,
-			SystemPrompt: defConf.SystemPrompt,
-			Tools:        defConf.Tools,
-			MaxTurns:     defConf.MaxTurns,
-			MaxDepth:     defConf.MaxDepth,
-			Model:        defConf.Model,
+			Name:          defConf.Name,
+			Description:   defConf.Description,
+			SystemPrompt:  defConf.SystemPrompt,
+			Tools:         defConf.Tools,
+			MaxTurns:      defConf.MaxTurns,
+			MaxDepth:      defConf.MaxDepth,
+			Model:         defConf.Model,
+			InheritSkills: defConf.InheritSkills,
+			ExtraSkills:   defConf.ExtraSkills,
+			DisableSkills: defConf.DisableSkills,
 		})
 	}
 
@@ -791,6 +811,7 @@ func runInteractive() error {
 		defer storeCloser.Close()
 	}
 	if rt != nil {
+		emitSkillDiscoveryWarnings(os.Stderr, rt)
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
@@ -884,6 +905,7 @@ func runInteractive() error {
 	// Wire spawner dependencies that need the agent and provider.
 	spawner.Provider = p
 	spawner.ParentTools = registry
+	spawner.ParentSkillRuntime = rt
 
 	// Register notes tool backed by agent's scratchpad.
 	if toolsCfg.ShouldEnable("notes") {
@@ -992,7 +1014,7 @@ func runHeadless() error {
 	}
 	if headlessToolsCfg.ShouldEnable("process") {
 		pm := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
-		defer pm.Shutdown(context.Background())
+		defer func() { _ = pm.Shutdown(context.Background()) }()
 		if err := registry.Register(tools.NewProcessTool(pm)); err != nil {
 			return fmt.Errorf("registering process tool: %w", err)
 		}
@@ -1057,6 +1079,7 @@ func runHeadless() error {
 		defer storeCloser.Close()
 	}
 	if rt != nil {
+		emitSkillDiscoveryWarnings(os.Stderr, rt)
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
@@ -1535,14 +1558,17 @@ type spawnerAdapter struct {
 
 func (a *spawnerAdapter) Spawn(ctx context.Context, cfg tools.TaskSpawnConfig, prompt string) (*tools.TaskSpawnResult, error) {
 	result, err := a.spawner.Spawn(ctx, agent.SubagentConfig{
-		Name:         cfg.Name,
-		SystemPrompt: cfg.SystemPrompt,
-		Tools:        cfg.Tools,
-		MaxTurns:     cfg.MaxTurns,
-		MaxTokens:    cfg.MaxTokens,
-		Model:        cfg.Model,
-		Depth:        cfg.Depth,
-		MaxDepth:     cfg.MaxDepth,
+		Name:          cfg.Name,
+		SystemPrompt:  cfg.SystemPrompt,
+		Tools:         cfg.Tools,
+		MaxTurns:      cfg.MaxTurns,
+		MaxTokens:     cfg.MaxTokens,
+		Model:         cfg.Model,
+		Depth:         cfg.Depth,
+		MaxDepth:      cfg.MaxDepth,
+		InheritSkills: cfg.InheritSkills,
+		ExtraSkills:   cfg.ExtraSkills,
+		DisableSkills: cfg.DisableSkills,
 	}, prompt)
 	if err != nil {
 		return nil, err
@@ -1569,12 +1595,15 @@ func (a *agentDefLookupAdapter) GetAgentDef(name string) (*tools.TaskAgentDef, b
 		return nil, false
 	}
 	return &tools.TaskAgentDef{
-		Name:         def.Name,
-		SystemPrompt: def.SystemPrompt,
-		Tools:        def.Tools,
-		MaxTurns:     def.MaxTurns,
-		MaxDepth:     def.MaxDepth,
-		Model:        def.Model,
+		Name:          def.Name,
+		SystemPrompt:  def.SystemPrompt,
+		Tools:         def.Tools,
+		MaxTurns:      def.MaxTurns,
+		MaxDepth:      def.MaxDepth,
+		Model:         def.Model,
+		InheritSkills: def.InheritSkills,
+		ExtraSkills:   def.ExtraSkills,
+		DisableSkills: def.DisableSkills,
 	}, true
 }
 
@@ -1619,13 +1648,16 @@ type agentDefRegistrarAdapter struct {
 
 func (a *agentDefRegistrarAdapter) Register(def *skills.AgentDefinition) error {
 	return a.reg.Register(&agent.AgentDef{
-		Name:         def.Name,
-		Description:  def.Description,
-		SystemPrompt: def.SystemPrompt,
-		Tools:        def.Tools,
-		MaxTurns:     def.MaxTurns,
-		MaxDepth:     def.MaxDepth,
-		Model:        def.Model,
+		Name:          def.Name,
+		Description:   def.Description,
+		SystemPrompt:  def.SystemPrompt,
+		Tools:         def.Tools,
+		MaxTurns:      def.MaxTurns,
+		MaxDepth:      def.MaxDepth,
+		Model:         def.Model,
+		InheritSkills: def.InheritSkills,
+		ExtraSkills:   def.ExtraSkills,
+		DisableSkills: def.DisableSkills,
 	})
 }
 

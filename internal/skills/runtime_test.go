@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/commands"
@@ -264,6 +266,39 @@ func TestRuntimeGetActiveSkills(t *testing.T) {
 	assert.False(t, names["inactive-one"])
 }
 
+func TestRuntimeDiscoverStoresWarnings(t *testing.T) {
+	userDir := t.TempDir()
+	skillDir := filepath.Join(userDir, "opt-dep-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.yaml"), []byte(`name: opt-dep-skill
+version: 1.0.0
+description: "skill with optional dependency"
+types:
+  - tool
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+dependencies:
+  - name: missing-optional
+    optional: true
+`), 0o644))
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	rt := NewRuntime(NewLoader(userDir, ""), s, tools.NewRegistry(), nil,
+		func(manifest SkillManifest, dir string) (SkillBackend, error) { return &mockBackend{}, nil },
+		func(skillName string, declared []Permission) PermissionChecker { return &mockPermissionChecker{} },
+	)
+
+	require.NoError(t, rt.Discover(nil))
+	warnings := rt.GetDiscoveryWarnings()
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "missing-optional")
+	assert.Contains(t, warnings[0], "opt-dep-skill")
+}
+
 func TestRuntimeToolRegistration(t *testing.T) {
 	rt, _, _ := newTestRuntime(t, []string{"tool-reg-skill"}, nil)
 
@@ -417,10 +452,79 @@ func TestRuntimeEvaluateAndActivatePermissionError(t *testing.T) {
 	assert.Contains(t, err.Error(), "not approved")
 }
 
+func TestRuntimeEvaluateAndActivateUsesActivationThreshold(t *testing.T) {
+	rt, _, _ := newTestRuntime(t, nil, nil)
+	rt.SetActivationThreshold(100)
+
+	m := testManifest("go-skill")
+	m.Triggers = TriggerConfig{Languages: []string{"go"}}
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	err := rt.EvaluateAndActivate(TriggerContext{DetectedLangs: []string{"go"}})
+	require.NoError(t, err)
+
+	assert.NotContains(t, rt.active, "go-skill")
+	report, ok := rt.GetActivationReport("go-skill")
+	require.True(t, ok)
+	assert.False(t, report.Activated)
+	assert.Equal(t, 60, report.Score.Languages)
+}
+
+func TestRuntimeGetActivationReports(t *testing.T) {
+	rt, _, _ := newTestRuntime(t, nil, nil)
+
+	fileSkill := testManifest("file-skill")
+	fileSkill.Triggers = TriggerConfig{Files: []string{"go.mod"}}
+	rt.loader.RegisterBuiltin(fileSkill)
+
+	explicitSkill := testManifest("explicit-skill")
+	rt.loader.RegisterBuiltin(explicitSkill)
+
+	require.NoError(t, rt.Discover([]string{"explicit-skill"}))
+	err := rt.EvaluateAndActivate(TriggerContext{ProjectFiles: []string{"go.mod"}})
+	require.NoError(t, err)
+
+	reports := rt.GetActivationReports()
+	require.Len(t, reports, 2)
+	assert.Equal(t, "explicit-skill", reports[0].Skill.Manifest.Name)
+	assert.True(t, reports[0].Activated)
+	assert.Equal(t, "file-skill", reports[1].Skill.Manifest.Name)
+}
+
 func TestRuntimeGetActiveSkillsEmpty(t *testing.T) {
 	rt, _, _ := newTestRuntime(t, nil, nil)
 	active := rt.GetActiveSkills()
 	assert.Empty(t, active)
+}
+
+func TestRuntimeSnapshotForSubagentFiltersActiveSkills(t *testing.T) {
+	rt, _, _ := newTestRuntime(t, []string{"alpha", "beta"}, nil)
+
+	alpha := testManifest("alpha")
+	alpha.Types = []SkillType{SkillTypePrompt}
+	alpha.Prompt = PromptConfig{SystemPromptFile: "Alpha guidance."}
+	rt.loader.RegisterBuiltin(alpha)
+
+	beta := testManifest("beta")
+	beta.Types = []SkillType{SkillTypePrompt}
+	beta.Prompt = PromptConfig{SystemPromptFile: "Beta guidance."}
+	rt.loader.RegisterBuiltin(beta)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("alpha"))
+	require.NoError(t, rt.Activate("beta"))
+
+	snapshot := rt.SnapshotForSubagent(SubagentSkillPolicy{
+		InheritActive: false,
+		Include:       []string{"beta"},
+	})
+	require.NotNil(t, snapshot)
+
+	fragments := snapshot.GetPromptFragments()
+	require.Len(t, fragments, 1)
+	assert.Equal(t, "beta", fragments[0].SkillName)
+	assert.Equal(t, "Beta guidance.", fragments[0].ResolvedPrompt)
 }
 
 func TestRuntimeDiscoverError(t *testing.T) {
@@ -617,6 +721,57 @@ func TestRuntimeActivateCommandRegistrationRollback(t *testing.T) {
 	assert.False(t, ok, "tool should be rolled back after command registration failure")
 }
 
+func TestRuntimeActivateRegistersDeclarativeCommands(t *testing.T) {
+	cmdReg := commands.NewRegistry()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	rt := NewRuntime(NewLoader("", ""), s, tools.NewRegistry(), []string{"instruction-cmd"}, func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{hooks: map[HookPhase]HookHandler{}}, nil
+	}, func(skillName string, declared []Permission) PermissionChecker {
+		return &mockPermissionChecker{}
+	})
+	rt.SetCommandRegistry(cmdReg)
+
+	m := &SkillManifest{
+		Name:        "instruction-cmd",
+		Version:     "1.0.0",
+		Description: "Instruction command skill",
+		Types:       []SkillType{SkillTypePrompt},
+		Commands: []CommandDef{
+			{
+				Name:        "review-plan",
+				Description: "Draft a review plan",
+				Arguments: []CommandArgDef{
+					{Name: "scope", Description: "Review scope", Required: true},
+				},
+			},
+		},
+	}
+	rt.loader.RegisterBuiltin(m)
+	require.NoError(t, rt.Discover(nil))
+
+	require.NoError(t, rt.Activate("instruction-cmd"))
+
+	cmd, found := cmdReg.Get("review-plan")
+	require.True(t, found)
+	assert.Equal(t, "review-plan", cmd.Name())
+
+	_, err = cmd.Execute(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required arguments")
+
+	result, err := cmd.Execute(context.Background(), []string{"ui"})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, `Skill command "review-plan" from "instruction-cmd" invoked`)
+
+	require.NoError(t, rt.Deactivate("instruction-cmd"))
+	_, found = cmdReg.Get("review-plan")
+	assert.False(t, found)
+}
+
 // --- mock agent def registrar for testing ---
 
 type mockAgentDefRegistrar struct {
@@ -759,4 +914,54 @@ func TestRuntimeActivateAgentDefRegistrationRollback(t *testing.T) {
 	// The tool registered before the agent def collision should be rolled back.
 	_, ok := registry.Get("collision-agent-skill-tool")
 	assert.False(t, ok, "tool should be rolled back after agent def registration failure")
+}
+
+func TestRuntimeActivateRegistersDeclarativeAgentDefs(t *testing.T) {
+	agentReg := newMockAgentDefRegistrar()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	rt := NewRuntime(NewLoader("", ""), s, tools.NewRegistry(), []string{"instruction-agent"}, func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{hooks: map[HookPhase]HookHandler{}}, nil
+	}, func(skillName string, declared []Permission) PermissionChecker {
+		return &mockPermissionChecker{}
+	})
+	rt.SetAgentDefRegistrar(agentReg)
+
+	m := &SkillManifest{
+		Name:        "instruction-agent",
+		Version:     "1.0.0",
+		Description: "Instruction agent skill",
+		Types:       []SkillType{SkillTypePrompt},
+		Agents: []AgentDefManifest{
+			{
+				Name:         "review-agent",
+				Description:  "Focused reviewer",
+				SystemPrompt: "Review thoroughly.",
+				Tools:        []string{"read_file"},
+				MaxTurns:     4,
+				MaxDepth:     2,
+				Model:        "test-model",
+			},
+		},
+	}
+	rt.loader.RegisterBuiltin(m)
+	require.NoError(t, rt.Discover(nil))
+
+	require.NoError(t, rt.Activate("instruction-agent"))
+
+	def, found := agentReg.defs["review-agent"]
+	require.True(t, found)
+	assert.Equal(t, "Focused reviewer", def.Description)
+	assert.Equal(t, "Review thoroughly.", def.SystemPrompt)
+	assert.Equal(t, []string{"read_file"}, def.Tools)
+	assert.Equal(t, 4, def.MaxTurns)
+	assert.Equal(t, 2, def.MaxDepth)
+	assert.Equal(t, "test-model", def.Model)
+
+	require.NoError(t, rt.Deactivate("instruction-agent"))
+	_, found = agentReg.defs["review-agent"]
+	assert.False(t, found)
 }

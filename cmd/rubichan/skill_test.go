@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/stretchr/testify/assert"
@@ -91,7 +92,7 @@ func TestSkillListAvailable(t *testing.T) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(results)
+		_ = json.NewEncoder(w).Encode(results)
 	}))
 	defer srv.Close()
 
@@ -117,7 +118,7 @@ func TestSkillListAvailable(t *testing.T) {
 func TestSkillListAvailableNoResults(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
 	}))
 	defer srv.Close()
 
@@ -185,6 +186,7 @@ implementation:
 	assert.Contains(t, output, "file:read")
 	assert.Contains(t, output, "shell:exec")
 	assert.Contains(t, output, "starlark")
+	assert.Contains(t, output, "InstalledFrom:")
 }
 
 func TestSkillInfoCommandNotFound(t *testing.T) {
@@ -215,7 +217,7 @@ func TestSkillSearchCommand(t *testing.T) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "code", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(results)
+		_ = json.NewEncoder(w).Encode(results)
 	}))
 	defer srv.Close()
 
@@ -245,7 +247,7 @@ func TestSkillSearchCommand(t *testing.T) {
 func TestSkillSearchCommandNoResults(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
 	}))
 	defer srv.Close()
 
@@ -260,6 +262,143 @@ func TestSkillSearchCommandNoResults(t *testing.T) {
 
 	output := buf.String()
 	assert.Contains(t, output, "No results found")
+}
+
+func TestSkillAddDir(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	skillPackDir := filepath.Join(t.TempDir(), "skill-pack")
+	require.NoError(t, os.MkdirAll(skillPackDir, 0o755))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"add-dir", skillPackDir, "--config", configFile})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	cfg, err := config.Load(configFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.Skills.Dirs, 1)
+
+	absDir, err := filepath.Abs(skillPackDir)
+	require.NoError(t, err)
+	assert.Equal(t, absDir, cfg.Skills.Dirs[0])
+	assert.Contains(t, buf.String(), "Registered skill directory")
+}
+
+func TestSkillWhy(t *testing.T) {
+	projectDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(projectDir))
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module test\n"), 0o644))
+
+	userDir := filepath.Join(t.TempDir(), "skills")
+	skillDir := filepath.Join(userDir, "k8s-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: k8s-skill
+version: 1.0.0
+description: "Kubernetes helper"
+triggers:
+  keywords:
+    - kubernetes
+---
+
+Use for Kubernetes work.
+`), 0o644))
+
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	cfg := config.DefaultConfig()
+	cfg.Skills.UserDir = userDir
+	require.NoError(t, config.Save(configFile, cfg))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"why", "k8s-skill", "--config", configFile, "--message", "deploy to kubernetes"})
+
+	err = cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Name:       k8s-skill")
+	assert.Contains(t, output, "Activated:  true")
+	assert.Contains(t, output, "Score:")
+	assert.Contains(t, output, "Keywords:   kubernetes")
+}
+
+func TestSkillTrace(t *testing.T) {
+	projectDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(projectDir))
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module test\n"), 0o644))
+
+	userDir := filepath.Join(t.TempDir(), "skills")
+
+	alphaDir := filepath.Join(userDir, "alpha-skill")
+	require.NoError(t, os.MkdirAll(alphaDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(alphaDir, "SKILL.md"), []byte(`---
+name: alpha-skill
+version: 1.0.0
+description: "Alpha helper"
+triggers:
+  keywords:
+    - alpha
+---
+
+Alpha guidance repeated. Alpha guidance repeated. Alpha guidance repeated. Alpha guidance repeated.
+`), 0o644))
+
+	betaDir := filepath.Join(userDir, "beta-skill")
+	require.NoError(t, os.MkdirAll(betaDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(betaDir, "SKILL.md"), []byte(`---
+name: beta-skill
+version: 1.0.0
+description: "Beta helper"
+triggers:
+  keywords:
+    - beta
+---
+
+Beta guidance repeated. Beta guidance repeated. Beta guidance repeated. Beta guidance repeated.
+`), 0o644))
+
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	cfg := config.DefaultConfig()
+	cfg.Skills.UserDir = userDir
+	require.NoError(t, config.Save(configFile, cfg))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{
+		"trace",
+		"--config", configFile,
+		"--message", "alpha beta",
+		"--max-total-tokens", "12",
+		"--max-per-skill-tokens", "12",
+	})
+
+	err = cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Activation")
+	assert.Contains(t, output, "alpha-skill [activated]")
+	assert.Contains(t, output, "beta-skill [activated]")
+	assert.Contains(t, output, "Prompt Budget")
+	assert.Contains(t, output, "decision=truncated")
+	assert.Contains(t, output, "decision=excluded")
 }
 
 func TestSkillSearchCommandMissingQuery(t *testing.T) {
@@ -404,10 +543,10 @@ func TestSkillInstallFromRegistry(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/latest/manifest":
 			w.Header().Set("Content-Type", "application/x-yaml")
-			w.Write([]byte(testManifestYAML))
+			_, _ = w.Write([]byte(testManifestYAML))
 		case r.URL.Path == "/api/v1/skills/my-tool/latest/download":
 			w.Header().Set("Content-Type", "application/gzip")
-			w.Write(tarData)
+			_, _ = w.Write(tarData)
 		default:
 			http.NotFound(w, r)
 		}
@@ -465,11 +604,11 @@ implementation:
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/2.3.0/manifest":
 			w.Header().Set("Content-Type", "application/x-yaml")
-			w.Write([]byte(manifestVersioned))
+			_, _ = w.Write([]byte(manifestVersioned))
 		case r.URL.Path == "/api/v1/skills/my-tool/2.3.0/download":
 			requestedVersion = "2.3.0"
 			w.Header().Set("Content-Type", "application/gzip")
-			w.Write(tarData)
+			_, _ = w.Write(tarData)
 		default:
 			http.NotFound(w, r)
 		}
@@ -525,11 +664,11 @@ implementation:
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/versions":
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode([]string{"1.0.0", "1.2.0", "2.0.0"})
+			_ = json.NewEncoder(w).Encode([]string{"1.0.0", "1.2.0", "2.0.0"})
 		case r.URL.Path == "/api/v1/skills/my-tool/1.2.0/download":
 			downloadedVersion = "1.2.0"
 			w.Header().Set("Content-Type", "application/gzip")
-			w.Write(tarData)
+			_, _ = w.Write(tarData)
 		default:
 			http.NotFound(w, r)
 		}
@@ -571,7 +710,7 @@ func TestSkillInstallSemVerRangeNoMatch(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/versions":
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode([]string{"1.0.0", "1.1.0"})
+			_ = json.NewEncoder(w).Encode([]string{"1.0.0", "1.1.0"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -642,7 +781,7 @@ func TestSkillRemove(t *testing.T) {
 }
 
 // TestSkillAdd verifies that "skill add <path>" copies a skill into the
-// project's .agent/skills/<name>/ directory.
+// project's .rubichan/skills/<name>/ directory.
 func TestSkillAdd(t *testing.T) {
 	srcDir := createTestSkillDir(t)
 	projectDir := filepath.Join(t.TempDir(), "my-project")
@@ -657,13 +796,13 @@ func TestSkillAdd(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 
-	// Verify the skill was copied to .agent/skills/<name>/.
-	addedManifest := filepath.Join(projectDir, ".agent", "skills", "my-tool", "SKILL.yaml")
+	// Verify the skill was copied to .rubichan/skills/<name>/.
+	addedManifest := filepath.Join(projectDir, ".rubichan", "skills", "my-tool", "SKILL.yaml")
 	_, err = os.Stat(addedManifest)
-	require.NoError(t, err, "SKILL.yaml should exist in project .agent/skills/<name>/")
+	require.NoError(t, err, "SKILL.yaml should exist in project .rubichan/skills/<name>/")
 
 	// Verify sub-directory was also copied.
-	addedHelper := filepath.Join(projectDir, ".agent", "skills", "my-tool", "lib", "helper.star")
+	addedHelper := filepath.Join(projectDir, ".rubichan", "skills", "my-tool", "lib", "helper.star")
 	_, err = os.Stat(addedHelper)
 	require.NoError(t, err, "nested files should be copied recursively")
 
@@ -671,6 +810,52 @@ func TestSkillAdd(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "Added skill")
 	assert.Contains(t, output, "my-tool")
+}
+
+func TestSkillInfoInstructionSkill(t *testing.T) {
+	skillDir := filepath.Join(t.TempDir(), "skills", "react-guide")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+
+	skillMD := `---
+name: react-guide
+version: 1.2.3
+description: "React guidance"
+types:
+  - prompt
+permissions:
+  - file:read
+---
+
+Use this skill when editing React files.
+`
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillMD), 0o644))
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:    "react-guide",
+		Version: "1.2.3",
+		Source:  skillDir,
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"info", "react-guide", "--store", dbPath})
+
+	err = cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "react-guide")
+	assert.Contains(t, output, "1.2.3")
+	assert.Contains(t, output, "React guidance")
+	assert.Contains(t, output, "prompt")
+	assert.Contains(t, output, "file:read")
+	assert.NotContains(t, output, "Backend:")
 }
 
 // TestSkillInstallLocalInvalidManifest verifies install fails when SKILL.yaml
@@ -706,6 +891,45 @@ func TestSkillInstallLocalInvalidManifest(t *testing.T) {
 	err = cmd2.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid manifest")
+}
+
+func TestSkillInstallLocalInstructionSkill(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "instruction-skill")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "SKILL.md"), []byte(`---
+name: docs-guide
+version: 0.3.0
+description: "Documentation guidance"
+---
+
+Write concise docs.
+`), 0o644))
+
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", source, "--store", dbPath, "--skills-dir", skillsDir})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	installedManifest := filepath.Join(skillsDir, "docs-guide", "SKILL.md")
+	_, err = os.Stat(installedManifest)
+	require.NoError(t, err)
+
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	defer s.Close()
+
+	state, err := s.GetSkillState("docs-guide")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	assert.Equal(t, "0.3.0", state.Version)
+	assert.Equal(t, filepath.Join(skillsDir, "docs-guide"), state.Source)
 }
 
 // TestSkillInstallRegistryDownloadError verifies install fails on registry errors.
@@ -930,10 +1154,10 @@ implementation:
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/manifest"):
 			w.Header().Set("Content-Type", "application/x-yaml")
-			w.Write([]byte(mismatchManifest))
+			_, _ = w.Write([]byte(mismatchManifest))
 		case strings.HasSuffix(r.URL.Path, "/download"):
 			w.Header().Set("Content-Type", "application/gzip")
-			w.Write(tarData)
+			_, _ = w.Write(tarData)
 		default:
 			http.NotFound(w, r)
 		}
@@ -998,6 +1222,37 @@ func TestSkillCreate(t *testing.T) {
 	assert.Contains(t, output, "Created skill")
 }
 
+func TestSkillCreateInstruction(t *testing.T) {
+	parentDir := t.TempDir()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"create", "react-guide", "--dir", parentDir, "--type", "instruction"})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	skillDir := filepath.Join(parentDir, "react-guide")
+	info, err := os.Stat(skillDir)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+
+	data, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+	require.NoError(t, err)
+
+	manifest, body, err := skills.ParseInstructionSkill(data)
+	require.NoError(t, err)
+	assert.Equal(t, "react-guide", manifest.Name)
+	assert.Equal(t, "0.1.0", manifest.Version)
+	assert.Equal(t, "A new instruction skill", manifest.Description)
+	assert.Contains(t, body, "Add concise guidance")
+
+	_, err = os.Stat(filepath.Join(skillDir, "skill.star"))
+	assert.True(t, os.IsNotExist(err))
+}
+
 // TestSkillTest verifies that "skill test <path>" loads and validates
 // a SKILL.yaml manifest from the given directory.
 func TestSkillTest(t *testing.T) {
@@ -1030,6 +1285,35 @@ implementation:
 
 	output := buf.String()
 	assert.Contains(t, output, "test-skill")
+	assert.Contains(t, output, "2.0.0")
+	assert.Contains(t, output, "validated successfully")
+}
+
+func TestSkillTestInstructionSkill(t *testing.T) {
+	skillDir := filepath.Join(t.TempDir(), "instruction-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+
+	skillMD := `---
+name: test-instruction
+version: 2.0.0
+description: "An instruction skill for validation"
+---
+
+Apply this guidance when editing docs.
+`
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillMD), 0o644))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"test", skillDir})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "test-instruction")
 	assert.Contains(t, output, "2.0.0")
 	assert.Contains(t, output, "validated successfully")
 }
@@ -1161,4 +1445,109 @@ func TestSkillPermissionsRevoke(t *testing.T) {
 	approvals, err := s2.ListApprovals("my-tool")
 	require.NoError(t, err)
 	assert.Empty(t, approvals)
+}
+
+func TestSkillLintCommandPasses(t *testing.T) {
+	skillDir := t.TempDir()
+	content := `---
+name: lint-ok
+version: 1.0.0
+description: Clean instruction skill
+references:
+  - path: references/checklist.md
+---
+Keep output concise.
+`
+	require.NoError(t, os.MkdirAll(filepath.Join(skillDir, "references"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "references", "checklist.md"), []byte("checklist"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"lint", skillDir})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "passed lint")
+}
+
+func TestSkillLintCommandReportsIssues(t *testing.T) {
+	skillDir := t.TempDir()
+	content := `---
+name: lint-bad
+version: 1.0.0
+description: Broken instruction skill
+references:
+  - path: refs/missing.md
+commands:
+  - name: repeat
+    description: first
+  - name: repeat
+    description: second
+---
+Body.
+`
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"lint", skillDir})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "skill lint failed")
+	assert.Contains(t, buf.String(), `duplicate command name "repeat"`)
+	assert.Contains(t, buf.String(), `missing reference file "refs/missing.md"`)
+}
+
+func TestSkillDevCommandOncePasses(t *testing.T) {
+	skillDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: dev-ok
+version: 1.0.0
+description: Clean dev skill
+---
+Keep things simple.
+`), 0o644))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"dev", skillDir, "--once"})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	output := buf.String()
+	assert.Contains(t, output, "[manifest] ok: dev-ok v1.0.0 (instruction)")
+	assert.Contains(t, output, "[lint] ok")
+}
+
+func TestSkillDevCommandOnceReportsIssues(t *testing.T) {
+	skillDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: dev-bad
+version: 1.0.0
+description: Broken dev skill
+unknown_field: nope
+---
+Body.
+`), 0o644))
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"dev", skillDir, "--once"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	output := buf.String()
+	assert.Contains(t, output, "[manifest] ok: dev-bad v1.0.0 (instruction)")
+	assert.Contains(t, output, "[lint] 1 issue(s)")
+	assert.Contains(t, output, "unknown_field")
 }

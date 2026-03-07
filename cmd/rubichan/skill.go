@@ -14,11 +14,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 )
 
 const defaultRegistryURL = "https://registry.rubichan.dev"
+
+const skillManifestNotFoundMsg = "reading skill manifest from %s: open %s: no such file or directory"
 
 // skillCmd returns the top-level "skill" command with list, info, search,
 // install, remove, and add subcommands.
@@ -33,10 +36,15 @@ func skillCmd() *cobra.Command {
 	cmd.AddCommand(skillInfoCmd())
 	cmd.AddCommand(skillSearchCmd())
 	cmd.AddCommand(skillInstallCmd())
+	cmd.AddCommand(skillAddDirCmd())
+	cmd.AddCommand(skillWhyCmd())
+	cmd.AddCommand(skillTraceCmd())
 	cmd.AddCommand(skillRemoveCmd())
 	cmd.AddCommand(skillAddCmd())
 	cmd.AddCommand(skillCreateCmd())
 	cmd.AddCommand(skillTestCmd())
+	cmd.AddCommand(skillLintCmd())
+	cmd.AddCommand(skillDevCmd())
 	cmd.AddCommand(skillPermissionsCmd())
 
 	return cmd
@@ -54,6 +62,21 @@ func resolveStorePath(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "rubichan", "skills.db"), nil
+}
+
+func resolveConfigFilePath(cmd *cobra.Command) (string, error) {
+	cfgPath, _ := cmd.Flags().GetString("config")
+	if cfgPath != "" {
+		return cfgPath, nil
+	}
+	if configPath != "" {
+		return configPath, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "rubichan", "config.toml"), nil
 }
 
 func skillListCmd() *cobra.Command {
@@ -178,17 +201,9 @@ func skillInfoCmd() *cobra.Command {
 			}
 
 			// The Source field stores the skill directory path.
-			skillDir := state.Source
-			manifestPath := filepath.Join(skillDir, "SKILL.yaml")
-
-			data, err := os.ReadFile(manifestPath)
+			manifest, _, _, err := loadSkillManifest(state.Source)
 			if err != nil {
-				return fmt.Errorf("reading manifest: %w", err)
-			}
-
-			manifest, err := skills.ParseManifest(data)
-			if err != nil {
-				return fmt.Errorf("parsing manifest: %w", err)
+				return err
 			}
 
 			out := cmd.OutOrStdout()
@@ -223,6 +238,7 @@ func skillInfoCmd() *cobra.Command {
 			if manifest.Implementation.Entrypoint != "" {
 				fmt.Fprintf(out, "Entrypoint:  %s\n", manifest.Implementation.Entrypoint)
 			}
+			fmt.Fprintf(out, "InstalledFrom: %s\n", state.Source)
 
 			return nil
 		},
@@ -272,6 +288,371 @@ func skillSearchCmd() *cobra.Command {
 	}
 	cmd.Flags().String("registry", "", "registry URL (default: "+defaultRegistryURL+")")
 	return cmd
+}
+
+func skillWhyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "why <name>",
+		Short: "Explain why a skill would activate",
+		Long:  "Evaluate the current project context and explain why a named skill would or would not activate.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			cfgPath, err := resolveConfigFilePath(cmd)
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("cannot determine home directory: %w", err)
+			}
+			configDir := filepath.Join(home, ".config", "rubichan")
+			userDir := filepath.Join(configDir, "skills")
+			if cfg.Skills.UserDir != "" {
+				userDir = cfg.Skills.UserDir
+			}
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("getting working directory: %w", err)
+			}
+			projectDir := filepath.Join(cwd, ".rubichan", "skills")
+
+			loader := skills.NewLoader(userDir, projectDir)
+			loader.AddSkillDirs(cfg.Skills.Dirs)
+			loader.AddMCPServers(cfg.MCP.Servers)
+			registerBuiltinSkillPrompts(loader)
+
+			discovered, warnings, err := loader.Discover(parseSkillsFlag(skillsFlag))
+			if err != nil {
+				return err
+			}
+			for _, warning := range warnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warning)
+			}
+
+			report, found := explainSkillActivation(cmd, discovered, cfg, cwd, name)
+			if !found {
+				return fmt.Errorf("skill %q not found in any discovered source", name)
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Name:       %s\n", report.Skill.Manifest.Name)
+			fmt.Fprintf(out, "Source:     %s\n", report.Skill.Source)
+			fmt.Fprintf(out, "Dir:        %s\n", report.Skill.Dir)
+			fmt.Fprintf(out, "Activated:  %t\n", report.Activated)
+			fmt.Fprintf(out, "Threshold:  %d\n", activationThreshold(cfg))
+			fmt.Fprintf(out, "Score:      %d\n", report.Score.Total)
+			fmt.Fprintf(out, "Breakdown:  explicit=%d current_path=%d files=%d keywords=%d languages=%d modes=%d\n",
+				report.Score.Explicit,
+				report.Score.CurrentPath,
+				report.Score.Files,
+				report.Score.Keywords,
+				report.Score.Languages,
+				report.Score.Modes,
+			)
+			if len(report.MatchedFiles) > 0 {
+				fmt.Fprintf(out, "Files:      %s\n", strings.Join(report.MatchedFiles, ", "))
+			}
+			if len(report.MatchedKeywords) > 0 {
+				fmt.Fprintf(out, "Keywords:   %s\n", strings.Join(report.MatchedKeywords, ", "))
+			}
+			if len(report.MatchedLanguages) > 0 {
+				fmt.Fprintf(out, "Languages:  %s\n", strings.Join(report.MatchedLanguages, ", "))
+			}
+			if len(report.MatchedModes) > 0 {
+				fmt.Fprintf(out, "Modes:      %s\n", strings.Join(report.MatchedModes, ", "))
+			}
+
+			return nil
+		},
+	}
+	cmd.Flags().String("config", "", "path to config file (default: ~/.config/rubichan/config.toml)")
+	cmd.Flags().String("message", "", "message text to evaluate keyword triggers against")
+	cmd.Flags().String("mode", "interactive", "execution mode to evaluate")
+	cmd.Flags().String("current-path", "", "current focused file path for higher-weight file trigger scoring")
+	return cmd
+}
+
+func skillTraceCmd() *cobra.Command {
+	defaultBudget := skills.DefaultContextBudget()
+	cmd := &cobra.Command{
+		Use:   "trace",
+		Short: "Trace skill activation and prompt budgeting",
+		Long:  "Discover skills for the current project, score activation, and show prompt-budget inclusion, truncation, or exclusion decisions.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, cwd, discovered, warnings, err := discoverSkillsForCLI(cmd)
+			if err != nil {
+				return err
+			}
+			for _, warning := range warnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warning)
+			}
+
+			traceCtx, err := buildTriggerContext(cmd, cwd)
+			if err != nil {
+				return err
+			}
+			reports := skills.EvaluateTriggerReports(discovered, traceCtx, activationThreshold(cfg))
+
+			maxTotalTokens, _ := cmd.Flags().GetInt("max-total-tokens")
+			maxPerSkillTokens, _ := cmd.Flags().GetInt("max-per-skill-tokens")
+			budget := &skills.ContextBudget{
+				MaxTotalTokens:    maxTotalTokens,
+				MaxPerSkillTokens: maxPerSkillTokens,
+			}
+			promptReport := buildPromptBudgetTrace(reports, budget)
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Threshold: %d\n", activationThreshold(cfg))
+			fmt.Fprintf(out, "Budget:    total=%d per_skill=%d\n", budget.MaxTotalTokens, budget.MaxPerSkillTokens)
+			fmt.Fprintf(out, "Discovered: %d\n", len(discovered))
+
+			if len(reports) == 0 {
+				fmt.Fprintln(out, "\nNo skills discovered.")
+				return nil
+			}
+
+			fmt.Fprintln(out, "\nActivation")
+			for _, report := range reports {
+				name := ""
+				if report.Skill.Manifest != nil {
+					name = report.Skill.Manifest.Name
+				}
+				status := "skipped"
+				if report.Activated {
+					status = "activated"
+				}
+				fmt.Fprintf(out, "- %s [%s] source=%s score=%d breakdown(explicit=%d current_path=%d files=%d keywords=%d languages=%d modes=%d)\n",
+					name,
+					status,
+					report.Skill.Source,
+					report.Score.Total,
+					report.Score.Explicit,
+					report.Score.CurrentPath,
+					report.Score.Files,
+					report.Score.Keywords,
+					report.Score.Languages,
+					report.Score.Modes,
+				)
+			}
+
+			fmt.Fprintln(out, "\nPrompt Budget")
+			if len(promptReport) == 0 {
+				fmt.Fprintln(out, "No activated prompt fragments.")
+				return nil
+			}
+			for _, fragment := range promptReport {
+				fmt.Fprintf(out, "- %s decision=%s score=%d tokens=%d/%d source=%s\n",
+					fragment.SkillName,
+					fragment.BudgetDecision,
+					fragment.ActivationScore,
+					fragment.UsedTokens,
+					fragment.OriginalTokens,
+					fragment.Source,
+				)
+			}
+
+			return nil
+		},
+	}
+	cmd.Flags().String("config", "", "path to config file (default: ~/.config/rubichan/config.toml)")
+	cmd.Flags().String("message", "", "message text to evaluate keyword triggers against")
+	cmd.Flags().String("mode", "interactive", "execution mode to evaluate")
+	cmd.Flags().String("current-path", "", "current focused file path for higher-weight file trigger scoring")
+	cmd.Flags().Int("max-total-tokens", defaultBudget.MaxTotalTokens, "prompt-budget total token cap")
+	cmd.Flags().Int("max-per-skill-tokens", defaultBudget.MaxPerSkillTokens, "prompt-budget per-skill token cap")
+	return cmd
+}
+
+func activationThreshold(cfg *config.Config) int {
+	if cfg == nil || cfg.Skills.ActivationThreshold <= 0 {
+		return 1
+	}
+	return cfg.Skills.ActivationThreshold
+}
+
+func explainSkillActivation(cmd *cobra.Command, discovered []skills.DiscoveredSkill, cfg *config.Config, cwd, name string) (skills.ActivationReport, bool) {
+	ctx, err := buildTriggerContext(cmd, cwd)
+	if err != nil {
+		return skills.ActivationReport{}, false
+	}
+	reports := skills.EvaluateTriggerReports(discovered, ctx, activationThreshold(cfg))
+	for _, report := range reports {
+		if report.Skill.Manifest != nil && report.Skill.Manifest.Name == name {
+			return report, true
+		}
+	}
+	return skills.ActivationReport{}, false
+}
+
+func discoverSkillsForCLI(cmd *cobra.Command) (*config.Config, string, []skills.DiscoveredSkill, []string, error) {
+	cfgPath, err := resolveConfigFilePath(cmd)
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, "", nil, nil, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	configDir := filepath.Join(home, ".config", "rubichan")
+	userDir := filepath.Join(configDir, "skills")
+	if cfg.Skills.UserDir != "" {
+		userDir = cfg.Skills.UserDir
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, "", nil, nil, fmt.Errorf("getting working directory: %w", err)
+	}
+	projectDir := filepath.Join(cwd, ".rubichan", "skills")
+
+	loader := skills.NewLoader(userDir, projectDir)
+	loader.AddSkillDirs(cfg.Skills.Dirs)
+	loader.AddMCPServers(cfg.MCP.Servers)
+	registerBuiltinSkillPrompts(loader)
+
+	discovered, warnings, err := loader.Discover(parseSkillsFlag(skillsFlag))
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	return cfg, cwd, discovered, warnings, nil
+}
+
+func buildTriggerContext(cmd *cobra.Command, cwd string) (skills.TriggerContext, error) {
+	entries, err := os.ReadDir(cwd)
+	if err != nil {
+		return skills.TriggerContext{}, fmt.Errorf("reading project directory: %w", err)
+	}
+	projectFiles := make([]string, 0, len(entries))
+	for _, e := range entries {
+		projectFiles = append(projectFiles, e.Name())
+	}
+	message, _ := cmd.Flags().GetString("message")
+	mode, _ := cmd.Flags().GetString("mode")
+	currentPath, _ := cmd.Flags().GetString("current-path")
+
+	return skills.TriggerContext{
+		ProjectFiles:    projectFiles,
+		CurrentPath:     currentPath,
+		DetectedLangs:   detectLanguages(projectFiles),
+		LastUserMessage: message,
+		Mode:            mode,
+		ExplicitSkills:  parseSkillsFlag(skillsFlag),
+	}, nil
+}
+
+func buildPromptBudgetTrace(reports []skills.ActivationReport, budget *skills.ContextBudget) []skills.PromptFragment {
+	collector := skills.NewPromptCollector()
+	for _, report := range reports {
+		if !report.Activated || report.Skill.Manifest == nil {
+			continue
+		}
+		fragment, ok := promptFragmentForTrace(report.Skill)
+		if !ok {
+			continue
+		}
+		fragment.ActivationScore = report.Score.Total
+		collector.Add(fragment)
+	}
+	return collector.BudgetReport(budget)
+}
+
+func promptFragmentForTrace(skill skills.DiscoveredSkill) (skills.PromptFragment, bool) {
+	if skill.Manifest == nil || !containsPromptType(skill.Manifest.Types) {
+		return skills.PromptFragment{}, false
+	}
+
+	fragment := skills.PromptFragment{
+		SkillName:        skill.Manifest.Name,
+		SystemPromptFile: skill.Manifest.Prompt.SystemPromptFile,
+		ContextFiles:     skill.Manifest.Prompt.ContextFiles,
+		MaxContextTokens: skill.Manifest.Prompt.MaxContextTokens,
+		Source:           skill.Source,
+	}
+
+	if skill.InstructionBody != "" {
+		fragment.ResolvedPrompt = skill.InstructionBody
+		return fragment, true
+	}
+
+	if skill.Manifest.Prompt.SystemPromptFile == "" {
+		return skills.PromptFragment{}, false
+	}
+
+	if skill.Dir == "" {
+		fragment.ResolvedPrompt = skill.Manifest.Prompt.SystemPromptFile
+		return fragment, true
+	}
+
+	promptPath := filepath.Join(skill.Dir, skill.Manifest.Prompt.SystemPromptFile)
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		fragment.ResolvedPrompt = fmt.Sprintf("[error reading prompt file %q: %s]", promptPath, err)
+		return fragment, true
+	}
+	fragment.ResolvedPrompt = string(data)
+	return fragment, true
+}
+
+func containsPromptType(types []skills.SkillType) bool {
+	for _, st := range types {
+		if st == skills.SkillTypePrompt {
+			return true
+		}
+	}
+	return false
+}
+
+func detectLanguages(files []string) []string {
+	seen := map[string]bool{}
+	var langs []string
+	for _, file := range files {
+		base := filepath.Base(file)
+		var lang string
+		switch {
+		case base == "Dockerfile" || strings.HasPrefix(base, "Dockerfile."):
+			lang = "dockerfile"
+		case base == "Package.swift":
+			lang = "swift"
+		case base == "Cargo.toml":
+			lang = "rust"
+		default:
+			switch filepath.Ext(base) {
+			case ".go":
+				lang = "go"
+			case ".rs":
+				lang = "rust"
+			case ".py":
+				lang = "python"
+			case ".js":
+				lang = "javascript"
+			case ".ts":
+				lang = "typescript"
+			case ".tsx":
+				lang = "typescript"
+			case ".jsx":
+				lang = "javascript"
+			case ".swift":
+				lang = "swift"
+			}
+		}
+		if lang != "" && !seen[lang] {
+			seen[lang] = true
+			langs = append(langs, lang)
+		}
+	}
+	return langs
 }
 
 // resolveSkillsDir returns the skills directory from the flag or the default location.
@@ -367,6 +748,34 @@ func copyFile(src, dst string) error {
 	return nil
 }
 
+func loadSkillManifest(skillDir string) (*skills.SkillManifest, string, string, error) {
+	yamlPath := filepath.Join(skillDir, "SKILL.yaml")
+	if data, err := os.ReadFile(yamlPath); err == nil {
+		manifest, parseErr := skills.ParseManifest(data)
+		if parseErr != nil {
+			return nil, "", "", fmt.Errorf("invalid manifest: %w", parseErr)
+		}
+		return manifest, yamlPath, "yaml", nil
+	} else if !os.IsNotExist(err) {
+		return nil, "", "", fmt.Errorf("reading skill manifest from %s: %w", skillDir, err)
+	}
+
+	mdPath := filepath.Join(skillDir, "SKILL.md")
+	data, err := os.ReadFile(mdPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", "", fmt.Errorf(skillManifestNotFoundMsg, skillDir, yamlPath)
+		}
+		return nil, "", "", fmt.Errorf("reading skill manifest from %s: %w", skillDir, err)
+	}
+
+	manifest, _, parseErr := skills.ParseInstructionSkill(data)
+	if parseErr != nil {
+		return nil, "", "", fmt.Errorf("invalid manifest: %w", parseErr)
+	}
+	return manifest, mdPath, "instruction", nil
+}
+
 func skillInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install <source>",
@@ -404,16 +813,9 @@ specific version; otherwise "latest" is used.`,
 // installFromLocal copies a skill from a local directory, validates its
 // manifest, and saves install state to the store.
 func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) error {
-	// Validate SKILL.yaml exists in source.
-	manifestPath := filepath.Join(source, "SKILL.yaml")
-	data, err := os.ReadFile(manifestPath)
+	manifest, _, _, err := loadSkillManifest(source)
 	if err != nil {
-		return fmt.Errorf("reading SKILL.yaml from %s: %w", source, err)
-	}
-
-	manifest, err := skills.ParseManifest(data)
-	if err != nil {
-		return fmt.Errorf("invalid manifest: %w", err)
+		return err
 	}
 
 	dest := filepath.Join(skillsDir, manifest.Name)
@@ -442,6 +844,54 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Installed skill %q (v%s) from local path\n", manifest.Name, manifest.Version)
 	return nil
+}
+
+func skillAddDirCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "add-dir <path>",
+		Short: "Register an external skill directory",
+		Long:  "Persist an external skill-pack directory in config so Rubichan discovers skills there recursively.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := args[0]
+			absDir, err := filepath.Abs(dir)
+			if err != nil {
+				return fmt.Errorf("resolving path: %w", err)
+			}
+			info, err := os.Stat(absDir)
+			if err != nil {
+				return fmt.Errorf("stat skill directory: %w", err)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("skill directory %q is not a directory", absDir)
+			}
+
+			cfgPath, err := resolveConfigFilePath(cmd)
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return err
+			}
+
+			for _, existing := range cfg.Skills.Dirs {
+				if existing == absDir {
+					fmt.Fprintf(cmd.OutOrStdout(), "Skill directory %q is already registered\n", absDir)
+					return nil
+				}
+			}
+			cfg.Skills.Dirs = append(cfg.Skills.Dirs, absDir)
+			if err := config.Save(cfgPath, cfg); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Registered skill directory %q\n", absDir)
+			return nil
+		},
+	}
+	cmd.Flags().String("config", "", "path to config file (default: ~/.config/rubichan/config.toml)")
+	return cmd
 }
 
 // installFromRegistry downloads a skill from the remote registry, validates
@@ -493,13 +943,7 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	}
 
 	// Validate and parse the downloaded manifest.
-	manifestPath := filepath.Join(dest, "SKILL.yaml")
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return fmt.Errorf("reading downloaded SKILL.yaml: %w", err)
-	}
-
-	manifest, err := skills.ParseManifest(data)
+	manifest, _, _, err := loadSkillManifest(dest)
 	if err != nil {
 		return fmt.Errorf("invalid downloaded manifest: %w", err)
 	}
@@ -591,7 +1035,7 @@ func skillAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <path>",
 		Short: "Add a skill to the current project",
-		Long:  "Copy a skill from the given path into the project's .agent/skills/<name>/ directory.",
+		Long:  "Copy a skill from the given path into the project's .rubichan/skills/<name>/ directory.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			source := args[0]
@@ -605,19 +1049,12 @@ func skillAddCmd() *cobra.Command {
 				}
 			}
 
-			// Validate SKILL.yaml exists in source.
-			manifestPath := filepath.Join(source, "SKILL.yaml")
-			data, err := os.ReadFile(manifestPath)
+			manifest, _, _, err := loadSkillManifest(source)
 			if err != nil {
-				return fmt.Errorf("reading SKILL.yaml from %s: %w", source, err)
+				return err
 			}
 
-			manifest, err := skills.ParseManifest(data)
-			if err != nil {
-				return fmt.Errorf("invalid manifest: %w", err)
-			}
-
-			dest := filepath.Join(projectDir, ".agent", "skills", manifest.Name)
+			dest := filepath.Join(projectDir, ".rubichan", "skills", manifest.Name)
 			if err := os.MkdirAll(dest, 0o755); err != nil {
 				return fmt.Errorf("creating project skill directory: %w", err)
 			}
@@ -645,6 +1082,17 @@ implementation:
   entrypoint: skill.star
 `
 
+const instructionSkillCreateTemplate = `---
+name: %s
+version: 0.1.0
+description: "A new instruction skill"
+---
+
+# Instructions
+
+Add concise guidance for when and how to use this skill.
+`
+
 // skillStarTemplate is the template skill.star written by "skill create".
 const skillStarTemplate = `# %s - Starlark skill entrypoint
 #
@@ -667,10 +1115,11 @@ func skillCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Scaffold a new skill directory",
-		Long:  "Create a new skill directory with a template SKILL.yaml and skill.star file.",
+		Long:  "Create a new skill directory with a template manifest.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			skillType, _ := cmd.Flags().GetString("type")
 
 			parentDir, _ := cmd.Flags().GetString("dir")
 			if parentDir == "" {
@@ -686,22 +1135,33 @@ func skillCreateCmd() *cobra.Command {
 				return fmt.Errorf("creating skill directory: %w", err)
 			}
 
-			// Write SKILL.yaml template.
-			manifestContent := fmt.Sprintf(skillCreateTemplate, name)
-			if err := os.WriteFile(
-				filepath.Join(skillDir, "SKILL.yaml"),
-				[]byte(manifestContent), 0o644,
-			); err != nil {
-				return fmt.Errorf("writing SKILL.yaml: %w", err)
-			}
+			switch skillType {
+			case "", "tool":
+				manifestContent := fmt.Sprintf(skillCreateTemplate, name)
+				if err := os.WriteFile(
+					filepath.Join(skillDir, "SKILL.yaml"),
+					[]byte(manifestContent), 0o644,
+				); err != nil {
+					return fmt.Errorf("writing SKILL.yaml: %w", err)
+				}
 
-			// Write skill.star template.
-			starContent := fmt.Sprintf(skillStarTemplate, name)
-			if err := os.WriteFile(
-				filepath.Join(skillDir, "skill.star"),
-				[]byte(starContent), 0o644,
-			); err != nil {
-				return fmt.Errorf("writing skill.star: %w", err)
+				starContent := fmt.Sprintf(skillStarTemplate, name)
+				if err := os.WriteFile(
+					filepath.Join(skillDir, "skill.star"),
+					[]byte(starContent), 0o644,
+				); err != nil {
+					return fmt.Errorf("writing skill.star: %w", err)
+				}
+			case "instruction":
+				manifestContent := fmt.Sprintf(instructionSkillCreateTemplate, name)
+				if err := os.WriteFile(
+					filepath.Join(skillDir, "SKILL.md"),
+					[]byte(manifestContent), 0o644,
+				); err != nil {
+					return fmt.Errorf("writing SKILL.md: %w", err)
+				}
+			default:
+				return fmt.Errorf("unsupported skill type %q", skillType)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Created skill %q in %s\n", name, skillDir)
@@ -709,6 +1169,7 @@ func skillCreateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("dir", "", "output parent directory (default: current working directory)")
+	cmd.Flags().String("type", "tool", "skill template type: tool or instruction")
 	return cmd
 }
 
@@ -716,18 +1177,12 @@ func skillTestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test <path>",
 		Short: "Validate a skill manifest",
-		Long:  "Read and validate the SKILL.yaml from the given skill directory.",
+		Long:  "Read and validate the SKILL.yaml or SKILL.md from the given skill directory.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			skillPath := args[0]
 
-			manifestPath := filepath.Join(skillPath, "SKILL.yaml")
-			data, err := os.ReadFile(manifestPath)
-			if err != nil {
-				return fmt.Errorf("reading SKILL.yaml from %s: %w", skillPath, err)
-			}
-
-			manifest, err := skills.ParseManifest(data)
+			manifest, _, _, err := loadSkillManifest(skillPath)
 			if err != nil {
 				return fmt.Errorf("manifest validation failed: %w", err)
 			}
@@ -740,6 +1195,128 @@ func skillTestCmd() *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+func skillLintCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "lint <path>",
+		Short: "Lint a skill directory",
+		Long:  "Validate a skill directory for authoring issues such as unknown frontmatter keys, duplicate names, oversized instruction bodies, and missing references.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			skillPath := args[0]
+			issues := skills.LintSkillDir(skillPath)
+			if len(issues) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Skill %q passed lint\n", skillPath)
+				return nil
+			}
+
+			for _, issue := range issues {
+				fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", issue)
+			}
+			return fmt.Errorf("skill lint failed with %d issue(s)", len(issues))
+		},
+	}
+	return cmd
+}
+
+func skillDevCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "dev <path>",
+		Short: "Watch and validate a skill while authoring",
+		Long:  "Validate a skill directory once or poll for file changes and rerun manifest validation plus lint checks.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			skillPath := args[0]
+			once, _ := cmd.Flags().GetBool("once")
+			interval, _ := cmd.Flags().GetDuration("interval")
+			if interval <= 0 {
+				interval = 2 * time.Second
+			}
+
+			snapshot, err := skillDirSnapshot(skillPath)
+			if err != nil {
+				return err
+			}
+			if err := runSkillDevCheck(cmd, skillPath); err != nil && once {
+				return err
+			}
+			if once {
+				return nil
+			}
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Watching %q every %s\n", skillPath, interval)
+			for {
+				select {
+				case <-cmd.Context().Done():
+					return nil
+				case <-ticker.C:
+					next, err := skillDirSnapshot(skillPath)
+					if err != nil {
+						fmt.Fprintf(cmd.OutOrStdout(), "watch error: %v\n", err)
+						continue
+					}
+					if next == snapshot {
+						continue
+					}
+					snapshot = next
+					fmt.Fprintf(cmd.OutOrStdout(), "\nChange detected at %s\n", time.Now().Format(time.RFC3339))
+					_ = runSkillDevCheck(cmd, skillPath)
+				}
+			}
+		},
+	}
+	cmd.Flags().Bool("once", false, "run a single validation pass and exit")
+	cmd.Flags().Duration("interval", 2*time.Second, "poll interval for change detection")
+	return cmd
+}
+
+func runSkillDevCheck(cmd *cobra.Command, skillPath string) error {
+	manifest, _, kind, err := loadSkillManifest(skillPath)
+	out := cmd.OutOrStdout()
+	if err != nil {
+		fmt.Fprintf(out, "[manifest] invalid: %v\n", err)
+		return err
+	}
+	fmt.Fprintf(out, "[manifest] ok: %s v%s (%s)\n", manifest.Name, manifest.Version, kind)
+
+	issues := skills.LintSkillDir(skillPath)
+	if len(issues) == 0 {
+		fmt.Fprintln(out, "[lint] ok")
+		return nil
+	}
+
+	fmt.Fprintf(out, "[lint] %d issue(s)\n", len(issues))
+	for _, issue := range issues {
+		fmt.Fprintf(out, "- %s\n", issue)
+	}
+	return fmt.Errorf("skill dev found %d issue(s)", len(issues))
+}
+
+func skillDirSnapshot(skillPath string) (string, error) {
+	var b strings.Builder
+	err := filepath.WalkDir(skillPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(skillPath, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&b, "%s|%d|%d|%d\n", rel, info.Size(), info.Mode(), info.ModTime().UnixNano())
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("snapshot skill directory: %w", err)
+	}
+	return b.String(), nil
 }
 
 func skillPermissionsCmd() *cobra.Command {
