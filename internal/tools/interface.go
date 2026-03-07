@@ -20,6 +20,34 @@ type ToolResult struct {
 	IsError        bool
 }
 
+// EventStage represents the lifecycle stage of a streaming tool event.
+type EventStage int
+
+const (
+	// EventBegin signals the start of a streaming tool execution.
+	EventBegin EventStage = iota
+	// EventDelta carries incremental output during execution.
+	EventDelta
+	// EventEnd signals the completion of streaming execution.
+	EventEnd
+)
+
+// ToolEvent represents a streaming event emitted during tool execution.
+type ToolEvent struct {
+	Stage   EventStage
+	Content string
+	IsError bool
+}
+
+// StreamingTool extends Tool with streaming execution capability.
+// Tools that implement this interface emit real-time progress events
+// during execution. Tools that don't implement it fall back to
+// synchronous Execute().
+type StreamingTool interface {
+	Tool
+	ExecuteStream(ctx context.Context, input json.RawMessage, emit func(ToolEvent)) (ToolResult, error)
+}
+
 // Display returns the content intended for user display. It returns
 // DisplayContent when set, otherwise falls back to Content.
 func (r ToolResult) Display() string {
