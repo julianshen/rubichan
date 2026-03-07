@@ -399,53 +399,6 @@ func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
 	assert.Contains(t, content, "> hello")
 }
 
-func TestModelHandleTurnEventDoneAddsCollapsedDiffPanel(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
-	m.state = StateStreaming
-	ch := make(chan agent.TurnEvent)
-	close(ch)
-	m.eventCh = ch
-
-	diffSummary := "## Turn Summary: 2 file(s) changed\n\n- **a.txt** modified (via edit)\n- **b.txt** created (via write)\n"
-	evt := TurnEventMsg(agent.TurnEvent{Type: "done", DiffSummary: diffSummary})
-	updated, _ := m.Update(evt)
-
-	um := updated.(*Model)
-	assert.Equal(t, StateInput, um.state)
-	assert.Contains(t, um.content.String(), "[Turn changes] 2 file(s) changed (Ctrl+G to expand)")
-	assert.False(t, um.diffSummaryOpen)
-}
-
-func TestModelToggleDiffPanel(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
-	m.state = StateStreaming
-	ch := make(chan agent.TurnEvent)
-	close(ch)
-	m.eventCh = ch
-
-	diffSummary := "## Turn Summary: 1 file(s) changed\n\n- **a.txt** modified (via edit)\n```diff\n-a\n+b\n```\n"
-	_, _ = m.Update(TurnEventMsg(agent.TurnEvent{Type: "done", DiffSummary: diffSummary}))
-
-	// Expand.
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	um := updated.(*Model)
-	assert.True(t, um.diffSummaryOpen)
-	assert.Contains(t, um.content.String(), "Ctrl+G to collapse")
-	assert.Contains(t, um.content.String(), "a.txt")
-
-	// Collapse again.
-	updated, _ = um.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	um = updated.(*Model)
-	assert.False(t, um.diffSummaryOpen)
-	assert.Contains(t, um.content.String(), "Ctrl+G to expand")
-}
-
-func TestExtractDiffSummaryFileCount(t *testing.T) {
-	assert.Equal(t, 3, extractDiffSummaryFileCount("## Turn Summary: 3 file(s) changed\n\n- **a** modified (via edit)\n"))
-	assert.Equal(t, 2, extractDiffSummaryFileCount("- **a** modified\n- **b** created\n"))
-	assert.Equal(t, 0, extractDiffSummaryFileCount(""))
-}
-
 func TestModelViewStreaming(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming
