@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestClient_ListModels(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/tags", r.URL.Path)
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
@@ -45,7 +45,7 @@ func TestClient_ListModels(t *testing.T) {
 }
 
 func TestClient_ListModels_Empty(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"models": []}`))
 	}))
 	defer srv.Close()
@@ -57,7 +57,7 @@ func TestClient_ListModels_Empty(t *testing.T) {
 }
 
 func TestClient_ListModels_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -75,7 +75,7 @@ func TestClient_ListModels_ConnectionError(t *testing.T) {
 }
 
 func TestClient_ListModels_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`not json`))
 	}))
 	defer srv.Close()
@@ -87,7 +87,7 @@ func TestClient_ListModels_InvalidJSON(t *testing.T) {
 }
 
 func TestClient_Version(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/version", r.URL.Path)
 		_, _ = w.Write([]byte(`{"version": "0.5.1"}`))
 	}))
@@ -100,7 +100,7 @@ func TestClient_Version(t *testing.T) {
 }
 
 func TestClient_Version_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -111,7 +111,7 @@ func TestClient_Version_Error(t *testing.T) {
 }
 
 func TestClient_IsRunning_True(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"version": "0.5.1"}`))
 	}))
 	defer srv.Close()
@@ -127,7 +127,7 @@ func TestClient_IsRunning_False(t *testing.T) {
 
 func TestClient_DeleteModel(t *testing.T) {
 	var capturedName string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/delete", r.URL.Path)
 		assert.Equal(t, http.MethodDelete, r.Method)
 		var body struct {
@@ -146,7 +146,7 @@ func TestClient_DeleteModel(t *testing.T) {
 }
 
 func TestClient_DeleteModel_NotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -158,7 +158,7 @@ func TestClient_DeleteModel_NotFound(t *testing.T) {
 }
 
 func TestClient_PullModel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/pull", r.URL.Path)
 		assert.Equal(t, http.MethodPost, r.Method)
 		var body struct {
@@ -191,7 +191,7 @@ func TestClient_PullModel(t *testing.T) {
 }
 
 func TestClient_PullModel_Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -202,7 +202,7 @@ func TestClient_PullModel_Error(t *testing.T) {
 }
 
 func TestClient_PullModel_ContextCancellation(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{\"status\":\"pulling manifest\"}\n"))
