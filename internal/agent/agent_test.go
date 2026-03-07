@@ -1902,3 +1902,78 @@ func TestTurnEmitsToolProgressEvents(t *testing.T) {
 	assert.NotNil(t, progressEvents[0].ToolProgress)
 	assert.Equal(t, "stream_test", progressEvents[0].ToolProgress.Name)
 }
+
+func TestStreamingToolIntegrationEndToEnd(t *testing.T) {
+	// Verify that a streaming tool produces tool_progress events
+	// between tool_call and tool_result in a full agent turn.
+	streamTool := &mockStreamingTool{
+		mockTool: mockTool{
+			name:        "stream_cmd",
+			description: "streaming command tool",
+			inputSchema: json.RawMessage(`{"type":"object","properties":{"cmd":{"type":"string"}}}`),
+			executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+				return tools.ToolResult{Content: "sync"}, nil
+			},
+		},
+		streamFn: func(_ context.Context, _ json.RawMessage, emit func(tools.ToolEvent)) (tools.ToolResult, error) {
+			emit(tools.ToolEvent{Stage: tools.EventBegin, Content: "begin"})
+			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "progress 1\n"})
+			emit(tools.ToolEvent{Stage: tools.EventDelta, Content: "progress 2\n"})
+			emit(tools.ToolEvent{Stage: tools.EventEnd, Content: ""})
+			return tools.ToolResult{Content: "completed"}, nil
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(streamTool))
+
+	mp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "tu-1", Name: "stream_cmd"}},
+				{Type: "text_delta", Text: `{"cmd":"test"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(mp, reg, autoApprove, cfg)
+
+	ch, err := a.Turn(context.Background(), "run stream_cmd")
+	require.NoError(t, err)
+
+	var eventTypes []string
+	for ev := range ch {
+		eventTypes = append(eventTypes, ev.Type)
+	}
+
+	// Expected order: tool_call, tool_progress(s), tool_result, text_delta, done
+	assert.Contains(t, eventTypes, "tool_call")
+	assert.Contains(t, eventTypes, "tool_progress")
+	assert.Contains(t, eventTypes, "tool_result")
+	assert.Contains(t, eventTypes, "done")
+
+	// tool_progress must come after tool_call and before tool_result.
+	toolCallIdx := -1
+	firstProgressIdx := -1
+	toolResultIdx := -1
+	for i, tp := range eventTypes {
+		if tp == "tool_call" && toolCallIdx == -1 {
+			toolCallIdx = i
+		}
+		if tp == "tool_progress" && firstProgressIdx == -1 {
+			firstProgressIdx = i
+		}
+		if tp == "tool_result" && toolResultIdx == -1 {
+			toolResultIdx = i
+		}
+	}
+
+	assert.Greater(t, firstProgressIdx, toolCallIdx, "tool_progress should come after tool_call")
+	assert.Less(t, firstProgressIdx, toolResultIdx, "tool_progress should come before tool_result")
+}
