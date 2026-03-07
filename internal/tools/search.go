@@ -159,6 +159,141 @@ func (s *SearchTool) Execute(ctx context.Context, input json.RawMessage) (ToolRe
 	return ToolResult{Content: result, DisplayContent: displayContent}, nil
 }
 
+// ExecuteStream implements StreamingTool. It emits match lines as
+// EventDelta events during search execution.
+func (s *SearchTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit func(ToolEvent)) (ToolResult, error) {
+	var in searchInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
+	}
+
+	if in.Pattern == "" {
+		return ToolResult{Content: "pattern is required", IsError: true}, nil
+	}
+
+	if _, err := regexp.Compile(in.Pattern); err != nil {
+		return ToolResult{Content: fmt.Sprintf("invalid regex pattern: %s", err), IsError: true}, nil
+	}
+
+	searchDir := s.rootDir
+	if in.Path != "" {
+		if filepath.IsAbs(in.Path) {
+			return ToolResult{Content: "path traversal denied: absolute paths not allowed", IsError: true}, nil
+		}
+		candidate := filepath.Join(s.rootDir, in.Path)
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			return ToolResult{Content: fmt.Sprintf("path traversal denied: %s", err), IsError: true}, nil
+		}
+		if !strings.HasPrefix(abs, s.rootDir+string(filepath.Separator)) && abs != s.rootDir {
+			return ToolResult{Content: "path traversal denied: path escapes root directory", IsError: true}, nil
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ToolResult{Content: fmt.Sprintf("path not found: %s", in.Path), IsError: true}, nil
+			}
+			return ToolResult{Content: fmt.Sprintf("path traversal denied: %s", err), IsError: true}, nil
+		}
+		if !strings.HasPrefix(resolved, s.rootDir+string(filepath.Separator)) && resolved != s.rootDir {
+			return ToolResult{Content: "path traversal denied: path escapes root directory via symlink", IsError: true}, nil
+		}
+		searchDir = resolved
+	}
+
+	if in.MaxResults <= 0 {
+		in.MaxResults = 200
+	}
+	if in.ContextLines < 0 {
+		in.ContextLines = 0
+	}
+
+	emit(ToolEvent{Stage: EventBegin, Content: fmt.Sprintf("searching for %q\n", in.Pattern)})
+
+	var result string
+	var searchErr error
+	if rgPath, lookErr := exec.LookPath("rg"); lookErr == nil {
+		result, searchErr = s.searchWithRipgrepStreaming(ctx, rgPath, searchDir, in, emit)
+	} else {
+		result, searchErr = s.searchGoNative(ctx, searchDir, in)
+		if searchErr == nil && result != "" {
+			emit(ToolEvent{Stage: EventDelta, Content: result})
+		}
+	}
+
+	if searchErr != nil {
+		emit(ToolEvent{Stage: EventEnd, Content: searchErr.Error(), IsError: true})
+		return ToolResult{Content: fmt.Sprintf("search error: %s", searchErr), IsError: true}, nil
+	}
+
+	if result == "" {
+		emit(ToolEvent{Stage: EventEnd, Content: "no matches found"})
+		return ToolResult{Content: "no matches found"}, nil
+	}
+
+	var displayContent string
+	if len(result) > maxOutputBytes {
+		display := result
+		if len(display) > maxDisplayBytes {
+			display = display[:maxDisplayBytes] + "\n... output truncated"
+		}
+		displayContent = display
+		result = result[:maxOutputBytes] + "\n... output truncated"
+	}
+
+	emit(ToolEvent{Stage: EventEnd, Content: ""})
+	return ToolResult{Content: result, DisplayContent: displayContent}, nil
+}
+
+func (s *SearchTool) searchWithRipgrepStreaming(ctx context.Context, rgPath, searchDir string, in searchInput, emit func(ToolEvent)) (string, error) {
+	args := []string{
+		"--no-heading", "--line-number", "--color", "never",
+	}
+	if in.ContextLines > 0 {
+		args = append(args, fmt.Sprintf("-C%d", in.ContextLines))
+	}
+	if in.FilePattern != "" {
+		args = append(args, "--glob", in.FilePattern)
+	}
+	args = append(args, in.Pattern, searchDir)
+
+	cmd := exec.CommandContext(ctx, rgPath, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to start ripgrep: %w", err)
+	}
+
+	var buf strings.Builder
+	matchCount := 0
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		relativeLine := strings.ReplaceAll(line, s.rootDir+string(filepath.Separator), "")
+		buf.WriteString(relativeLine + "\n")
+
+		if in.ContextLines > 0 {
+			if line == "--" {
+				matchCount++
+			}
+		} else {
+			matchCount++
+		}
+
+		emit(ToolEvent{Stage: EventDelta, Content: relativeLine + "\n"})
+
+		if in.MaxResults > 0 && matchCount >= in.MaxResults {
+			break
+		}
+	}
+
+	_ = cmd.Wait()
+	return buf.String(), nil
+}
+
 func (s *SearchTool) searchWithRipgrep(ctx context.Context, rgPath, searchDir string, in searchInput) (string, error) {
 	args := []string{
 		"--no-heading",

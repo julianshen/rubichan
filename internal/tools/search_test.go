@@ -366,6 +366,68 @@ func TestSearchTool_GoNativeFilePatternNoMatch(t *testing.T) {
 	assert.Empty(t, result)
 }
 
+func TestSearchToolImplementsStreamingTool(t *testing.T) {
+	st := NewSearchTool(t.TempDir())
+	var tool Tool = st
+	_, ok := tool.(StreamingTool)
+	assert.True(t, ok, "SearchTool should implement StreamingTool")
+}
+
+func TestSearchToolExecuteStreamEmitsEvents(t *testing.T) {
+	dir := setupSearchDir(t)
+	st := NewSearchTool(dir)
+
+	input, _ := json.Marshal(searchInput{Pattern: "func"})
+
+	var events []ToolEvent
+	emit := func(ev ToolEvent) {
+		events = append(events, ev)
+	}
+
+	result, err := st.ExecuteStream(context.Background(), input, emit)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "func")
+
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventBegin, events[0].Stage)
+	assert.Equal(t, EventEnd, events[len(events)-1].Stage)
+
+	var deltas []ToolEvent
+	for _, ev := range events {
+		if ev.Stage == EventDelta {
+			deltas = append(deltas, ev)
+		}
+	}
+	assert.GreaterOrEqual(t, len(deltas), 1)
+}
+
+func TestSearchToolExecuteStreamNoMatches(t *testing.T) {
+	dir := setupSearchDir(t)
+	st := NewSearchTool(dir)
+
+	input, _ := json.Marshal(searchInput{Pattern: "nonexistent_xyz"})
+
+	var events []ToolEvent
+	result, err := st.ExecuteStream(context.Background(), input, func(ev ToolEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "no matches")
+
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventBegin, events[0].Stage)
+	assert.Equal(t, EventEnd, events[len(events)-1].Stage)
+}
+
+func TestSearchToolExecuteStreamInvalidInput(t *testing.T) {
+	st := NewSearchTool(t.TempDir())
+	result, err := st.ExecuteStream(context.Background(), json.RawMessage(`{bad`), func(ev ToolEvent) {})
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+}
+
 func TestIsBinaryFile(t *testing.T) {
 	dir := t.TempDir()
 
