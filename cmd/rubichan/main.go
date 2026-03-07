@@ -1308,7 +1308,7 @@ func (tc ToolsConfig) ShouldEnable(name string) bool {
 	if tc.UserPreferences.Disabled != nil && tc.UserPreferences.Disabled[name] {
 		return false
 	}
-	if tc.UserPreferences.Enabled != nil && len(tc.UserPreferences.Enabled) > 0 && !tc.UserPreferences.Enabled[name] {
+	if len(tc.UserPreferences.Enabled) > 0 && !tc.UserPreferences.Enabled[name] {
 		return false
 	}
 
