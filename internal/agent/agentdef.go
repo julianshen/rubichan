@@ -20,6 +20,7 @@ type AgentDef struct {
 	InheritSkills *bool    `toml:"inherit_skills" yaml:"inherit_skills"`
 	ExtraSkills   []string `toml:"extra_skills" yaml:"extra_skills"`
 	DisableSkills []string `toml:"disable_skills" yaml:"disable_skills"`
+	Isolation     string   `toml:"isolation" yaml:"isolation"` // "", "worktree"
 }
 
 // AgentDefRegistry is a thread-safe registry of named agent definitions.

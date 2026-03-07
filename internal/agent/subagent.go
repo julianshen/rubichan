@@ -24,6 +24,7 @@ type SubagentConfig struct {
 	InheritSkills *bool    // Nil/default = inherit currently active parent skills
 	ExtraSkills   []string
 	DisableSkills []string
+	Isolation     string // "", "worktree" — if "worktree", spawn in isolated worktree
 }
 
 // SubagentResult is returned when a child agent completes.

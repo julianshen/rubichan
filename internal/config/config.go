@@ -95,6 +95,7 @@ type AgentDefConf struct {
 	InheritSkills *bool    `toml:"inherit_skills"`
 	ExtraSkills   []string `toml:"extra_skills"`
 	DisableSkills []string `toml:"disable_skills"`
+	Isolation     string   `toml:"isolation"`
 }
 
 // TrustRuleConf defines a trust rule in the configuration file.

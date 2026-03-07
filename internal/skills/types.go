@@ -165,6 +165,7 @@ type AgentDefinition struct {
 	InheritSkills *bool
 	ExtraSkills   []string
 	DisableSkills []string
+	Isolation     string // "", "worktree"
 }
 
 // AgentDefRegistrar abstracts the agent definition registry so the skills
