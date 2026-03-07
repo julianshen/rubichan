@@ -184,7 +184,7 @@ func (pm *ProcessManager) readLoop(proc *managedProcess) {
 	for {
 		n, err := proc.io.Read(buf)
 		if n > 0 {
-			proc.output.Write(buf[:n])
+			_, _ = proc.output.Write(buf[:n])
 		}
 		if err != nil {
 			return

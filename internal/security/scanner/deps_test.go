@@ -62,12 +62,12 @@ func TestDepScannerParsesGoSum(t *testing.T) {
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
 		// No vulns for other packages.
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(osvQueryResponse{})
+		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
 	}))
 	defer srv.Close()
 
@@ -102,7 +102,7 @@ func TestDepScannerParsesPackageLock(t *testing.T) {
 	// Mock OSV server that returns no vulnerabilities.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(osvQueryResponse{})
+		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
 	}))
 	defer srv.Close()
 
@@ -205,11 +205,11 @@ func TestDepScannerParsesRequirementsTxt(t *testing.T) {
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(osvQueryResponse{})
+		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
 	}))
 	defer srv.Close()
 
@@ -240,7 +240,7 @@ flask==2.3.0
 func TestDepScannerParsesGemfileLock(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(osvQueryResponse{})
+		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
 	}))
 	defer srv.Close()
 
@@ -273,7 +273,7 @@ DEPENDENCIES
 func TestDepScannerParsesCargoLock(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(osvQueryResponse{})
+		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
 	}))
 	defer srv.Close()
 
@@ -301,7 +301,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 func TestDepScannerParsesPodfileLock(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(osvQueryResponse{})
+		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
 	}))
 	defer srv.Close()
 
@@ -332,7 +332,7 @@ func TestDepScannerPackageLockV1Dependencies(t *testing.T) {
 	// Test parsing the older lockfileVersion 1 format with "dependencies" field.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(osvQueryResponse{})
+		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
 	}))
 	defer srv.Close()
 
@@ -444,7 +444,7 @@ func TestDepScannerQueryOSVInvalidJSON(t *testing.T) {
 	// Mock server that returns invalid JSON body.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not valid json"))
+		_, _ = w.Write([]byte("not valid json"))
 	}))
 	defer srv.Close()
 

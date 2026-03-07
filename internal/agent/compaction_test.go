@@ -135,10 +135,7 @@ func TestCompactStopsWhenUnderBudget(t *testing.T) {
 	cm.Compact(context.Background(), conv)
 
 	assert.True(t, s1.called, "first strategy should be called")
-	// If first strategy brought under budget, second should not be called
-	if !cm.ExceedsBudget(conv) {
-		// Check succeeded — second may or may not have been called depending on exact token math
-	}
+	assert.False(t, cm.ExceedsBudget(conv), "conversation should fit within budget after compaction")
 }
 
 func TestTruncateStrategyPreservesMinMessages(t *testing.T) {

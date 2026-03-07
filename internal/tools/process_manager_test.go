@@ -45,7 +45,7 @@ func TestProcessManagerExec(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	id, output, err := pm.Exec(ctx, "echo hello")
@@ -67,7 +67,7 @@ func TestProcessManagerExecLimit(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -90,7 +90,7 @@ func TestProcessManagerReadOutput(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	id, _, err := pm.Exec(ctx, "echo line1; echo line2")
@@ -126,7 +126,7 @@ func TestProcessManagerWriteStdin(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	id, _, err := pm.Exec(ctx, "cat")
@@ -150,7 +150,7 @@ func TestProcessManagerWriteStdinExitedProcess(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	id, _, err := pm.Exec(ctx, "echo done")
@@ -172,7 +172,7 @@ func TestProcessManagerKill(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	id, _, err := pm.Exec(ctx, "sleep 60")
@@ -238,7 +238,7 @@ func TestProcessManagerExecCancelledContext(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
@@ -257,7 +257,7 @@ func TestProcessManagerExecLimitCountsOnlyRunning(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 
@@ -284,7 +284,7 @@ func TestProcessManagerExecIDFormat(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	id, _, err := pm.Exec(ctx, "echo test")
@@ -321,7 +321,7 @@ func TestProcessManagerListFields(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	before := time.Now()
 	ctx := context.Background()
@@ -348,7 +348,7 @@ func TestProcessManagerReadOutputExitCode(t *testing.T) {
 		BufferSize:    4096,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	id, _, err := pm.Exec(ctx, "sh -c 'exit 42'")
@@ -380,7 +380,7 @@ func TestProcessManagerOutputBufferWrap(t *testing.T) {
 		BufferSize:    32, // very small buffer
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	ctx := context.Background()
 	// Generate output larger than 32 bytes.

@@ -350,7 +350,6 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 
 		// Handle done signal
 		if chunk.Done {
-			gotDone = true
 			select {
 			case ch <- provider.StreamEvent{Type: "stop"}:
 			case <-ctx.Done():

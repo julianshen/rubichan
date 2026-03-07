@@ -17,7 +17,7 @@ func TestProcessToolMetadata(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -54,7 +54,7 @@ func TestProcessToolInvalidJSON(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -68,7 +68,7 @@ func TestProcessToolUnknownOperation(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -88,7 +88,7 @@ func TestProcessToolExec(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -107,7 +107,7 @@ func TestProcessToolExecMissingCommand(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -126,7 +126,7 @@ func TestProcessToolReadOutput(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -161,7 +161,7 @@ func TestProcessToolReadOutputMissingProcessID(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -180,7 +180,7 @@ func TestProcessToolWriteStdin(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -213,7 +213,7 @@ func TestProcessToolWriteStdinMissingFields(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -244,7 +244,7 @@ func TestProcessToolKill(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -276,7 +276,7 @@ func TestProcessToolKillMissingProcessID(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -293,7 +293,7 @@ func TestProcessToolList(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -328,7 +328,7 @@ func TestProcessToolExecManagerError(t *testing.T) {
 		MaxProcesses:  1,
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -356,7 +356,7 @@ func TestProcessToolReadOutputManagerError(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -374,7 +374,7 @@ func TestProcessToolKillManagerError(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -392,7 +392,7 @@ func TestProcessToolWriteStdinManagerError(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 
@@ -415,7 +415,7 @@ func TestProcessToolListFormat(t *testing.T) {
 	pm := NewProcessManager(t.TempDir(), ProcessManagerConfig{
 		ShutdownGrace: 500 * time.Millisecond,
 	})
-	defer pm.Shutdown(context.Background())
+	defer func() { _ = pm.Shutdown(context.Background()) }()
 
 	pt := NewProcessTool(pm)
 

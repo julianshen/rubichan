@@ -299,10 +299,7 @@ func isConfigFile(relPath string) bool {
 		return true
 	}
 	baseName := filepath.Base(relPath)
-	if strings.HasPrefix(baseName, ".env") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(baseName, ".env")
 }
 
 func (s *ConfigScanner) checkGeneralConfig(data []byte, relPath string) []security.Finding {
