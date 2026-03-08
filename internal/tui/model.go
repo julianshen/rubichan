@@ -345,6 +345,8 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 		return nil
 	}
 	prompt := m.ralph.cfg.Prompt
+	m.diffSummary = ""
+	m.diffExpanded = false
 	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
 	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()

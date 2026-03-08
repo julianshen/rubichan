@@ -605,6 +605,28 @@ func TestModelToggleDiffSummaryExpansion(t *testing.T) {
 	assert.NotContains(t, um.viewport.View(), "foo.txt")
 }
 
+func TestModelToggleDiffSummaryIgnoredWithoutSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	um := updated.(*Model)
+	assert.False(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+}
+
+func TestModelToggleDiffSummaryIgnoredWhileStreaming(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	um := updated.(*Model)
+	assert.False(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+}
+
 func TestModelViewStreaming(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming
@@ -636,6 +658,20 @@ func TestModelUpdateEnterUserMessage(t *testing.T) {
 	assert.Contains(t, um.content.String(), "> hello agent")
 	// Should return a batch command (startTurn + spinner tick)
 	assert.NotNil(t, cmd)
+}
+
+func TestModelUpdateEnterUserMessageClearsPriorDiffSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.diffExpanded = true
+	m.input.SetValue("hello agent")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updated.(*Model)
+	assert.Empty(t, um.diffSummary)
+	assert.False(t, um.diffExpanded)
+	assert.NotContains(t, um.viewport.View(), "Turn changes")
 }
 
 func TestModelStartTurnNilAgent(t *testing.T) {
@@ -1421,6 +1457,26 @@ func TestModelSwitchModel(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.SwitchModel("gpt-4")
 	assert.Equal(t, "gpt-4", m.modelName)
+}
+
+func TestModelMaybeStartRalphLoopClearsPriorDiffSummary(t *testing.T) {
+	m := NewModel(&agent.Agent{}, "rubichan", "claude-3", 50, "", nil, nil)
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.diffExpanded = true
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "continue",
+			CompletionPromise: "done",
+			MaxIterations:     2,
+		},
+	}
+
+	cmd := m.maybeStartRalphLoop()
+
+	require.NotNil(t, cmd)
+	assert.Empty(t, m.diffSummary)
+	assert.False(t, m.diffExpanded)
+	assert.NotContains(t, m.viewport.View(), "Turn changes")
 }
 
 func TestModelCompletionTabAccept(t *testing.T) {

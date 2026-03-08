@@ -188,6 +188,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Regular user message: write to content and start agent turn
+		m.diffSummary = ""
+		m.diffExpanded = false
 		m.content.WriteString(fmt.Sprintf("> %s\n", text))
 		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()

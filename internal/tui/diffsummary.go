@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file\(s\)\s+changed`)
+var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file(?:\(s\)|s)?\s+changed`)
 
 func (m *Model) viewportContent() string {
 	content := m.content.String()
@@ -69,6 +69,7 @@ func diffSummaryLabel(summary string) string {
 	}
 
 	for _, line := range strings.Split(summary, "\n") {
+		line = strings.TrimSpace(line)
 		line = strings.TrimSpace(strings.TrimLeft(line, "#"))
 		if line != "" {
 			return line
