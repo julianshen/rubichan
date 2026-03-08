@@ -80,10 +80,9 @@ type Model struct {
 }
 
 type ralphLoopState struct {
-	cfg         commands.RalphLoopConfig
-	iteration   int
-	cancelled   bool
-	lastOutcome string
+	cfg       commands.RalphLoopConfig
+	iteration int
+	cancelled bool
 }
 
 // Ensure Model satisfies the tea.Model interface at compile time.
@@ -253,8 +252,8 @@ func (m *Model) waitForApproval() tea.Cmd {
 // handleCommand processes slash commands entered by the user.
 // It delegates to the command registry and interprets the result's Action.
 // Returns a tea.Cmd if the command produces one (e.g., tea.Quit), or nil.
-func (m *Model) handleCommand(cmd string) tea.Cmd {
-	parts, err := commands.ParseLine(cmd)
+func (m *Model) handleCommand(line string) tea.Cmd {
+	parts, err := commands.ParseLine(line)
 	if err != nil {
 		m.content.WriteString(persona.ErrorMessage(err.Error()))
 		m.viewport.SetContent(m.content.String())
@@ -293,8 +292,8 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		m.content.WriteString(result.Output + "\n")
 		m.viewport.SetContent(m.content.String())
 	}
-	if cmd := m.maybeStartRalphLoop(); cmd != nil {
-		return tea.Batch(cmd, m.spinner.Tick)
+	if startCmd := m.maybeStartRalphLoop(); startCmd != nil {
+		return tea.Batch(startCmd, m.spinner.Tick)
 	}
 
 	switch result.Action {
@@ -331,7 +330,6 @@ func (m *Model) CancelRalphLoop() bool {
 		return false
 	}
 	m.ralph.cancelled = true
-	m.ralph.lastOutcome = "cancelled"
 	if m.turnCancel != nil {
 		m.turnCancel()
 		m.turnCancel = nil
