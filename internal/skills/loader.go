@@ -46,7 +46,7 @@ type Loader struct {
 	userDir    string
 	projectDir string
 	skillDirs  []string
-	builtins   map[string]*SkillManifest
+	builtins   map[string]DiscoveredSkill
 	mcpServers []config.MCPServerConfig
 }
 
@@ -55,14 +55,23 @@ func NewLoader(userDir, projectDir string) *Loader {
 	return &Loader{
 		userDir:    userDir,
 		projectDir: projectDir,
-		builtins:   make(map[string]*SkillManifest),
+		builtins:   make(map[string]DiscoveredSkill),
 	}
 }
 
 // RegisterBuiltin adds a manifest as a built-in skill. Built-in skills have
 // the highest priority and override any user or project skill with the same name.
 func (l *Loader) RegisterBuiltin(m *SkillManifest) {
-	l.builtins[m.Name] = m
+	l.RegisterBuiltinDiscovered(DiscoveredSkill{
+		Manifest: m,
+	})
+}
+
+// RegisterBuiltinDiscovered adds a fully-populated built-in skill, preserving
+// any associated on-disk directory and instruction body.
+func (l *Loader) RegisterBuiltinDiscovered(ds DiscoveredSkill) {
+	ds.Source = SourceBuiltin
+	l.builtins[ds.Manifest.Name] = ds
 }
 
 // AddMCPServers registers MCP server configs for auto-discovery. Each server
@@ -127,12 +136,9 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	}
 
 	// 4. Built-in skills override everything from directories.
-	for name, m := range l.builtins {
-		byName[name] = DiscoveredSkill{
-			Manifest: m,
-			Dir:      "",
-			Source:   SourceBuiltin,
-		}
+	for name, ds := range l.builtins {
+		ds.Source = SourceBuiltin
+		byName[name] = ds
 	}
 
 	// 4.5. MCP servers from config become synthetic skills.

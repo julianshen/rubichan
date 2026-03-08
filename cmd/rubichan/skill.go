@@ -326,7 +326,9 @@ func skillWhyCmd() *cobra.Command {
 			loader := skills.NewLoader(userDir, projectDir)
 			loader.AddSkillDirs(cfg.Skills.Dirs)
 			loader.AddMCPServers(cfg.MCP.Servers)
-			registerBuiltinSkillPrompts(loader)
+			if err := registerBuiltinSkillPrompts(loader, configDir); err != nil {
+				return err
+			}
 
 			discovered, warnings, err := loader.Discover(parseSkillsFlag(skillsFlag))
 			if err != nil {
@@ -520,7 +522,9 @@ func discoverSkillsForCLI(cmd *cobra.Command) (*config.Config, string, []skills.
 	loader := skills.NewLoader(userDir, projectDir)
 	loader.AddSkillDirs(cfg.Skills.Dirs)
 	loader.AddMCPServers(cfg.MCP.Servers)
-	registerBuiltinSkillPrompts(loader)
+	if err := registerBuiltinSkillPrompts(loader, configDir); err != nil {
+		return nil, "", nil, nil, err
+	}
 
 	discovered, warnings, err := loader.Discover(parseSkillsFlag(skillsFlag))
 	if err != nil {

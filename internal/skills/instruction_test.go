@@ -377,6 +377,38 @@ func TestInstructionSkillPromptFragmentContent(t *testing.T) {
 	assert.Equal(t, expectedBody, fragment)
 }
 
+func TestInstructionSkillPromptFragmentIncludesSkillDirHint(t *testing.T) {
+	bf := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{
+			tools: nil,
+			hooks: map[HookPhase]HookHandler{},
+		}, nil
+	}
+
+	rt := newIntegrationRuntime(t, []string{"dir-aware-skill"}, bf)
+
+	m := &SkillManifest{
+		Name:        "dir-aware-skill",
+		Version:     "1.0.0",
+		Description: "Instruction skill with helper files",
+		Types:       []SkillType{SkillTypePrompt},
+	}
+	rt.loader.RegisterBuiltinDiscovered(DiscoveredSkill{
+		Manifest:        m,
+		Dir:             "/tmp/ui-ux-pro-max",
+		InstructionBody: "Run `python3 scripts/search.py` when you need design guidance.",
+	})
+	require.NoError(t, rt.Discover(nil))
+
+	require.NoError(t, rt.Activate("dir-aware-skill"))
+
+	fragments := rt.GetPromptFragments()
+	require.Len(t, fragments, 1)
+	assert.Contains(t, fragments[0].ResolvedPrompt, "Skill root directory: /tmp/ui-ux-pro-max")
+	assert.Contains(t, fragments[0].ResolvedPrompt, "Resolve relative paths mentioned in this skill against that directory.")
+	assert.Contains(t, fragments[0].ResolvedPrompt, "python3 scripts/search.py")
+}
+
 func TestLintInstructionSkillDir(t *testing.T) {
 	skillDir := t.TempDir()
 	repeated := strings.Repeat("word ", 501)
