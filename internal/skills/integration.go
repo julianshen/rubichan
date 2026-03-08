@@ -10,6 +10,17 @@ import (
 	"unicode/utf8"
 )
 
+func withSkillDirHint(prompt, dir string) string {
+	if prompt == "" || dir == "" {
+		return prompt
+	}
+	return fmt.Sprintf(
+		"Skill root directory: %s\nResolve relative paths mentioned in this skill against that directory.\n\n%s",
+		dir,
+		prompt,
+	)
+}
+
 // SecurityFinding represents a single finding from a security scanner.
 type SecurityFinding struct {
 	Rule     string
@@ -310,7 +321,7 @@ func wirePromptSkill(rt *Runtime, sk *Skill) {
 
 	// Instruction skills (SKILL.md) have their body pre-parsed.
 	if sk.InstructionBody != "" {
-		fragment.ResolvedPrompt = sk.InstructionBody
+		fragment.ResolvedPrompt = withSkillDirHint(sk.InstructionBody, sk.Dir)
 	} else if sk.Manifest.Prompt.SystemPromptFile != "" {
 		// Read the system prompt file content if a file path is specified and the
 		// skill has a directory on disk. For built-in skills (Dir=""), the
@@ -321,7 +332,7 @@ func wirePromptSkill(rt *Runtime, sk *Skill) {
 			if err != nil {
 				fragment.ResolvedPrompt = fmt.Sprintf("[error reading prompt file %q: %s]", promptPath, err)
 			} else {
-				fragment.ResolvedPrompt = string(data)
+				fragment.ResolvedPrompt = withSkillDirHint(string(data), sk.Dir)
 			}
 		} else {
 			// Built-in skills without a directory use SystemPromptFile as

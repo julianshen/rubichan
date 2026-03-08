@@ -192,6 +192,32 @@ func TestDiscoverDeduplicationBuiltinWins(t *testing.T) {
 	assert.Equal(t, SourceBuiltin, skills[0].Source)
 }
 
+func TestDiscoverBuiltinRetainsDirAndInstructionBody(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+	builtinDir := t.TempDir()
+
+	loader := NewLoader(userDir, projectDir)
+	loader.RegisterBuiltinDiscovered(DiscoveredSkill{
+		Manifest: &SkillManifest{
+			Name:        "builtin-instruction",
+			Version:     "1.0.0",
+			Description: "Builtin instruction skill",
+			Types:       []SkillType{SkillTypePrompt},
+		},
+		Dir:             builtinDir,
+		InstructionBody: "Use the bundled helper files.",
+	})
+
+	discovered, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, discovered, 1)
+	assert.Equal(t, SourceBuiltin, discovered[0].Source)
+	assert.Equal(t, builtinDir, discovered[0].Dir)
+	assert.Equal(t, "Use the bundled helper files.", discovered[0].InstructionBody)
+}
+
 func TestDiscoverMissingRequiredDep(t *testing.T) {
 	userDir := t.TempDir()
 	projectDir := t.TempDir()

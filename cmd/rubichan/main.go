@@ -36,6 +36,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
 	"github.com/julianshen/rubichan/internal/skills/builtin/frontenddesign"
 	"github.com/julianshen/rubichan/internal/skills/builtin/superpowers"
+	"github.com/julianshen/rubichan/internal/skills/builtin/uiuxpromax"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
 	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
 	"github.com/julianshen/rubichan/internal/skills/process"
@@ -289,7 +290,9 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	loader.AddMCPServers(cfg.MCP.Servers)
 
 	// Register built-in prompt skills. These auto-activate via mode triggers.
-	registerBuiltinSkillPrompts(loader)
+	if err := registerBuiltinSkillPrompts(loader, configDir); err != nil {
+		return nil, nil, fmt.Errorf("register builtin skills: %w", err)
+	}
 
 	// Create integration objects shared across all skill backends.
 	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
@@ -397,10 +400,11 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 	return rt, s, nil
 }
 
-func registerBuiltinSkillPrompts(loader *skills.Loader) {
+func registerBuiltinSkillPrompts(loader *skills.Loader, configDir string) error {
 	superpowers.Register(loader)
 	frontenddesign.Register(loader)
 	appledev.RegisterPrompt(loader)
+	return uiuxpromax.Register(loader, configDir)
 }
 
 func emitSkillDiscoveryWarnings(w io.Writer, rt *skills.Runtime) {
