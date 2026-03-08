@@ -248,6 +248,49 @@ func TestRalphLoopCommandRequiresCompletionPromise(t *testing.T) {
 	assert.Contains(t, err.Error(), "--completion-promise")
 }
 
+func TestRalphLoopCommandErrorPaths(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "non integer max iterations",
+			args: []string{"prompt", "--completion-promise", "DONE", "--max-iterations", "abc"},
+			want: "positive integer",
+		},
+		{
+			name: "zero max iterations",
+			args: []string{"prompt", "--completion-promise", "DONE", "--max-iterations", "0"},
+			want: "positive integer",
+		},
+		{
+			name: "negative max iterations",
+			args: []string{"prompt", "--completion-promise", "DONE", "--max-iterations", "-1"},
+			want: "positive integer",
+		},
+		{
+			name: "unknown flag",
+			args: []string{"prompt", "--completion-promise", "DONE", "--unknown"},
+			want: "unknown flag",
+		},
+		{
+			name: "missing prompt",
+			args: []string{"--completion-promise", "DONE"},
+			want: "prompt is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := cmd.Execute(context.Background(), tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
 func TestCancelRalphCommandExecute(t *testing.T) {
 	called := false
 	cmd := NewCancelRalphCommand(func() bool {
@@ -259,4 +302,12 @@ func TestCancelRalphCommandExecute(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, called)
 	assert.Contains(t, result.Output, "cancelled")
+}
+
+func TestCancelRalphCommandExecuteWithoutActiveLoop(t *testing.T) {
+	cmd := NewCancelRalphCommand(func() bool { return false })
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "No active Ralph loop")
 }

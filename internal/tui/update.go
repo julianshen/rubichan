@@ -338,6 +338,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil {
 			errMsg = msg.Error.Error()
 		}
+		m.rawAssistant.Reset()
 		m.content.WriteString(persona.ErrorMessage(errMsg))
 		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()

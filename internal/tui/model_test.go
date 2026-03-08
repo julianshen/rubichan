@@ -732,6 +732,24 @@ func TestModelHandleTurnEventErrorNilError(t *testing.T) {
 	assert.Contains(t, um.content.String(), "unknown error")
 }
 
+func TestModelHandleTurnEventErrorResetsRawAssistant(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+	m.rawAssistant.WriteString("stale DONE content")
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{
+		Type:  "error",
+		Error: assert.AnError,
+	}))
+
+	um := updated.(*Model)
+	assert.Equal(t, "", um.rawAssistant.String())
+	assert.Contains(t, um.content.String(), assert.AnError.Error())
+}
+
 func TestModelUpdateWindowSizeTiny(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 10, Height: 2})

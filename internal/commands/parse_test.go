@@ -23,3 +23,20 @@ func TestParseLineRejectsUnterminatedQuote(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unterminated")
 }
+
+func TestParseLineHandlesEscapes(t *testing.T) {
+	args, err := ParseLine(`/ralph-loop finish\ the\ feature --completion-promise DONE`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"/ralph-loop",
+		"finish the feature",
+		"--completion-promise",
+		"DONE",
+	}, args)
+}
+
+func TestParseLineRejectsUnterminatedEscape(t *testing.T) {
+	_, err := ParseLine(`/ralph-loop finish\`)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unterminated escape")
+}
