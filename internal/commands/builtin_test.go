@@ -217,4 +217,97 @@ func TestBuiltinCommandsImplementSlashCommand(t *testing.T) {
 	var _ SlashCommand = NewModelCommand(func(string) {})
 	var _ SlashCommand = NewConfigCommand()
 	var _ SlashCommand = NewHelpCommand(NewRegistry())
+	var _ SlashCommand = NewRalphLoopCommand(nil)
+	var _ SlashCommand = NewCancelRalphCommand(nil)
+}
+
+func TestRalphLoopCommandExecute(t *testing.T) {
+	var got RalphLoopConfig
+	cmd := NewRalphLoopCommand(func(cfg RalphLoopConfig) error {
+		got = cfg
+		return nil
+	})
+
+	result, err := cmd.Execute(context.Background(), []string{
+		"finish", "the", "feature",
+		"--completion-promise", "DONE",
+		"--max-iterations", "4",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "finish the feature", got.Prompt)
+	assert.Equal(t, "DONE", got.CompletionPromise)
+	assert.Equal(t, 4, got.MaxIterations)
+	assert.Contains(t, result.Output, "Ralph loop started")
+}
+
+func TestRalphLoopCommandRequiresCompletionPromise(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+
+	_, err := cmd.Execute(context.Background(), []string{"finish", "it"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--completion-promise")
+}
+
+func TestRalphLoopCommandErrorPaths(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "non integer max iterations",
+			args: []string{"prompt", "--completion-promise", "DONE", "--max-iterations", "abc"},
+			want: "positive integer",
+		},
+		{
+			name: "zero max iterations",
+			args: []string{"prompt", "--completion-promise", "DONE", "--max-iterations", "0"},
+			want: "positive integer",
+		},
+		{
+			name: "negative max iterations",
+			args: []string{"prompt", "--completion-promise", "DONE", "--max-iterations", "-1"},
+			want: "positive integer",
+		},
+		{
+			name: "unknown flag",
+			args: []string{"prompt", "--completion-promise", "DONE", "--unknown"},
+			want: "unknown flag",
+		},
+		{
+			name: "missing prompt",
+			args: []string{"--completion-promise", "DONE"},
+			want: "prompt is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := cmd.Execute(context.Background(), tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+func TestCancelRalphCommandExecute(t *testing.T) {
+	called := false
+	cmd := NewCancelRalphCommand(func() bool {
+		called = true
+		return true
+	})
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Contains(t, result.Output, "cancelled")
+}
+
+func TestCancelRalphCommandExecuteWithoutActiveLoop(t *testing.T) {
+	cmd := NewCancelRalphCommand(func() bool { return false })
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "No active Ralph loop")
 }

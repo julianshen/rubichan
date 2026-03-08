@@ -20,8 +20,9 @@ type TurnEventMsg agent.TurnEvent
 // turnStartedMsg carries the event channel and first event back to Update
 // so that m.eventCh is set in the Update goroutine rather than the Cmd goroutine.
 type turnStartedMsg struct {
-	ch    <-chan agent.TurnEvent
-	first agent.TurnEvent
+	ch     <-chan agent.TurnEvent
+	first  agent.TurnEvent
+	cancel context.CancelFunc
 }
 
 // Init implements tea.Model. It initializes the input area and starts
@@ -89,6 +90,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnStartedMsg:
 		m.eventCh = msg.ch
+		m.turnCancel = msg.cancel
 		return m.handleTurnEvent(TurnEventMsg(msg.first))
 
 	case TurnEventMsg:
@@ -212,8 +214,10 @@ func (m *Model) startTurn(a *agent.Agent, text string) tea.Cmd {
 			})
 		}
 
-		ch, err := a.Turn(context.Background(), text)
+		turnCtx, cancel := context.WithCancel(context.Background())
+		ch, err := a.Turn(turnCtx, text)
 		if err != nil {
+			cancel()
 			return TurnEventMsg(agent.TurnEvent{
 				Type:  "error",
 				Error: fmt.Errorf("turn failed: %w", err),
@@ -224,9 +228,14 @@ func (m *Model) startTurn(a *agent.Agent, text string) tea.Cmd {
 		// back via turnStartedMsg so Update sets m.eventCh safely.
 		evt, ok := <-ch
 		if !ok {
+			cancel()
 			return TurnEventMsg(agent.TurnEvent{Type: "done"})
 		}
-		return turnStartedMsg{ch: ch, first: evt}
+		return turnStartedMsg{
+			ch:     ch,
+			first:  evt,
+			cancel: cancel,
+		}
 	}
 }
 
@@ -329,11 +338,17 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil {
 			errMsg = msg.Error.Error()
 		}
+		m.rawAssistant.Reset()
 		m.content.WriteString(persona.ErrorMessage(errMsg))
 		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 
 	case "done":
+		if m.turnCancel != nil {
+			m.turnCancel()
+			m.turnCancel = nil
+		}
+		raw := m.rawAssistant.String()
 		m.renderAssistantMarkdown()
 		m.rawAssistant.Reset()
 		m.content.WriteString(persona.SuccessMessage())
@@ -354,6 +369,11 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 
 		m.state = StateInput
 		m.eventCh = nil
+		if m.ralph != nil {
+			if cmd := m.advanceRalphLoop(raw); cmd != nil {
+				return m, tea.Batch(cmd, m.spinner.Tick)
+			}
+		}
 		return m, nil
 	}
 
@@ -377,4 +397,37 @@ func (m *Model) renderAssistantMarkdown() {
 	m.content.Reset()
 	m.content.WriteString(contentStr[:m.assistantStartIdx])
 	m.content.WriteString(rendered)
+}
+
+func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
+	if m.ralph == nil {
+		return nil
+	}
+
+	loop := m.ralph
+	switch {
+	case loop.cancelled:
+		m.content.WriteString("Ralph loop stopped.\n")
+		m.setContentAndAutoScroll(m.content.String())
+		m.ralph = nil
+		return nil
+	case strings.Contains(raw, loop.cfg.CompletionPromise):
+		m.content.WriteString(fmt.Sprintf("Ralph loop complete after %d iteration(s).\n", loop.iteration+1))
+		m.setContentAndAutoScroll(m.content.String())
+		m.ralph = nil
+		return nil
+	case loop.iteration+1 >= loop.cfg.MaxIterations:
+		m.content.WriteString(fmt.Sprintf("Ralph loop stopped after reaching %d iteration(s) without completion promise %q.\n", loop.cfg.MaxIterations, loop.cfg.CompletionPromise))
+		m.setContentAndAutoScroll(m.content.String())
+		m.ralph = nil
+		return nil
+	}
+
+	loop.iteration++
+	prompt := loop.cfg.Prompt
+	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
+	m.setContentAndAutoScroll(m.content.String())
+	m.assistantStartIdx = m.content.Len()
+	m.state = StateStreaming
+	return m.startTurn(m.agent, prompt)
 }

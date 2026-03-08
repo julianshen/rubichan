@@ -75,6 +75,14 @@ type Model struct {
 	eventCh           <-chan agent.TurnEvent
 	cmdRegistry       *commands.Registry
 	completion        *CompletionOverlay
+	turnCancel        context.CancelFunc
+	ralph             *ralphLoopState
+}
+
+type ralphLoopState struct {
+	cfg       commands.RalphLoopConfig
+	iteration int
+	cancelled bool
 }
 
 // Ensure Model satisfies the tea.Model interface at compile time.
@@ -132,6 +140,8 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		_ = cmdRegistry.Register(commands.NewQuitCommand())
 		_ = cmdRegistry.Register(commands.NewExitCommand())
 		_ = cmdRegistry.Register(commands.NewConfigCommand())
+		_ = cmdRegistry.Register(commands.NewRalphLoopCommand(m.StartRalphLoop))
+		_ = cmdRegistry.Register(commands.NewCancelRalphCommand(m.CancelRalphLoop))
 		_ = cmdRegistry.Register(commands.NewClearCommand(func() {
 			if m.agent != nil {
 				m.agent.ClearConversation()
@@ -242,8 +252,13 @@ func (m *Model) waitForApproval() tea.Cmd {
 // handleCommand processes slash commands entered by the user.
 // It delegates to the command registry and interprets the result's Action.
 // Returns a tea.Cmd if the command produces one (e.g., tea.Quit), or nil.
-func (m *Model) handleCommand(cmd string) tea.Cmd {
-	parts := strings.Fields(cmd)
+func (m *Model) handleCommand(line string) tea.Cmd {
+	parts, err := commands.ParseLine(line)
+	if err != nil {
+		m.content.WriteString(persona.ErrorMessage(err.Error()))
+		m.viewport.SetContent(m.content.String())
+		return nil
+	}
 	if len(parts) == 0 {
 		return nil
 	}
@@ -277,6 +292,9 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		m.content.WriteString(result.Output + "\n")
 		m.viewport.SetContent(m.content.String())
 	}
+	if startCmd := m.maybeStartRalphLoop(); startCmd != nil {
+		return tea.Batch(startCmd, m.spinner.Tick)
+	}
 
 	switch result.Action {
 	case commands.ActionQuit:
@@ -294,4 +312,39 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 	}
 
 	return nil
+}
+
+func (m *Model) StartRalphLoop(cfg commands.RalphLoopConfig) error {
+	if m.state != StateInput {
+		return fmt.Errorf("Ralph loop can only start while idle")
+	}
+	if m.agent == nil {
+		return fmt.Errorf("no agent configured")
+	}
+	m.ralph = &ralphLoopState{cfg: cfg}
+	return nil
+}
+
+func (m *Model) CancelRalphLoop() bool {
+	if m.ralph == nil {
+		return false
+	}
+	m.ralph.cancelled = true
+	if m.turnCancel != nil {
+		m.turnCancel()
+		m.turnCancel = nil
+	}
+	return true
+}
+
+func (m *Model) maybeStartRalphLoop() tea.Cmd {
+	if m.ralph == nil || m.state != StateInput || m.agent == nil || m.ralph.iteration != 0 {
+		return nil
+	}
+	prompt := m.ralph.cfg.Prompt
+	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
+	m.setContentAndAutoScroll(m.content.String())
+	m.assistantStartIdx = m.content.Len()
+	m.state = StateStreaming
+	return m.startTurn(m.agent, prompt)
 }

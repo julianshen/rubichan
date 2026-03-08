@@ -109,6 +109,31 @@ func TestModelHandleSlashModelNoArg(t *testing.T) {
 	assert.Contains(t, m.content.String(), "Pigi")
 }
 
+func TestModelHandleSlashRalphLoopParsesQuotedArgs(t *testing.T) {
+	reg := commands.NewRegistry()
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, reg)
+	m.agent = &agent.Agent{}
+	require.NoError(t, reg.Register(commands.NewRalphLoopCommand(m.StartRalphLoop)))
+	require.NoError(t, reg.Register(commands.NewCancelRalphCommand(m.CancelRalphLoop)))
+
+	cmd := m.handleCommand(`/ralph-loop "finish the feature" --completion-promise "ALL DONE" --max-iterations 3`)
+	require.NotNil(t, cmd)
+	require.NotNil(t, m.ralph)
+	assert.Equal(t, "finish the feature", m.ralph.cfg.Prompt)
+	assert.Equal(t, "ALL DONE", m.ralph.cfg.CompletionPromise)
+	assert.Equal(t, 3, m.ralph.cfg.MaxIterations)
+	assert.Equal(t, StateStreaming, m.state)
+	assert.Contains(t, m.content.String(), "> finish the feature")
+}
+
+func TestModelHandleCommandParseError(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	cmd := m.handleCommand(`/ralph-loop "unterminated`)
+	assert.Nil(t, cmd)
+	assert.Contains(t, m.content.String(), "unterminated quoted string")
+}
+
 func TestModelHandleUnknownCommand(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	cmd := m.handleCommand("/unknown")
@@ -192,6 +217,117 @@ func TestModelUpdateEnterSlashCommand(t *testing.T) {
 
 	um := updated.(*Model)
 	assert.Contains(t, um.content.String(), "/quit")
+}
+
+func TestModelAdvanceRalphLoopStopsOnCompletionPromise(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "keep going",
+			MaxIterations:     3,
+			CompletionPromise: "ALL DONE",
+		},
+	}
+
+	cmd := m.advanceRalphLoop("work finished ALL DONE")
+	assert.Nil(t, cmd)
+	assert.Nil(t, m.ralph)
+	assert.Contains(t, m.content.String(), "Ralph loop complete")
+}
+
+func TestModelAdvanceRalphLoopSchedulesNextIteration(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.agent = &agent.Agent{}
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "keep going",
+			MaxIterations:     3,
+			CompletionPromise: "ALL DONE",
+		},
+	}
+
+	cmd := m.advanceRalphLoop("still working")
+	require.NotNil(t, cmd)
+	assert.Equal(t, 1, m.ralph.iteration)
+	assert.Equal(t, StateStreaming, m.state)
+	assert.Contains(t, m.content.String(), "> keep going")
+}
+
+func TestModelAdvanceRalphLoopStopsAtMaxIterations(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "keep going",
+			MaxIterations:     2,
+			CompletionPromise: "ALL DONE",
+		},
+		iteration: 1,
+	}
+
+	cmd := m.advanceRalphLoop("still working")
+	assert.Nil(t, cmd)
+	assert.Nil(t, m.ralph)
+	assert.Contains(t, m.content.String(), "without completion promise")
+}
+
+func TestModelCancelRalphLoopCancelsTurn(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	cancelled := false
+	m.ralph = &ralphLoopState{cfg: commands.RalphLoopConfig{Prompt: "keep going", MaxIterations: 2, CompletionPromise: "DONE"}}
+	m.turnCancel = func() { cancelled = true }
+
+	ok := m.CancelRalphLoop()
+	assert.True(t, ok)
+	assert.True(t, cancelled)
+	assert.True(t, m.ralph.cancelled)
+	assert.Nil(t, m.turnCancel)
+}
+
+func TestModelCancelRalphLoopNoActiveLoop(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	assert.False(t, m.CancelRalphLoop())
+}
+
+func TestModelStartRalphLoopRequiresIdleState(t *testing.T) {
+	m := NewModel(&agent.Agent{}, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+
+	err := m.StartRalphLoop(commands.RalphLoopConfig{
+		Prompt:            "keep going",
+		MaxIterations:     2,
+		CompletionPromise: "DONE",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "idle")
+}
+
+func TestModelStartRalphLoopRequiresAgent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	err := m.StartRalphLoop(commands.RalphLoopConfig{
+		Prompt:            "keep going",
+		MaxIterations:     2,
+		CompletionPromise: "DONE",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no agent")
+}
+
+func TestModelMaybeStartRalphLoopNoopWhenAlreadyIterating(t *testing.T) {
+	m := NewModel(&agent.Agent{}, "rubichan", "claude-3", 50, "", nil, nil)
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "keep going",
+			MaxIterations:     3,
+			CompletionPromise: "DONE",
+		},
+		iteration: 1,
+	}
+
+	cmd := m.maybeStartRalphLoop()
+	assert.Nil(t, cmd)
+	assert.Equal(t, StateInput, m.state)
+	assert.NotContains(t, m.content.String(), "> keep going")
 }
 
 func TestModelUpdateEnterEmptyInput(t *testing.T) {
@@ -594,6 +730,24 @@ func TestModelHandleTurnEventErrorNilError(t *testing.T) {
 	um := updated.(*Model)
 	assert.Contains(t, um.content.String(), "Pigi")
 	assert.Contains(t, um.content.String(), "unknown error")
+}
+
+func TestModelHandleTurnEventErrorResetsRawAssistant(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+	m.rawAssistant.WriteString("stale DONE content")
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{
+		Type:  "error",
+		Error: assert.AnError,
+	}))
+
+	um := updated.(*Model)
+	assert.Equal(t, "", um.rawAssistant.String())
+	assert.Contains(t, um.content.String(), assert.AnError.Error())
 }
 
 func TestModelUpdateWindowSizeTiny(t *testing.T) {
