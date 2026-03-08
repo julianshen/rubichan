@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -139,27 +138,47 @@ func wordToString(w *syntax.Word) (string, error) {
 }
 
 // ShellValidator validates shell commands by parsing them into sub-commands
-// and checking each against the rule engine.
+// and checking each against the rule engine. It delegates pattern-based
+// interception to a CommandInterceptor.
 type ShellValidator struct {
-	engine  *RuleEngine
-	workDir string
+	engine      *RuleEngine
+	workDir     string
+	interceptor *CommandInterceptor
 }
 
 // NewShellValidator creates a ShellValidator backed by the given RuleEngine.
+// It uses DefaultInterceptionRules for pattern-based interception.
 func NewShellValidator(engine *RuleEngine, workDir string) *ShellValidator {
 	return &ShellValidator{
-		engine:  engine,
-		workDir: workDir,
+		engine:      engine,
+		workDir:     workDir,
+		interceptor: MustNewCommandInterceptor(workDir, nil),
+	}
+}
+
+// NewShellValidatorWithInterceptor creates a ShellValidator with a custom
+// CommandInterceptor for configurable interception rules. If interceptor
+// is nil, a default interceptor is created automatically.
+func NewShellValidatorWithInterceptor(engine *RuleEngine, workDir string, interceptor *CommandInterceptor) *ShellValidator {
+	if interceptor == nil {
+		interceptor = MustNewCommandInterceptor(workDir, nil)
+	}
+	return &ShellValidator{
+		engine:      engine,
+		workDir:     workDir,
+		interceptor: interceptor,
 	}
 }
 
 // Validate parses the command string and checks each sub-command against the
 // rule engine with CategoryBash. Returns an error if any sub-command is denied.
 func (v *ShellValidator) Validate(ctx context.Context, command string) error {
-	interception, err := v.Inspect(ctx, command)
+	parts, err := ParseCommand(command)
 	if err != nil {
-		return err
+		return fmt.Errorf("shell validation parse error: %w", err)
 	}
+
+	interception := v.interceptor.Intercept(command, parts)
 	if interception.RouteReason != "" {
 		return fmt.Errorf("command requires routing: %s", interception.RouteReason)
 	}
@@ -167,53 +186,19 @@ func (v *ShellValidator) Validate(ctx context.Context, command string) error {
 		return fmt.Errorf("command blocked: %s", interception.BlockReason)
 	}
 
-	return v.validateRuleEngine(command)
+	return v.validateRuleEngineParts(parts)
 }
 
-var (
-	redirectPattern = regexp.MustCompile(`(?i)\b(?:echo|cat)\b[^;\n]*\s(?:>>?)\s*[^\s;]+`)
-	sedInPlaceRegex = regexp.MustCompile(`(?i)\bsed\b[^;\n]*\s-i(?:\s|$)`)
-	chmodChownRegex = regexp.MustCompile(`(?i)\b(?:chmod|chown)\b`)
-	mvCpOutside     = regexp.MustCompile(`(?i)\b(?:mv|cp)\b[^;\n]*(?:\s/\S+|\s\.\./\S+)`)
-)
-
 // Inspect evaluates shell-specific safety checks that sit alongside rule
-// engine deny rules. It returns route/block/warn decisions for the command.
+// engine deny rules. It delegates pattern matching to the CommandInterceptor
+// and returns route/block/warn decisions for the command.
 func (v *ShellValidator) Inspect(_ context.Context, command string) (ShellInterception, error) {
-	var interception ShellInterception
-
 	parts, err := ParseCommand(command)
 	if err != nil {
-		return interception, fmt.Errorf("shell validation parse error: %w", err)
+		return ShellInterception{}, fmt.Errorf("shell validation parse error: %w", err)
 	}
 
-	for _, part := range parts {
-		if part.Prefix == "apply_patch" {
-			interception.RouteReason = "apply_patch shell commands must be routed through the file tool"
-			break
-		}
-	}
-
-	if interception.BlockReason == "" {
-		if outsideTargets := findRecursiveRMOutsideWorkdir(parts, v.workDir); len(outsideTargets) > 0 {
-			interception.BlockReason = fmt.Sprintf("recursive rm target(s) escape working directory: %s", strings.Join(outsideTargets, ", "))
-		}
-	}
-
-	if redirectPattern.MatchString(command) {
-		interception.Warnings = append(interception.Warnings, "command redirects output to a file")
-	}
-	if sedInPlaceRegex.MatchString(command) {
-		interception.Warnings = append(interception.Warnings, "command uses sed -i for in-place file edits")
-	}
-	if chmodChownRegex.MatchString(command) {
-		interception.Warnings = append(interception.Warnings, "command changes file ownership/permissions")
-	}
-	if mvCpOutside.MatchString(command) {
-		interception.Warnings = append(interception.Warnings, "command may move/copy files outside the working directory")
-	}
-
-	return interception, nil
+	return v.interceptor.Intercept(command, parts), nil
 }
 
 // ShellSafetyMiddleware returns a Middleware that validates shell commands
@@ -230,13 +215,15 @@ func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
 				return next(ctx, tc)
 			}
 
-			interception, err := validator.Inspect(ctx, command)
-			if err != nil {
+			parts, parseErr := ParseCommand(command)
+			if parseErr != nil {
 				return Result{
-					Content: fmt.Sprintf("shell command blocked: %s", err),
+					Content: fmt.Sprintf("shell command blocked: %s", parseErr),
 					IsError: true,
 				}
 			}
+
+			interception := validator.interceptor.Intercept(command, parts)
 
 			if interception.RouteReason != "" {
 				return Result{
@@ -250,7 +237,7 @@ func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
 					IsError: true,
 				}
 			}
-			if err := validator.validateRuleEngine(command); err != nil {
+			if err := validator.validateRuleEngineParts(parts); err != nil {
 				return Result{
 					Content: fmt.Sprintf("shell command blocked: %s", err),
 					IsError: true,
@@ -272,14 +259,9 @@ func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
 	}
 }
 
-func (v *ShellValidator) validateRuleEngine(command string) error {
+func (v *ShellValidator) validateRuleEngineParts(parts []CommandPart) error {
 	if v.engine == nil {
 		return nil
-	}
-
-	parts, err := ParseCommand(command)
-	if err != nil {
-		return fmt.Errorf("shell validation parse error: %w", err)
 	}
 
 	for _, part := range parts {
@@ -290,6 +272,24 @@ func (v *ShellValidator) validateRuleEngine(command string) error {
 		}
 	}
 	return nil
+}
+
+// isRecursiveRM returns true if the full command string represents an rm
+// invocation with -r, -R, or --recursive flags.
+func isRecursiveRM(full string) bool {
+	fields := strings.Fields(full)
+	for _, token := range fields[1:] {
+		if token == "--" {
+			break
+		}
+		if token == "--recursive" {
+			return true
+		}
+		if strings.HasPrefix(token, "-") && !strings.HasPrefix(token, "--") && strings.ContainsAny(token, "rR") {
+			return true
+		}
+	}
+	return false
 }
 
 func findRecursiveRMOutsideWorkdir(parts []CommandPart, workDir string) []string {
