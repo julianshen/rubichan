@@ -1,6 +1,9 @@
 ---
 name: writing-plans
 description: Use when you have a spec or requirements for a multi-step task, before touching code
+commands:
+  - name: plan
+    description: Start writing an implementation plan
 ---
 
 # Writing Plans

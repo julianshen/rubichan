@@ -1,6 +1,9 @@
 ---
 name: requesting-code-review
 description: Use when completing tasks, implementing major features, or before merging to verify work meets requirements
+commands:
+  - name: review
+    description: Request a code review of current work
 ---
 
 # Requesting Code Review

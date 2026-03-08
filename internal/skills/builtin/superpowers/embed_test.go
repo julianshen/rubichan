@@ -69,6 +69,68 @@ func TestRegisterPopulatesLoader(t *testing.T) {
 	}
 }
 
+func TestSuperpowersRegisterCommands(t *testing.T) {
+	loader := skills.NewLoader("", "")
+	Register(loader)
+
+	discovered, _, err := loader.Discover(nil)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	byName := make(map[string]skills.DiscoveredSkill)
+	for _, ds := range discovered {
+		byName[ds.Manifest.Name] = ds
+	}
+
+	// Skills that should have exactly one command.
+	wantCommands := map[string]string{
+		"writing-plans":                  "plan",
+		"brainstorming":                  "brainstorm",
+		"test-driven-development":        "tdd",
+		"requesting-code-review":         "review",
+		"systematic-debugging":           "debug",
+		"finishing-a-development-branch":  "finish",
+	}
+
+	for skillName, cmdName := range wantCommands {
+		ds, ok := byName[skillName]
+		if !ok {
+			t.Errorf("skill %q not found", skillName)
+			continue
+		}
+		cmds := ds.Manifest.Commands
+		if len(cmds) != 1 {
+			t.Errorf("skill %q: got %d commands, want 1", skillName, len(cmds))
+			continue
+		}
+		if cmds[0].Name != cmdName {
+			t.Errorf("skill %q: command name = %q, want %q", skillName, cmds[0].Name, cmdName)
+		}
+	}
+
+	// Skills that should NOT have commands.
+	noCommands := []string{
+		"using-superpowers",
+		"writing-skills",
+		"using-git-worktrees",
+		"dispatching-parallel-agents",
+		"subagent-driven-development",
+		"executing-plans",
+		"verification-before-completion",
+		"receiving-code-review",
+	}
+	for _, name := range noCommands {
+		ds, ok := byName[name]
+		if !ok {
+			continue
+		}
+		if len(ds.Manifest.Commands) != 0 {
+			t.Errorf("skill %q: got %d commands, want 0", name, len(ds.Manifest.Commands))
+		}
+	}
+}
+
 func TestSkillContentNotEmpty(t *testing.T) {
 	loader := skills.NewLoader("", "")
 	Register(loader)
