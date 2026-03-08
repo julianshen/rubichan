@@ -25,6 +25,10 @@ func (m *Model) View() string {
 		return m.configForm.Form().View()
 	}
 
+	if m.state == StateWikiOverlay && m.wikiForm != nil {
+		return m.wikiForm.Form().View()
+	}
+
 	var b strings.Builder
 
 	// Header

@@ -23,6 +23,14 @@ func TestConfigFormGroupCount(t *testing.T) {
 	assert.Equal(t, 3, form.GroupCount())
 }
 
+func TestConfigFormIsCompletedAborted(t *testing.T) {
+	cfg := config.DefaultConfig()
+	form := NewConfigForm(cfg, "/tmp/test-config.toml")
+
+	assert.False(t, form.IsCompleted())
+	assert.False(t, form.IsAborted())
+}
+
 func TestConfigFormSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

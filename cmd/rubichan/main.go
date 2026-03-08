@@ -1017,6 +1017,10 @@ func runInteractive() error {
 
 	// Wire the agent into the TUI model now that both exist.
 	model.SetAgent(a)
+	model.SetWikiConfig(tui.WikiCommandConfig{
+		WorkDir: cwd,
+		LLM:     llmCompleter,
+	})
 	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

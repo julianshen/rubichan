@@ -16,6 +16,7 @@ type StatusBar struct {
 	turn        int
 	maxTurns    int
 	cost        float64
+	wikiStage   string
 	style       lipgloss.Style
 }
 
@@ -40,16 +41,26 @@ func (s *StatusBar) SetTurn(current, max int) { s.turn = current; s.maxTurns = m
 // SetCost sets the cumulative estimated cost.
 func (s *StatusBar) SetCost(cost float64) { s.cost = cost }
 
+// SetWikiProgress sets the wiki generation stage for display.
+func (s *StatusBar) SetWikiProgress(stage string) { s.wikiStage = stage }
+
+// ClearWikiProgress clears the wiki progress display.
+func (s *StatusBar) ClearWikiProgress() { s.wikiStage = "" }
+
 // View renders the status bar as a styled string.
 func (s *StatusBar) View() string {
-	return s.style.Render(fmt.Sprintf(" %s  %s  %s/%s  Turn %d/%d  ~$%.2f",
+	base := fmt.Sprintf(" %s  %s  %s/%s  Turn %d/%d  ~$%.2f",
 		persona.StatusPrefix(),
 		s.model,
 		formatTokens(s.inputTokens),
 		formatTokens(s.maxTokens),
 		s.turn, s.maxTurns,
 		s.cost,
-	))
+	)
+	if s.wikiStage != "" {
+		base += fmt.Sprintf("  Wiki: %s", s.wikiStage)
+	}
+	return s.style.Render(base)
 }
 
 // formatTokens formats a token count for compact display.

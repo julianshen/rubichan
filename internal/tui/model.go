@@ -42,6 +42,8 @@ const (
 	StateConfigOverlay
 	// StateBootstrap indicates the TUI is running the bootstrap setup wizard.
 	StateBootstrap
+	// StateWikiOverlay indicates the TUI is showing the wiki form overlay.
+	StateWikiOverlay
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -79,6 +81,10 @@ type Model struct {
 	completion        *CompletionOverlay
 	turnCancel        context.CancelFunc
 	ralph             *ralphLoopState
+	wikiForm          *WikiForm
+	wikiRunning       bool
+	wikiCfg           WikiCommandConfig
+	wikiCancel        context.CancelFunc
 }
 
 type ralphLoopState struct {
@@ -203,6 +209,12 @@ func (m *Model) syncCompletion() {
 	}
 }
 
+// SetWikiConfig sets the wiki command configuration and registers the /wiki command.
+func (m *Model) SetWikiConfig(cfg WikiCommandConfig) {
+	m.wikiCfg = cfg
+	_ = m.cmdRegistry.Register(NewWikiCommand(cfg))
+}
+
 // MakeApprovalFunc returns an agent.ApprovalFunc that bridges the agent's
 // synchronous approval requests to the TUI's async keypress handling.
 // Tools previously marked "always" are auto-approved without prompting.
@@ -312,6 +324,15 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 		m.configForm = NewConfigForm(m.cfg, m.configPath)
 		m.state = StateConfigOverlay
 		return m.configForm.Form().Init()
+	case commands.ActionOpenWiki:
+		if m.wikiRunning {
+			m.content.WriteString("Wiki generation is already running.\n")
+			m.viewport.SetContent(m.content.String())
+			return nil
+		}
+		m.wikiForm = NewWikiForm(m.wikiCfg.WorkDir)
+		m.state = StateWikiOverlay
+		return m.wikiForm.Form().Init()
 	}
 
 	return nil

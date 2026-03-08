@@ -25,6 +25,7 @@ func TestUIStateConstants(t *testing.T) {
 		StateAwaitingApproval,
 		StateConfigOverlay,
 		StateBootstrap,
+		StateWikiOverlay,
 	}
 	seen := make(map[UIState]bool)
 	for _, s := range states {
@@ -1484,6 +1485,14 @@ func TestModelCompletionOverlayInView(t *testing.T) {
 	assert.Contains(t, view, "/help")
 }
 
+func TestModelSetAgent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	assert.Nil(t, m.GetAgent())
+	// SetAgent is a no-op with nil, but verifies the method works.
+	m.SetAgent(nil)
+	assert.Nil(t, m.GetAgent())
+}
+
 func TestModelGetAgent(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	assert.Nil(t, m.GetAgent())
@@ -1608,6 +1617,45 @@ func TestRenderAssistantMarkdownEmpty(t *testing.T) {
 	m.renderAssistantMarkdown()
 
 	assert.Equal(t, contentBefore, m.content.String())
+}
+
+func TestModelWikiOverlayRoutesMessages(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.SetWikiConfig(WikiCommandConfig{WorkDir: "/tmp"})
+	m.handleCommand("/wiki")
+	assert.Equal(t, StateWikiOverlay, m.state)
+
+	// Regular key message while in wiki overlay should be routed to form
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	um := updated.(*Model)
+	assert.Equal(t, StateWikiOverlay, um.state)
+}
+
+func TestModelWikiOverlayAborted(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.SetWikiConfig(WikiCommandConfig{WorkDir: "/tmp"})
+	m.handleCommand("/wiki")
+	assert.Equal(t, StateWikiOverlay, m.state)
+
+	// Simulate form abort
+	m.wikiForm.Form().State = huh.StateAborted
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	um := updated.(*Model)
+	assert.Equal(t, StateInput, um.state)
+	assert.Nil(t, um.wikiForm)
+}
+
+func TestModelCtrlCCancelsWiki(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	cancelled := false
+	m.wikiCancel = func() { cancelled = true }
+	m.wikiRunning = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	um := updated.(*Model)
+	assert.True(t, um.quitting)
+	assert.True(t, cancelled)
+	require.NotNil(t, cmd)
 }
 
 func TestModelWindowSizeUpdatesCompletionWidth(t *testing.T) {

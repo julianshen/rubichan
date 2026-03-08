@@ -52,6 +52,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Route messages to wiki form overlay when active.
+	if m.state == StateWikiOverlay && m.wikiForm != nil {
+		form, cmd := m.wikiForm.Form().Update(msg)
+		if f, ok := form.(*huh.Form); ok {
+			m.wikiForm.SetForm(f)
+		}
+		switch m.wikiForm.Form().State {
+		case huh.StateCompleted:
+			m.state = StateInput
+			wf := m.wikiForm
+			m.wikiForm = nil
+			return m, m.startWikiGeneration(wf)
+		case huh.StateAborted:
+			m.state = StateInput
+			m.wikiForm = nil
+		}
+		return m, cmd
+	}
+
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -96,6 +115,31 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TurnEventMsg:
 		return m.handleTurnEvent(msg)
 
+	case wikiEventMsg:
+		if msg.progress != nil {
+			stage := msg.progress.Stage
+			m.statusBar.SetWikiProgress(stage)
+			detail := fmt.Sprintf("  Wiki: %s", stage)
+			if msg.progress.Total > 0 {
+				detail = fmt.Sprintf("  Wiki: %s (%d items)", stage, msg.progress.Total)
+			}
+			m.content.WriteString(detail + "\n")
+			m.setContentAndAutoScroll(m.content.String())
+		}
+		return m, m.waitForWikiEvent(msg.progressCh, msg.doneCh)
+
+	case wikiDoneMsg:
+		m.wikiRunning = false
+		m.wikiCancel = nil
+		m.statusBar.ClearWikiProgress()
+		if msg.Err != nil {
+			m.content.WriteString(persona.ErrorMessage(fmt.Sprintf("Wiki generation failed: %s", msg.Err)))
+		} else {
+			m.content.WriteString("Wiki generation complete!\n")
+		}
+		m.setContentAndAutoScroll(m.content.String())
+		return m, nil
+
 	case spinner.TickMsg:
 		if m.state == StateStreaming {
 			var cmd tea.Cmd
@@ -117,6 +161,10 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.pendingApproval != nil {
 			m.pendingApproval.response <- false
 			m.pendingApproval = nil
+		}
+		// Cancel any running wiki generation goroutine.
+		if m.wikiCancel != nil {
+			m.wikiCancel()
 		}
 		return m, tea.Quit
 	}
