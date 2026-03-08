@@ -293,6 +293,9 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 		m.content.WriteString(result.Output + "\n")
 		m.viewport.SetContent(m.content.String())
 	}
+	if cmd := m.maybeStartRalphLoop(); cmd != nil {
+		return tea.Batch(cmd, m.spinner.Tick)
+	}
 
 	switch result.Action {
 	case commands.ActionQuit:
@@ -331,6 +334,19 @@ func (m *Model) CancelRalphLoop() bool {
 	m.ralph.lastOutcome = "cancelled"
 	if m.turnCancel != nil {
 		m.turnCancel()
+		m.turnCancel = nil
 	}
 	return true
+}
+
+func (m *Model) maybeStartRalphLoop() tea.Cmd {
+	if m.ralph == nil || m.state != StateInput || m.agent == nil || m.ralph.iteration != 0 {
+		return nil
+	}
+	prompt := m.ralph.cfg.Prompt
+	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
+	m.setContentAndAutoScroll(m.content.String())
+	m.assistantStartIdx = m.content.Len()
+	m.state = StateStreaming
+	return m.startTurn(m.agent, prompt)
 }

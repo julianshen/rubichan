@@ -117,11 +117,13 @@ func TestModelHandleSlashRalphLoopParsesQuotedArgs(t *testing.T) {
 	require.NoError(t, reg.Register(commands.NewCancelRalphCommand(m.CancelRalphLoop)))
 
 	cmd := m.handleCommand(`/ralph-loop "finish the feature" --completion-promise "ALL DONE" --max-iterations 3`)
-	assert.Nil(t, cmd)
+	require.NotNil(t, cmd)
 	require.NotNil(t, m.ralph)
 	assert.Equal(t, "finish the feature", m.ralph.cfg.Prompt)
 	assert.Equal(t, "ALL DONE", m.ralph.cfg.CompletionPromise)
 	assert.Equal(t, 3, m.ralph.cfg.MaxIterations)
+	assert.Equal(t, StateStreaming, m.state)
+	assert.Contains(t, m.content.String(), "> finish the feature")
 }
 
 func TestModelHandleUnknownCommand(t *testing.T) {
@@ -253,6 +255,7 @@ func TestModelCancelRalphLoopCancelsTurn(t *testing.T) {
 	assert.True(t, ok)
 	assert.True(t, cancelled)
 	assert.True(t, m.ralph.cancelled)
+	assert.Nil(t, m.turnCancel)
 }
 
 func TestModelUpdateEnterEmptyInput(t *testing.T) {
