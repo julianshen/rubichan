@@ -1292,6 +1292,8 @@ func runHeadless() error {
 		return fmt.Errorf("agent run failed: %s", result.Error)
 	}
 
+	fmt.Fprintln(os.Stderr, persona.SuccessMessage())
+
 	// Compute exit code from security findings.
 	failOn := failOnFlag
 	if failOn == "" {

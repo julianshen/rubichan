@@ -342,6 +342,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.rawAssistant.Reset()
+		m.content.WriteString(persona.SuccessMessage())
 		m.content.WriteString("\n")
 		m.setContentAndAutoScroll(m.content.String())
 
