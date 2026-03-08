@@ -96,6 +96,8 @@ AVAILABLE_STACKS = list(STACK_CONFIG.keys())
 class BM25:
     """BM25 ranking algorithm for text search"""
 
+    _SHORT_TOKEN_ALLOWLIST = {"ui", "ux"}
+
     def __init__(self, k1=1.5, b=0.75):
         self.k1 = k1
         self.b = b
@@ -109,7 +111,10 @@ class BM25:
     def tokenize(self, text):
         """Lowercase, split, remove punctuation, filter short words"""
         text = re.sub(r'[^\w\s]', ' ', str(text).lower())
-        return [w for w in text.split() if len(w) > 2]
+        return [
+            w for w in text.split()
+            if len(w) > 2 or w in self._SHORT_TOKEN_ALLOWLIST
+        ]
 
     def fit(self, documents):
         """Build BM25 index from documents"""

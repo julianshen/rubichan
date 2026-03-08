@@ -15,7 +15,7 @@ Usage:
 
 import csv
 import json
-import os
+import re
 from datetime import datetime
 from pathlib import Path
 from core import search, DATA_DIR
@@ -31,6 +31,25 @@ SEARCH_CONFIG = {
     "landing": {"max_results": 2},
     "typography": {"max_results": 2}
 }
+
+SAFE_SLUG_RE = re.compile(r"[^a-z0-9_-]+")
+
+
+def _slugify_path_component(value: str, default: str = "default") -> str:
+    """Convert user-facing names into safe single path components."""
+    normalized = str(value or "").replace("/", " ").replace("\\", " ").replace("..", " ")
+    normalized = SAFE_SLUG_RE.sub("-", normalized.lower()).strip("-_")
+    normalized = re.sub(r"-{2,}", "-", normalized)
+    return normalized or default
+
+
+def _ensure_within_root(path: Path, root: Path) -> Path:
+    """Resolve a path and ensure it remains inside the expected root."""
+    resolved = path.resolve()
+    resolved_root = root.resolve()
+    if resolved != resolved_root and resolved_root not in resolved.parents:
+        raise ValueError(f"path escapes root: {path}")
+    return resolved
 
 
 # ============ DESIGN SYSTEM GENERATOR ============
@@ -273,7 +292,7 @@ def format_ascii_box(design_system: dict) -> str:
 
     # Build output lines
     lines = []
-    w = BOX_WIDTH - 1
+    w = BOX_WIDTH
 
     lines.append("+" + "-" * w + "+")
     lines.append(f"|  TARGET: {project} - RECOMMENDED DESIGN SYSTEM".ljust(BOX_WIDTH) + "|")
@@ -490,7 +509,7 @@ def generate_design_system(query: str, project_name: str = None, output_format: 
 # ============ PERSISTENCE FUNCTIONS ============
 def persist_design_system(design_system: dict, page: str = None, output_dir: str = None, page_query: str = None) -> dict:
     """
-    Persist design system to design-system/<project>/ folder using Master + Overrides pattern.
+    Persist design system to design-system/ using Master + Overrides pattern.
     
     Args:
         design_system: The generated design system dictionary
@@ -502,36 +521,34 @@ def persist_design_system(design_system: dict, page: str = None, output_dir: str
         dict with created file paths and status
     """
     base_dir = Path(output_dir) if output_dir else Path.cwd()
-    
-    # Use project name for project-specific folder
-    project_name = design_system.get("project_name", "default")
-    project_slug = project_name.lower().replace(' ', '-')
-    
-    design_system_dir = base_dir / "design-system" / project_slug
+
+    design_system_dir = base_dir / "design-system"
     pages_dir = design_system_dir / "pages"
-    
+
     created_files = []
-    
+
     # Create directories
     design_system_dir.mkdir(parents=True, exist_ok=True)
     pages_dir.mkdir(parents=True, exist_ok=True)
-    
-    master_file = design_system_dir / "MASTER.md"
-    
+
+    _ensure_within_root(design_system_dir, base_dir)
+    master_file = _ensure_within_root(design_system_dir / "MASTER.md", design_system_dir)
+
     # Generate and write MASTER.md
     master_content = format_master_md(design_system)
     with open(master_file, 'w', encoding='utf-8') as f:
         f.write(master_content)
     created_files.append(str(master_file))
-    
+
     # If page is specified, create page override file with intelligent content
     if page:
-        page_file = pages_dir / f"{page.lower().replace(' ', '-')}.md"
+        page_slug = _slugify_path_component(page, default="page")
+        page_file = _ensure_within_root(pages_dir / f"{page_slug}.md", design_system_dir)
         page_content = format_page_override_md(design_system, page, page_query)
         with open(page_file, 'w', encoding='utf-8') as f:
             f.write(page_content)
         created_files.append(str(page_file))
-    
+
     return {
         "status": "success",
         "design_system_dir": str(design_system_dir),
@@ -937,14 +954,21 @@ def _generate_intelligent_overrides(page_name: str, page_query: str, design_syst
     # Detect page type from search results or context
     page_type = _detect_page_type(combined_context, style_results)
     
-    # Build overrides from search results
-    layout = {}
-    spacing = {}
-    typography = {}
-    colors = {}
-    components = []
-    unique_components = []
-    recommendations = []
+    base_layout = design_system.get("layout", {}) or {}
+    base_spacing = design_system.get("spacing", {}) or {}
+    base_typography = design_system.get("typography", {}) or {}
+    base_colors = design_system.get("colors", {}) or {}
+    base_components = design_system.get("components", []) or []
+    base_unique_components = design_system.get("unique_components", []) or []
+    base_recommendations = design_system.get("recommendations", []) or []
+
+    candidate_layout = {}
+    candidate_spacing = {}
+    candidate_typography = {}
+    candidate_colors = {}
+    candidate_components = []
+    candidate_unique_components = []
+    candidate_recommendations = []
     
     # Extract style-based overrides
     if style_results:
@@ -956,19 +980,19 @@ def _generate_intelligent_overrides(page_name: str, page_query: str, design_syst
         
         # Infer layout from style keywords
         if any(kw in keywords.lower() for kw in ["data", "dense", "dashboard", "grid"]):
-            layout["Max Width"] = "1400px or full-width"
-            layout["Grid"] = "12-column grid for data flexibility"
-            spacing["Content Density"] = "High — optimize for information display"
+            candidate_layout["Max Width"] = "1400px or full-width"
+            candidate_layout["Grid"] = "12-column grid for data flexibility"
+            candidate_spacing["Content Density"] = "High — optimize for information display"
         elif any(kw in keywords.lower() for kw in ["minimal", "simple", "clean", "single"]):
-            layout["Max Width"] = "800px (narrow, focused)"
-            layout["Layout"] = "Single column, centered"
-            spacing["Content Density"] = "Low — focus on clarity"
+            candidate_layout["Max Width"] = "800px (narrow, focused)"
+            candidate_layout["Layout"] = "Single column, centered"
+            candidate_spacing["Content Density"] = "Low — focus on clarity"
         else:
-            layout["Max Width"] = "1200px (standard)"
-            layout["Layout"] = "Full-width sections, centered content"
-        
+            candidate_layout["Max Width"] = "1200px (standard)"
+            candidate_layout["Layout"] = "Full-width sections, centered content"
+
         if effects:
-            recommendations.append(f"Effects: {effects}")
+            candidate_recommendations.append(f"Effects: {effects}")
     
     # Extract UX guidelines as recommendations
     for ux in ux_results:
@@ -976,9 +1000,9 @@ def _generate_intelligent_overrides(page_name: str, page_query: str, design_syst
         do_text = ux.get("Do", "")
         dont_text = ux.get("Don't", "")
         if do_text:
-            recommendations.append(f"{category}: {do_text}")
+            candidate_recommendations.append(f"{category}: {do_text}")
         if dont_text:
-            components.append(f"Avoid: {dont_text}")
+            candidate_components.append(f"Avoid: {dont_text}")
     
     # Extract landing pattern info for section structure
     if landing_results:
@@ -988,32 +1012,44 @@ def _generate_intelligent_overrides(page_name: str, page_query: str, design_syst
         color_strategy = landing.get("Color Strategy", "")
         
         if sections:
-            layout["Sections"] = sections
+            candidate_layout["Sections"] = sections
         if cta_placement:
-            recommendations.append(f"CTA Placement: {cta_placement}")
+            candidate_recommendations.append(f"CTA Placement: {cta_placement}")
         if color_strategy:
-            colors["Strategy"] = color_strategy
-    
-    # Add page-type specific defaults if no search results
-    if not layout:
-        layout["Max Width"] = "1200px"
-        layout["Layout"] = "Responsive grid"
-    
-    if not recommendations:
-        recommendations = [
-            "Refer to MASTER.md for all design rules",
-            "Add specific overrides as needed for this page"
-        ]
-    
+            candidate_colors["Strategy"] = color_strategy
+
+    page_type_unique_components = {
+        "Dashboard / Data View": ["KPI summary cards", "Filter bar", "Activity feed"],
+        "Checkout / Payment": ["Order summary", "Payment method selector", "Security / trust indicators"],
+        "Authentication": ["Social auth actions", "Password strength meter"],
+        "Search Results": ["Filter sidebar", "Sort controls", "Active filter chips"],
+    }
+    candidate_unique_components.extend(page_type_unique_components.get(page_type, []))
+
+    def _diff_mapping(candidate: dict, base: dict) -> dict:
+        return {key: value for key, value in candidate.items() if base.get(key) != value}
+
+    def _diff_list(candidate: list, base: list) -> list:
+        base_items = {str(item) for item in base}
+        seen = set()
+        result = []
+        for item in candidate:
+            item = str(item).strip()
+            if not item or item in base_items or item in seen:
+                continue
+            seen.add(item)
+            result.append(item)
+        return result
+
     return {
         "page_type": page_type,
-        "layout": layout,
-        "spacing": spacing,
-        "typography": typography,
-        "colors": colors,
-        "components": components,
-        "unique_components": unique_components,
-        "recommendations": recommendations
+        "layout": _diff_mapping(candidate_layout, base_layout),
+        "spacing": _diff_mapping(candidate_spacing, base_spacing),
+        "typography": _diff_mapping(candidate_typography, base_typography),
+        "colors": _diff_mapping(candidate_colors, base_colors),
+        "components": _diff_list(candidate_components, base_components),
+        "unique_components": _diff_list(candidate_unique_components, base_unique_components),
+        "recommendations": _diff_list(candidate_recommendations, base_recommendations),
     }
 
 
