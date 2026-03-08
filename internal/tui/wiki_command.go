@@ -9,6 +9,25 @@ import (
 	"github.com/julianshen/rubichan/internal/wiki"
 )
 
+// wikiProgressMsg carries a progress update from the wiki goroutine.
+type wikiProgressMsg struct {
+	Stage   string
+	Current int
+	Total   int
+}
+
+// wikiDoneMsg signals wiki generation completion.
+type wikiDoneMsg struct {
+	Err error
+}
+
+// wikiEventMsg carries a progress update and channels for continued listening.
+type wikiEventMsg struct {
+	progress   *wikiProgressMsg
+	progressCh <-chan wikiProgressMsg
+	doneCh     <-chan error
+}
+
 // WikiCommandConfig holds dependencies for the /wiki command.
 type WikiCommandConfig struct {
 	WorkDir string

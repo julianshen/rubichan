@@ -53,3 +53,14 @@ func TestWikiFormConcurrency(t *testing.T) {
 	wf.ConcurrencyStr = "invalid"
 	assert.Equal(t, 5, wf.Concurrency())
 }
+
+func TestStatusBarWikiProgress(t *testing.T) {
+	sb := NewStatusBar(120)
+	sb.SetWikiProgress("analyzing")
+	view := sb.View()
+	assert.Contains(t, view, "Wiki: analyzing")
+
+	sb.ClearWikiProgress()
+	view = sb.View()
+	assert.NotContains(t, view, "Wiki:")
+}
