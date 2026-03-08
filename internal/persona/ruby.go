@@ -37,10 +37,8 @@ func ErrorMessage(err string) string {
 	return fmt.Sprintf("P-Pigi!! %s (>_<)\n", err)
 }
 
-// SuccessMessage returns a completion message.
-// Not yet wired into a call site — the TUI "done" event currently has no
-// explicit success text. Available for future integration (e.g., headless
-// runner summary or TUI turn-completion indicator).
+// SuccessMessage returns a completion message displayed after a successful
+// agent turn in both the TUI and headless runner.
 func SuccessMessage() string {
 	return "Ruby did it! (^_^) Ganbaruby!"
 }
