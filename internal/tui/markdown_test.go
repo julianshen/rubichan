@@ -50,3 +50,36 @@ func TestRenderMarkdownNilRenderer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Hello **world**", result)
 }
+
+func TestIsMarkdownBreakpointDoubleNewline(t *testing.T) {
+	assert.True(t, IsMarkdownBreakpoint("some text\n\n"))
+}
+
+func TestIsMarkdownBreakpointCodeFenceClosing(t *testing.T) {
+	assert.True(t, IsMarkdownBreakpoint("fmt.Println()\n```\n"))
+}
+
+func TestIsMarkdownBreakpointHeading(t *testing.T) {
+	assert.True(t, IsMarkdownBreakpoint("some text\n## Section\n"))
+}
+
+func TestIsMarkdownBreakpointH1(t *testing.T) {
+	assert.True(t, IsMarkdownBreakpoint("intro\n# Title\n"))
+}
+
+func TestIsMarkdownBreakpointSingleNewline(t *testing.T) {
+	assert.False(t, IsMarkdownBreakpoint("some text\n"))
+}
+
+func TestIsMarkdownBreakpointMidWord(t *testing.T) {
+	assert.False(t, IsMarkdownBreakpoint("some text"))
+}
+
+func TestIsMarkdownBreakpointEmpty(t *testing.T) {
+	assert.False(t, IsMarkdownBreakpoint(""))
+}
+
+func TestIsMarkdownBreakpointCodeFenceOpening(t *testing.T) {
+	// Opening fence is NOT a breakpoint — only closing fences are.
+	assert.False(t, IsMarkdownBreakpoint("text\n```go\n"))
+}
