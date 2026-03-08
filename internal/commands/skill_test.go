@@ -171,18 +171,32 @@ func TestSkillCommandCompleteSubcommands(t *testing.T) {
 	assert.Equal(t, "deactivate", candidates[2].Value)
 }
 
-func TestSkillCommandCompleteSkillNames(t *testing.T) {
+func TestSkillCommandCompleteActivateShowsInactiveOnly(t *testing.T) {
 	cmd := NewSkillCommand(&mockSkillLister{
 		skills: []SkillInfo{
-			{Name: "alpha", Description: "Alpha skill"},
-			{Name: "beta", Description: "Beta skill"},
+			{Name: "alpha", Description: "Alpha skill", State: "Active"},
+			{Name: "beta", Description: "Beta skill", State: "Inactive"},
+			{Name: "gamma", Description: "Gamma skill", State: "Inactive"},
 		},
 	})
 
 	candidates := cmd.Complete(context.Background(), []string{"activate"})
 	require.Len(t, candidates, 2)
+	assert.Equal(t, "beta", candidates[0].Value)
+	assert.Equal(t, "gamma", candidates[1].Value)
+}
+
+func TestSkillCommandCompleteDeactivateShowsActiveOnly(t *testing.T) {
+	cmd := NewSkillCommand(&mockSkillLister{
+		skills: []SkillInfo{
+			{Name: "alpha", Description: "Alpha skill", State: "Active"},
+			{Name: "beta", Description: "Beta skill", State: "Inactive"},
+		},
+	})
+
+	candidates := cmd.Complete(context.Background(), []string{"deactivate"})
+	require.Len(t, candidates, 1)
 	assert.Equal(t, "alpha", candidates[0].Value)
-	assert.Equal(t, "beta", candidates[1].Value)
 }
 
 func TestSkillCommandImplementsSlashCommand(t *testing.T) {

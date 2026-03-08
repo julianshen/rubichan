@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"text/tabwriter"
 )
 
 // SkillInfo holds minimal skill information for the /skill command.
@@ -53,16 +54,22 @@ func (c *skillCommand) Complete(_ context.Context, args []string) []Candidate {
 		}
 	}
 
-	// Second argument: skill names for activate/deactivate.
+	// Second argument: skill names filtered by state for the subcommand.
 	sub := args[0]
 	if sub == "activate" || sub == "deactivate" {
+		wantState := "Inactive"
+		if sub == "deactivate" {
+			wantState = "Active"
+		}
 		skills := c.lister.ListSkills()
 		candidates := make([]Candidate, 0, len(skills))
 		for _, sk := range skills {
-			candidates = append(candidates, Candidate{
-				Value:       sk.Name,
-				Description: sk.Description,
-			})
+			if sk.State == wantState {
+				candidates = append(candidates, Candidate{
+					Value:       sk.Name,
+					Description: sk.Description,
+				})
+			}
 		}
 		return candidates
 	}
@@ -102,9 +109,11 @@ func (c *skillCommand) executeList() (Result, error) {
 
 	var b strings.Builder
 	b.WriteString("Skills:\n")
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, sk := range skills {
-		fmt.Fprintf(&b, "  %-30s %-10s %-10s %s\n", sk.Name, sk.State, sk.Source, sk.Description)
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", sk.Name, sk.State, sk.Source, sk.Description)
 	}
+	tw.Flush()
 	return Result{Output: b.String()}, nil
 }
 
