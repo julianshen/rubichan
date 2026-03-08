@@ -137,7 +137,6 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 
 	// 4. Built-in skills override everything from directories.
 	for name, ds := range l.builtins {
-		ds.Source = SourceBuiltin
 		byName[name] = ds
 	}
 

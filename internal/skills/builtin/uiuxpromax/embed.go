@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/julianshen/rubichan/internal/skills"
 )
@@ -14,6 +15,7 @@ import (
 var content embed.FS
 
 const embeddedSkillRoot = "content/ui-ux-pro-max"
+const materializeVersion = "1.0.0"
 
 // Register materializes the embedded ui-ux-pro-max skill into cacheRoot and
 // registers it as a built-in instruction skill with its helper files preserved.
@@ -33,7 +35,7 @@ func Register(loader *skills.Loader, cacheRoot string) error {
 		return fmt.Errorf("parse embedded skill: %w", err)
 	}
 	if manifest.Version == "" {
-		manifest.Version = "1.0.0"
+		manifest.Version = materializeVersion
 	}
 
 	loader.RegisterBuiltinDiscovered(skills.DiscoveredSkill{
@@ -47,6 +49,11 @@ func Register(loader *skills.Loader, cacheRoot string) error {
 
 func materialize(cacheRoot string) (string, error) {
 	destRoot := filepath.Join(cacheRoot, "builtin-skills", "ui-ux-pro-max")
+	versionFile := filepath.Join(destRoot, ".version")
+
+	if data, err := os.ReadFile(versionFile); err == nil && strings.TrimSpace(string(data)) == materializeVersion {
+		return destRoot, nil
+	}
 	if err := os.MkdirAll(destRoot, 0o755); err != nil {
 		return "", fmt.Errorf("create builtin skill directory: %w", err)
 	}
@@ -73,13 +80,13 @@ func materialize(cacheRoot string) (string, error) {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			return err
-		}
 		return os.WriteFile(destPath, data, 0o644)
 	})
 	if err != nil {
 		return "", fmt.Errorf("materialize builtin skill: %w", err)
+	}
+	if err := os.WriteFile(versionFile, []byte(materializeVersion), 0o644); err != nil {
+		return "", fmt.Errorf("write materialize version: %w", err)
 	}
 
 	return destRoot, nil

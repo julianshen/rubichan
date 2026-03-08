@@ -1,6 +1,7 @@
 package uiuxpromax
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -29,4 +30,31 @@ func TestRegisterPopulatesLoader(t *testing.T) {
 	assert.FileExists(t, filepath.Join(ds.Dir, "scripts", "search.py"))
 	assert.FileExists(t, filepath.Join(ds.Dir, "data", "styles.csv"))
 	assert.FileExists(t, filepath.Join(ds.Dir, "templates", "platforms", "codex.json"))
+}
+
+func TestRegisterIsIdempotentForMaterializedCache(t *testing.T) {
+	cacheRoot := t.TempDir()
+	loader := skills.NewLoader("", "")
+
+	require.NoError(t, Register(loader, cacheRoot))
+
+	scriptPath := filepath.Join(cacheRoot, "builtin-skills", "ui-ux-pro-max", "scripts", "search.py")
+	require.NoError(t, os.WriteFile(scriptPath, []byte("# sentinel\n"), 0o644))
+
+	require.NoError(t, Register(loader, cacheRoot))
+
+	data, err := os.ReadFile(scriptPath)
+	require.NoError(t, err)
+	assert.Equal(t, "# sentinel\n", string(data))
+	assert.FileExists(t, filepath.Join(cacheRoot, "builtin-skills", "ui-ux-pro-max", ".version"))
+}
+
+func TestRegisterReturnsErrorForInvalidCacheRoot(t *testing.T) {
+	cacheRoot := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(cacheRoot, []byte("x"), 0o644))
+
+	loader := skills.NewLoader("", "")
+	err := Register(loader, cacheRoot)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create builtin skill directory")
 }

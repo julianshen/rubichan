@@ -402,10 +402,7 @@ func registerBuiltinSkillPrompts(loader *skills.Loader, configDir string) error 
 	superpowers.Register(loader)
 	frontenddesign.Register(loader)
 	appledev.RegisterPrompt(loader)
-	if err := uiuxpromax.Register(loader, configDir); err != nil {
-		return err
-	}
-	return nil
+	return uiuxpromax.Register(loader, configDir)
 }
 
 func emitSkillDiscoveryWarnings(w io.Writer, rt *skills.Runtime) {
