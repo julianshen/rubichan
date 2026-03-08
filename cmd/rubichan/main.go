@@ -958,6 +958,11 @@ func runInteractive() error {
 	})); err != nil {
 		return fmt.Errorf("register built-in command %q: %w", "model", err)
 	}
+	if rt != nil {
+		if err := cmdRegistry.Register(commands.NewSkillCommand(&skillListerAdapter{rt: rt})); err != nil {
+			return fmt.Errorf("register built-in command %q: %w", "skill", err)
+		}
+	}
 
 	// Build tool execution pipeline first so its rule engine can feed
 	// the approval system.
@@ -1768,4 +1773,31 @@ func (a *agentDefRegistrarAdapter) Register(def *skills.AgentDefinition) error {
 
 func (a *agentDefRegistrarAdapter) Unregister(name string) error {
 	return a.reg.Unregister(name)
+}
+
+// skillListerAdapter bridges skills.Runtime to commands.SkillLister.
+type skillListerAdapter struct {
+	rt *skills.Runtime
+}
+
+func (a *skillListerAdapter) ListSkills() []commands.SkillInfo {
+	summaries := a.rt.GetAllSkillSummaries()
+	infos := make([]commands.SkillInfo, len(summaries))
+	for i, s := range summaries {
+		infos[i] = commands.SkillInfo{
+			Name:        s.Name,
+			Description: s.Description,
+			Source:      string(s.Source),
+			State:       s.State.String(),
+		}
+	}
+	return infos
+}
+
+func (a *skillListerAdapter) ActivateSkill(name string) error {
+	return a.rt.Activate(name)
+}
+
+func (a *skillListerAdapter) DeactivateSkill(name string) error {
+	return a.rt.Deactivate(name)
 }

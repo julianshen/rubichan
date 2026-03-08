@@ -1,61 +1,47 @@
 // Package frontmatter parses YAML frontmatter from SKILL.md files used by
-// built-in prompt skills. The format is: ---\nyaml\n---\nbody.
+// built-in prompt skills and registers them on the skill Loader.
 package frontmatter
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
-	"strings"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/julianshen/rubichan/internal/skills"
 )
 
-// Fields holds the YAML fields parsed from SKILL.md frontmatter.
-type Fields struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-}
-
-// Parse splits a SKILL.md file into frontmatter fields and body content.
-// The file must start with "---\n", followed by YAML, then "---\n", then body.
-func Parse(raw string) (name, description, body string, err error) {
-	const delimiter = "---"
-	if !strings.HasPrefix(raw, delimiter) {
-		return "", "", "", fmt.Errorf("missing opening frontmatter delimiter")
+// injectDefaultVersion prepends "version: 1.0.0" to the YAML frontmatter if
+// no version field exists within the frontmatter block. The check is scoped
+// to the content between the opening and closing "---" markers to avoid false
+// positives from "version:" appearing in the markdown body.
+func injectDefaultVersion(data []byte) []byte {
+	// Find the closing "---" that ends the frontmatter block.
+	// The opening "---" is at the start; search for "\n---" after it.
+	closingIdx := bytes.Index(data[3:], []byte("\n---"))
+	if closingIdx < 0 {
+		return data
 	}
+	frontmatter := data[:3+closingIdx]
 
-	// Find the first newline after the opening delimiter.
-	firstNewline := strings.Index(raw, "\n")
-	if firstNewline < 0 {
-		return "", "", "", fmt.Errorf("missing content after opening delimiter")
+	if bytes.Contains(frontmatter, []byte("\nversion:")) {
+		return data
 	}
-	rest := raw[firstNewline+1:]
-
-	// Find the closing delimiter at the start of a line.
-	// Look for "\n---" so we don't match "---" as a substring of other content.
-	closingMarker := "\n" + delimiter
-	idx := strings.Index(rest, closingMarker)
+	// Insert "version: 1.0.0\n" right after the opening "---\n".
+	idx := bytes.Index(data, []byte("\n"))
 	if idx < 0 {
-		return "", "", "", fmt.Errorf("missing closing frontmatter delimiter")
+		return data
 	}
-
-	yamlBlock := rest[:idx]
-	body = strings.TrimSpace(rest[idx+len(closingMarker):])
-
-	var fm Fields
-	if err := yaml.Unmarshal([]byte(yamlBlock), &fm); err != nil {
-		return "", "", "", fmt.Errorf("parse frontmatter YAML: %w", err)
-	}
-
-	return fm.Name, fm.Description, body, nil
+	var buf bytes.Buffer
+	buf.Write(data[:idx+1])
+	buf.WriteString("version: \"1.0.0\"\n")
+	buf.Write(data[idx+1:])
+	return buf.Bytes()
 }
 
-// RegisterAll walks an embedded FS for SKILL.md files and registers each as a
-// built-in prompt skill that auto-activates in interactive mode. It returns an
-// error if any embedded content is malformed.
-func RegisterAll(fsys fs.FS, loader *skills.Loader) error {
+// RegisterAllFull walks an embedded FS for SKILL.md files and registers each
+// as a built-in skill using the full instruction skill parser. This supports
+// the complete SKILL.md frontmatter schema (commands, agents, triggers, etc.).
+func RegisterAllFull(fsys fs.FS, loader *skills.Loader) error {
 	return fs.WalkDir(fsys, "content", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || d.IsDir() || d.Name() != "SKILL.md" {
 			return walkErr
@@ -66,24 +52,20 @@ func RegisterAll(fsys fs.FS, loader *skills.Loader) error {
 			return readErr
 		}
 
-		name, description, body, parseErr := Parse(string(data))
-		if parseErr != nil {
-			return parseErr
-		}
+		// Inject a default version if the frontmatter doesn't include one,
+		// because ParseInstructionSkill requires version via validateManifest.
+		data = injectDefaultVersion(data)
 
-		m := &skills.SkillManifest{
-			Name:        name,
-			Version:     "1.0.0",
-			Description: description,
-			Types:       []skills.SkillType{skills.SkillTypePrompt},
-			Prompt: skills.PromptConfig{
-				SystemPromptFile: body,
-			},
-			Triggers: skills.TriggerConfig{
-				Modes: []string{"interactive"},
-			},
+		manifest, body, parseErr := skills.ParseInstructionSkill(data)
+		if parseErr != nil {
+			return fmt.Errorf("parse %s: %w", path, parseErr)
 		}
-		loader.RegisterBuiltin(m)
+		if len(manifest.Triggers.Modes) == 0 {
+			manifest.Triggers.Modes = []string{"interactive"}
+		}
+		manifest.Prompt.SystemPromptFile = body
+
+		loader.RegisterBuiltin(manifest)
 		return nil
 	})
 }

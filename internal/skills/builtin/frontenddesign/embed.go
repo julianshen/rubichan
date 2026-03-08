@@ -17,7 +17,7 @@ var content embed.FS
 // built-in prompt skill on the loader. Skills auto-activate in interactive mode.
 // It panics on embedded content errors since these indicate a build-time bug.
 func Register(loader *skills.Loader) {
-	if err := frontmatter.RegisterAll(content, loader); err != nil {
+	if err := frontmatter.RegisterAllFull(content, loader); err != nil {
 		panic("frontenddesign: embedded content error: " + err.Error())
 	}
 }

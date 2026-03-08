@@ -39,3 +39,21 @@ func TestRegisterPopulatesLoader(t *testing.T) {
 		t.Errorf("content too short (%d bytes)", len(ds.Manifest.Prompt.SystemPromptFile))
 	}
 }
+
+func TestFrontendDesignRegisterDesignCommand(t *testing.T) {
+	loader := skills.NewLoader("", "")
+	Register(loader)
+
+	discovered, _, err := loader.Discover(nil)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	cmds := discovered[0].Manifest.Commands
+	if len(cmds) != 1 {
+		t.Fatalf("got %d commands, want 1", len(cmds))
+	}
+	if cmds[0].Name != "design" {
+		t.Errorf("command name = %q, want %q", cmds[0].Name, "design")
+	}
+}

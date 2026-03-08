@@ -1,6 +1,9 @@
 ---
 name: test-driven-development
 description: Use when implementing any feature or bugfix, before writing implementation code
+commands:
+  - name: tdd
+    description: Start TDD workflow for a feature or bugfix
 ---
 
 # Test-Driven Development (TDD)

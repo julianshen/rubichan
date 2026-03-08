@@ -12,10 +12,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
+	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1550,4 +1552,106 @@ Body.
 	assert.Contains(t, output, "[manifest] ok: dev-bad v1.0.0 (instruction)")
 	assert.Contains(t, output, "[lint] 1 issue(s)")
 	assert.Contains(t, output, "unknown_field")
+}
+
+// --- skillListerAdapter tests ---
+
+// newTestRuntime creates a Runtime with a single registered built-in skill
+// for testing the skillListerAdapter field mapping.
+func newTestRuntime(t *testing.T) *skills.Runtime {
+	t.Helper()
+
+	loader := skills.NewLoader("", "")
+
+	manifest := &skills.SkillManifest{
+		Name:        "test-skill",
+		Description: "A test skill",
+		Version:     "1.0.0",
+		Types:       []skills.SkillType{skills.SkillTypePrompt},
+		Triggers:    skills.TriggerConfig{Modes: []string{"interactive"}},
+	}
+	loader.RegisterBuiltin(manifest)
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+
+	rt := skills.NewRuntime(loader, s, tools.NewRegistry(), nil,
+		func(m skills.SkillManifest, dir string) (skills.SkillBackend, error) {
+			return &stubBackend{}, nil
+		},
+		func(name string, perms []skills.Permission) skills.PermissionChecker {
+			return &stubPermChecker{}
+		},
+	)
+	require.NoError(t, rt.Discover(nil))
+	return rt
+}
+
+// stubBackend satisfies SkillBackend for adapter tests.
+type stubBackend struct{}
+
+func (b *stubBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error { return nil }
+func (b *stubBackend) Unload() error                                                 { return nil }
+func (b *stubBackend) Tools() []tools.Tool                                           { return nil }
+func (b *stubBackend) Commands() []commands.SlashCommand                             { return nil }
+func (b *stubBackend) Agents() []*skills.AgentDefinition                             { return nil }
+func (b *stubBackend) Hooks() map[skills.HookPhase]skills.HookHandler                { return nil }
+
+// stubPermChecker satisfies PermissionChecker for adapter tests.
+type stubPermChecker struct{}
+
+func (c *stubPermChecker) CheckPermission(_ skills.Permission) error { return nil }
+func (c *stubPermChecker) CheckRateLimit(_ string) error             { return nil }
+func (c *stubPermChecker) ResetTurnLimits()                          {}
+
+func TestSkillListerAdapterListSkills(t *testing.T) {
+	rt := newTestRuntime(t)
+	adapter := &skillListerAdapter{rt: rt}
+
+	infos := adapter.ListSkills()
+	require.Len(t, infos, 1)
+
+	info := infos[0]
+	assert.Equal(t, "test-skill", info.Name)
+	assert.Equal(t, "A test skill", info.Description)
+	assert.Equal(t, "builtin", info.Source)
+	assert.Equal(t, "Inactive", info.State)
+}
+
+func TestSkillListerAdapterActivateAndDeactivate(t *testing.T) {
+	rt := newTestRuntime(t)
+	adapter := &skillListerAdapter{rt: rt}
+
+	// Activate.
+	require.NoError(t, adapter.ActivateSkill("test-skill"))
+
+	infos := adapter.ListSkills()
+	require.Len(t, infos, 1)
+	assert.Equal(t, "Active", infos[0].State)
+
+	// Deactivate.
+	require.NoError(t, adapter.DeactivateSkill("test-skill"))
+
+	infos = adapter.ListSkills()
+	require.Len(t, infos, 1)
+	assert.Equal(t, "Inactive", infos[0].State)
+}
+
+func TestSkillListerAdapterActivateNotFound(t *testing.T) {
+	rt := newTestRuntime(t)
+	adapter := &skillListerAdapter{rt: rt}
+
+	err := adapter.ActivateSkill("nonexistent")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestSkillListerAdapterDeactivateNotActive(t *testing.T) {
+	rt := newTestRuntime(t)
+	adapter := &skillListerAdapter{rt: rt}
+
+	err := adapter.DeactivateSkill("test-skill")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not active")
 }
