@@ -51,7 +51,7 @@ func (m *Manager) HasChanges(ctx context.Context, name string) (bool, error) {
 	}
 
 	// Check for commits beyond the base branch.
-	base := m.baseBranch()
+	base := m.baseBranch(ctx)
 	log, err := m.git(ctx, dir, "log", base+"..HEAD", "--oneline")
 	if err != nil {
 		return false, fmt.Errorf("checking worktree commits: %w", err)
@@ -166,7 +166,7 @@ func (m *Manager) create(ctx context.Context, name string) (*Worktree, error) {
 		return nil, fmt.Errorf("creating worktree parent dir: %w", err)
 	}
 
-	base := m.baseBranch()
+	base := m.baseBranch(ctx)
 
 	// Fire worktree.create hook. If it handles creation, skip git command.
 	if m.hookFn != nil {
@@ -273,12 +273,12 @@ func (m *Manager) list(ctx context.Context) ([]Worktree, error) {
 
 // baseBranch returns the configured base branch, auto-detecting from
 // origin/HEAD if not explicitly configured, falling back to "main".
-func (m *Manager) baseBranch() string {
+func (m *Manager) baseBranch(ctx context.Context) string {
 	if m.config.BaseBranch != "" {
 		return m.config.BaseBranch
 	}
 	// Auto-detect from origin/HEAD (e.g., "refs/remotes/origin/main").
-	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Dir = m.repoRoot
 	if out, err := cmd.Output(); err == nil {
 		ref := strings.TrimSpace(string(out))

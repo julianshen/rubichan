@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -561,6 +562,34 @@ func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
 	}
 }
 
+func TestCleanup_AutoCleanupDisabled(t *testing.T) {
+	repo := initTestRepo(t)
+	cfg := DefaultConfig()
+	cfg.AutoCleanup = false
+	cfg.MaxWorktrees = 2
+	mgr := NewManager(repo, cfg)
+	ctx := context.Background()
+
+	// Create 3 clean worktrees. With AutoCleanup disabled, Phase 1 is skipped.
+	// Phase 2 should remove the oldest clean one to enforce max=2.
+	for _, name := range []string{"oldest", "middle", "newest"} {
+		mgr.Create(ctx, name)
+	}
+
+	err := mgr.Cleanup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Errorf("Expected 2 worktrees after retention enforcement, got %d", len(list))
+	}
+}
+
 func TestCleanup_PreservesDirtyWorktrees(t *testing.T) {
 	repo := initTestRepo(t)
 	cfg := DefaultConfig()
@@ -586,5 +615,310 @@ func TestCleanup_PreservesDirtyWorktrees(t *testing.T) {
 	}
 	if len(list) != 3 {
 		t.Errorf("All dirty worktrees should be preserved, got %d", len(list))
+	}
+}
+
+func TestBaseBranch_AutoDetect(t *testing.T) {
+	repo := initTestRepo(t)
+	cfg := DefaultConfig()
+	mgr := NewManager(repo, cfg)
+	ctx := context.Background()
+
+	// Without origin/HEAD set, baseBranch should fall back to "main".
+	got := mgr.baseBranch(ctx)
+	if got != "main" {
+		t.Errorf("expected fallback to 'main', got %q", got)
+	}
+
+	// With explicit config, baseBranch should use that.
+	cfg.BaseBranch = "develop"
+	mgr2 := NewManager(repo, cfg)
+	got2 := mgr2.baseBranch(ctx)
+	if got2 != "develop" {
+		t.Errorf("expected configured 'develop', got %q", got2)
+	}
+}
+
+func TestBaseBranch_WithOriginHead(t *testing.T) {
+	repo := initTestRepo(t)
+
+	// Set up a bare remote and configure origin/HEAD.
+	remote := t.TempDir()
+	cmd := exec.Command("git", "clone", "--bare", repo, remote)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bare clone failed: %v\n%s", err, out)
+	}
+
+	// Add remote to original repo.
+	for _, args := range [][]string{
+		{"git", "remote", "add", "origin", remote},
+		{"git", "fetch", "origin"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	// Set origin/HEAD to point to main.
+	cmd = exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("symbolic-ref failed: %v\n%s", err, out)
+	}
+
+	cfg := DefaultConfig()
+	mgr := NewManager(repo, cfg)
+	ctx := context.Background()
+
+	got := mgr.baseBranch(ctx)
+	if got != "main" {
+		t.Errorf("expected auto-detected 'main', got %q", got)
+	}
+}
+
+func TestRemove_NonExistent(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	err := mgr.Remove(ctx, "does-not-exist")
+	if err == nil {
+		t.Error("expected error removing non-existent worktree")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' in error, got: %v", err)
+	}
+}
+
+func TestList_EmptyDirectory(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	// No worktrees created yet — list should return nil.
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected empty list, got %d", len(list))
+	}
+}
+
+func TestList_SkipsNonDirEntries(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	// Create the worktrees base dir with a plain file (not a dir).
+	wtBase := filepath.Join(repo, ".rubichan", "worktrees")
+	os.MkdirAll(wtBase, 0o755)
+	os.WriteFile(filepath.Join(wtBase, "not-a-dir"), []byte("x"), 0o644)
+
+	// Also create a dir without .git (should be skipped).
+	os.MkdirAll(filepath.Join(wtBase, "no-git-file"), 0o755)
+
+	list, err := mgr.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected empty list (no valid worktrees), got %d", len(list))
+	}
+}
+
+func TestCreate_ExistingWorktree(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	// Create a worktree, then create again — should return existing.
+	wt1, err := mgr.Create(ctx, "existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wt2, err := mgr.Create(ctx, "existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt1.Dir() != wt2.Dir() {
+		t.Errorf("expected same dir, got %q vs %q", wt1.Dir(), wt2.Dir())
+	}
+}
+
+func TestCreate_HookHandled(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	mgr.SetHookFunc(func(phase string, data map[string]any) (bool, error) {
+		if phase == "worktree.create" {
+			// Create the directory ourselves so the worktree "exists".
+			dir := data["path"].(string)
+			os.MkdirAll(dir, 0o755)
+			// Create a .git file so it looks like a worktree.
+			os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /fake"), 0o644)
+			return true, nil
+		}
+		return false, nil
+	})
+
+	ctx := context.Background()
+	wt, err := mgr.Create(ctx, "hook-handled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wt.Name != "hook-handled" {
+		t.Errorf("expected name 'hook-handled', got %q", wt.Name)
+	}
+}
+
+func TestRemove_HookHandled(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	// Create a real worktree first.
+	wt, err := mgr.Create(ctx, "hook-rm")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set hook that handles removal.
+	hookCalled := false
+	mgr.SetHookFunc(func(phase string, data map[string]any) (bool, error) {
+		if phase == "worktree.remove" {
+			hookCalled = true
+			// Remove directory ourselves.
+			os.RemoveAll(data["path"].(string))
+			return true, nil
+		}
+		return false, nil
+	})
+
+	err = mgr.Remove(ctx, wt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hookCalled {
+		t.Error("expected remove hook to be called")
+	}
+}
+
+func TestCreate_HookError(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	mgr.SetHookFunc(func(phase string, _ map[string]any) (bool, error) {
+		if phase == "worktree.create" {
+			return false, fmt.Errorf("hook failed")
+		}
+		return false, nil
+	})
+
+	ctx := context.Background()
+	_, err := mgr.Create(ctx, "hook-err")
+	if err == nil {
+		t.Fatal("expected error from hook")
+	}
+	if !strings.Contains(err.Error(), "hook failed") {
+		t.Errorf("expected hook error, got: %v", err)
+	}
+}
+
+func TestRemove_HookError(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	mgr.Create(ctx, "hook-rm-err")
+
+	mgr.SetHookFunc(func(phase string, _ map[string]any) (bool, error) {
+		if phase == "worktree.remove" {
+			return false, fmt.Errorf("remove hook failed")
+		}
+		return false, nil
+	})
+
+	err := mgr.Remove(ctx, "hook-rm-err")
+	if err == nil {
+		t.Fatal("expected error from remove hook")
+	}
+	if !strings.Contains(err.Error(), "remove hook failed") {
+		t.Errorf("expected hook error, got: %v", err)
+	}
+}
+
+func TestCleanup_RemoveError(t *testing.T) {
+	repo := initTestRepo(t)
+	cfg := DefaultConfig()
+	cfg.AutoCleanup = true
+	mgr := NewManager(repo, cfg)
+	ctx := context.Background()
+
+	// Create a clean worktree, then corrupt it so remove fails.
+	mgr.Create(ctx, "corrupt")
+
+	// Set hook to fail on remove.
+	mgr.SetHookFunc(func(phase string, _ map[string]any) (bool, error) {
+		if phase == "worktree.remove" {
+			return false, fmt.Errorf("forced remove failure")
+		}
+		return false, nil
+	})
+
+	err := mgr.Cleanup(ctx)
+	if err == nil {
+		t.Fatal("expected error from cleanup")
+	}
+	if !strings.Contains(err.Error(), "forced remove failure") {
+		t.Errorf("expected forced remove error, got: %v", err)
+	}
+}
+
+func TestCreate_MkdirAllError(t *testing.T) {
+	repo := initTestRepo(t)
+	mgr := NewManager(repo, DefaultConfig())
+	ctx := context.Background()
+
+	// Block the parent directory creation by placing a file where the dir would be.
+	rubichanPath := filepath.Join(repo, ".rubichan")
+	os.RemoveAll(rubichanPath)
+	os.WriteFile(rubichanPath, []byte("blocking file"), 0o644)
+
+	_, err := mgr.Create(ctx, "blocked")
+	if err == nil {
+		t.Fatal("expected error when parent dir creation fails")
+	}
+}
+
+func TestPublicMethods_LockError(t *testing.T) {
+	// Use a repo root where the lock file path's parent is blocked.
+	repo := initTestRepo(t)
+	cfg := DefaultConfig()
+	mgr := NewManager(repo, cfg)
+
+	// Block the lock directory by placing a file where .rubichan/worktrees would be.
+	lockParent := filepath.Join(repo, ".rubichan", "worktrees")
+	os.RemoveAll(lockParent)
+	os.MkdirAll(filepath.Dir(lockParent), 0o755)
+	os.WriteFile(lockParent, []byte("blocker"), 0o644)
+
+	ctx := context.Background()
+
+	// All public methods that acquire lock should return error.
+	_, err := mgr.Create(ctx, "test")
+	if err == nil {
+		t.Error("Create should fail when lock cannot be acquired")
+	}
+
+	err = mgr.Remove(ctx, "test")
+	if err == nil {
+		t.Error("Remove should fail when lock cannot be acquired")
+	}
+
+	err = mgr.Cleanup(ctx)
+	if err == nil {
+		t.Error("Cleanup should fail when lock cannot be acquired")
 	}
 }

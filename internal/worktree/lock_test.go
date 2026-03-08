@@ -56,3 +56,60 @@ func TestFileLock_UnlockNil(t *testing.T) {
 		t.Fatalf("Unlock on nil file should succeed: %v", err)
 	}
 }
+
+func TestFileLock_OpenFileError(t *testing.T) {
+	// Use a path where the parent exists but the lock file path is a directory,
+	// causing OpenFile to fail.
+	dir := t.TempDir()
+	lockDir := filepath.Join(dir, "lockfile")
+	os.MkdirAll(lockDir, 0o755) // lockfile is a dir, not a file
+
+	fl := &fileLock{path: lockDir}
+	err := fl.Lock()
+	if err == nil {
+		fl.Unlock()
+		t.Fatal("expected error opening directory as file")
+	}
+}
+
+func TestFileLock_TryLock_OpenFileError(t *testing.T) {
+	dir := t.TempDir()
+	lockDir := filepath.Join(dir, "lockfile")
+	os.MkdirAll(lockDir, 0o755)
+
+	fl := &fileLock{path: lockDir}
+	err := fl.TryLock()
+	if err == nil {
+		fl.Unlock()
+		t.Fatal("expected error from TryLock with directory as file")
+	}
+}
+
+func TestFileLock_MkdirAllError(t *testing.T) {
+	// Place a file where the parent directory should be.
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	os.WriteFile(blocker, []byte("x"), 0o644)
+	lockPath := filepath.Join(blocker, "subdir", ".lock")
+
+	fl := &fileLock{path: lockPath}
+	err := fl.Lock()
+	if err == nil {
+		fl.Unlock()
+		t.Fatal("expected MkdirAll error")
+	}
+}
+
+func TestFileLock_TryLock_MkdirAllError(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	os.WriteFile(blocker, []byte("x"), 0o644)
+	lockPath := filepath.Join(blocker, "subdir", ".lock")
+
+	fl := &fileLock{path: lockPath}
+	err := fl.TryLock()
+	if err == nil {
+		fl.Unlock()
+		t.Fatal("expected MkdirAll error from TryLock")
+	}
+}
