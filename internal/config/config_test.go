@@ -16,6 +16,9 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 50, cfg.Agent.MaxTurns)
 	assert.Equal(t, "prompt", cfg.Agent.ApprovalMode)
 	assert.Equal(t, 100000, cfg.Agent.ContextBudget)
+	assert.Equal(t, 5, cfg.Worktree.MaxCount)
+	assert.True(t, cfg.Worktree.AutoCleanup)
+	assert.Empty(t, cfg.Worktree.BaseBranch)
 }
 
 func TestLoadFromFile(t *testing.T) {
@@ -449,4 +452,22 @@ ollama_keep_alive = "15m"
 	cfg, err := Load(tmpFile)
 	require.NoError(t, err)
 	assert.Equal(t, "15m", cfg.Agent.Cache.OllamaKeepAlive)
+}
+
+func TestWorktreeConfigFromTOML(t *testing.T) {
+	tomlData := `
+[worktree]
+max_count = 10
+base_branch = "develop"
+auto_cleanup = false
+`
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, 10, cfg.Worktree.MaxCount)
+	assert.Equal(t, "develop", cfg.Worktree.BaseBranch)
+	assert.False(t, cfg.Worktree.AutoCleanup)
 }

@@ -78,6 +78,10 @@ const (
 	HookOnBeforeWikiSection
 	// HookOnSecurityScanComplete is called after all security scans finish.
 	HookOnSecurityScanComplete
+	// HookOnWorktreeCreate is called before a git worktree is created.
+	HookOnWorktreeCreate
+	// HookOnWorktreeRemove is called before a git worktree is removed.
+	HookOnWorktreeRemove
 )
 
 // String returns the human-readable name of a HookPhase.
@@ -101,6 +105,10 @@ func (h HookPhase) String() string {
 		return "OnBeforeWikiSection"
 	case HookOnSecurityScanComplete:
 		return "OnSecurityScanComplete"
+	case HookOnWorktreeCreate:
+		return "OnWorktreeCreate"
+	case HookOnWorktreeRemove:
+		return "OnWorktreeRemove"
 	default:
 		return fmt.Sprintf("HookPhase(%d)", h)
 	}
@@ -157,6 +165,7 @@ type AgentDefinition struct {
 	InheritSkills *bool
 	ExtraSkills   []string
 	DisableSkills []string
+	Isolation     string // "", "worktree"
 }
 
 // AgentDefRegistrar abstracts the agent definition registry so the skills
