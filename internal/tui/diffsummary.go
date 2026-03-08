@@ -10,6 +10,9 @@ import (
 )
 
 var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file(?:\(s\)|s)?\s+changed`)
+var diffPanelStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	Padding(0, 1)
 
 func (m *Model) viewportContent() string {
 	content := m.content.String()
@@ -50,10 +53,7 @@ func (m *Model) renderDiffSummaryPanel() string {
 		body.WriteString(strings.TrimRight(rendered, "\n"))
 	}
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Padding(0, 1).
-		Render(body.String()) + "\n"
+	return diffPanelStyle.Render(body.String()) + "\n"
 }
 
 func diffSummaryLabel(summary string) string {

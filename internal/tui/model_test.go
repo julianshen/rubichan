@@ -253,6 +253,27 @@ func TestModelAdvanceRalphLoopSchedulesNextIteration(t *testing.T) {
 	assert.Contains(t, m.content.String(), "> keep going")
 }
 
+func TestModelAdvanceRalphLoopClearsPriorDiffSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.agent = &agent.Agent{}
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.diffExpanded = true
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "keep going",
+			MaxIterations:     3,
+			CompletionPromise: "ALL DONE",
+		},
+	}
+
+	cmd := m.advanceRalphLoop("still working")
+
+	require.NotNil(t, cmd)
+	assert.Empty(t, m.diffSummary)
+	assert.False(t, m.diffExpanded)
+	assert.NotContains(t, m.viewport.View(), "Turn changes")
+}
+
 func TestModelAdvanceRalphLoopStopsAtMaxIterations(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.ralph = &ralphLoopState{
@@ -625,6 +646,30 @@ func TestModelToggleDiffSummaryIgnoredWhileStreaming(t *testing.T) {
 	um := updated.(*Model)
 	assert.False(t, um.diffExpanded)
 	assert.Nil(t, cmd)
+}
+
+func TestModelToggleDiffSummaryPreservesScrollPosition(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+
+	var lines strings.Builder
+	for i := 0; i < 50; i++ {
+		lines.WriteString("line content\n")
+	}
+	m.content.WriteString(lines.String())
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.viewport.SetContent(m.viewportContent())
+	m.viewport.GotoBottom()
+	m.viewport.HalfPageUp()
+	assert.False(t, m.viewport.AtBottom(), "precondition: should be scrolled up")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	um := updated.(*Model)
+	assert.True(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+	assert.False(t, um.viewport.AtBottom(), "toggle should preserve the user's scroll position")
 }
 
 func TestModelViewStreaming(t *testing.T) {

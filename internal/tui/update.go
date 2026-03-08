@@ -166,7 +166,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if msg.Type == tea.KeyCtrlG && m.state == StateInput && strings.TrimSpace(m.diffSummary) != "" {
 		m.diffExpanded = !m.diffExpanded
-		m.setContentAndAutoScroll()
+		m.viewport.SetContent(m.viewportContent())
 		return m, nil
 	}
 
@@ -435,6 +435,8 @@ func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
 
 	loop.iteration++
 	prompt := loop.cfg.Prompt
+	m.diffSummary = ""
+	m.diffExpanded = false
 	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
 	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
