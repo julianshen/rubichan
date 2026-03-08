@@ -119,7 +119,7 @@ func TestShellValidatorDeniesSubCommand(t *testing.T) {
 		},
 	}
 	engine := toolexec.NewRuleEngine(rules)
-	validator := toolexec.NewShellValidator(engine)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
 
 	// Compound command where second part is denied.
 	err := validator.Validate(context.Background(), "ls -la && rm -rf /")
@@ -136,10 +136,38 @@ func TestShellValidatorAllowsCleanCommand(t *testing.T) {
 		},
 	}
 	engine := toolexec.NewRuleEngine(rules)
-	validator := toolexec.NewShellValidator(engine)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
 
 	err := validator.Validate(context.Background(), "ls -la")
 	assert.NoError(t, err)
+}
+
+func TestShellValidatorRoutesApplyPatch(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+
+	interception, err := validator.Inspect(context.Background(), "sh -c 'apply_patch <<\"PATCH\"\n*** Begin Patch\n*** End Patch\nPATCH'")
+	require.NoError(t, err)
+	assert.Equal(t, "apply_patch shell commands must be routed through the file tool", interception.RouteReason)
+}
+
+func TestShellValidatorWarnsOnRedirect(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+
+	interception, err := validator.Inspect(context.Background(), "echo hi > redirected.txt")
+	require.NoError(t, err)
+	assert.Contains(t, interception.Warnings, "command redirects output to a file")
+}
+
+func TestShellValidatorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
+	workDir := t.TempDir()
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, workDir)
+
+	interception, err := validator.Inspect(context.Background(), "rm -rf ../outside")
+	require.NoError(t, err)
+	assert.Contains(t, interception.BlockReason, "../outside")
 }
 
 // --- Middleware tests ---
@@ -153,7 +181,7 @@ func TestShellSafetyMiddlewareBlocksDangerousCommand(t *testing.T) {
 		},
 	}
 	engine := toolexec.NewRuleEngine(rules)
-	validator := toolexec.NewShellValidator(engine)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
 	mw := toolexec.ShellSafetyMiddleware(validator)
 
 	baseCalled := false
@@ -184,7 +212,7 @@ func TestShellSafetyMiddlewareSkipsNonBash(t *testing.T) {
 		},
 	}
 	engine := toolexec.NewRuleEngine(rules)
-	validator := toolexec.NewShellValidator(engine)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
 	mw := toolexec.ShellSafetyMiddleware(validator)
 
 	baseCalled := false
@@ -205,4 +233,51 @@ func TestShellSafetyMiddlewareSkipsNonBash(t *testing.T) {
 	assert.True(t, baseCalled, "base should be called for non-bash categories")
 	assert.False(t, result.IsError)
 	assert.Equal(t, "file contents", result.Content)
+}
+
+func TestShellSafetyMiddlewareRoutesApplyPatch(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+	mw := toolexec.ShellSafetyMiddleware(validator)
+
+	baseCalled := false
+	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+		baseCalled = true
+		return toolexec.Result{Content: "executed"}
+	}
+
+	handler := mw(base)
+	ctx := toolexec.WithCategory(context.Background(), toolexec.CategoryBash)
+	result := handler(ctx, toolexec.ToolCall{
+		ID:    "call-route-1",
+		Name:  "shell",
+		Input: json.RawMessage(`{"command":"apply_patch <<'PATCH'\n*** Begin Patch\n*** End Patch\nPATCH"}`),
+	})
+
+	assert.False(t, baseCalled, "base should not be called when command must be routed")
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "requires routing")
+}
+
+func TestShellSafetyMiddlewarePrefixesWarnings(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+	mw := toolexec.ShellSafetyMiddleware(validator)
+
+	base := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+		return toolexec.Result{Content: "ok"}
+	}
+
+	handler := mw(base)
+	ctx := toolexec.WithCategory(context.Background(), toolexec.CategoryBash)
+	result := handler(ctx, toolexec.ToolCall{
+		ID:    "call-warn-1",
+		Name:  "shell",
+		Input: json.RawMessage(`{"command":"echo hi > redirected.txt"}`),
+	})
+
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "warning: shell safety interceptor")
+	assert.Contains(t, result.Content, "redirects output to a file")
+	assert.Contains(t, result.Content, "ok")
 }

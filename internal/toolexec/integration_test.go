@@ -30,7 +30,7 @@ func (t *integrationTool) Execute(_ context.Context, _ json.RawMessage) (tools.T
 func buildFullPipeline(registry *tools.Registry, rules []toolexec.PermissionRule) *toolexec.Pipeline {
 	classifier := toolexec.NewClassifier(nil)
 	engine := toolexec.NewRuleEngine(rules)
-	validator := toolexec.NewShellValidator(engine)
+	validator := toolexec.NewShellValidator(engine, "")
 
 	return toolexec.NewPipeline(
 		toolexec.RegistryExecutor(registry),

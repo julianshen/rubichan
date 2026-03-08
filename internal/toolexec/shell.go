@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -13,6 +15,13 @@ import (
 type CommandPart struct {
 	Prefix string // command name (first word after env vars)
 	Full   string // full command with arguments
+}
+
+// ShellInterception captures pre-execution safety findings for a shell command.
+type ShellInterception struct {
+	BlockReason string
+	RouteReason string
+	Warnings    []string
 }
 
 // ParseCommand parses a shell command string into its component simple commands.
@@ -110,17 +119,32 @@ func wordToString(w *syntax.Word) string {
 // ShellValidator validates shell commands by parsing them into sub-commands
 // and checking each against the rule engine.
 type ShellValidator struct {
-	engine *RuleEngine
+	engine  *RuleEngine
+	workDir string
 }
 
 // NewShellValidator creates a ShellValidator backed by the given RuleEngine.
-func NewShellValidator(engine *RuleEngine) *ShellValidator {
-	return &ShellValidator{engine: engine}
+func NewShellValidator(engine *RuleEngine, workDir string) *ShellValidator {
+	return &ShellValidator{
+		engine:  engine,
+		workDir: workDir,
+	}
 }
 
 // Validate parses the command string and checks each sub-command against the
 // rule engine with CategoryBash. Returns an error if any sub-command is denied.
-func (v *ShellValidator) Validate(_ context.Context, command string) error {
+func (v *ShellValidator) Validate(ctx context.Context, command string) error {
+	interception, err := v.Inspect(ctx, command)
+	if err != nil {
+		return err
+	}
+	if interception.RouteReason != "" {
+		return fmt.Errorf("command requires routing: %s", interception.RouteReason)
+	}
+	if interception.BlockReason != "" {
+		return fmt.Errorf("command blocked: %s", interception.BlockReason)
+	}
+
 	parts, err := ParseCommand(command)
 	if err != nil {
 		return fmt.Errorf("shell validation parse error: %w", err)
@@ -134,6 +158,52 @@ func (v *ShellValidator) Validate(_ context.Context, command string) error {
 		}
 	}
 	return nil
+}
+
+var (
+	redirectPattern = regexp.MustCompile(`(?i)\b(?:echo|cat)\b[^;\n]*\s(?:>>?)\s*[^\s;]+`)
+	sedInPlaceRegex = regexp.MustCompile(`(?i)\bsed\b[^;\n]*\s-i(?:\s|$)`)
+	chmodChownRegex = regexp.MustCompile(`(?i)\b(?:chmod|chown)\b`)
+	mvCpOutside     = regexp.MustCompile(`(?i)\b(?:mv|cp)\b[^;\n]*(?:\s/\S+|\s\.\./\S+)`)
+)
+
+// Inspect evaluates shell-specific safety checks that sit alongside rule
+// engine deny rules. It returns route/block/warn decisions for the command.
+func (v *ShellValidator) Inspect(_ context.Context, command string) (ShellInterception, error) {
+	var interception ShellInterception
+
+	parts, err := ParseCommand(command)
+	if err != nil {
+		return interception, fmt.Errorf("shell validation parse error: %w", err)
+	}
+
+	for _, part := range parts {
+		if part.Prefix == "apply_patch" {
+			interception.RouteReason = "apply_patch shell commands must be routed through the file tool"
+			break
+		}
+	}
+
+	if interception.BlockReason == "" {
+		if outsideTargets := findRecursiveRMOutsideWorkdir(parts, v.workDir); len(outsideTargets) > 0 {
+			interception.BlockReason = fmt.Sprintf("recursive rm target(s) escape working directory: %s", strings.Join(outsideTargets, ", "))
+		}
+	}
+
+	if redirectPattern.MatchString(command) {
+		interception.Warnings = append(interception.Warnings, "command redirects output to a file")
+	}
+	if sedInPlaceRegex.MatchString(command) {
+		interception.Warnings = append(interception.Warnings, "command uses sed -i for in-place file edits")
+	}
+	if chmodChownRegex.MatchString(command) {
+		interception.Warnings = append(interception.Warnings, "command changes file ownership/permissions")
+	}
+	if mvCpOutside.MatchString(command) {
+		interception.Warnings = append(interception.Warnings, "command may move/copy files outside the working directory")
+	}
+
+	return interception, nil
 }
 
 // ShellSafetyMiddleware returns a Middleware that validates shell commands
@@ -150,16 +220,155 @@ func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
 				return next(ctx, tc)
 			}
 
-			if err := validator.Validate(ctx, command); err != nil {
+			interception, err := validator.Inspect(ctx, command)
+			if err != nil {
 				return Result{
 					Content: fmt.Sprintf("shell command blocked: %s", err),
 					IsError: true,
 				}
 			}
 
-			return next(ctx, tc)
+			if interception.RouteReason != "" {
+				return Result{
+					Content: fmt.Sprintf("shell command requires routing: %s. Use the file tool for this operation.", interception.RouteReason),
+					IsError: true,
+				}
+			}
+			if interception.BlockReason != "" {
+				return Result{
+					Content: fmt.Sprintf("shell command blocked: %s. Use the file tool for file edits.", interception.BlockReason),
+					IsError: true,
+				}
+			}
+			if err := validator.validateRuleEngine(command); err != nil {
+				return Result{
+					Content: fmt.Sprintf("shell command blocked: %s", err),
+					IsError: true,
+				}
+			}
+
+			result := next(ctx, tc)
+			if len(interception.Warnings) == 0 {
+				return result
+			}
+
+			prefix := formatInterceptionWarnings(interception.Warnings)
+			result.Content = prefix + result.Content
+			if result.DisplayContent != "" {
+				result.DisplayContent = prefix + result.DisplayContent
+			}
+			return result
 		}
 	}
+}
+
+func (v *ShellValidator) validateRuleEngine(command string) error {
+	if v.engine == nil {
+		return nil
+	}
+
+	parts, err := ParseCommand(command)
+	if err != nil {
+		return fmt.Errorf("shell validation parse error: %w", err)
+	}
+
+	for _, part := range parts {
+		input := json.RawMessage(fmt.Sprintf(`{"command":%q}`, part.Full))
+		action := v.engine.Evaluate(CategoryBash, "shell", input)
+		if action == ActionDeny {
+			return fmt.Errorf("sub-command denied: %s", part.Full)
+		}
+	}
+	return nil
+}
+
+func findRecursiveRMOutsideWorkdir(parts []CommandPart, workDir string) []string {
+	var outside []string
+	for _, part := range parts {
+		if part.Prefix != "rm" {
+			continue
+		}
+
+		fields := strings.Fields(part.Full)
+		if len(fields) <= 1 {
+			continue
+		}
+
+		recursive := false
+		targets := make([]string, 0, len(fields)-1)
+		parseTargets := false
+		for _, token := range fields[1:] {
+			if token == "" {
+				continue
+			}
+			if parseTargets {
+				targets = append(targets, token)
+				continue
+			}
+			if token == "--" {
+				parseTargets = true
+				continue
+			}
+			if strings.HasPrefix(token, "--") {
+				if token == "--recursive" {
+					recursive = true
+				}
+				continue
+			}
+			if strings.HasPrefix(token, "-") {
+				if strings.Contains(token, "r") {
+					recursive = true
+				}
+				continue
+			}
+			targets = append(targets, token)
+		}
+
+		if !recursive {
+			continue
+		}
+		for _, target := range targets {
+			if isOutsideWorkdir(target, workDir) {
+				outside = append(outside, target)
+			}
+		}
+	}
+	return outside
+}
+
+func isOutsideWorkdir(target, workDir string) bool {
+	if target == "" || target == "-" {
+		return false
+	}
+	if strings.HasPrefix(target, "~") {
+		return true
+	}
+
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return false
+	}
+
+	var absTarget string
+	if filepath.IsAbs(target) {
+		absTarget = filepath.Clean(target)
+	} else {
+		absTarget = filepath.Clean(filepath.Join(workDir, target))
+	}
+	absWorkDir := filepath.Clean(workDir)
+
+	return !strings.HasPrefix(absTarget, absWorkDir+string(filepath.Separator)) && absTarget != absWorkDir
+}
+
+func formatInterceptionWarnings(warnings []string) string {
+	var b strings.Builder
+	b.WriteString("warning: shell safety interceptor detected file-modifying pattern(s):\n")
+	for _, warning := range warnings {
+		b.WriteString("- ")
+		b.WriteString(warning)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // extractCommandField extracts the "command" string value from JSON input.
