@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/julianshen/rubichan/internal/persona"
 )
 
 // Style definitions for the TUI view.
@@ -16,7 +18,7 @@ var (
 // View implements tea.Model. It renders the TUI as a string.
 func (m *Model) View() string {
 	if m.quitting {
-		return "Goodbye!\n"
+		return persona.GoodbyeMessage()
 	}
 
 	if m.state == StateConfigOverlay && m.configForm != nil {
@@ -45,7 +47,7 @@ func (m *Model) View() string {
 	// Status line / approval prompt
 	switch m.state {
 	case StateStreaming:
-		b.WriteString(fmt.Sprintf("%s Thinking...", m.spinner.View()))
+		b.WriteString(fmt.Sprintf("%s %s", m.spinner.View(), persona.ThinkingMessage()))
 	case StateAwaitingApproval:
 		if m.approvalPrompt != nil {
 			b.WriteString(m.approvalPrompt.View())

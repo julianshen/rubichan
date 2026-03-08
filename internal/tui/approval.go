@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/julianshen/rubichan/internal/persona"
 )
 
 // ApprovalResult represents the user's choice on a tool approval prompt.
@@ -77,7 +79,8 @@ func (a *ApprovalPrompt) HandleKey(msg tea.KeyMsg) bool {
 
 // View renders the approval prompt as a bordered box with tool info and options.
 func (a *ApprovalPrompt) View() string {
-	header := fmt.Sprintf("─ %s(%s) ", a.tool, a.args)
-	prompt := "Allow?  (y)es  (n)o  (a)lways"
-	return a.box.Render(header+"\n"+prompt) + "\n"
+	header := persona.ApprovalAsk(a.tool)
+	detail := fmt.Sprintf("  args: %s", a.args)
+	prompt := "  (y)es  (n)o  (a)lways"
+	return a.box.Render(header+"\n"+detail+"\n"+prompt) + "\n"
 }

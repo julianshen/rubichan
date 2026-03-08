@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/julianshen/rubichan/internal/persona"
 )
 
 // StatusBar displays model, token usage, turn count, and estimated cost.
@@ -41,7 +42,8 @@ func (s *StatusBar) SetCost(cost float64) { s.cost = cost }
 
 // View renders the status bar as a styled string.
 func (s *StatusBar) View() string {
-	return s.style.Render(fmt.Sprintf(" %s  %s/%s  Turn %d/%d  ~$%.2f",
+	return s.style.Render(fmt.Sprintf(" %s  %s  %s/%s  Turn %d/%d  ~$%.2f",
+		persona.StatusPrefix(),
 		s.model,
 		formatTokens(s.inputTokens),
 		formatTokens(s.maxTokens),

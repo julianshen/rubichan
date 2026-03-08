@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
@@ -278,4 +279,12 @@ func TestEnsureFolderAccessApprovedNonInteractive_AutoApproves(t *testing.T) {
 	approved, err := s.IsFolderApproved("/tmp/project")
 	require.NoError(t, err)
 	assert.True(t, approved)
+}
+
+func TestPersonaErrorMessage(t *testing.T) {
+	// Verify persona.ErrorMessage is used by testing the persona function directly.
+	// The main() function calls os.Exit so we can't easily test it end-to-end.
+	msg := persona.ErrorMessage("something broke")
+	assert.Contains(t, msg, "Pigi")
+	assert.Contains(t, msg, "something broke")
 }
