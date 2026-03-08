@@ -1,0 +1,4 @@
+package javascript
+//go:cgo_import_dynamic _DefaultRuneLocale _DefaultRuneLocale ""
+//go:cgo_import_dynamic __maskrune __maskrune ""
+//go:cgo_import_dynamic _ _ "/usr/lib/libSystem.B.dylib"

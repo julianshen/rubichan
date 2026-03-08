@@ -75,6 +75,15 @@ type Model struct {
 	eventCh           <-chan agent.TurnEvent
 	cmdRegistry       *commands.Registry
 	completion        *CompletionOverlay
+	turnCancel        context.CancelFunc
+	ralph             *ralphLoopState
+}
+
+type ralphLoopState struct {
+	cfg         commands.RalphLoopConfig
+	iteration   int
+	cancelled   bool
+	lastOutcome string
 }
 
 // Ensure Model satisfies the tea.Model interface at compile time.
@@ -132,6 +141,8 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		_ = cmdRegistry.Register(commands.NewQuitCommand())
 		_ = cmdRegistry.Register(commands.NewExitCommand())
 		_ = cmdRegistry.Register(commands.NewConfigCommand())
+		_ = cmdRegistry.Register(commands.NewRalphLoopCommand(m.StartRalphLoop))
+		_ = cmdRegistry.Register(commands.NewCancelRalphCommand(m.CancelRalphLoop))
 		_ = cmdRegistry.Register(commands.NewClearCommand(func() {
 			if m.agent != nil {
 				m.agent.ClearConversation()
@@ -243,7 +254,12 @@ func (m *Model) waitForApproval() tea.Cmd {
 // It delegates to the command registry and interprets the result's Action.
 // Returns a tea.Cmd if the command produces one (e.g., tea.Quit), or nil.
 func (m *Model) handleCommand(cmd string) tea.Cmd {
-	parts := strings.Fields(cmd)
+	parts, err := commands.ParseLine(cmd)
+	if err != nil {
+		m.content.WriteString(persona.ErrorMessage(err.Error()))
+		m.viewport.SetContent(m.content.String())
+		return nil
+	}
 	if len(parts) == 0 {
 		return nil
 	}
@@ -294,4 +310,27 @@ func (m *Model) handleCommand(cmd string) tea.Cmd {
 	}
 
 	return nil
+}
+
+func (m *Model) StartRalphLoop(cfg commands.RalphLoopConfig) error {
+	if m.state != StateInput {
+		return fmt.Errorf("Ralph loop can only start while idle")
+	}
+	if m.agent == nil {
+		return fmt.Errorf("no agent configured")
+	}
+	m.ralph = &ralphLoopState{cfg: cfg}
+	return nil
+}
+
+func (m *Model) CancelRalphLoop() bool {
+	if m.ralph == nil {
+		return false
+	}
+	m.ralph.cancelled = true
+	m.ralph.lastOutcome = "cancelled"
+	if m.turnCancel != nil {
+		m.turnCancel()
+	}
+	return true
 }

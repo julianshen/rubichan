@@ -1,0 +1,10 @@
+./cmdrunner.go
+./codesign.go
+./discover.go
+./logparser.go
+./pathutil.go
+./platform.go
+./simctl.go
+./spm.go
+./xcodebuild.go
+./xcrun.go

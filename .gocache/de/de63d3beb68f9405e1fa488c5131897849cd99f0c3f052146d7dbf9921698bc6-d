@@ -1,0 +1,17 @@
+./apple.go
+./config.go
+./custom.go
+./deps.go
+./license.go
+./sast.go
+./secrets.go
+./skill_scanner.go
+./apple_test.go
+./config_test.go
+./custom_test.go
+./deps_test.go
+./helpers_test.go
+./license_test.go
+./sast_test.go
+./secrets_test.go
+./skill_scanner_test.go

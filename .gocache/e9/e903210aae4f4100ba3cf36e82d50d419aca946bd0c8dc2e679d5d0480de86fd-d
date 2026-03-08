@@ -1,0 +1,6 @@
+./options.go
+./parse.go
+./quote.go
+./scan.go
+./syntax.go
+./walk.go

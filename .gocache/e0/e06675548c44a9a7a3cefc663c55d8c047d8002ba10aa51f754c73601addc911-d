@@ -1,0 +1,15 @@
+./agent.go
+./agentdef.go
+./approval.go
+./compaction_signals.go
+./compaction_summarize.go
+./compaction_toolclear.go
+./context.go
+./conversation.go
+./memory_extractor.go
+./prompt.go
+./resultstore.go
+./scratchpad.go
+./subagent.go
+./summarizer.go
+./wake.go

@@ -1,0 +1,3 @@
+./agentmd.go
+./apikey.go
+./config.go

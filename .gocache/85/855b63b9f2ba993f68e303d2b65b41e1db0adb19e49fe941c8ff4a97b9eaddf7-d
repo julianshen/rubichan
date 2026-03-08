@@ -1,0 +1,14 @@
+./approval.go
+./banner.go
+./bootstrap.go
+./completion.go
+./configform.go
+./inputarea.go
+./markdown.go
+./model.go
+./modelpicker.go
+./pricing.go
+./statusbar.go
+./toolbox.go
+./update.go
+./view.go

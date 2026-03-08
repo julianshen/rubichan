@@ -217,4 +217,46 @@ func TestBuiltinCommandsImplementSlashCommand(t *testing.T) {
 	var _ SlashCommand = NewModelCommand(func(string) {})
 	var _ SlashCommand = NewConfigCommand()
 	var _ SlashCommand = NewHelpCommand(NewRegistry())
+	var _ SlashCommand = NewRalphLoopCommand(nil)
+	var _ SlashCommand = NewCancelRalphCommand(nil)
+}
+
+func TestRalphLoopCommandExecute(t *testing.T) {
+	var got RalphLoopConfig
+	cmd := NewRalphLoopCommand(func(cfg RalphLoopConfig) error {
+		got = cfg
+		return nil
+	})
+
+	result, err := cmd.Execute(context.Background(), []string{
+		"finish", "the", "feature",
+		"--completion-promise", "DONE",
+		"--max-iterations", "4",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "finish the feature", got.Prompt)
+	assert.Equal(t, "DONE", got.CompletionPromise)
+	assert.Equal(t, 4, got.MaxIterations)
+	assert.Contains(t, result.Output, "Ralph loop started")
+}
+
+func TestRalphLoopCommandRequiresCompletionPromise(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+
+	_, err := cmd.Execute(context.Background(), []string{"finish", "it"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "--completion-promise")
+}
+
+func TestCancelRalphCommandExecute(t *testing.T) {
+	called := false
+	cmd := NewCancelRalphCommand(func() bool {
+		called = true
+		return true
+	})
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Contains(t, result.Output, "cancelled")
 }

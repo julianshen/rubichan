@@ -940,6 +940,12 @@ func runInteractive() error {
 	})); err != nil {
 		return fmt.Errorf("register built-in command %q: %w", "clear", err)
 	}
+	if err := cmdRegistry.Register(commands.NewRalphLoopCommand(model.StartRalphLoop)); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "ralph-loop", err)
+	}
+	if err := cmdRegistry.Register(commands.NewCancelRalphCommand(model.CancelRalphLoop)); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "cancel-ralph", err)
+	}
 	if err := cmdRegistry.Register(commands.NewModelCommand(func(name string) {
 		if model.GetAgent() != nil {
 			model.GetAgent().SetModel(name)
