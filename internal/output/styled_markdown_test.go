@@ -73,6 +73,28 @@ func TestStyledMarkdownFormatterError(t *testing.T) {
 	assert.Contains(t, s, "timeout exceeded")
 }
 
+func TestStyledMarkdownFormatterNilRendererFallback(t *testing.T) {
+	f := &StyledMarkdownFormatter{
+		inner:    NewMarkdownFormatter(),
+		renderer: nil,
+	}
+	result := &RunResult{
+		Prompt:     "hello",
+		Response:   "world",
+		TurnCount:  1,
+		DurationMs: 500,
+		Mode:       "generic",
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	s := string(out)
+	// Should fall back to raw markdown (no ANSI codes).
+	assert.NotContains(t, s, "\x1b[")
+	assert.Contains(t, s, "world")
+}
+
 func TestStyledMarkdownFormatterEmpty(t *testing.T) {
 	f := NewStyledMarkdownFormatter(80)
 	result := &RunResult{
