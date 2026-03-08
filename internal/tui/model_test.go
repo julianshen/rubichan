@@ -557,6 +557,54 @@ func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
 	assert.Contains(t, content, "> hello")
 }
 
+func TestModelHandleTurnEventDoneShowsCollapsedDiffSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+
+	ch := make(chan agent.TurnEvent)
+	close(ch)
+	m.eventCh = ch
+
+	diffSummary := "## Turn Summary: 2 file(s) changed\n\n- **foo.txt** created (via write_file)\n- **bar.txt** modified (via apply_patch)\n```diff\n+hello\n```\n"
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{
+		Type:        "done",
+		DiffSummary: diffSummary,
+	}))
+
+	um := updated.(*Model)
+	assert.Equal(t, StateInput, um.state)
+	assert.Equal(t, diffSummary, um.diffSummary)
+	assert.False(t, um.diffExpanded)
+
+	viewportContent := um.viewport.View()
+	assert.Contains(t, viewportContent, "Turn changes")
+	assert.Contains(t, viewportContent, "2 files changed")
+	assert.Contains(t, viewportContent, "ctrl+g")
+	assert.NotContains(t, viewportContent, "foo.txt")
+	assert.NotContains(t, viewportContent, "+hello")
+}
+
+func TestModelToggleDiffSummaryExpansion(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created (via write_file)\n```diff\n+hello\n```\n"
+	m.viewport.SetContent(m.viewportContent())
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	um := updated.(*Model)
+	assert.True(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+	assert.Contains(t, um.viewport.View(), "foo.txt")
+	assert.Contains(t, um.viewport.View(), "hello")
+
+	updated, cmd = um.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	um = updated.(*Model)
+	assert.False(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+	assert.Contains(t, um.viewport.View(), "Turn changes")
+	assert.NotContains(t, um.viewport.View(), "foo.txt")
+}
+
 func TestModelViewStreaming(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming

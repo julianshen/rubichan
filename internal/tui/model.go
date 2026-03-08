@@ -63,6 +63,8 @@ type Model struct {
 	alwaysApproved    sync.Map
 	approvalCh        chan approvalRequest
 	assistantStartIdx int
+	diffSummary       string
+	diffExpanded      bool
 	state             UIState
 	appName           string
 	modelName         string
@@ -146,8 +148,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 			if m.agent != nil {
 				m.agent.ClearConversation()
 			}
-			m.content.Reset()
-			m.viewport.SetContent("")
+			m.ClearContent()
 		}))
 		_ = cmdRegistry.Register(commands.NewModelCommand(func(name string) {
 			if m.agent != nil {
@@ -162,7 +163,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	bannerText := RenderBanner()
 	m.content.WriteString(bannerText)
 	m.content.WriteString("\n")
-	m.viewport.SetContent(m.content.String())
+	m.viewport.SetContent(m.viewportContent())
 
 	return m
 }
@@ -183,6 +184,8 @@ func (m *Model) GetAgent() *agent.Agent {
 // /clear command callback to wipe the display.
 func (m *Model) ClearContent() {
 	m.content.Reset()
+	m.diffSummary = ""
+	m.diffExpanded = false
 	m.viewport.SetContent("")
 }
 
@@ -256,7 +259,7 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	parts, err := commands.ParseLine(line)
 	if err != nil {
 		m.content.WriteString(persona.ErrorMessage(err.Error()))
-		m.viewport.SetContent(m.content.String())
+		m.viewport.SetContent(m.viewportContent())
 		return nil
 	}
 	if len(parts) == 0 {
@@ -273,24 +276,24 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	if !ok {
 		if slashOnly {
 			m.content.WriteString("Type /help to show available commands.\n")
-			m.viewport.SetContent(m.content.String())
+			m.viewport.SetContent(m.viewportContent())
 			return nil
 		}
 		m.content.WriteString(fmt.Sprintf("Unknown command: %s\n", parts[0]))
-		m.viewport.SetContent(m.content.String())
+		m.viewport.SetContent(m.viewportContent())
 		return nil
 	}
 
 	result, err := slashCmd.Execute(context.Background(), parts[1:])
 	if err != nil {
 		m.content.WriteString(persona.ErrorMessage(err.Error()))
-		m.viewport.SetContent(m.content.String())
+		m.viewport.SetContent(m.viewportContent())
 		return nil
 	}
 
 	if result.Output != "" {
 		m.content.WriteString(result.Output + "\n")
-		m.viewport.SetContent(m.content.String())
+		m.viewport.SetContent(m.viewportContent())
 	}
 	if startCmd := m.maybeStartRalphLoop(); startCmd != nil {
 		return tea.Batch(startCmd, m.spinner.Tick)
@@ -303,7 +306,7 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	case commands.ActionOpenConfig:
 		if m.cfg == nil {
 			m.content.WriteString("No config available\n")
-			m.viewport.SetContent(m.content.String())
+			m.viewport.SetContent(m.viewportContent())
 			return nil
 		}
 		m.configForm = NewConfigForm(m.cfg, m.configPath)
@@ -343,7 +346,7 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	}
 	prompt := m.ralph.cfg.Prompt
 	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
-	m.setContentAndAutoScroll(m.content.String())
+	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
 	m.state = StateStreaming
 	return m.startTurn(m.agent, prompt)
