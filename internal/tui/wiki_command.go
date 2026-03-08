@@ -47,8 +47,8 @@ func NewWikiCommand(cfg WikiCommandConfig) commands.SlashCommand {
 	return &wikiCommand{cfg: cfg}
 }
 
-func (c *wikiCommand) Name() string        { return "wiki" }
-func (c *wikiCommand) Description() string { return "Generate project documentation wiki" }
+func (c *wikiCommand) Name() string                      { return "wiki" }
+func (c *wikiCommand) Description() string               { return "Generate project documentation wiki" }
 func (c *wikiCommand) Arguments() []commands.ArgumentDef { return nil }
 
 func (c *wikiCommand) Complete(_ context.Context, _ []string) []commands.Candidate {

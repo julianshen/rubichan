@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/commands"
@@ -52,6 +53,148 @@ func TestWikiFormConcurrency(t *testing.T) {
 
 	wf.ConcurrencyStr = "invalid"
 	assert.Equal(t, 5, wf.Concurrency())
+}
+
+func TestWikiFormSetForm(t *testing.T) {
+	wf := NewWikiForm("/tmp")
+	original := wf.Form()
+	assert.NotNil(t, original)
+
+	// SetForm replaces the underlying form.
+	wf.SetForm(original)
+	assert.Equal(t, original, wf.Form())
+}
+
+func TestWikiCommandComplete(t *testing.T) {
+	cmd := NewWikiCommand(WikiCommandConfig{})
+	candidates := cmd.Complete(context.Background(), nil)
+	assert.Nil(t, candidates)
+}
+
+func TestSetWikiConfig(t *testing.T) {
+	reg := commands.NewRegistry()
+	m := &Model{cmdRegistry: reg}
+	m.SetWikiConfig(WikiCommandConfig{WorkDir: "/tmp/proj"})
+
+	assert.Equal(t, "/tmp/proj", m.wikiCfg.WorkDir)
+	// /wiki command should be registered.
+	cmd, ok := reg.Get("wiki")
+	assert.True(t, ok)
+	assert.Equal(t, "wiki", cmd.Name())
+}
+
+func TestHandleCommandOpenWiki(t *testing.T) {
+	reg := commands.NewRegistry()
+	m := NewModel(nil, "test", "model", 10, "", nil, reg)
+	m.SetWikiConfig(WikiCommandConfig{WorkDir: "/tmp"})
+
+	cmd := m.handleCommand("/wiki")
+	assert.NotNil(t, cmd) // form Init() returns a Cmd
+	assert.Equal(t, StateWikiOverlay, m.state)
+	assert.NotNil(t, m.wikiForm)
+}
+
+func TestHandleCommandOpenWikiAlreadyRunning(t *testing.T) {
+	reg := commands.NewRegistry()
+	m := NewModel(nil, "test", "model", 10, "", nil, reg)
+	m.SetWikiConfig(WikiCommandConfig{WorkDir: "/tmp"})
+	m.wikiRunning = true
+
+	cmd := m.handleCommand("/wiki")
+	assert.Nil(t, cmd)
+	assert.Contains(t, m.content.String(), "already running")
+	assert.Equal(t, StateInput, m.state)
+}
+
+func TestWikiDoneMsgClearsState(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	m.wikiRunning = true
+	m.statusBar.SetWikiProgress("analyzing")
+
+	_, _ = m.Update(wikiDoneMsg{Err: nil})
+	assert.False(t, m.wikiRunning)
+	assert.Contains(t, m.content.String(), "Wiki generation complete!")
+}
+
+func TestWikiDoneMsgWithError(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	m.wikiRunning = true
+
+	_, _ = m.Update(wikiDoneMsg{Err: fmt.Errorf("disk full")})
+	assert.False(t, m.wikiRunning)
+	assert.Contains(t, m.content.String(), "disk full")
+}
+
+func TestWikiEventMsgUpdatesStatusBar(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	progressCh := make(chan wikiProgressMsg, 1)
+	doneCh := make(chan error, 1)
+
+	msg := wikiEventMsg{
+		progress:   &wikiProgressMsg{Stage: "scanning", Total: 42},
+		progressCh: progressCh,
+		doneCh:     doneCh,
+	}
+
+	_, cmd := m.Update(msg)
+	assert.NotNil(t, cmd) // continues listening
+	assert.Contains(t, m.content.String(), "Wiki: scanning (42 items)")
+	assert.Contains(t, m.statusBar.View(), "Wiki: scanning")
+}
+
+func TestWikiEventMsgNoTotal(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	progressCh := make(chan wikiProgressMsg, 1)
+	doneCh := make(chan error, 1)
+
+	msg := wikiEventMsg{
+		progress:   &wikiProgressMsg{Stage: "rendering", Total: 0},
+		progressCh: progressCh,
+		doneCh:     doneCh,
+	}
+
+	_, _ = m.Update(msg)
+	assert.Contains(t, m.content.String(), "Wiki: rendering")
+	assert.NotContains(t, m.content.String(), "items")
+}
+
+func TestWaitForWikiEventProgressMsg(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	progressCh := make(chan wikiProgressMsg, 1)
+	doneCh := make(chan error, 1)
+
+	progressCh <- wikiProgressMsg{Stage: "chunking", Current: 1, Total: 5}
+	cmd := m.waitForWikiEvent(progressCh, doneCh)
+	msg := cmd()
+	evt, ok := msg.(wikiEventMsg)
+	assert.True(t, ok)
+	assert.Equal(t, "chunking", evt.progress.Stage)
+}
+
+func TestWaitForWikiEventDoneMsg(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	progressCh := make(chan wikiProgressMsg)
+	doneCh := make(chan error, 1)
+
+	close(progressCh)
+	doneCh <- nil
+	cmd := m.waitForWikiEvent(progressCh, doneCh)
+	msg := cmd()
+	done, ok := msg.(wikiDoneMsg)
+	assert.True(t, ok)
+	assert.NoError(t, done.Err)
+}
+
+func TestViewWikiOverlay(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	m.wikiForm = NewWikiForm("/tmp")
+	m.state = StateWikiOverlay
+
+	view := m.View()
+	// Wiki form overlay should render (huh form output).
+	assert.NotEmpty(t, view)
+	// Should not contain the normal header since overlay takes over.
+	assert.NotContains(t, view, "test · model")
 }
 
 func TestStatusBarWikiProgress(t *testing.T) {
