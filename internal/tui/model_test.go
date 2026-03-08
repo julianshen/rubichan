@@ -253,6 +253,27 @@ func TestModelAdvanceRalphLoopSchedulesNextIteration(t *testing.T) {
 	assert.Contains(t, m.content.String(), "> keep going")
 }
 
+func TestModelAdvanceRalphLoopClearsPriorDiffSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.agent = &agent.Agent{}
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.diffExpanded = true
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "keep going",
+			MaxIterations:     3,
+			CompletionPromise: "ALL DONE",
+		},
+	}
+
+	cmd := m.advanceRalphLoop("still working")
+
+	require.NotNil(t, cmd)
+	assert.Empty(t, m.diffSummary)
+	assert.False(t, m.diffExpanded)
+	assert.NotContains(t, m.viewport.View(), "Turn changes")
+}
+
 func TestModelAdvanceRalphLoopStopsAtMaxIterations(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.ralph = &ralphLoopState{
@@ -557,6 +578,100 @@ func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
 	assert.Contains(t, content, "> hello")
 }
 
+func TestModelHandleTurnEventDoneShowsCollapsedDiffSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+
+	ch := make(chan agent.TurnEvent)
+	close(ch)
+	m.eventCh = ch
+
+	diffSummary := "## Turn Summary: 2 file(s) changed\n\n- **foo.txt** created (via write_file)\n- **bar.txt** modified (via apply_patch)\n```diff\n+hello\n```\n"
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{
+		Type:        "done",
+		DiffSummary: diffSummary,
+	}))
+
+	um := updated.(*Model)
+	assert.Equal(t, StateInput, um.state)
+	assert.Equal(t, diffSummary, um.diffSummary)
+	assert.False(t, um.diffExpanded)
+
+	viewportContent := um.viewport.View()
+	assert.Contains(t, viewportContent, "Turn changes")
+	assert.Contains(t, viewportContent, "2 files changed")
+	assert.Contains(t, viewportContent, "ctrl+g")
+	assert.NotContains(t, viewportContent, "foo.txt")
+	assert.NotContains(t, viewportContent, "+hello")
+}
+
+func TestModelToggleDiffSummaryExpansion(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created (via write_file)\n```diff\n+hello\n```\n"
+	m.viewport.SetContent(m.viewportContent())
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	um := updated.(*Model)
+	assert.True(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+	assert.Contains(t, um.viewport.View(), "foo.txt")
+	assert.Contains(t, um.viewport.View(), "hello")
+
+	updated, cmd = um.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	um = updated.(*Model)
+	assert.False(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+	assert.Contains(t, um.viewport.View(), "Turn changes")
+	assert.NotContains(t, um.viewport.View(), "foo.txt")
+}
+
+func TestModelToggleDiffSummaryIgnoredWithoutSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	um := updated.(*Model)
+	assert.False(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+}
+
+func TestModelToggleDiffSummaryIgnoredWhileStreaming(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	um := updated.(*Model)
+	assert.False(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+}
+
+func TestModelToggleDiffSummaryPreservesScrollPosition(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+
+	var lines strings.Builder
+	for i := 0; i < 50; i++ {
+		lines.WriteString("line content\n")
+	}
+	m.content.WriteString(lines.String())
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.viewport.SetContent(m.viewportContent())
+	m.viewport.GotoBottom()
+	m.viewport.HalfPageUp()
+	assert.False(t, m.viewport.AtBottom(), "precondition: should be scrolled up")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	um := updated.(*Model)
+	assert.True(t, um.diffExpanded)
+	assert.Nil(t, cmd)
+	assert.False(t, um.viewport.AtBottom(), "toggle should preserve the user's scroll position")
+}
+
 func TestModelViewStreaming(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming
@@ -588,6 +703,20 @@ func TestModelUpdateEnterUserMessage(t *testing.T) {
 	assert.Contains(t, um.content.String(), "> hello agent")
 	// Should return a batch command (startTurn + spinner tick)
 	assert.NotNil(t, cmd)
+}
+
+func TestModelUpdateEnterUserMessageClearsPriorDiffSummary(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.diffExpanded = true
+	m.input.SetValue("hello agent")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updated.(*Model)
+	assert.Empty(t, um.diffSummary)
+	assert.False(t, um.diffExpanded)
+	assert.NotContains(t, um.viewport.View(), "Turn changes")
 }
 
 func TestModelStartTurnNilAgent(t *testing.T) {
@@ -1373,6 +1502,26 @@ func TestModelSwitchModel(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.SwitchModel("gpt-4")
 	assert.Equal(t, "gpt-4", m.modelName)
+}
+
+func TestModelMaybeStartRalphLoopClearsPriorDiffSummary(t *testing.T) {
+	m := NewModel(&agent.Agent{}, "rubichan", "claude-3", 50, "", nil, nil)
+	m.diffSummary = "## Turn Summary: 1 file(s) changed\n\n- **foo.txt** created"
+	m.diffExpanded = true
+	m.ralph = &ralphLoopState{
+		cfg: commands.RalphLoopConfig{
+			Prompt:            "continue",
+			CompletionPromise: "done",
+			MaxIterations:     2,
+		},
+	}
+
+	cmd := m.maybeStartRalphLoop()
+
+	require.NotNil(t, cmd)
+	assert.Empty(t, m.diffSummary)
+	assert.False(t, m.diffExpanded)
+	assert.NotContains(t, m.viewport.View(), "Turn changes")
 }
 
 func TestModelCompletionTabAccept(t *testing.T) {

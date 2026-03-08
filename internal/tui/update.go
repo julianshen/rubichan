@@ -164,6 +164,12 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if msg.Type == tea.KeyCtrlG && m.state == StateInput && strings.TrimSpace(m.diffSummary) != "" {
+		m.diffExpanded = !m.diffExpanded
+		m.viewport.SetContent(m.viewportContent())
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyEnter:
 		if m.state != StateInput {
@@ -182,8 +188,10 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Regular user message: write to content and start agent turn
+		m.diffSummary = ""
+		m.diffExpanded = false
 		m.content.WriteString(fmt.Sprintf("> %s\n", text))
-		m.viewport.SetContent(m.content.String())
+		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()
 		m.assistantStartIdx = m.content.Len()
 		m.state = StateStreaming
@@ -273,9 +281,9 @@ func isScrollKey(msg tea.KeyMsg) bool {
 // setContentAndAutoScroll updates the viewport content and scrolls to bottom only
 // if the viewport was already at the bottom before the update. This preserves the
 // user's scroll position when they scroll up to read earlier content.
-func (m *Model) setContentAndAutoScroll(content string) {
+func (m *Model) setContentAndAutoScroll() {
 	wasAtBottom := m.viewport.AtBottom()
-	m.viewport.SetContent(content)
+	m.viewport.SetContent(m.viewportContent())
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	}
@@ -290,7 +298,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if IsMarkdownBreakpoint(m.rawAssistant.String()) {
 			m.renderAssistantMarkdown()
 		}
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
 	case "tool_call":
@@ -301,7 +309,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			args = string(msg.ToolCall.Input)
 		}
 		m.content.WriteString(m.toolBox.RenderToolCall(name, args))
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
 	case "tool_result":
@@ -318,7 +326,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			isError = msg.ToolResult.IsError
 		}
 		m.content.WriteString(m.toolBox.RenderToolResult(resultName, resultContent, isError))
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
 	case "tool_progress":
@@ -329,7 +337,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 				msg.ToolProgress.Content,
 				msg.ToolProgress.IsError,
 			))
-			m.setContentAndAutoScroll(m.content.String())
+			m.setContentAndAutoScroll()
 		}
 		return m, m.waitForEvent()
 
@@ -340,7 +348,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 		m.rawAssistant.Reset()
 		m.content.WriteString(persona.ErrorMessage(errMsg))
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
 	case "done":
@@ -351,9 +359,11 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		raw := m.rawAssistant.String()
 		m.renderAssistantMarkdown()
 		m.rawAssistant.Reset()
+		m.diffSummary = msg.DiffSummary
+		m.diffExpanded = false
 		m.content.WriteString(persona.SuccessMessage())
 		m.content.WriteString("\n")
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 
 		// Update status bar with token usage and turn count.
 		m.turnCount++
@@ -408,25 +418,27 @@ func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
 	switch {
 	case loop.cancelled:
 		m.content.WriteString("Ralph loop stopped.\n")
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		m.ralph = nil
 		return nil
 	case strings.Contains(raw, loop.cfg.CompletionPromise):
 		m.content.WriteString(fmt.Sprintf("Ralph loop complete after %d iteration(s).\n", loop.iteration+1))
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		m.ralph = nil
 		return nil
 	case loop.iteration+1 >= loop.cfg.MaxIterations:
 		m.content.WriteString(fmt.Sprintf("Ralph loop stopped after reaching %d iteration(s) without completion promise %q.\n", loop.cfg.MaxIterations, loop.cfg.CompletionPromise))
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		m.ralph = nil
 		return nil
 	}
 
 	loop.iteration++
 	prompt := loop.cfg.Prompt
+	m.diffSummary = ""
+	m.diffExpanded = false
 	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
-	m.setContentAndAutoScroll(m.content.String())
+	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
 	m.state = StateStreaming
 	return m.startTurn(m.agent, prompt)
