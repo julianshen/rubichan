@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/julianshen/rubichan/internal/commands"
@@ -548,6 +549,32 @@ func (rt *Runtime) GetSkillIndexes() []SkillIndex {
 		indexes = append(indexes, NewSkillIndex(sk.Manifest, sk.Source, sk.Dir))
 	}
 	return indexes
+}
+
+// GetAllSkillSummaries returns a summary of all discovered skills with their
+// current state, sorted by name for deterministic output.
+func (rt *Runtime) GetAllSkillSummaries() []SkillSummary {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	summaries := make([]SkillSummary, 0, len(rt.skills))
+	for _, sk := range rt.skills {
+		typesCopy := make([]SkillType, len(sk.Manifest.Types))
+		copy(typesCopy, sk.Manifest.Types)
+		summaries = append(summaries, SkillSummary{
+			Name:        sk.Manifest.Name,
+			Description: sk.Manifest.Description,
+			Source:      sk.Source,
+			State:       sk.State,
+			Types:       typesCopy,
+		})
+	}
+
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].Name < summaries[j].Name
+	})
+
+	return summaries
 }
 
 // SetContextBudget configures the global context budget for prompt fragments.

@@ -275,6 +275,16 @@ func NewSkillIndex(manifest *SkillManifest, source Source, dir string) SkillInde
 	}
 }
 
+// SkillSummary is a lightweight snapshot of a skill's current state, suitable
+// for display in the /skill command.
+type SkillSummary struct {
+	Name        string
+	Description string
+	Source      Source
+	State       SkillState
+	Types       []SkillType
+}
+
 // ContextBudget controls the total context window budget allocated to skill
 // prompt fragments. When set, the PromptCollector enforces these limits during
 // prompt building, using priority-based allocation.

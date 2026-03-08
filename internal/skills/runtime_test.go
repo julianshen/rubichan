@@ -916,6 +916,69 @@ func TestRuntimeActivateAgentDefRegistrationRollback(t *testing.T) {
 	assert.False(t, ok, "tool should be rolled back after agent def registration failure")
 }
 
+func TestGetAllSkillSummaries(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	rt := NewRuntime(NewLoader("", ""), s, tools.NewRegistry(), nil,
+		func(manifest SkillManifest, dir string) (SkillBackend, error) {
+			return &mockBackend{hooks: map[HookPhase]HookHandler{}}, nil
+		},
+		func(skillName string, declared []Permission) PermissionChecker {
+			return &mockPermissionChecker{}
+		},
+	)
+
+	// Register two skills with different sources.
+	rt.loader.RegisterBuiltin(&SkillManifest{
+		Name:        "alpha",
+		Version:     "1.0.0",
+		Description: "Alpha skill",
+		Types:       []SkillType{SkillTypePrompt},
+	})
+	rt.loader.RegisterBuiltin(&SkillManifest{
+		Name:        "beta",
+		Version:     "1.0.0",
+		Description: "Beta skill",
+		Types:       []SkillType{SkillTypeTool},
+	})
+	require.NoError(t, rt.Discover(nil))
+
+	// Activate alpha.
+	require.NoError(t, rt.Activate("alpha"))
+
+	summaries := rt.GetAllSkillSummaries()
+
+	// All discovered skills should be included.
+	require.Len(t, summaries, 2)
+
+	// Results should be sorted by name.
+	assert.Equal(t, "alpha", summaries[0].Name)
+	assert.Equal(t, "beta", summaries[1].Name)
+
+	// Active skill shows Active state.
+	assert.Equal(t, SkillStateActive, summaries[0].State)
+	assert.Equal(t, "Alpha skill", summaries[0].Description)
+	assert.Equal(t, SourceBuiltin, summaries[0].Source)
+	assert.Equal(t, []SkillType{SkillTypePrompt}, summaries[0].Types)
+
+	// Inactive skill shows Inactive state.
+	assert.Equal(t, SkillStateInactive, summaries[1].State)
+	assert.Equal(t, "Beta skill", summaries[1].Description)
+}
+
+func TestGetAllSkillSummariesEmpty(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	rt := NewRuntime(NewLoader("", ""), s, tools.NewRegistry(), nil, nil, nil)
+
+	summaries := rt.GetAllSkillSummaries()
+	assert.Empty(t, summaries)
+}
+
 func TestRuntimeActivateRegistersDeclarativeAgentDefs(t *testing.T) {
 	agentReg := newMockAgentDefRegistrar()
 
