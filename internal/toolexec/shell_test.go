@@ -3,6 +3,7 @@ package toolexec_test
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/toolexec"
@@ -84,6 +85,13 @@ func TestParseCommandBashDashC(t *testing.T) {
 	assert.True(t, found, "should find npm command from bash -c argument")
 }
 
+func TestParseCommandBashDashCPropagatesInnerParseErrors(t *testing.T) {
+	parts, err := toolexec.ParseCommand(`bash -c 'echo $HOME'`)
+	require.Error(t, err)
+	assert.Nil(t, parts)
+	assert.Contains(t, err.Error(), "parse bash -c payload")
+}
+
 func TestParseCommandQuotedArgs(t *testing.T) {
 	parts, err := toolexec.ParseCommand("rm '-rf' /")
 	require.NoError(t, err)
@@ -145,6 +153,13 @@ func TestShellValidatorAllowsCleanCommand(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestShellValidatorAllowsCleanCommandWithNilRuleEngine(t *testing.T) {
+	validator := toolexec.NewShellValidator(nil, t.TempDir())
+
+	err := validator.Validate(context.Background(), "ls -la")
+	assert.NoError(t, err)
+}
+
 func TestShellValidatorRoutesApplyPatch(t *testing.T) {
 	engine := toolexec.NewRuleEngine(nil)
 	validator := toolexec.NewShellValidator(engine, t.TempDir())
@@ -181,6 +196,15 @@ func TestShellValidatorBlocksRecursiveRMOutsideWorkdirWithUppercaseFlag(t *testi
 	interception, err := validator.Inspect(context.Background(), "rm -Rf ../outside")
 	require.NoError(t, err)
 	assert.Contains(t, interception.BlockReason, "../outside")
+}
+
+func TestShellValidatorAllowsPathsInsideRootWorkdir(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, string(filepath.Separator))
+
+	interception, err := validator.Inspect(context.Background(), "rm -rf /tmp")
+	require.NoError(t, err)
+	assert.Empty(t, interception.BlockReason)
 }
 
 // --- Middleware tests ---

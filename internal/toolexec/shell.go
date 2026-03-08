@@ -77,9 +77,11 @@ func ParseCommand(command string) ([]CommandPart, error) {
 		if (prefix == "bash" || prefix == "sh") && len(words) >= 3 && words[1] == "-c" {
 			inner := words[2]
 			innerParts, innerErr := ParseCommand(inner)
-			if innerErr == nil {
-				parts = append(parts, innerParts...)
+			if innerErr != nil {
+				walkErr = fmt.Errorf("parse %s -c payload: %w", prefix, innerErr)
+				return false
 			}
+			parts = append(parts, innerParts...)
 		}
 
 		return true
@@ -165,19 +167,7 @@ func (v *ShellValidator) Validate(ctx context.Context, command string) error {
 		return fmt.Errorf("command blocked: %s", interception.BlockReason)
 	}
 
-	parts, err := ParseCommand(command)
-	if err != nil {
-		return fmt.Errorf("shell validation parse error: %w", err)
-	}
-
-	for _, part := range parts {
-		input := json.RawMessage(fmt.Sprintf(`{"command":%q}`, part.Full))
-		action := v.engine.Evaluate(CategoryBash, "shell", input)
-		if action == ActionDeny {
-			return fmt.Errorf("sub-command denied: %s", part.Full)
-		}
-	}
-	return nil
+	return v.validateRuleEngine(command)
 }
 
 var (
@@ -376,8 +366,18 @@ func isOutsideWorkdir(target, workDir string) bool {
 		absTarget = filepath.Clean(filepath.Join(workDir, target))
 	}
 	absWorkDir := filepath.Clean(workDir)
+	if absWorkDir == string(filepath.Separator) {
+		return false
+	}
 
-	return !strings.HasPrefix(absTarget, absWorkDir+string(filepath.Separator)) && absTarget != absWorkDir
+	rel, err := filepath.Rel(absWorkDir, absTarget)
+	if err != nil {
+		return true
+	}
+	if rel == "." {
+		return false
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func formatInterceptionWarnings(warnings []string) string {
