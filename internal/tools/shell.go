@@ -86,6 +86,7 @@ func NewShellTool(workDir string, timeout time.Duration) *ShellTool {
 	return &ShellTool{
 		workDir: workDir,
 		timeout: timeout,
+		sandbox: NewDefaultShellSandbox(workDir),
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 )
 
@@ -48,20 +49,6 @@ func DefaultShellSandboxPolicy(workDir string) ShellSandboxPolicy {
 	writable := []string{workDir, os.TempDir()}
 	if tmpDir := os.Getenv("TMPDIR"); tmpDir != "" {
 		writable = append(writable, tmpDir)
-	}
-	if homeDir, err := os.UserHomeDir(); err == nil {
-		writable = append(writable,
-			filepath.Join(homeDir, ".cache"),
-			filepath.Join(homeDir, ".config"),
-			filepath.Join(homeDir, "Library", "Caches"),
-			filepath.Join(homeDir, "Library", "Application Support"),
-		)
-	}
-	if xdgCache := os.Getenv("XDG_CACHE_HOME"); xdgCache != "" {
-		writable = append(writable, xdgCache)
-	}
-	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
-		writable = append(writable, xdgConfig)
 	}
 
 	return ShellSandboxPolicy{
@@ -111,6 +98,7 @@ func (s *seatbeltSandbox) Wrap(cmd *exec.Cmd) error {
 	}
 
 	profile := buildSeatbeltProfile(s.policy)
+	cmd.Env = sandboxCommandEnv(cmd)
 	cmd.Path = s.binary
 	cmd.Args = append([]string{s.binary, "-p", profile, originalPath}, originalArgs[1:]...)
 	return nil
@@ -129,6 +117,9 @@ func (s *bubblewrapSandbox) Wrap(cmd *exec.Cmd) error {
 	originalPath, originalArgs, err := resolveWrappedCommand(cmd)
 	if err != nil {
 		return err
+	}
+	if !s.policy.AllowSubprocs {
+		return fmt.Errorf("subprocesses disabled by policy: bubblewrap backend does not support this on Linux")
 	}
 
 	args := []string{
@@ -150,12 +141,17 @@ func (s *bubblewrapSandbox) Wrap(cmd *exec.Cmd) error {
 		args = append(args, "--bind", path, path)
 	}
 	for _, path := range existingSandboxPaths(s.policy.DeniedPaths) {
-		args = append(args, "--tmpfs", path)
+		if isDir(path) {
+			args = append(args, "--tmpfs", path)
+			continue
+		}
+		args = append(args, "--ro-bind", "/dev/null", path)
 	}
 	if cmd.Dir != "" {
 		args = append(args, "--chdir", cmd.Dir)
 	}
 
+	cmd.Env = sandboxCommandEnv(cmd)
 	args = append(args, "--", originalPath)
 	args = append(args, originalArgs[1:]...)
 
@@ -186,6 +182,13 @@ func resolveWrappedCommand(cmd *exec.Cmd) (string, []string, error) {
 }
 
 func buildSeatbeltProfile(policy ShellSandboxPolicy) string {
+	allowed := normalizeSandboxPaths(policy.AllowedPaths)
+	writable := normalizeSandboxPaths(policy.WritablePaths)
+	denied := normalizeSandboxPaths(policy.DeniedPaths)
+	sort.SliceStable(denied, func(i, j int) bool {
+		return len(denied[i]) > len(denied[j])
+	})
+
 	lines := []string{
 		"(version 1)",
 		"(deny default)",
@@ -199,17 +202,56 @@ func buildSeatbeltProfile(policy ShellSandboxPolicy) string {
 	if !policy.AllowNetwork {
 		lines = append(lines, "(deny network*)")
 	}
-	for _, path := range normalizeSandboxPaths(policy.AllowedPaths) {
+	for _, path := range allowed {
 		lines = append(lines, fmt.Sprintf("(allow file-read* (subpath %q))", path))
 	}
-	for _, path := range normalizeSandboxPaths(policy.WritablePaths) {
+	for _, path := range writable {
 		lines = append(lines, fmt.Sprintf("(allow file-read* (subpath %q))", path))
 		lines = append(lines, fmt.Sprintf("(allow file-write* (subpath %q))", path))
 	}
-	for _, path := range normalizeSandboxPaths(policy.DeniedPaths) {
+	for _, path := range denied {
 		lines = append(lines, fmt.Sprintf("(deny file-read* file-write* (subpath %q))", path))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func sandboxCommandEnv(cmd *exec.Cmd) []string {
+	env := cmd.Environ()
+	sandboxHome := filepath.Join(cmd.Dir, ".rubichan-sandbox")
+	if cmd.Dir == "" {
+		sandboxHome = filepath.Join(os.TempDir(), "rubichan-sandbox")
+	}
+	return setEnvValues(env, map[string]string{
+		"HOME":            sandboxHome,
+		"XDG_CACHE_HOME":  filepath.Join(sandboxHome, ".cache"),
+		"XDG_CONFIG_HOME": filepath.Join(sandboxHome, ".config"),
+	})
+}
+
+func setEnvValues(env []string, values map[string]string) []string {
+	out := make([]string, 0, len(env)+len(values))
+	remaining := make(map[string]string, len(values))
+	for k, v := range values {
+		remaining[k] = v
+	}
+
+	for _, entry := range env {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			out = append(out, entry)
+			continue
+		}
+		if value, exists := remaining[name]; exists {
+			out = append(out, name+"="+value)
+			delete(remaining, name)
+			continue
+		}
+		out = append(out, entry)
+	}
+	for name, value := range remaining {
+		out = append(out, name+"="+value)
+	}
+	return out
 }
 
 func normalizeSandboxPaths(paths []string) []string {
@@ -235,4 +277,12 @@ func existingSandboxPaths(paths []string) []string {
 		}
 	}
 	return out
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
