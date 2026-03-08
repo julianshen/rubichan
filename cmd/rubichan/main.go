@@ -50,6 +50,8 @@ import (
 	"github.com/julianshen/rubichan/internal/worktree"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
 
+	"golang.org/x/term"
+
 	// Register providers via init() side effects.
 	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
 	"github.com/julianshen/rubichan/internal/provider/ollama"
@@ -1273,7 +1275,11 @@ func runHeadless() error {
 	case "json":
 		formatter = output.NewJSONFormatter()
 	default:
-		formatter = output.NewMarkdownFormatter()
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			formatter = output.NewStyledMarkdownFormatter(80)
+		} else {
+			formatter = output.NewMarkdownFormatter()
+		}
 	}
 
 	out, err := formatter.Format(result)
