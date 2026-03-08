@@ -1,7 +1,0 @@
-./builtin.go
-./commands.go
-./parse.go
-./ralph.go
-./builtin_test.go
-./commands_test.go
-./parse_test.go

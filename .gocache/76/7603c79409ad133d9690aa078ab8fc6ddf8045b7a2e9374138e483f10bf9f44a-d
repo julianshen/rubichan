@@ -1,6 +1,0 @@
-./agentmd.go
-./apikey.go
-./config.go
-./agentmd_test.go
-./apikey_test.go
-./config_test.go

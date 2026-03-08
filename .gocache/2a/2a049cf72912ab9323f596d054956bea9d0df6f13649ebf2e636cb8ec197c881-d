@@ -1,6 +1,0 @@
-./formatter.go
-./json.go
-./markdown.go
-./formatter_test.go
-./json_test.go
-./markdown_test.go

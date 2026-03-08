@@ -1,8 +1,0 @@
-./git_runner.go
-./http_fetcher.go
-./llm_completer.go
-./skill_invoker.go
-./git_runner_test.go
-./http_fetcher_test.go
-./llm_completer_test.go
-./skill_invoker_test.go

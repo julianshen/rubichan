@@ -1,6 +1,0 @@
-./core_tools.go
-./git.go
-./wiki_skill.go
-./core_tools_test.go
-./git_test.go
-./wiki_skill_test.go

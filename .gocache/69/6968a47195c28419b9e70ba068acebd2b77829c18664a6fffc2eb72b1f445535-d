@@ -1,9 +1,0 @@
-./main.go
-./ollama.go
-./skill.go
-./worktree.go
-./helpers_test.go
-./main_test.go
-./ollama_test.go
-./skill_test.go
-./worktree_test.go

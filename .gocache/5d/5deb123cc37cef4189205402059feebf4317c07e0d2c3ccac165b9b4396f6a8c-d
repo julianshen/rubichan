@@ -1,8 +1,0 @@
-./client.go
-./sse_transport.go
-./tool_wrapper.go
-./transport.go
-./client_test.go
-./sse_transport_test.go
-./tool_wrapper_test.go
-./transport_test.go

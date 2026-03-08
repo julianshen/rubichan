@@ -1,8 +1,0 @@
-./apple.go
-./config.go
-./custom.go
-./deps.go
-./license.go
-./sast.go
-./secrets.go
-./skill_scanner.go

@@ -1,6 +1,0 @@
-./config.go
-./lock.go
-./manager.go
-./config_test.go
-./lock_test.go
-./manager_test.go

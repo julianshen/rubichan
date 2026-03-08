@@ -1,6 +1,0 @@
-./cyclonedx.go
-./github_pr.go
-./json.go
-./markdown.go
-./sarif.go
-./wiki.go

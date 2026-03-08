@@ -1,8 +1,0 @@
-./analyzer.go
-./assembler.go
-./chunker.go
-./diagrams.go
-./pipeline.go
-./renderer.go
-./scanner.go
-./types.go
