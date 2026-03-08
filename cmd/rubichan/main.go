@@ -685,7 +685,6 @@ func runInteractive() error {
 	if toolsCfg.ShouldEnable("shell") {
 		shellTool := tools.NewShellTool(cwd, 120*time.Second)
 		shellTool.SetDiffTracker(diffTracker)
-		shellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
 		if err := registry.Register(shellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
@@ -1004,7 +1003,6 @@ func runHeadless() error {
 	if headlessToolsCfg.ShouldEnable("shell") {
 		headlessShellTool := tools.NewShellTool(cwd, timeoutFlag)
 		headlessShellTool.SetDiffTracker(headlessDiffTracker)
-		headlessShellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
 		if err := registry.Register(headlessShellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}

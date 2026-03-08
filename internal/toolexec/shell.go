@@ -38,8 +38,14 @@ func ParseCommand(command string) ([]CommandPart, error) {
 		return nil, fmt.Errorf("parse shell command: %w", err)
 	}
 
-	var parts []CommandPart
+	var (
+		parts   []CommandPart
+		walkErr error
+	)
 	syntax.Walk(prog, func(node syntax.Node) bool {
+		if walkErr != nil {
+			return false
+		}
 		call, ok := node.(*syntax.CallExpr)
 		if !ok {
 			return true
@@ -50,7 +56,11 @@ func ParseCommand(command string) ([]CommandPart, error) {
 			return true
 		}
 
-		words := wordStrings(call.Args)
+		words, err := wordStrings(call.Args)
+		if err != nil {
+			walkErr = err
+			return false
+		}
 		if len(words) == 0 {
 			return true
 		}
@@ -74,6 +84,9 @@ func ParseCommand(command string) ([]CommandPart, error) {
 
 		return true
 	})
+	if walkErr != nil {
+		return nil, fmt.Errorf("parse shell command: %w", walkErr)
+	}
 
 	if len(parts) == 0 {
 		return nil, nil
@@ -82,21 +95,24 @@ func ParseCommand(command string) ([]CommandPart, error) {
 }
 
 // wordStrings converts a slice of syntax.Word nodes into their string
-// representations. It handles Lit values and SglQuoted values, stripping
-// quotes to produce the logical command text.
-func wordStrings(words []*syntax.Word) []string {
+// representations. Unsupported expansions fail closed so validation does not
+// silently ignore dangerous shell fragments.
+func wordStrings(words []*syntax.Word) ([]string, error) {
 	result := make([]string, 0, len(words))
 	for _, w := range words {
-		s := wordToString(w)
+		s, err := wordToString(w)
+		if err != nil {
+			return nil, err
+		}
 		if s != "" {
 			result = append(result, s)
 		}
 	}
-	return result
+	return result, nil
 }
 
 // wordToString converts a single syntax.Word node to its string value.
-func wordToString(w *syntax.Word) string {
+func wordToString(w *syntax.Word) (string, error) {
 	var b strings.Builder
 	for _, part := range w.Parts {
 		switch p := part.(type) {
@@ -109,11 +125,15 @@ func wordToString(w *syntax.Word) string {
 				switch ip := inner.(type) {
 				case *syntax.Lit:
 					b.WriteString(ip.Value)
+				default:
+					return "", fmt.Errorf("unsupported shell word part %T", ip)
 				}
 			}
+		default:
+			return "", fmt.Errorf("unsupported shell word part %T", p)
 		}
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // ShellValidator validates shell commands by parsing them into sub-commands
@@ -316,7 +336,7 @@ func findRecursiveRMOutsideWorkdir(parts []CommandPart, workDir string) []string
 				continue
 			}
 			if strings.HasPrefix(token, "-") {
-				if strings.Contains(token, "r") {
+				if strings.ContainsAny(token, "rR") {
 					recursive = true
 				}
 				continue

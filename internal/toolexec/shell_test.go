@@ -49,13 +49,16 @@ func TestParseCommandPipeline(t *testing.T) {
 
 func TestParseCommandSubshell(t *testing.T) {
 	parts, err := toolexec.ParseCommand("echo $(rm -rf /)")
-	require.NoError(t, err)
-	// Should find both echo and rm inside the command substitution.
-	require.Len(t, parts, 2)
+	require.Error(t, err)
+	assert.Nil(t, parts)
+	assert.Contains(t, err.Error(), "unsupported shell word part")
+}
 
-	assert.Equal(t, "echo", parts[0].Prefix)
-	assert.Equal(t, "rm", parts[1].Prefix)
-	assert.Equal(t, "rm -rf /", parts[1].Full)
+func TestParseCommandRejectsParameterExpansion(t *testing.T) {
+	parts, err := toolexec.ParseCommand("echo $HOME")
+	require.Error(t, err)
+	assert.Nil(t, parts)
+	assert.Contains(t, err.Error(), "unsupported shell word part")
 }
 
 func TestParseCommandEnvPrefix(t *testing.T) {
@@ -166,6 +169,16 @@ func TestShellValidatorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
 	validator := toolexec.NewShellValidator(engine, workDir)
 
 	interception, err := validator.Inspect(context.Background(), "rm -rf ../outside")
+	require.NoError(t, err)
+	assert.Contains(t, interception.BlockReason, "../outside")
+}
+
+func TestShellValidatorBlocksRecursiveRMOutsideWorkdirWithUppercaseFlag(t *testing.T) {
+	workDir := t.TempDir()
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, workDir)
+
+	interception, err := validator.Inspect(context.Background(), "rm -Rf ../outside")
 	require.NoError(t, err)
 	assert.Contains(t, interception.BlockReason, "../outside")
 }
