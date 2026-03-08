@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +24,7 @@ func TestStreamTextResponse(t *testing.T) {
 {"model":"llama3","message":{"role":"assistant","content":""},"done":true}
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request basics
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		assert.Equal(t, http.MethodPost, r.Method)
@@ -76,7 +76,7 @@ func TestStreamTextResponse(t *testing.T) {
 }
 
 func TestStreamAPIError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"model not found"}`))
@@ -111,7 +111,7 @@ func TestStreamContextCancellation(t *testing.T) {
 	var mu sync.Mutex
 	serverReady := make(chan struct{})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 
@@ -174,7 +174,7 @@ func TestStreamToolCallResponse(t *testing.T) {
 {"model":"llama3","message":{"role":"assistant","content":""},"done":true}
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(ndjsonBody))
@@ -227,7 +227,7 @@ func TestStreamToolCallResponse(t *testing.T) {
 func TestBuildRequestBodyWithTools(t *testing.T) {
 	var capturedBody []byte
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		capturedBody, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -315,7 +315,7 @@ func TestBuildRequestBodyWithTools(t *testing.T) {
 func TestBuildRequestBodyWithAssistantToolCalls(t *testing.T) {
 	var capturedBody []byte
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		capturedBody, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -384,7 +384,7 @@ func TestBuildRequestBodyWithAssistantToolCalls(t *testing.T) {
 func TestBuildRequestBodyWithToolResults(t *testing.T) {
 	var capturedBody []byte
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		capturedBody, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -442,7 +442,7 @@ func TestBuildRequestBodyWithToolResults(t *testing.T) {
 func TestBuildRequestBodyWithToolResultsAndText(t *testing.T) {
 	var capturedBody []byte
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		capturedBody, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -499,7 +499,7 @@ func TestBuildRequestBodyWithToolResultsAndText(t *testing.T) {
 func TestBuildRequestBodyWithUnknownRole(t *testing.T) {
 	var capturedBody []byte
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		capturedBody, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -555,7 +555,7 @@ func TestBuildRequestBodyWithUnknownRole(t *testing.T) {
 func TestBuildRequestBodyWithTemperature(t *testing.T) {
 	var capturedBody []byte
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		capturedBody, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -601,7 +601,7 @@ func TestStreamMalformedJSON(t *testing.T) {
 {"model":"llama3","message":{"role":"assistant","content":""},"done":true}
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(ndjsonBody))
@@ -641,7 +641,7 @@ func TestStreamWithEmptyLines(t *testing.T) {
 	// NDJSON body with empty lines interspersed
 	ndjsonBody := "\n\n" + `{"model":"llama3","message":{"role":"assistant","content":"hi"},"done":false}` + "\n\n" + `{"model":"llama3","message":{"role":"assistant","content":""},"done":true}` + "\n"
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(ndjsonBody))
@@ -673,7 +673,7 @@ func TestStreamWithEmptyLines(t *testing.T) {
 
 func TestStreamConnectionError(t *testing.T) {
 	// Use a server that is immediately closed to trigger a connection error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	server.Close() // Close immediately
 
 	p := New(server.URL)
@@ -695,7 +695,7 @@ func TestStreamTruncatedWithoutDone(t *testing.T) {
 {"model":"llama3","message":{"role":"assistant","content":" world"},"done":false}
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(ndjsonBody))
@@ -733,7 +733,7 @@ func TestStreamToolCallWithNilArguments(t *testing.T) {
 {"model":"llama3","message":{"role":"assistant","content":""},"done":true}
 `
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(ndjsonBody))

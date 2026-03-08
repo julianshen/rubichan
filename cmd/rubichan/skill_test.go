@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,7 +88,7 @@ func TestSkillListAvailable(t *testing.T) {
 		{Name: "formatter", Version: "2.1.0", Description: "Code formatting skill"},
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
@@ -116,7 +116,7 @@ func TestSkillListAvailable(t *testing.T) {
 }
 
 func TestSkillListAvailableNoResults(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
 	}))
@@ -213,7 +213,7 @@ func TestSkillSearchCommand(t *testing.T) {
 		{Name: "code-format", Version: "2.1.0", Description: "Code formatting skill"},
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "code", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
@@ -245,7 +245,7 @@ func TestSkillSearchCommand(t *testing.T) {
 }
 
 func TestSkillSearchCommandNoResults(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
 	}))
@@ -414,7 +414,7 @@ func TestSkillSearchCommandMissingQuery(t *testing.T) {
 
 // TestSkillSearchCommandContextCancellation verifies search handles context cancellation.
 func TestSkillSearchCommandContextCancellation(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Simulate a slow server.
 		ctx := r.Context()
 		<-ctx.Done()
@@ -539,7 +539,7 @@ func TestSkillInstallFromRegistry(t *testing.T) {
 		"main.star":  "print('hello')",
 	})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/latest/manifest":
 			w.Header().Set("Content-Type", "application/x-yaml")
@@ -600,7 +600,7 @@ implementation:
 	})
 
 	var requestedVersion string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/2.3.0/manifest":
 			w.Header().Set("Content-Type", "application/x-yaml")
@@ -660,7 +660,7 @@ implementation:
 	})
 
 	var downloadedVersion string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/versions":
 			w.Header().Set("Content-Type", "application/json")
@@ -706,7 +706,7 @@ implementation:
 
 // TestSkillInstallSemVerRangeNoMatch verifies error when no version matches the range.
 func TestSkillInstallSemVerRangeNoMatch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/skills/my-tool/versions":
 			w.Header().Set("Content-Type", "application/json")
@@ -934,7 +934,7 @@ Write concise docs.
 
 // TestSkillInstallRegistryDownloadError verifies install fails on registry errors.
 func TestSkillInstallRegistryDownloadError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
@@ -1093,7 +1093,7 @@ func TestSkillInstallInvalidName(t *testing.T) {
 
 // TestSkillListAvailableError verifies --available handles registry errors.
 func TestSkillListAvailableError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server error", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -1112,7 +1112,7 @@ func TestSkillListAvailableError(t *testing.T) {
 // TestSkillInstallSemVerRangeListVersionsError verifies that a registry error
 // during version listing propagates correctly.
 func TestSkillInstallSemVerRangeListVersionsError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -1150,7 +1150,7 @@ implementation:
 		"main.star":  "print('hello')",
 	})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/manifest"):
 			w.Header().Set("Content-Type", "application/x-yaml")
