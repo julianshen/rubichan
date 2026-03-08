@@ -11,10 +11,19 @@ import (
 )
 
 // injectDefaultVersion prepends "version: 1.0.0" to the YAML frontmatter if
-// no version field exists. This allows built-in SKILL.md files to omit the
-// version field while still passing manifest validation.
+// no version field exists within the frontmatter block. The check is scoped
+// to the content between the opening and closing "---" markers to avoid false
+// positives from "version:" appearing in the markdown body.
 func injectDefaultVersion(data []byte) []byte {
-	if bytes.Contains(data, []byte("\nversion:")) {
+	// Find the closing "---" that ends the frontmatter block.
+	// The opening "---" is at the start; search for "\n---" after it.
+	closingIdx := bytes.Index(data[3:], []byte("\n---"))
+	if closingIdx < 0 {
+		return data
+	}
+	frontmatter := data[:3+closingIdx]
+
+	if bytes.Contains(frontmatter, []byte("\nversion:")) {
 		return data
 	}
 	// Insert "version: 1.0.0\n" right after the opening "---\n".

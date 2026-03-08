@@ -64,6 +64,49 @@ func TestRegisterAllFullSetsDefaultVersion(t *testing.T) {
 	}
 }
 
+func TestRegisterAllFullPreservesExplicitVersion(t *testing.T) {
+	fsys := fstest.MapFS{
+		"content/versioned/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: versioned\ndescription: Has explicit version\nversion: \"2.5.0\"\n---\n\nBody"),
+		},
+	}
+
+	loader := skills.NewLoader("", "")
+	if err := RegisterAllFull(fsys, loader); err != nil {
+		t.Fatalf("RegisterAllFull: %v", err)
+	}
+
+	discovered, _, err := loader.Discover(nil)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if discovered[0].Manifest.Version != "2.5.0" {
+		t.Errorf("version = %q, want %q", discovered[0].Manifest.Version, "2.5.0")
+	}
+}
+
+func TestRegisterAllFullInjectsVersionWhenBodyContainsVersionText(t *testing.T) {
+	// "version:" appears in the body but not in frontmatter — should still inject default.
+	fsys := fstest.MapFS{
+		"content/body-version/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: body-version\ndescription: Version in body\n---\n\nversion: 3.0.0\nSome text"),
+		},
+	}
+
+	loader := skills.NewLoader("", "")
+	if err := RegisterAllFull(fsys, loader); err != nil {
+		t.Fatalf("RegisterAllFull: %v", err)
+	}
+
+	discovered, _, err := loader.Discover(nil)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if discovered[0].Manifest.Version != "1.0.0" {
+		t.Errorf("version = %q, want %q (should inject default, not pick up body text)", discovered[0].Manifest.Version, "1.0.0")
+	}
+}
+
 func TestRegisterAllFullSetsInteractiveTrigger(t *testing.T) {
 	fsys := fstest.MapFS{
 		"content/interactive/SKILL.md": &fstest.MapFile{
