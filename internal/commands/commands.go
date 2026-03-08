@@ -18,6 +18,8 @@ const (
 	ActionQuit
 	// ActionOpenConfig requests the host to open the configuration editor.
 	ActionOpenConfig
+	// ActionOpenWiki requests the host to open the wiki generation form.
+	ActionOpenWiki
 )
 
 // Candidate represents a completion suggestion.
