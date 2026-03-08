@@ -69,7 +69,7 @@ func (m *Manager) Create(ctx context.Context, name string) (*Worktree, error) {
 	if err := m.lock.Lock(); err != nil {
 		return nil, fmt.Errorf("acquiring lock: %w", err)
 	}
-	defer m.lock.Unlock()
+	defer m.lock.Unlock() //nolint:errcheck
 
 	return m.create(ctx, name)
 }
@@ -79,7 +79,7 @@ func (m *Manager) Remove(ctx context.Context, name string) error {
 	if err := m.lock.Lock(); err != nil {
 		return fmt.Errorf("acquiring lock: %w", err)
 	}
-	defer m.lock.Unlock()
+	defer m.lock.Unlock() //nolint:errcheck
 
 	return m.remove(ctx, name)
 }
@@ -95,7 +95,7 @@ func (m *Manager) Cleanup(ctx context.Context) error {
 	if err := m.lock.Lock(); err != nil {
 		return fmt.Errorf("acquiring lock: %w", err)
 	}
-	defer m.lock.Unlock()
+	defer m.lock.Unlock() //nolint:errcheck
 
 	worktrees, err := m.list(ctx)
 	if err != nil {

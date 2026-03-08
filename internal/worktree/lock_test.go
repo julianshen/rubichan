@@ -38,16 +38,16 @@ func TestFileLock_BlocksConcurrentAccess(t *testing.T) {
 	fl2 := &fileLock{path: lockPath}
 	if err := fl2.TryLock(); err == nil {
 		t.Error("TryLock should fail when lock is held")
-		fl2.Unlock()
+		_ = fl2.Unlock()
 	}
 
-	fl1.Unlock()
+	_ = fl1.Unlock()
 
 	// After release, should be acquirable again.
 	if err := fl2.Lock(); err != nil {
 		t.Fatalf("Lock after release: %v", err)
 	}
-	fl2.Unlock()
+	_ = fl2.Unlock()
 }
 
 func TestFileLock_UnlockNil(t *testing.T) {
@@ -62,12 +62,14 @@ func TestFileLock_OpenFileError(t *testing.T) {
 	// causing OpenFile to fail.
 	dir := t.TempDir()
 	lockDir := filepath.Join(dir, "lockfile")
-	os.MkdirAll(lockDir, 0o755) // lockfile is a dir, not a file
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	fl := &fileLock{path: lockDir}
 	err := fl.Lock()
 	if err == nil {
-		fl.Unlock()
+		_ = fl.Unlock()
 		t.Fatal("expected error opening directory as file")
 	}
 }
@@ -75,12 +77,14 @@ func TestFileLock_OpenFileError(t *testing.T) {
 func TestFileLock_TryLock_OpenFileError(t *testing.T) {
 	dir := t.TempDir()
 	lockDir := filepath.Join(dir, "lockfile")
-	os.MkdirAll(lockDir, 0o755)
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	fl := &fileLock{path: lockDir}
 	err := fl.TryLock()
 	if err == nil {
-		fl.Unlock()
+		_ = fl.Unlock()
 		t.Fatal("expected error from TryLock with directory as file")
 	}
 }
@@ -89,13 +93,15 @@ func TestFileLock_MkdirAllError(t *testing.T) {
 	// Place a file where the parent directory should be.
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "blocker")
-	os.WriteFile(blocker, []byte("x"), 0o644)
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	lockPath := filepath.Join(blocker, "subdir", ".lock")
 
 	fl := &fileLock{path: lockPath}
 	err := fl.Lock()
 	if err == nil {
-		fl.Unlock()
+		_ = fl.Unlock()
 		t.Fatal("expected MkdirAll error")
 	}
 }
@@ -103,13 +109,15 @@ func TestFileLock_MkdirAllError(t *testing.T) {
 func TestFileLock_TryLock_MkdirAllError(t *testing.T) {
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "blocker")
-	os.WriteFile(blocker, []byte("x"), 0o644)
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	lockPath := filepath.Join(blocker, "subdir", ".lock")
 
 	fl := &fileLock{path: lockPath}
 	err := fl.TryLock()
 	if err == nil {
-		fl.Unlock()
+		_ = fl.Unlock()
 		t.Fatal("expected MkdirAll error from TryLock")
 	}
 }

@@ -241,8 +241,12 @@ func TestList_WithWorktrees(t *testing.T) {
 	mgr := NewManager(repo, DefaultConfig())
 	ctx := context.Background()
 
-	mgr.Create(ctx, "alpha")
-	mgr.Create(ctx, "beta")
+	if _, err := mgr.Create(ctx, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Create(ctx, "beta"); err != nil {
+		t.Fatal(err)
+	}
 
 	list, err := mgr.List(ctx)
 	if err != nil {
@@ -266,8 +270,12 @@ func TestCleanup_RemovesClean(t *testing.T) {
 	mgr := NewManager(repo, DefaultConfig())
 	ctx := context.Background()
 
-	mgr.Create(ctx, "clean-one")
-	mgr.Create(ctx, "clean-two")
+	if _, err := mgr.Create(ctx, "clean-one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Create(ctx, "clean-two"); err != nil {
+		t.Fatal(err)
+	}
 
 	err := mgr.Cleanup(ctx)
 	if err != nil {
@@ -288,12 +296,18 @@ func TestCleanup_PreservesDirty(t *testing.T) {
 	mgr := NewManager(repo, DefaultConfig())
 	ctx := context.Background()
 
-	mgr.Create(ctx, "dirty")
-	mgr.Create(ctx, "clean")
+	if _, err := mgr.Create(ctx, "dirty"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.Create(ctx, "clean"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Make dirty worktree actually dirty
 	wtDir := filepath.Join(repo, ".rubichan", "worktrees", "dirty")
-	os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("changed"), 0o644)
+	if err := os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	err := mgr.Cleanup(ctx)
 	if err != nil {
@@ -348,8 +362,8 @@ func TestCreate_HookOverrides(t *testing.T) {
 	mgr.SetHookFunc(func(phase string, data map[string]any) (bool, error) {
 		// Override: create directory ourselves instead of git worktree add.
 		dir, _ := data["path"].(string)
-		os.MkdirAll(dir, 0o755)
-		os.WriteFile(filepath.Join(dir, ".git"), []byte("custom vcs"), 0o644)
+		_ = os.MkdirAll(dir, 0o755)
+		_ = os.WriteFile(filepath.Join(dir, ".git"), []byte("custom vcs"), 0o644)
 		return true, nil
 	})
 
@@ -374,7 +388,9 @@ func TestRemove_FiresHook(t *testing.T) {
 	repo := initTestRepo(t)
 	mgr := NewManager(repo, DefaultConfig())
 
-	mgr.Create(context.Background(), "hook-rm")
+	if _, err := mgr.Create(context.Background(), "hook-rm"); err != nil {
+		t.Fatal(err)
+	}
 
 	var hookCalled bool
 	var hookPhase string
@@ -384,7 +400,7 @@ func TestRemove_FiresHook(t *testing.T) {
 		return false, nil
 	})
 
-	mgr.Remove(context.Background(), "hook-rm")
+	_ = mgr.Remove(context.Background(), "hook-rm")
 	if !hookCalled {
 		t.Error("remove hook was not called")
 	}
@@ -411,7 +427,7 @@ func TestCreate_CustomBaseBranch(t *testing.T) {
 	// Remove the temp worktree so we can test create with develop as base.
 	removeCmd := exec.Command("git", "worktree", "remove", "--force", tmpDir)
 	removeCmd.Dir = repo
-	removeCmd.CombinedOutput()
+	_, _ = removeCmd.CombinedOutput()
 
 	wt, err := mgr.Create(ctx, "from-develop")
 	if err != nil {
@@ -421,7 +437,7 @@ func TestCreate_CustomBaseBranch(t *testing.T) {
 		t.Errorf("Name = %q, want %q", wt.Name, "from-develop")
 	}
 
-	mgr.Remove(ctx, "from-develop")
+	_ = mgr.Remove(ctx, "from-develop")
 }
 
 func TestHasChanges_NonExistent(t *testing.T) {
@@ -455,12 +471,12 @@ func TestLock_TryLockConflict(t *testing.T) {
 	if err := l1.Lock(); err != nil {
 		t.Fatalf("Lock: %v", err)
 	}
-	defer l1.Unlock()
+	defer func() { _ = l1.Unlock() }()
 
 	l2 := &fileLock{path: lockPath}
 	err := l2.TryLock()
 	if err == nil {
-		l2.Unlock()
+		_ = l2.Unlock()
 		t.Error("expected TryLock to fail when lock is held")
 	}
 }
@@ -514,12 +530,14 @@ func TestLock_InvalidPath(t *testing.T) {
 	// Lock on path under a file (not a directory) should fail.
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "afile")
-	os.WriteFile(filePath, []byte("x"), 0o644)
+	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	l := &fileLock{path: filepath.Join(filePath, "sub", "lock")}
 	err := l.Lock()
 	if err == nil {
-		l.Unlock()
+		_ = l.Unlock()
 		t.Error("expected error when lock parent is a file")
 	}
 }
@@ -533,12 +551,16 @@ func TestCleanup_EnforcesMaxWorktrees(t *testing.T) {
 
 	// Create 4 worktrees: 2 clean + 2 dirty. Only clean ones should be removed.
 	for _, name := range []string{"oldest", "middle", "newer", "newest"} {
-		mgr.Create(ctx, name)
+		if _, err := mgr.Create(ctx, name); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Make "middle" and "newest" dirty.
 	for _, name := range []string{"middle", "newest"} {
 		wtDir := filepath.Join(repo, ".rubichan", "worktrees", name)
-		os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("dirty"), 0o644)
+		if err := os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("dirty"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	err := mgr.Cleanup(ctx)
@@ -573,7 +595,9 @@ func TestCleanup_AutoCleanupDisabled(t *testing.T) {
 	// Create 3 clean worktrees. With AutoCleanup disabled, Phase 1 is skipped.
 	// Phase 2 should remove the oldest clean one to enforce max=2.
 	for _, name := range []string{"oldest", "middle", "newest"} {
-		mgr.Create(ctx, name)
+		if _, err := mgr.Create(ctx, name); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	err := mgr.Cleanup(ctx)
@@ -599,9 +623,13 @@ func TestCleanup_PreservesDirtyWorktrees(t *testing.T) {
 
 	// Create 3 dirty worktrees. None should be removed since all are dirty.
 	for _, name := range []string{"a", "b", "c"} {
-		mgr.Create(ctx, name)
+		if _, err := mgr.Create(ctx, name); err != nil {
+			t.Fatal(err)
+		}
 		wtDir := filepath.Join(repo, ".rubichan", "worktrees", name)
-		os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("dirty"), 0o644)
+		if err := os.WriteFile(filepath.Join(wtDir, "change.txt"), []byte("dirty"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	err := mgr.Cleanup(ctx)
@@ -714,11 +742,17 @@ func TestList_SkipsNonDirEntries(t *testing.T) {
 
 	// Create the worktrees base dir with a plain file (not a dir).
 	wtBase := filepath.Join(repo, ".rubichan", "worktrees")
-	os.MkdirAll(wtBase, 0o755)
-	os.WriteFile(filepath.Join(wtBase, "not-a-dir"), []byte("x"), 0o644)
+	if err := os.MkdirAll(wtBase, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wtBase, "not-a-dir"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Also create a dir without .git (should be skipped).
-	os.MkdirAll(filepath.Join(wtBase, "no-git-file"), 0o755)
+	if err := os.MkdirAll(filepath.Join(wtBase, "no-git-file"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	list, err := mgr.List(ctx)
 	if err != nil {
@@ -756,9 +790,9 @@ func TestCreate_HookHandled(t *testing.T) {
 		if phase == "worktree.create" {
 			// Create the directory ourselves so the worktree "exists".
 			dir := data["path"].(string)
-			os.MkdirAll(dir, 0o755)
+			_ = os.MkdirAll(dir, 0o755)
 			// Create a .git file so it looks like a worktree.
-			os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /fake"), 0o644)
+			_ = os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /fake"), 0o644)
 			return true, nil
 		}
 		return false, nil
@@ -831,7 +865,9 @@ func TestRemove_HookError(t *testing.T) {
 	mgr := NewManager(repo, DefaultConfig())
 	ctx := context.Background()
 
-	mgr.Create(ctx, "hook-rm-err")
+	if _, err := mgr.Create(ctx, "hook-rm-err"); err != nil {
+		t.Fatal(err)
+	}
 
 	mgr.SetHookFunc(func(phase string, _ map[string]any) (bool, error) {
 		if phase == "worktree.remove" {
@@ -857,7 +893,9 @@ func TestCleanup_RemoveError(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a clean worktree, then corrupt it so remove fails.
-	mgr.Create(ctx, "corrupt")
+	if _, err := mgr.Create(ctx, "corrupt"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set hook to fail on remove.
 	mgr.SetHookFunc(func(phase string, _ map[string]any) (bool, error) {
@@ -883,8 +921,10 @@ func TestCreate_MkdirAllError(t *testing.T) {
 
 	// Block the parent directory creation by placing a file where the dir would be.
 	rubichanPath := filepath.Join(repo, ".rubichan")
-	os.RemoveAll(rubichanPath)
-	os.WriteFile(rubichanPath, []byte("blocking file"), 0o644)
+	_ = os.RemoveAll(rubichanPath)
+	if err := os.WriteFile(rubichanPath, []byte("blocking file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := mgr.Create(ctx, "blocked")
 	if err == nil {
@@ -900,9 +940,13 @@ func TestPublicMethods_LockError(t *testing.T) {
 
 	// Block the lock directory by placing a file where .rubichan/worktrees would be.
 	lockParent := filepath.Join(repo, ".rubichan", "worktrees")
-	os.RemoveAll(lockParent)
-	os.MkdirAll(filepath.Dir(lockParent), 0o755)
-	os.WriteFile(lockParent, []byte("blocker"), 0o644)
+	_ = os.RemoveAll(lockParent)
+	if err := os.MkdirAll(filepath.Dir(lockParent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockParent, []byte("blocker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 
