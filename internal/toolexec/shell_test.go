@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/toolexec"
@@ -317,4 +318,48 @@ func TestShellSafetyMiddlewarePrefixesWarnings(t *testing.T) {
 	assert.Contains(t, result.Content, "warning: shell safety interceptor")
 	assert.Contains(t, result.Content, "redirects output to a file")
 	assert.Contains(t, result.Content, "ok")
+}
+
+func TestShellValidatorWithCustomInterceptor(t *testing.T) {
+	customRules := []toolexec.InterceptionRule{
+		{
+			Pattern: regexp.MustCompile(`\bcurl\b`),
+			Action:  toolexec.ActionBlock,
+			Message: "curl is blocked by policy",
+		},
+	}
+	interceptor := toolexec.NewCommandInterceptor(t.TempDir(), customRules)
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidatorWithInterceptor(engine, t.TempDir(), interceptor)
+
+	interception, err := validator.Inspect(context.Background(), "curl https://example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "curl is blocked by policy", interception.BlockReason)
+}
+
+func TestShellValidatorWarnsOnTee(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+
+	interception, err := validator.Inspect(context.Background(), "echo hello | tee output.txt")
+	require.NoError(t, err)
+	assert.Contains(t, interception.Warnings, "command uses tee to write to a file")
+}
+
+func TestShellValidatorWarnsOnDd(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+
+	interception, err := validator.Inspect(context.Background(), "dd if=/dev/zero of=output.bin bs=1024 count=1")
+	require.NoError(t, err)
+	assert.Contains(t, interception.Warnings, "command uses dd to write to a file")
+}
+
+func TestShellValidatorWarnsOnTruncate(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+
+	interception, err := validator.Inspect(context.Background(), "truncate -s 0 logfile.log")
+	require.NoError(t, err)
+	assert.Contains(t, interception.Warnings, "command uses truncate to modify a file")
 }
