@@ -328,7 +328,7 @@ func TestShellValidatorWithCustomInterceptor(t *testing.T) {
 			Message: "curl is blocked by policy",
 		},
 	}
-	interceptor := toolexec.NewCommandInterceptor(t.TempDir(), customRules)
+	interceptor := toolexec.MustNewCommandInterceptor(t.TempDir(), customRules)
 	engine := toolexec.NewRuleEngine(nil)
 	validator := toolexec.NewShellValidatorWithInterceptor(engine, t.TempDir(), interceptor)
 

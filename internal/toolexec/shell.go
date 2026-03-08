@@ -152,13 +152,17 @@ func NewShellValidator(engine *RuleEngine, workDir string) *ShellValidator {
 	return &ShellValidator{
 		engine:      engine,
 		workDir:     workDir,
-		interceptor: NewCommandInterceptor(workDir, nil),
+		interceptor: MustNewCommandInterceptor(workDir, nil),
 	}
 }
 
 // NewShellValidatorWithInterceptor creates a ShellValidator with a custom
-// CommandInterceptor for configurable interception rules.
+// CommandInterceptor for configurable interception rules. If interceptor
+// is nil, a default interceptor is created automatically.
 func NewShellValidatorWithInterceptor(engine *RuleEngine, workDir string, interceptor *CommandInterceptor) *ShellValidator {
+	if interceptor == nil {
+		interceptor = MustNewCommandInterceptor(workDir, nil)
+	}
 	return &ShellValidator{
 		engine:      engine,
 		workDir:     workDir,
@@ -269,6 +273,24 @@ func (v *ShellValidator) validateRuleEngine(command string) error {
 		}
 	}
 	return nil
+}
+
+// isRecursiveRM returns true if the full command string represents an rm
+// invocation with -r, -R, or --recursive flags.
+func isRecursiveRM(full string) bool {
+	fields := strings.Fields(full)
+	for _, token := range fields[1:] {
+		if token == "--" {
+			break
+		}
+		if token == "--recursive" {
+			return true
+		}
+		if strings.HasPrefix(token, "-") && !strings.HasPrefix(token, "--") && strings.ContainsAny(token, "rR") {
+			return true
+		}
+	}
+	return false
 }
 
 func findRecursiveRMOutsideWorkdir(parts []CommandPart, workDir string) []string {

@@ -1,6 +1,7 @@
 package toolexec_test
 
 import (
+	"context"
 	"regexp"
 	"testing"
 
@@ -15,7 +16,8 @@ func TestDefaultInterceptionRulesNotEmpty(t *testing.T) {
 }
 
 func TestCommandInterceptorUsesDefaultRulesWhenNil(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci, err := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	require.NoError(t, err)
 	assert.NotEmpty(t, ci.Rules(), "should use default rules when nil is passed")
 }
 
@@ -27,8 +29,39 @@ func TestCommandInterceptorUsesCustomRules(t *testing.T) {
 			Message: "foo is blocked",
 		},
 	}
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), custom)
+	ci, err := toolexec.NewCommandInterceptor(t.TempDir(), custom)
+	require.NoError(t, err)
 	assert.Len(t, ci.Rules(), 1)
+}
+
+func TestCommandInterceptorRejectsNilPattern(t *testing.T) {
+	rules := []toolexec.InterceptionRule{
+		{
+			Pattern: nil,
+			Action:  toolexec.ActionBlock,
+			Message: "bad rule",
+		},
+	}
+	ci, err := toolexec.NewCommandInterceptor(t.TempDir(), rules)
+	assert.Error(t, err)
+	assert.Nil(t, ci)
+	assert.Contains(t, err.Error(), "nil Pattern")
+}
+
+func TestCommandInterceptorDefensiveCopy(t *testing.T) {
+	custom := []toolexec.InterceptionRule{
+		{
+			Pattern: regexp.MustCompile(`\bfoo\b`),
+			Action:  toolexec.ActionBlock,
+			Message: "foo is blocked",
+		},
+	}
+	ci, err := toolexec.NewCommandInterceptor(t.TempDir(), custom)
+	require.NoError(t, err)
+
+	// Mutating the original slice should not affect the interceptor.
+	custom[0].Message = "mutated"
+	assert.Equal(t, "foo is blocked", ci.Rules()[0].Message)
 }
 
 func TestCommandInterceptorCustomBlockRule(t *testing.T) {
@@ -39,7 +72,8 @@ func TestCommandInterceptorCustomBlockRule(t *testing.T) {
 			Message: "dangerous command blocked",
 		},
 	}
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), custom)
+	ci, err := toolexec.NewCommandInterceptor(t.TempDir(), custom)
+	require.NoError(t, err)
 
 	parts, err := toolexec.ParseCommand("dangerous --force")
 	require.NoError(t, err)
@@ -56,7 +90,8 @@ func TestCommandInterceptorCustomRouteRule(t *testing.T) {
 			Message: "custom_patch must be routed",
 		},
 	}
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), custom)
+	ci, err := toolexec.NewCommandInterceptor(t.TempDir(), custom)
+	require.NoError(t, err)
 
 	parts, err := toolexec.ParseCommand("custom_patch apply")
 	require.NoError(t, err)
@@ -66,7 +101,7 @@ func TestCommandInterceptorCustomRouteRule(t *testing.T) {
 }
 
 func TestCommandInterceptorWarnsOnRedirect(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("echo hi > output.txt")
 	require.NoError(t, err)
@@ -76,8 +111,18 @@ func TestCommandInterceptorWarnsOnRedirect(t *testing.T) {
 	assert.Empty(t, result.BlockReason)
 }
 
+func TestCommandInterceptorWarnsOnRedirectWithoutSpace(t *testing.T) {
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
+
+	parts, err := toolexec.ParseCommand("echo hi>out.txt")
+	require.NoError(t, err)
+
+	result := ci.Intercept("echo hi>out.txt", parts)
+	assert.Contains(t, result.Warnings, "command redirects output to a file")
+}
+
 func TestCommandInterceptorWarnsOnSedInPlace(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("sed -i 's/foo/bar/' file.txt")
 	require.NoError(t, err)
@@ -87,7 +132,7 @@ func TestCommandInterceptorWarnsOnSedInPlace(t *testing.T) {
 }
 
 func TestCommandInterceptorWarnsOnChmod(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("chmod +x script.sh")
 	require.NoError(t, err)
@@ -97,7 +142,7 @@ func TestCommandInterceptorWarnsOnChmod(t *testing.T) {
 }
 
 func TestCommandInterceptorWarnsOnChown(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("chown root:root file.txt")
 	require.NoError(t, err)
@@ -107,7 +152,7 @@ func TestCommandInterceptorWarnsOnChown(t *testing.T) {
 }
 
 func TestCommandInterceptorWarnsOnMvOutside(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("mv file.txt ../outside/")
 	require.NoError(t, err)
@@ -116,8 +161,28 @@ func TestCommandInterceptorWarnsOnMvOutside(t *testing.T) {
 	assert.Contains(t, result.Warnings, "command may move/copy files outside the working directory")
 }
 
+func TestCommandInterceptorWarnsOnMvToRoot(t *testing.T) {
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
+
+	parts, err := toolexec.ParseCommand("mv file /")
+	require.NoError(t, err)
+
+	result := ci.Intercept("mv file /", parts)
+	assert.Contains(t, result.Warnings, "command may move/copy files outside the working directory")
+}
+
+func TestCommandInterceptorWarnsOnMvToDotDot(t *testing.T) {
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
+
+	parts, err := toolexec.ParseCommand("mv file ..")
+	require.NoError(t, err)
+
+	result := ci.Intercept("mv file ..", parts)
+	assert.Contains(t, result.Warnings, "command may move/copy files outside the working directory")
+}
+
 func TestCommandInterceptorWarnsOnTee(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("echo hello | tee output.txt")
 	require.NoError(t, err)
@@ -127,7 +192,7 @@ func TestCommandInterceptorWarnsOnTee(t *testing.T) {
 }
 
 func TestCommandInterceptorWarnsOnDd(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("dd if=/dev/zero of=output.bin bs=1024 count=1")
 	require.NoError(t, err)
@@ -137,7 +202,7 @@ func TestCommandInterceptorWarnsOnDd(t *testing.T) {
 }
 
 func TestCommandInterceptorDoesNotWarnOnDdWithoutOf(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("dd if=/dev/zero bs=1024 count=1")
 	require.NoError(t, err)
@@ -149,7 +214,7 @@ func TestCommandInterceptorDoesNotWarnOnDdWithoutOf(t *testing.T) {
 }
 
 func TestCommandInterceptorWarnsOnTruncate(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("truncate -s 0 logfile.log")
 	require.NoError(t, err)
@@ -159,7 +224,7 @@ func TestCommandInterceptorWarnsOnTruncate(t *testing.T) {
 }
 
 func TestCommandInterceptorRoutesApplyPatch(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("apply_patch foo")
 	require.NoError(t, err)
@@ -170,7 +235,7 @@ func TestCommandInterceptorRoutesApplyPatch(t *testing.T) {
 
 func TestCommandInterceptorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
 	workDir := t.TempDir()
-	ci := toolexec.NewCommandInterceptor(workDir, nil)
+	ci := toolexec.MustNewCommandInterceptor(workDir, nil)
 
 	parts, err := toolexec.ParseCommand("rm -rf ../outside")
 	require.NoError(t, err)
@@ -181,7 +246,7 @@ func TestCommandInterceptorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
 
 func TestCommandInterceptorAllowsRecursiveRMInsideWorkdir(t *testing.T) {
 	workDir := t.TempDir()
-	ci := toolexec.NewCommandInterceptor(workDir, nil)
+	ci := toolexec.MustNewCommandInterceptor(workDir, nil)
 
 	parts, err := toolexec.ParseCommand("rm -rf subdir")
 	require.NoError(t, err)
@@ -191,7 +256,7 @@ func TestCommandInterceptorAllowsRecursiveRMInsideWorkdir(t *testing.T) {
 }
 
 func TestCommandInterceptorMultipleWarnings(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	cmd := "echo hi > output.txt; chmod +x output.txt"
 	parts, err := toolexec.ParseCommand(cmd)
@@ -204,7 +269,7 @@ func TestCommandInterceptorMultipleWarnings(t *testing.T) {
 }
 
 func TestCommandInterceptorNoMatchReturnsEmpty(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 
 	parts, err := toolexec.ParseCommand("ls -la")
 	require.NoError(t, err)
@@ -216,11 +281,21 @@ func TestCommandInterceptorNoMatchReturnsEmpty(t *testing.T) {
 }
 
 func TestCommandInterceptorRulesCopyIsolation(t *testing.T) {
-	ci := toolexec.NewCommandInterceptor(t.TempDir(), nil)
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
 	rules1 := ci.Rules()
 	rules2 := ci.Rules()
 
 	// Mutating the returned slice should not affect the interceptor.
 	rules1[0].Message = "mutated"
 	assert.NotEqual(t, rules1[0].Message, rules2[0].Message)
+}
+
+func TestNewShellValidatorWithNilInterceptor(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	// Passing nil interceptor should not panic; falls back to defaults.
+	validator := toolexec.NewShellValidatorWithInterceptor(engine, t.TempDir(), nil)
+
+	interception, err := validator.Inspect(context.Background(), "echo hi > output.txt")
+	require.NoError(t, err)
+	assert.Contains(t, interception.Warnings, "command redirects output to a file")
 }
