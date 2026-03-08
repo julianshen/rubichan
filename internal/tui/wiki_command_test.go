@@ -197,6 +197,35 @@ func TestViewWikiOverlay(t *testing.T) {
 	assert.NotContains(t, view, "test · model")
 }
 
+func TestStartWikiGenerationPathTraversal(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	m.wikiCfg = WikiCommandConfig{WorkDir: "/tmp/proj"}
+
+	wf := NewWikiForm("/tmp/proj")
+	wf.Path = "../../etc"
+	m.wikiRunning = true
+
+	cmd := m.startWikiGeneration(wf)
+	assert.Nil(t, cmd)
+	assert.False(t, m.wikiRunning)
+	assert.Contains(t, m.content.String(), "escapes working directory")
+}
+
+func TestStartWikiGenerationOutDirTraversal(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	m.wikiCfg = WikiCommandConfig{WorkDir: "/tmp/proj"}
+
+	wf := NewWikiForm("/tmp/proj")
+	wf.Path = "."
+	wf.OutDir = "../../../tmp/evil"
+	m.wikiRunning = true
+
+	cmd := m.startWikiGeneration(wf)
+	assert.Nil(t, cmd)
+	assert.False(t, m.wikiRunning)
+	assert.Contains(t, m.content.String(), "escapes working directory")
+}
+
 func TestStatusBarWikiProgress(t *testing.T) {
 	sb := NewStatusBar(120)
 	sb.SetWikiProgress("analyzing")

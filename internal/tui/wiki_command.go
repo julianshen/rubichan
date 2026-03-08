@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/parser"
+	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/wiki"
 )
 
@@ -125,6 +127,22 @@ func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 	m.setContentAndAutoScroll(m.content.String())
 	m.statusBar.SetWikiProgress("starting")
 
+	dir := filepath.Clean(filepath.Join(m.wikiCfg.WorkDir, wf.Path))
+	outDir := filepath.Clean(filepath.Join(m.wikiCfg.WorkDir, wf.OutDir))
+	base := filepath.Clean(m.wikiCfg.WorkDir)
+	if rel, err := filepath.Rel(base, dir); err != nil || strings.HasPrefix(rel, "..") {
+		m.wikiRunning = false
+		m.content.WriteString(persona.ErrorMessage("project path escapes working directory"))
+		m.setContentAndAutoScroll(m.content.String())
+		return nil
+	}
+	if rel, err := filepath.Rel(base, outDir); err != nil || strings.HasPrefix(rel, "..") {
+		m.wikiRunning = false
+		m.content.WriteString(persona.ErrorMessage("output directory escapes working directory"))
+		m.setContentAndAutoScroll(m.content.String())
+		return nil
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	m.wikiCancel = cancel
 
@@ -132,8 +150,8 @@ func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 	doneCh := make(chan error, 1)
 
 	cfg := wiki.Config{
-		Dir:         filepath.Join(m.wikiCfg.WorkDir, wf.Path),
-		OutputDir:   filepath.Join(m.wikiCfg.WorkDir, wf.OutDir),
+		Dir:         dir,
+		OutputDir:   outDir,
 		Format:      wf.Format,
 		Concurrency: wf.Concurrency(),
 		ProgressFunc: func(stage string, current, total int) {
@@ -154,18 +172,17 @@ func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 	return m.waitForWikiEvent(progressCh, doneCh)
 }
 
-// waitForWikiEvent returns a tea.Cmd that reads either a progress or done event.
+// waitForWikiEvent returns a tea.Cmd that reads from progressCh until it is
+// closed, then reads the final error from doneCh. Reading progressCh
+// exclusively avoids a race where select picks doneCh before buffered
+// progress messages are drained.
 func (m *Model) waitForWikiEvent(progressCh <-chan wikiProgressMsg, doneCh <-chan error) tea.Cmd {
 	return func() tea.Msg {
-		select {
-		case msg, ok := <-progressCh:
-			if !ok {
-				err := <-doneCh
-				return wikiDoneMsg{Err: err}
-			}
-			return wikiEventMsg{progress: &msg, progressCh: progressCh, doneCh: doneCh}
-		case err := <-doneCh:
+		msg, ok := <-progressCh
+		if !ok {
+			err := <-doneCh
 			return wikiDoneMsg{Err: err}
 		}
+		return wikiEventMsg{progress: &msg, progressCh: progressCh, doneCh: doneCh}
 	}
 }
