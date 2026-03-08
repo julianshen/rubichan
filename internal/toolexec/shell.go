@@ -173,10 +173,12 @@ func NewShellValidatorWithInterceptor(engine *RuleEngine, workDir string, interc
 // Validate parses the command string and checks each sub-command against the
 // rule engine with CategoryBash. Returns an error if any sub-command is denied.
 func (v *ShellValidator) Validate(ctx context.Context, command string) error {
-	interception, err := v.Inspect(ctx, command)
+	parts, err := ParseCommand(command)
 	if err != nil {
-		return err
+		return fmt.Errorf("shell validation parse error: %w", err)
 	}
+
+	interception := v.interceptor.Intercept(command, parts)
 	if interception.RouteReason != "" {
 		return fmt.Errorf("command requires routing: %s", interception.RouteReason)
 	}
@@ -184,7 +186,7 @@ func (v *ShellValidator) Validate(ctx context.Context, command string) error {
 		return fmt.Errorf("command blocked: %s", interception.BlockReason)
 	}
 
-	return v.validateRuleEngine(command)
+	return v.validateRuleEngineParts(parts)
 }
 
 // Inspect evaluates shell-specific safety checks that sit alongside rule
@@ -213,13 +215,15 @@ func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
 				return next(ctx, tc)
 			}
 
-			interception, err := validator.Inspect(ctx, command)
-			if err != nil {
+			parts, parseErr := ParseCommand(command)
+			if parseErr != nil {
 				return Result{
-					Content: fmt.Sprintf("shell command blocked: %s", err),
+					Content: fmt.Sprintf("shell command blocked: %s", parseErr),
 					IsError: true,
 				}
 			}
+
+			interception := validator.interceptor.Intercept(command, parts)
 
 			if interception.RouteReason != "" {
 				return Result{
@@ -233,7 +237,7 @@ func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
 					IsError: true,
 				}
 			}
-			if err := validator.validateRuleEngine(command); err != nil {
+			if err := validator.validateRuleEngineParts(parts); err != nil {
 				return Result{
 					Content: fmt.Sprintf("shell command blocked: %s", err),
 					IsError: true,
@@ -255,14 +259,9 @@ func ShellSafetyMiddleware(validator *ShellValidator) Middleware {
 	}
 }
 
-func (v *ShellValidator) validateRuleEngine(command string) error {
+func (v *ShellValidator) validateRuleEngineParts(parts []CommandPart) error {
 	if v.engine == nil {
 		return nil
-	}
-
-	parts, err := ParseCommand(command)
-	if err != nil {
-		return fmt.Errorf("shell validation parse error: %w", err)
 	}
 
 	for _, part := range parts {

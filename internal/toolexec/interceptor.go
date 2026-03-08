@@ -99,7 +99,7 @@ func DefaultInterceptionRules() []InterceptionRule {
 			Message: "command changes file ownership/permissions",
 		},
 		{
-			Pattern: regexp.MustCompile(`(?i)\b(?:mv|cp)\b[^;\n]*(?:\s/\S*|\s\.\./\S*)`),
+			Pattern: regexp.MustCompile(`(?i)\b(?:mv|cp)\b[^;\n]*(?:\s/\S*|\s\.\./?\S*)`),
 			Action:  ActionWarn,
 			Message: "command may move/copy files outside the working directory",
 		},
