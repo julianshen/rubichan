@@ -299,3 +299,62 @@ func TestNewShellValidatorWithNilInterceptor(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, interception.Warnings, "command redirects output to a file")
 }
+
+func TestMustNewCommandInterceptorPanicsOnNilPattern(t *testing.T) {
+	assert.Panics(t, func() {
+		toolexec.MustNewCommandInterceptor(t.TempDir(), []toolexec.InterceptionRule{
+			{Pattern: nil, Action: toolexec.ActionBlock, Message: "bad"},
+		})
+	})
+}
+
+func TestShellValidatorInspectParseError(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+
+	// Unclosed single quote causes a parse error.
+	_, err := validator.Inspect(context.Background(), "echo 'unclosed")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "shell validation parse error")
+}
+
+func TestShellValidatorValidateParseError(t *testing.T) {
+	engine := toolexec.NewRuleEngine(nil)
+	validator := toolexec.NewShellValidator(engine, t.TempDir())
+
+	err := validator.Validate(context.Background(), "echo 'unclosed")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "shell validation parse error")
+}
+
+func TestCommandInterceptorIsRecursiveRMWithLongFlag(t *testing.T) {
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
+
+	parts, err := toolexec.ParseCommand("rm --recursive subdir")
+	require.NoError(t, err)
+
+	result := ci.Intercept("rm --recursive subdir", parts)
+	assert.Contains(t, result.Warnings, "command uses recursive rm")
+}
+
+func TestCommandInterceptorNonRecursiveRMNoWarning(t *testing.T) {
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
+
+	parts, err := toolexec.ParseCommand("rm file.txt")
+	require.NoError(t, err)
+
+	result := ci.Intercept("rm file.txt", parts)
+	for _, w := range result.Warnings {
+		assert.NotContains(t, w, "recursive rm")
+	}
+}
+
+func TestCommandInterceptorBlocksRMOutsideWorkdirWithTilde(t *testing.T) {
+	ci := toolexec.MustNewCommandInterceptor(t.TempDir(), nil)
+
+	parts, err := toolexec.ParseCommand("rm -rf ~/important")
+	require.NoError(t, err)
+
+	result := ci.Intercept("rm -rf ~/important", parts)
+	assert.NotEmpty(t, result.BlockReason)
+}

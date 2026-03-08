@@ -8,7 +8,10 @@ import (
 )
 
 // InterceptionAction defines the response when a command matches an
-// interception rule.
+// interception rule. This is distinct from RuleAction in rules.go:
+// InterceptionAction governs shell-specific pattern matching (warn/block/
+// route), while RuleAction governs the permission rule engine (allow/ask/
+// deny). Both systems run independently in the toolexec pipeline.
 type InterceptionAction int
 
 const (
