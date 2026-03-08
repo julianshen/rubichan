@@ -278,6 +278,9 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	case "text_delta":
 		m.rawAssistant.WriteString(msg.Text)
 		m.content.WriteString(msg.Text)
+		if IsMarkdownBreakpoint(m.rawAssistant.String()) {
+			m.renderAssistantMarkdown()
+		}
 		m.setContentAndAutoScroll(m.content.String())
 		return m, m.waitForEvent()
 
