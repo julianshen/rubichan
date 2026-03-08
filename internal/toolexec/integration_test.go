@@ -3,6 +3,7 @@ package toolexec_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/toolexec"
@@ -30,7 +31,11 @@ func (t *integrationTool) Execute(_ context.Context, _ json.RawMessage) (tools.T
 func buildFullPipeline(registry *tools.Registry, rules []toolexec.PermissionRule) *toolexec.Pipeline {
 	classifier := toolexec.NewClassifier(nil)
 	engine := toolexec.NewRuleEngine(rules)
-	validator := toolexec.NewShellValidator(engine)
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	validator := toolexec.NewShellValidator(engine, cwd)
 
 	return toolexec.NewPipeline(
 		toolexec.RegistryExecutor(registry),

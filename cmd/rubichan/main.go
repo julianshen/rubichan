@@ -540,7 +540,7 @@ func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt 
 
 	allRules := toolexec.MergeRules(userRules, projectRules)
 	ruleEngine := toolexec.NewRuleEngine(allRules)
-	shellValidator := toolexec.NewShellValidator(ruleEngine)
+	shellValidator := toolexec.NewShellValidator(ruleEngine, cwd)
 	hookAdapter := &toolexec.SkillHookAdapter{Runtime: rt}
 
 	p := toolexec.NewPipeline(
