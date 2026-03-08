@@ -331,16 +331,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "done":
-		raw := m.rawAssistant.String()
-		if raw != "" {
-			rendered, err := m.mdRenderer.Render(raw)
-			if err == nil && rendered != "" {
-				contentStr := m.content.String()
-				m.content.Reset()
-				m.content.WriteString(contentStr[:m.assistantStartIdx])
-				m.content.WriteString(rendered)
-			}
-		}
+		m.renderAssistantMarkdown()
 		m.rawAssistant.Reset()
 		m.content.WriteString(persona.SuccessMessage())
 		m.content.WriteString("\n")
@@ -364,4 +355,23 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, m.waitForEvent()
+}
+
+// renderAssistantMarkdown re-renders the accumulated rawAssistant markdown
+// through the Glamour renderer and replaces content from assistantStartIdx.
+// If rendering fails or produces empty output, the existing raw content is
+// kept unchanged.
+func (m *Model) renderAssistantMarkdown() {
+	raw := m.rawAssistant.String()
+	if raw == "" {
+		return
+	}
+	rendered, err := m.mdRenderer.Render(raw)
+	if err != nil || rendered == "" {
+		return
+	}
+	contentStr := m.content.String()
+	m.content.Reset()
+	m.content.WriteString(contentStr[:m.assistantStartIdx])
+	m.content.WriteString(rendered)
 }

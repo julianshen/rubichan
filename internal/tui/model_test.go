@@ -1270,6 +1270,43 @@ func TestModelCompletionUpDownNavigate(t *testing.T) {
 	assert.Equal(t, 1, um.completion.Selected())
 }
 
+func TestRenderAssistantMarkdown(t *testing.T) {
+	m := &Model{}
+	r, err := NewMarkdownRenderer(80)
+	require.NoError(t, err)
+	m.mdRenderer = r
+
+	// Simulate: user prompt is prefix, raw markdown is assistant text.
+	m.content.WriteString("> hello\n")
+	m.assistantStartIdx = m.content.Len()
+	m.rawAssistant.WriteString("Hello **world**")
+	m.content.WriteString("Hello **world**") // raw during streaming
+
+	m.renderAssistantMarkdown()
+
+	result := m.content.String()
+	assert.True(t, strings.HasPrefix(result, "> hello\n"))
+	// After rendering, raw ** markers should be stripped.
+	assert.NotContains(t, result[m.assistantStartIdx:], "**world**")
+	assert.Contains(t, result, "world")
+}
+
+func TestRenderAssistantMarkdownEmpty(t *testing.T) {
+	m := &Model{}
+	r, err := NewMarkdownRenderer(80)
+	require.NoError(t, err)
+	m.mdRenderer = r
+
+	m.content.WriteString("> hello\n")
+	m.assistantStartIdx = m.content.Len()
+
+	// rawAssistant is empty — should be a no-op.
+	contentBefore := m.content.String()
+	m.renderAssistantMarkdown()
+
+	assert.Equal(t, contentBefore, m.content.String())
+}
+
 func TestModelWindowSizeUpdatesCompletionWidth(t *testing.T) {
 	reg := commands.NewRegistry()
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, reg)
