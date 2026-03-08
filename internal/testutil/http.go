@@ -1,3 +1,5 @@
+// Package testutil provides test utilities including an in-memory HTTP
+// server that avoids binding network ports for hermetic test execution.
 package testutil
 
 import (
@@ -9,6 +11,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+)
+
+// Compile-time interface assertions.
+var (
+	_ http.ResponseWriter = (*memoryResponseWriter)(nil)
+	_ http.Flusher        = (*memoryResponseWriter)(nil)
 )
 
 type Server struct {
@@ -50,23 +58,31 @@ func NewServer(t *testing.T, handler http.Handler) *Server {
 
 	id := strconv.FormatUint(serverSeq.Add(1), 10)
 	serverHandlers.Store(id, handler)
-	return &Server{
+	s := &Server{
 		URL: "mem://" + id,
 		id:  id,
 	}
+	t.Cleanup(s.Close)
+	return s
 }
 
 func (s *Server) Close() {
 	serverHandlers.Delete(s.id)
 }
 
+// Client returns http.DefaultClient. The mem:// protocol is registered on
+// http.DefaultTransport, so any standard client can reach this server.
 func (s *Server) Client() *http.Client {
 	return http.DefaultClient
 }
 
 func registerMemoryTransport() {
 	registerTransportOnce.Do(func() {
-		http.DefaultTransport.(*http.Transport).RegisterProtocol("mem", memoryTransport{})
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			panic("testutil: http.DefaultTransport is not *http.Transport; cannot register mem:// protocol")
+		}
+		transport.RegisterProtocol("mem", memoryTransport{})
 	})
 }
 
@@ -143,6 +159,8 @@ func (w *memoryResponseWriter) WriteHeader(statusCode int) {
 	}
 }
 
+// Flush implements http.Flusher. It is a no-op because memoryBody.Write
+// broadcasts to readers immediately via sync.Cond.
 func (w *memoryResponseWriter) Flush() {}
 
 func (w *memoryResponseWriter) hasWrittenHeader() bool {
