@@ -13,6 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newTestShellTool(dir string, timeout time.Duration) *ShellTool {
+	st := NewShellTool(dir, timeout)
+	st.SetSandbox(nil)
+	return st
+}
+
 // initGitRepo initializes a git repo in dir with the given committed files.
 // Each file is created with "initial" as content, staged, and committed.
 func initGitRepo(t *testing.T, dir string, files ...string) {
@@ -30,7 +36,7 @@ func initGitRepo(t *testing.T, dir string, files ...string) {
 
 	for _, cmd := range cmds {
 		input, _ := json.Marshal(map[string]string{"command": cmd})
-		st := NewShellTool(dir, 30*time.Second)
+		st := newTestShellTool(dir, 30*time.Second)
 		r, err := st.Execute(context.Background(), input)
 		require.NoError(t, err, "setup cmd %q", cmd)
 		require.False(t, r.IsError, "setup cmd %q: %s", cmd, r.Content)
@@ -39,7 +45,7 @@ func initGitRepo(t *testing.T, dir string, files ...string) {
 
 func TestShellToolExecute(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	assert.Equal(t, "shell", st.Name())
 	assert.NotEmpty(t, st.Description())
@@ -56,7 +62,7 @@ func TestShellToolExecute(t *testing.T) {
 
 func TestShellToolTimeout(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 100*time.Millisecond)
+	st := newTestShellTool(dir, 100*time.Millisecond)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "sleep 10",
@@ -69,7 +75,7 @@ func TestShellToolTimeout(t *testing.T) {
 
 func TestShellToolExitCode(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo error output >&2; exit 1",
@@ -82,7 +88,7 @@ func TestShellToolExitCode(t *testing.T) {
 
 func TestShellToolExecuteStreamEmitsEvents(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo hello stream",
@@ -101,7 +107,7 @@ func TestShellToolExecuteStreamEmitsEvents(t *testing.T) {
 
 func TestShellToolOutputTruncation(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	// Generate output larger than 30KB (30 * 1024 = 30720 bytes)
 	// Use printf to generate a known large output
@@ -118,7 +124,7 @@ func TestShellToolOutputTruncation(t *testing.T) {
 
 func TestShellToolLargeOutputSetsDisplayContent(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	// Generate output larger than 30KB but smaller than 100KB.
 	// 50KB = 50 * 1024 = 51200 bytes.
@@ -138,7 +144,7 @@ func TestShellToolLargeOutputSetsDisplayContent(t *testing.T) {
 
 func TestShellToolHugeOutputCapsDisplayContent(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	// Generate output larger than 100KB (maxDisplayBytes).
 	// 120KB = 120 * 1024 = 122880 bytes.
@@ -159,7 +165,7 @@ func TestShellToolHugeOutputCapsDisplayContent(t *testing.T) {
 
 func TestShellToolSmallOutputNoDisplayContent(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo hello",
@@ -173,7 +179,7 @@ func TestShellToolSmallOutputNoDisplayContent(t *testing.T) {
 
 func TestShellToolInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	result, err := st.Execute(context.Background(), json.RawMessage(`{invalid`))
 	require.NoError(t, err)
@@ -184,7 +190,7 @@ func TestShellToolInvalidJSON(t *testing.T) {
 func TestShellToolSetDiffTracker(t *testing.T) {
 	dir := t.TempDir()
 	dt := NewDiffTracker()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	st.SetDiffTracker(dt)
 
 	// Run a command that doesn't change files — git diff should not record anything
@@ -200,7 +206,7 @@ func TestShellToolSetDiffTracker(t *testing.T) {
 
 func TestShellToolNoDiffTrackerDoesNotPanic(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second) // No DiffTracker
+	st := newTestShellTool(dir, 30*time.Second) // No DiffTracker
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo safe",
@@ -215,7 +221,7 @@ func TestShellToolDetectChangesInGitRepo(t *testing.T) {
 	initGitRepo(t, dir, "tracked.txt")
 
 	dt := NewDiffTracker()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	st.SetDiffTracker(dt)
 
 	// Modify a tracked file and create an untracked file in one command.
@@ -243,7 +249,7 @@ func TestShellToolDetectChangesRespectsOwnTimeout(t *testing.T) {
 	initGitRepo(t, dir, "file.txt")
 
 	dt := NewDiffTracker()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	st.SetDiffTracker(dt)
 
 	// Modify a file so git status has something to report.
@@ -268,7 +274,7 @@ func TestShellToolDetectChangesDeduplicates(t *testing.T) {
 	initGitRepo(t, dir, "file.txt")
 
 	dt := NewDiffTracker()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	st.SetDiffTracker(dt)
 
 	// First command: modify file.txt
@@ -305,12 +311,12 @@ func TestShellToolDetectChangesIgnoresPreExistingDirtyFiles(t *testing.T) {
 	preInput, _ := json.Marshal(map[string]string{
 		"command": "echo dirty > preexisting.txt",
 	})
-	preShell := NewShellTool(dir, 30*time.Second)
+	preShell := newTestShellTool(dir, 30*time.Second)
 	_, err := preShell.Execute(context.Background(), preInput)
 	require.NoError(t, err)
 
 	dt := NewDiffTracker()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	st.SetDiffTracker(dt)
 
 	// Now modify tracked.txt — only this should be recorded.
@@ -336,7 +342,7 @@ func TestShellToolDetectChangesRunsOnTimeout(t *testing.T) {
 
 	dt := NewDiffTracker()
 	// Very short timeout to trigger the timeout path.
-	st := NewShellTool(dir, 100*time.Millisecond)
+	st := newTestShellTool(dir, 100*time.Millisecond)
 	st.SetDiffTracker(dt)
 
 	// Command that writes a file then sleeps past the timeout.
@@ -360,7 +366,7 @@ func TestShellToolDetectChangesRunsOnTimeout(t *testing.T) {
 
 func TestShellToolInterceptorAllowsRecursiveRMInsideWorkdir(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	victim := dir + "/victim"
 	require.NoError(t, os.Mkdir(victim, 0755))
@@ -382,7 +388,7 @@ func TestShellToolInterceptorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
 	require.NoError(t, os.Mkdir(parentVictim, 0755))
 	t.Cleanup(func() { _ = os.RemoveAll(parentVictim) })
 
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	input, _ := json.Marshal(map[string]string{
 		"command": "rm -rf ../outside-victim",
 	})
@@ -397,7 +403,7 @@ func TestShellToolInterceptorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
 
 func TestShellToolInterceptorWarnsOnRedirect(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo hi > redirected.txt",
@@ -415,7 +421,7 @@ func TestShellToolInterceptorWarnsOnRedirect(t *testing.T) {
 
 func TestShellToolInterceptorWarnsOnSedInPlace(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "sed -i",
@@ -429,7 +435,7 @@ func TestShellToolInterceptorWarnsOnSedInPlace(t *testing.T) {
 
 func TestShellToolInterceptorRoutesApplyPatchToFileTool(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "apply_patch foo",
@@ -443,7 +449,7 @@ func TestShellToolInterceptorRoutesApplyPatchToFileTool(t *testing.T) {
 
 func TestShellToolInterceptorRoutesApplyPatchAfterCommandSeparator(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo ok; apply_patch foo",
@@ -456,7 +462,7 @@ func TestShellToolInterceptorRoutesApplyPatchAfterCommandSeparator(t *testing.T)
 
 func TestShellToolInterceptorRoutesApplyPatchWithEnvPrefix(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "FOO=1 apply_patch foo",
@@ -469,7 +475,7 @@ func TestShellToolInterceptorRoutesApplyPatchWithEnvPrefix(t *testing.T) {
 
 func TestShellToolInterceptorRoutesApplyPatchViaShC(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": `sh -c 'apply_patch foo'`,
@@ -482,7 +488,7 @@ func TestShellToolInterceptorRoutesApplyPatchViaShC(t *testing.T) {
 
 func TestShellToolInterceptorRoutesApplyPatchInsideQuotedSeparator(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": `sh -c "echo \"a|b\"; apply_patch foo"`,
@@ -495,7 +501,7 @@ func TestShellToolInterceptorRoutesApplyPatchInsideQuotedSeparator(t *testing.T)
 
 func TestShellToolInterceptorRoutesApplyPatchViaEnv(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "env FOO=1 apply_patch foo",
@@ -508,7 +514,7 @@ func TestShellToolInterceptorRoutesApplyPatchViaEnv(t *testing.T) {
 
 func TestShellToolExecuteStreamTimeout(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 200*time.Millisecond)
+	st := newTestShellTool(dir, 200*time.Millisecond)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo before && sleep 10",
@@ -527,7 +533,7 @@ func TestShellToolExecuteStreamTimeout(t *testing.T) {
 
 func TestShellToolExecuteStreamExitCode(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "echo error >&2; exit 1",
@@ -549,7 +555,7 @@ func TestShellToolExecuteStreamExitCode(t *testing.T) {
 
 func TestShellToolExecuteStreamInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	result, err := st.ExecuteStream(context.Background(), json.RawMessage(`{invalid`), func(ev ToolEvent) {})
 	require.NoError(t, err)
@@ -559,7 +565,7 @@ func TestShellToolExecuteStreamInvalidJSON(t *testing.T) {
 
 func TestShellToolExecuteStreamBlockedCommand(t *testing.T) {
 	dir := t.TempDir()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 
 	input, _ := json.Marshal(map[string]string{
 		"command": "apply_patch foo",
@@ -583,7 +589,7 @@ func TestShellToolExecuteStreamDetectsChanges(t *testing.T) {
 	initGitRepo(t, dir, "tracked.txt")
 
 	dt := NewDiffTracker()
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	st.SetDiffTracker(dt)
 
 	input, _ := json.Marshal(map[string]string{
@@ -609,7 +615,7 @@ func TestShellToolInterceptorBlocksRecursiveRMViaShC(t *testing.T) {
 	require.NoError(t, os.Mkdir(parentVictim, 0755))
 	t.Cleanup(func() { _ = os.RemoveAll(parentVictim) })
 
-	st := NewShellTool(dir, 30*time.Second)
+	st := newTestShellTool(dir, 30*time.Second)
 	input, _ := json.Marshal(map[string]string{
 		"command": "sh -c 'rm -rf ../outside-victim-shc'",
 	})

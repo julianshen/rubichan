@@ -77,6 +77,7 @@ type ShellTool struct {
 	workDir     string
 	timeout     time.Duration
 	diffTracker *DiffTracker
+	sandbox     ShellSandbox
 }
 
 // NewShellTool creates a new ShellTool that runs commands in the given
@@ -85,6 +86,7 @@ func NewShellTool(workDir string, timeout time.Duration) *ShellTool {
 	return &ShellTool{
 		workDir: workDir,
 		timeout: timeout,
+		sandbox: NewDefaultShellSandbox(workDir),
 	}
 }
 
@@ -92,6 +94,11 @@ func NewShellTool(workDir string, timeout time.Duration) *ShellTool {
 // by running git status --porcelain after command execution.
 func (s *ShellTool) SetDiffTracker(dt *DiffTracker) {
 	s.diffTracker = dt
+}
+
+// SetSandbox attaches an OS-level sandbox wrapper to shell executions.
+func (s *ShellTool) SetSandbox(sb ShellSandbox) {
+	s.sandbox = sb
 }
 
 func (s *ShellTool) Name() string {
@@ -162,6 +169,16 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 
 	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", in.Command)
 	cmd.Dir = s.workDir
+	if s.sandbox != nil {
+		if err := s.sandbox.Wrap(cmd); err != nil {
+			res := withInterceptionWarnings(ToolResult{
+				Content: fmt.Sprintf("tool execution error: sandbox setup failed: %s", err.Error()),
+				IsError: true,
+			}, interception.warnings)
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
+			return res, nil
+		}
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
