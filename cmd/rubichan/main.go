@@ -1276,7 +1276,11 @@ func runHeadless() error {
 		formatter = output.NewJSONFormatter()
 	default:
 		if term.IsTerminal(int(os.Stdout.Fd())) {
-			formatter = output.NewStyledMarkdownFormatter(80)
+			width := 80
+			if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+				width = w
+			}
+			formatter = output.NewStyledMarkdownFormatter(width)
 		} else {
 			formatter = output.NewMarkdownFormatter()
 		}
