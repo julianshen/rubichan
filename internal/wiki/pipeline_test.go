@@ -124,6 +124,23 @@ func Main() {}
 	assertFileExists(t, filepath.Join(outDir, "docusaurus.config.js"))
 }
 
+func TestRunCallsProgressFunc(t *testing.T) {
+	var stages []string
+	cfg := Config{
+		Dir:         t.TempDir(),
+		OutputDir:   filepath.Join(t.TempDir(), "out"),
+		Format:      "raw-md",
+		Concurrency: 1,
+		ProgressFunc: func(stage string, current, total int) {
+			stages = append(stages, stage)
+		},
+	}
+
+	// Run will fail at scan (empty dir), but ProgressFunc should be called for stage 1.
+	_ = Run(context.Background(), cfg, nil, nil)
+	assert.Contains(t, stages, "scanning")
+}
+
 func TestRunPipelineEmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
