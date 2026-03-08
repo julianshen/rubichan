@@ -2,10 +2,14 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"strconv"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/julianshen/rubichan/internal/commands"
+	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/wiki"
 )
 
@@ -102,6 +106,9 @@ func NewWikiForm(workDir string) *WikiForm {
 // Form returns the underlying huh.Form.
 func (wf *WikiForm) Form() *huh.Form { return wf.form }
 
+// SetForm replaces the underlying huh.Form (used after Update returns a new form).
+func (wf *WikiForm) SetForm(f *huh.Form) { wf.form = f }
+
 // Concurrency parses the concurrency string, defaulting to 5.
 func (wf *WikiForm) Concurrency() int {
 	n, err := strconv.Atoi(wf.ConcurrencyStr)
@@ -109,4 +116,56 @@ func (wf *WikiForm) Concurrency() int {
 		return 5
 	}
 	return n
+}
+
+// startWikiGeneration launches wiki generation in a background goroutine.
+func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
+	m.wikiRunning = true
+	m.content.WriteString(fmt.Sprintf("Wiki generation started (%s -> %s)\n", wf.Format, wf.OutDir))
+	m.setContentAndAutoScroll(m.content.String())
+	m.statusBar.SetWikiProgress("starting")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.wikiCancel = cancel
+
+	progressCh := make(chan wikiProgressMsg, 16)
+	doneCh := make(chan error, 1)
+
+	cfg := wiki.Config{
+		Dir:         filepath.Join(m.wikiCfg.WorkDir, wf.Path),
+		OutputDir:   filepath.Join(m.wikiCfg.WorkDir, wf.OutDir),
+		Format:      wf.Format,
+		Concurrency: wf.Concurrency(),
+		ProgressFunc: func(stage string, current, total int) {
+			select {
+			case progressCh <- wikiProgressMsg{Stage: stage, Current: current, Total: total}:
+			case <-ctx.Done():
+			}
+		},
+	}
+
+	go func() {
+		p := parser.NewParser()
+		err := wiki.Run(ctx, cfg, m.wikiCfg.LLM, p)
+		close(progressCh)
+		doneCh <- err
+	}()
+
+	return m.waitForWikiEvent(progressCh, doneCh)
+}
+
+// waitForWikiEvent returns a tea.Cmd that reads either a progress or done event.
+func (m *Model) waitForWikiEvent(progressCh <-chan wikiProgressMsg, doneCh <-chan error) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case msg, ok := <-progressCh:
+			if !ok {
+				err := <-doneCh
+				return wikiDoneMsg{Err: err}
+			}
+			return wikiEventMsg{progress: &msg, progressCh: progressCh, doneCh: doneCh}
+		case err := <-doneCh:
+			return wikiDoneMsg{Err: err}
+		}
+	}
 }
