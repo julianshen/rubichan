@@ -34,6 +34,11 @@ func (al *CommandAllowlist) Allow(command string) {
 func (al *CommandAllowlist) AllowPattern(prefix string) {
 	al.mu.Lock()
 	defer al.mu.Unlock()
+	for _, p := range al.patterns {
+		if p == prefix {
+			return
+		}
+	}
 	al.patterns = append(al.patterns, prefix)
 }
 
@@ -55,7 +60,13 @@ func (al *CommandAllowlist) IsAllowed(command string) bool {
 
 	for _, prefix := range al.patterns {
 		if strings.HasPrefix(command, prefix) {
-			return true
+			// Ensure the match is at a word boundary: the command must either
+			// equal the prefix exactly or the character after the prefix must
+			// be a space. This prevents "git status; rm -rf /" from matching
+			// a pattern of "git status".
+			if len(command) == len(prefix) || command[len(prefix)] == ' ' {
+				return true
+			}
 		}
 	}
 

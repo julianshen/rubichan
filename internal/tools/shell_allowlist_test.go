@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,6 @@ func TestCommandAllowlistReadOnlyBypass(t *testing.T) {
 	al := NewCommandAllowlist()
 	// Read-only commands should be auto-allowed without explicit Allow
 	assert.True(t, al.IsAllowed("ls -la"))
-	assert.True(t, al.IsAllowed("git status"))
 	assert.True(t, al.IsAllowed("cat file.go"))
 
 	// Write commands should not be auto-allowed
@@ -48,24 +48,31 @@ func TestCommandAllowlistClear(t *testing.T) {
 
 func TestCommandAllowlistConcurrentAccess(t *testing.T) {
 	al := NewCommandAllowlist()
-	done := make(chan bool)
+	var wg sync.WaitGroup
+	wg.Add(3)
 
 	go func() {
+		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			al.Allow("command-a")
 		}
-		done <- true
 	}()
 
 	go func() {
+		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			al.IsAllowed("command-a")
 		}
-		done <- true
 	}()
 
-	<-done
-	<-done
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			al.AllowPattern("pattern-")
+		}
+	}()
+
+	wg.Wait()
 }
 
 func TestCommandAllowlistMultiplePatterns(t *testing.T) {
@@ -85,4 +92,26 @@ func TestCommandAllowlistExactMatchOverPattern(t *testing.T) {
 	al.Allow("rm -rf /tmp/test")
 	assert.True(t, al.IsAllowed("rm -rf /tmp/test"))
 	assert.False(t, al.IsAllowed("rm -rf /tmp/other"))
+}
+
+func TestCommandAllowlistPatternNotExploitableViaSeparators(t *testing.T) {
+	al := NewCommandAllowlist()
+	al.AllowPattern("git status")
+
+	// "git status; rm -rf /" should NOT match the "git status" pattern
+	assert.False(t, al.IsAllowed("git status; rm -rf /"))
+	assert.False(t, al.IsAllowed("git status&& rm -rf /"))
+}
+
+func TestCommandAllowlistDeduplicatesPatterns(t *testing.T) {
+	al := NewCommandAllowlist()
+	al.AllowPattern("go test")
+	al.AllowPattern("go test")
+	al.AllowPattern("go test")
+
+	al.mu.RLock()
+	count := len(al.patterns)
+	al.mu.RUnlock()
+
+	assert.Equal(t, 1, count, "duplicate patterns should be deduplicated")
 }

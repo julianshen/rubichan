@@ -763,12 +763,26 @@ func TestShellToolDirectoryMustExist(t *testing.T) {
 
 	input, _ := json.Marshal(map[string]interface{}{
 		"command":   "pwd",
-		"directory": "/nonexistent/path",
+		"directory": filepath.Join(dir, "nonexistent"),
 	})
 	result, err := st.Execute(context.Background(), input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "does not exist")
+}
+
+func TestShellToolDirectoryMustBeWithinWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":   "pwd",
+		"directory": "/tmp",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "within the project root")
 }
 
 func TestShellToolDescriptionField(t *testing.T) {
@@ -800,6 +814,24 @@ func TestShellToolBackgroundExecution(t *testing.T) {
 	assert.False(t, result.IsError)
 	assert.Contains(t, result.Content, "process_id:")
 	pm.Shutdown(context.Background())
+}
+
+func TestShellToolBackgroundBlockedByInterceptor(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProcessManager(dir, ProcessManagerConfig{})
+	st := newTestShellTool(dir, 30*time.Second)
+	st.SetProcessManager(pm)
+	defer pm.Shutdown(context.Background())
+
+	// Command substitution should be blocked even in background mode
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":       "echo $(whoami)",
+		"is_background": true,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command substitution")
 }
 
 func TestShellToolBackgroundWithoutManager(t *testing.T) {
@@ -915,9 +947,42 @@ func TestIsReadOnlyCommandEnvPrefix(t *testing.T) {
 }
 
 func TestIsReadOnlyCommandGitBranch(t *testing.T) {
-	assert.True(t, IsReadOnlyCommand("git branch"))
+	// git branch can create branches, so it's not read-only
+	assert.False(t, IsReadOnlyCommand("git branch"))
 }
 
 func TestIsReadOnlyCommandGitShow(t *testing.T) {
 	assert.True(t, IsReadOnlyCommand("git show HEAD"))
+}
+
+func TestIsReadOnlyCommandAndSeparator(t *testing.T) {
+	// "ls && rm -rf /" should NOT be read-only
+	assert.False(t, IsReadOnlyCommand("ls && rm -rf /"))
+}
+
+func TestIsReadOnlyCommandSemicolonSeparator(t *testing.T) {
+	assert.False(t, IsReadOnlyCommand("ls; rm -rf /"))
+}
+
+func TestIsReadOnlyCommandOrSeparator(t *testing.T) {
+	assert.False(t, IsReadOnlyCommand("ls || rm -rf /"))
+}
+
+func TestIsReadOnlyCommandAllReadOnlyWithAnd(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("ls && pwd && echo ok"))
+}
+
+func TestIsReadOnlyCommandGitTag(t *testing.T) {
+	// git tag can create tags, so it's not read-only
+	assert.False(t, IsReadOnlyCommand("git tag"))
+}
+
+func TestIsReadOnlyCommandGitRemote(t *testing.T) {
+	// git remote can add/remove remotes, so it's not read-only
+	assert.False(t, IsReadOnlyCommand("git remote"))
+}
+
+func TestIsReadOnlyCommandBareGit(t *testing.T) {
+	// bare "git" with no subcommand just prints help — safe
+	assert.True(t, IsReadOnlyCommand("git"))
 }

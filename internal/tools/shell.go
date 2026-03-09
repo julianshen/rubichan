@@ -182,10 +182,38 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
 			return res, nil
 		}
+		// Ensure directory is within or equal to the project workDir to prevent
+		// path traversal attacks that bypass recursive-rm safety checks.
+		cleanDir := filepath.Clean(in.Directory)
+		cleanWork := filepath.Clean(s.workDir)
+		if cleanDir != cleanWork && !strings.HasPrefix(cleanDir, cleanWork+string(filepath.Separator)) {
+			res := ToolResult{Content: fmt.Sprintf("directory must be within the project root (%s)", s.workDir), IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
 		workDir = in.Directory
 	}
 
-	// Handle background execution.
+	// Run security interceptor BEFORE any execution (including background).
+	interception := inspectShellCommand(in.Command, workDir)
+	if interception.routeReason != "" {
+		res := ToolResult{
+			Content: fmt.Sprintf("command requires routing: %s. Use the file tool for this operation.", interception.routeReason),
+			IsError: true,
+		}
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+		return res, nil
+	}
+	if interception.blockReason != "" {
+		res := ToolResult{
+			Content: fmt.Sprintf("command blocked: %s. Use the file tool for file edits.", interception.blockReason),
+			IsError: true,
+		}
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+		return res, nil
+	}
+
+	// Handle background execution (after security checks).
 	if in.IsBackground {
 		if s.processManager == nil {
 			res := ToolResult{Content: "background execution requires a process manager", IsError: true}
@@ -212,24 +240,6 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 			ms = maxShellTimeout
 		}
 		timeout = time.Duration(ms) * time.Millisecond
-	}
-
-	interception := inspectShellCommand(in.Command, workDir)
-	if interception.routeReason != "" {
-		res := ToolResult{
-			Content: fmt.Sprintf("command requires routing: %s. Use the file tool for this operation.", interception.routeReason),
-			IsError: true,
-		}
-		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
-		return res, nil
-	}
-	if interception.blockReason != "" {
-		res := ToolResult{
-			Content: fmt.Sprintf("command blocked: %s. Use the file tool for file edits.", interception.blockReason),
-			IsError: true,
-		}
-		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
-		return res, nil
 	}
 
 	// Capture a baseline of dirty paths before execution so we only attribute
@@ -406,13 +416,14 @@ var readOnlyCommands = map[string]bool{
 	"realpath": true, "readlink": true, "sha256sum": true,
 	"md5sum": true, "xxd": true, "hexdump": true,
 	"ps": true, "top": true, "uptime": true, "free": true,
-	"go": true, // go commands are checked separately for sub-commands
+	"go":  true, // go commands are checked separately for sub-commands
+	"git": true, // git commands are checked separately for sub-commands
 }
 
 // readOnlyGitSubCommands is the set of git sub-commands considered read-only.
 var readOnlyGitSubCommands = map[string]bool{
 	"status": true, "log": true, "diff": true, "show": true,
-	"branch": true, "tag": true, "remote": true, "describe": true,
+	"branch": false, "tag": false, "remote": false, "describe": true,
 	"rev-parse": true, "rev-list": true, "ls-files": true,
 	"ls-tree": true, "ls-remote": true, "blame": true,
 	"shortlog": true, "stash": false, "config": false,
@@ -426,10 +437,9 @@ var readOnlyGoSubCommands = map[string]bool{
 
 // IsReadOnlyCommand determines whether a shell command is read-only (safe).
 // Read-only commands do not modify the filesystem and can bypass user approval.
-// It handles pipes by checking all pipeline segments.
+// It splits on all shell separators: pipes (|), semicolons (;), && and ||.
 func IsReadOnlyCommand(command string) bool {
-	// Split on pipes.
-	segments := splitPipeSegments(command)
+	segments := splitAllShellSegments(command)
 	for _, seg := range segments {
 		seg = strings.TrimSpace(seg)
 		if seg == "" {
@@ -484,6 +494,66 @@ func isSegmentReadOnly(segment string) bool {
 	}
 
 	return readOnlyCommands[exe]
+}
+
+// splitAllShellSegments splits a command on all shell separators: |, ;, &&, ||.
+// It respects single and double quotes to avoid splitting inside quoted strings.
+func splitAllShellSegments(command string) []string {
+	var segments []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+	runes := []rune(command)
+
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			current.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			current.WriteRune(r)
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			current.WriteRune(r)
+			continue
+		}
+		if inSingle || inDouble {
+			current.WriteRune(r)
+			continue
+		}
+		// Check for two-character separators first: && and ||
+		if i+1 < len(runes) {
+			next := runes[i+1]
+			if (r == '&' && next == '&') || (r == '|' && next == '|') {
+				segments = append(segments, current.String())
+				current.Reset()
+				i++ // skip the second character
+				continue
+			}
+		}
+		// Single-character separators: | and ;
+		if r == '|' || r == ';' {
+			segments = append(segments, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteRune(r)
+	}
+	if current.Len() > 0 {
+		segments = append(segments, current.String())
+	}
+	return segments
 }
 
 // splitPipeSegments splits a command on pipe characters, respecting quotes.
