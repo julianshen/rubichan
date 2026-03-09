@@ -15,23 +15,9 @@ import (
 	"github.com/julianshen/rubichan/internal/wiki"
 )
 
-// wikiProgressMsg carries a progress update from the wiki goroutine.
-type wikiProgressMsg struct {
-	Stage   string
-	Current int
-	Total   int
-}
-
 // wikiDoneMsg signals wiki generation completion.
 type wikiDoneMsg struct {
 	Err error
-}
-
-// wikiEventMsg carries a progress update and channels for continued listening.
-type wikiEventMsg struct {
-	progress   *wikiProgressMsg
-	progressCh <-chan wikiProgressMsg
-	doneCh     <-chan error
 }
 
 // WikiCommandConfig holds dependencies for the /wiki command.
@@ -120,7 +106,8 @@ func (wf *WikiForm) Concurrency() int {
 	return n
 }
 
-// startWikiGeneration launches wiki generation in a background goroutine.
+// startWikiGeneration launches wiki generation synchronously in a foreground tea.Cmd.
+// The TUI blocks until generation completes; progress is written to stderr.
 func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 	m.wikiRunning = true
 	m.content.WriteString(fmt.Sprintf("Wiki generation started (%s -> %s)\n", wf.Format, wf.OutDir))
@@ -146,43 +133,16 @@ func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.wikiCancel = cancel
 
-	progressCh := make(chan wikiProgressMsg, 16)
-	doneCh := make(chan error, 1)
-
 	cfg := wiki.Config{
 		Dir:         dir,
 		OutputDir:   outDir,
 		Format:      wf.Format,
 		Concurrency: wf.Concurrency(),
-		ProgressFunc: func(stage string, current, total int) {
-			select {
-			case progressCh <- wikiProgressMsg{Stage: stage, Current: current, Total: total}:
-			case <-ctx.Done():
-			}
-		},
 	}
 
-	go func() {
+	return func() tea.Msg {
 		p := parser.NewParser()
 		err := wiki.Run(ctx, cfg, m.wikiCfg.LLM, p)
-		close(progressCh)
-		doneCh <- err
-	}()
-
-	return m.waitForWikiEvent(progressCh, doneCh)
-}
-
-// waitForWikiEvent returns a tea.Cmd that reads from progressCh until it is
-// closed, then reads the final error from doneCh. Reading progressCh
-// exclusively avoids a race where select picks doneCh before buffered
-// progress messages are drained.
-func (m *Model) waitForWikiEvent(progressCh <-chan wikiProgressMsg, doneCh <-chan error) tea.Cmd {
-	return func() tea.Msg {
-		msg, ok := <-progressCh
-		if !ok {
-			err := <-doneCh
-			return wikiDoneMsg{Err: err}
-		}
-		return wikiEventMsg{progress: &msg, progressCh: progressCh, doneCh: doneCh}
+		return wikiDoneMsg{Err: err}
 	}
 }
