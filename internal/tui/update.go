@@ -115,19 +115,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TurnEventMsg:
 		return m.handleTurnEvent(msg)
 
-	case wikiEventMsg:
-		if msg.progress != nil {
-			stage := msg.progress.Stage
-			m.statusBar.SetWikiProgress(stage)
-			detail := fmt.Sprintf("  Wiki: %s", stage)
-			if msg.progress.Total > 0 {
-				detail = fmt.Sprintf("  Wiki: %s (%d items)", stage, msg.progress.Total)
-			}
-			m.content.WriteString(detail + "\n")
-			m.setContentAndAutoScroll()
-		}
-		return m, m.waitForWikiEvent(msg.progressCh, msg.doneCh)
-
 	case wikiDoneMsg:
 		m.wikiRunning = false
 		m.wikiCancel = nil

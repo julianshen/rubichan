@@ -125,66 +125,6 @@ func TestWikiDoneMsgWithError(t *testing.T) {
 	assert.Contains(t, m.content.String(), "disk full")
 }
 
-func TestWikiEventMsgUpdatesStatusBar(t *testing.T) {
-	m := NewModel(nil, "test", "model", 10, "", nil, nil)
-	progressCh := make(chan wikiProgressMsg, 1)
-	doneCh := make(chan error, 1)
-
-	msg := wikiEventMsg{
-		progress:   &wikiProgressMsg{Stage: "scanning", Total: 42},
-		progressCh: progressCh,
-		doneCh:     doneCh,
-	}
-
-	_, cmd := m.Update(msg)
-	assert.NotNil(t, cmd) // continues listening
-	assert.Contains(t, m.content.String(), "Wiki: scanning (42 items)")
-	assert.Contains(t, m.statusBar.View(), "Wiki: scanning")
-}
-
-func TestWikiEventMsgNoTotal(t *testing.T) {
-	m := NewModel(nil, "test", "model", 10, "", nil, nil)
-	progressCh := make(chan wikiProgressMsg, 1)
-	doneCh := make(chan error, 1)
-
-	msg := wikiEventMsg{
-		progress:   &wikiProgressMsg{Stage: "rendering", Total: 0},
-		progressCh: progressCh,
-		doneCh:     doneCh,
-	}
-
-	_, _ = m.Update(msg)
-	assert.Contains(t, m.content.String(), "Wiki: rendering")
-	assert.NotContains(t, m.content.String(), "items")
-}
-
-func TestWaitForWikiEventProgressMsg(t *testing.T) {
-	m := NewModel(nil, "test", "model", 10, "", nil, nil)
-	progressCh := make(chan wikiProgressMsg, 1)
-	doneCh := make(chan error, 1)
-
-	progressCh <- wikiProgressMsg{Stage: "chunking", Current: 1, Total: 5}
-	cmd := m.waitForWikiEvent(progressCh, doneCh)
-	msg := cmd()
-	evt, ok := msg.(wikiEventMsg)
-	assert.True(t, ok)
-	assert.Equal(t, "chunking", evt.progress.Stage)
-}
-
-func TestWaitForWikiEventDoneMsg(t *testing.T) {
-	m := NewModel(nil, "test", "model", 10, "", nil, nil)
-	progressCh := make(chan wikiProgressMsg)
-	doneCh := make(chan error, 1)
-
-	close(progressCh)
-	doneCh <- nil
-	cmd := m.waitForWikiEvent(progressCh, doneCh)
-	msg := cmd()
-	done, ok := msg.(wikiDoneMsg)
-	assert.True(t, ok)
-	assert.NoError(t, done.Err)
-}
-
 func TestViewWikiOverlay(t *testing.T) {
 	m := NewModel(nil, "test", "model", 10, "", nil, nil)
 	m.wikiForm = NewWikiForm("/tmp")
