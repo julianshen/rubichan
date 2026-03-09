@@ -228,3 +228,132 @@ func TestDetectProjectInfoNodeScripts(t *testing.T) {
 	assert.NotEmpty(t, info.buildCmds)
 	assert.NotEmpty(t, info.lintCmds)
 }
+
+// --- Case-insensitive format argument ---
+
+func TestInitCommandFormatCaseInsensitive(t *testing.T) {
+	tests := []struct {
+		arg      string
+		filename string
+	}{
+		{"AGENTS", "AGENTS.md"},
+		{"Claude", "CLAUDE.md"},
+		{"CLAUDE", "CLAUDE.md"},
+		{"Agents", "AGENTS.md"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arg, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd := NewInitCommand(dir)
+			result, err := cmd.Execute(context.Background(), []string{tt.arg})
+			require.NoError(t, err)
+			assert.Contains(t, result.Output, tt.filename)
+
+			_, err = os.Stat(filepath.Join(dir, tt.filename))
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// --- os.Stat error handling (non-ErrNotExist) ---
+
+func TestInitCommandStatErrorReturnsError(t *testing.T) {
+	// Use a non-existent parent directory to trigger a stat error
+	// that is not ErrNotExist (the parent doesn't exist, so stat
+	// on a child path gives a different error on some systems).
+	// Alternatively, use a workDir that is a file, not a directory.
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notadir")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
+
+	// workDir is a file, so filepath.Join(file, "AGENTS.md") will
+	// fail stat with a "not a directory" error, not ErrNotExist.
+	cmd := NewInitCommand(file)
+	_, err := cmd.Execute(context.Background(), nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "AGENTS.md")
+}
+
+// --- Write failure ---
+
+func TestInitCommandWriteFailure(t *testing.T) {
+	cmd := NewInitCommand("/nonexistent/path/that/does/not/exist")
+	_, err := cmd.Execute(context.Background(), nil)
+	assert.Error(t, err)
+}
+
+// --- detectNodePM ---
+
+func TestDetectNodePMBun(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bun.lockb"), []byte{}, 0o644))
+	assert.Equal(t, "bun", detectNodePM(dir))
+}
+
+func TestDetectNodePMBunLock(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bun.lock"), []byte{}, 0o644))
+	assert.Equal(t, "bun", detectNodePM(dir))
+}
+
+func TestDetectNodePMPnpm(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte{}, 0o644))
+	assert.Equal(t, "pnpm", detectNodePM(dir))
+}
+
+func TestDetectNodePMYarn(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "yarn.lock"), []byte{}, 0o644))
+	assert.Equal(t, "yarn", detectNodePM(dir))
+}
+
+func TestDetectNodePMDefaultNpm(t *testing.T) {
+	dir := t.TempDir()
+	assert.Equal(t, "npm", detectNodePM(dir))
+}
+
+func TestDetectNodePMBunTakesPriority(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bun.lockb"), []byte{}, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "yarn.lock"), []byte{}, 0o644))
+	assert.Equal(t, "bun", detectNodePM(dir))
+}
+
+// --- Python detection alternatives ---
+
+func TestDetectProjectInfoPythonSetupPy(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "setup.py"), []byte("from setuptools import setup\n"), 0o644))
+
+	info := detectProjectInfo(dir)
+	assert.Contains(t, info.languages, "Python")
+	assert.NotEmpty(t, info.testCmds)
+}
+
+func TestDetectProjectInfoPythonRequirements(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("flask\n"), 0o644))
+
+	info := detectProjectInfo(dir)
+	assert.Contains(t, info.languages, "Python")
+}
+
+// --- readPackageScripts error resilience ---
+
+func TestDetectProjectInfoMalformedPackageJSON(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{bad json`), 0o644))
+
+	info := detectProjectInfo(dir)
+	// Should still detect JS/TS language but have no script-based commands
+	assert.Contains(t, info.languages, "JavaScript/TypeScript")
+	assert.Empty(t, info.buildCmds)
+	assert.Empty(t, info.testCmds)
+	assert.Empty(t, info.lintCmds)
+}
+
+func TestReadPackageScriptsNonexistentFile(t *testing.T) {
+	result := readPackageScripts("/nonexistent/package.json")
+	assert.Nil(t, result)
+}

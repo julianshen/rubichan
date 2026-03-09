@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,6 +66,8 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 	target := filepath.Join(c.workDir, filename)
 	if _, err := os.Stat(target); err == nil {
 		return Result{}, fmt.Errorf("%s already exists; remove it first or edit manually", filename)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Result{}, fmt.Errorf("checking for existing %s: %w", filename, err)
 	}
 
 	info := detectProjectInfo(c.workDir)
@@ -191,12 +194,14 @@ func detectNodePM(dir string) string {
 func readPackageScripts(path string) map[string]string {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not read %s: %v\n", filepath.Base(path), err)
 		return nil
 	}
 	var pkg struct {
 		Scripts map[string]string `json:"scripts"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not parse %s: %v\n", filepath.Base(path), err)
 		return nil
 	}
 	return pkg.Scripts
