@@ -11,7 +11,7 @@ func TestSystemPromptContainsIdentity(t *testing.T) {
 	assert.NotEmpty(t, prompt)
 	assert.Contains(t, prompt, "Ruby")
 	assert.Contains(t, prompt, "Pigi")
-	assert.Contains(t, prompt, "Ganbaruby")
+	assert.Contains(t, prompt, "ガンバ")
 	assert.Contains(t, prompt, "kaomoji")
 	assert.Contains(t, prompt, "coding assistant")
 }
@@ -44,7 +44,7 @@ func TestErrorMessageIncludesError(t *testing.T) {
 func TestSuccessMessage(t *testing.T) {
 	msg := SuccessMessage()
 	assert.NotEmpty(t, msg)
-	assert.Contains(t, msg, "Ganbaruby")
+	assert.Contains(t, msg, "ガンバ")
 }
 
 func TestStatusPrefix(t *testing.T) {

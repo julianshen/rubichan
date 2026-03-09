@@ -120,7 +120,7 @@ func TestNewAgentSystemPrompt(t *testing.T) {
 	prompt := agent.conversation.SystemPrompt()
 	assert.NotEmpty(t, prompt)
 	assert.Contains(t, prompt, "Ruby")
-	assert.Contains(t, prompt, "Ganbaruby")
+	assert.Contains(t, prompt, "ガンバ")
 }
 
 func TestWithWorkingDir(t *testing.T) {
