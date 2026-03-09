@@ -63,6 +63,7 @@ type Model struct {
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
 	alwaysApproved    sync.Map
+	alwaysDenied      sync.Map
 	approvalCh        chan approvalRequest
 	assistantStartIdx int
 	assistantEndIdx   int
@@ -80,6 +81,7 @@ type Model struct {
 	eventCh           <-chan agent.TurnEvent
 	cmdRegistry       *commands.Registry
 	completion        *CompletionOverlay
+	history           *InputHistory
 	turnCancel        context.CancelFunc
 	ralph             *ralphLoopState
 	wikiForm          *WikiForm
@@ -140,6 +142,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		height:      24,
 		cmdRegistry: cmdRegistry,
 		completion:  NewCompletionOverlay(cmdRegistry, 80),
+		history:     NewInputHistory(100),
 	}
 
 	// When no registry was provided, populate with default built-in commands.
@@ -221,6 +224,10 @@ func (m *Model) SetWikiConfig(cfg WikiCommandConfig) {
 // Tools previously marked "always" are auto-approved without prompting.
 func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 	return func(_ context.Context, tool string, input json.RawMessage) (bool, error) {
+		// Auto-deny if user previously chose "deny always" for this tool.
+		if _, ok := m.alwaysDenied.Load(tool); ok {
+			return false, nil
+		}
 		// Auto-approve if user previously chose "always" for this tool.
 		if _, ok := m.alwaysApproved.Load(tool); ok {
 			return true, nil

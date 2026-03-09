@@ -167,6 +167,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if result == ApprovalAlways {
 				m.alwaysApproved.Store(m.pendingApproval.tool, true)
 			}
+			if result == ApprovalDenyAlways {
+				m.alwaysDenied.Store(m.pendingApproval.tool, true)
+			}
 			m.pendingApproval.response <- approved
 			m.approvalPrompt = nil
 			m.pendingApproval = nil
@@ -195,6 +198,24 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Ctrl+P/N for input history navigation.
+	if m.state == StateInput && m.history != nil {
+		if msg.Type == tea.KeyCtrlP {
+			if val, ok := m.history.Previous(m.input.Value()); ok {
+				m.input.SetValue(val)
+				m.syncCompletion()
+			}
+			return m, nil
+		}
+		if msg.Type == tea.KeyCtrlN {
+			if val, ok := m.history.Next(); ok {
+				m.input.SetValue(val)
+				m.syncCompletion()
+			}
+			return m, nil
+		}
+	}
+
 	// Scroll keys are forwarded to the viewport regardless of state.
 	if isScrollKey(msg) {
 		var cmd tea.Cmd
@@ -216,6 +237,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
 			return m, nil
+		}
+		if m.history != nil {
+			m.history.Add(text)
 		}
 		m.input.Reset()
 		m.syncCompletion()
