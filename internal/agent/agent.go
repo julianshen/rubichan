@@ -779,6 +779,22 @@ type toolExecResult struct {
 	isError   bool
 }
 
+func (a *Agent) approvalResultForTool(tc provider.ToolUseBlock) ApprovalResult {
+	if a.approvalChecker == nil {
+		return ApprovalRequired
+	}
+	return a.approvalChecker.CheckApproval(tc.Name, tc.Input)
+}
+
+func toolErrorResult(tc provider.ToolUseBlock, msg string) toolExecResult {
+	return toolExecResult{
+		toolUseID: tc.ID,
+		content:   msg,
+		isError:   true,
+		event:     makeToolResultEvent(tc.ID, tc.Name, msg, "", true),
+	}
+}
+
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
 // Returns true if the context was cancelled during execution.
 func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
@@ -789,16 +805,17 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 
 	// Partition into auto-approved and needs-approval using input-sensitive check.
 	type indexedTool struct {
-		index int
-		tc    provider.ToolUseBlock
+		index          int
+		tc             provider.ToolUseBlock
+		approvalResult ApprovalResult
 	}
 	var autoApproved, needsApproval []indexedTool
 	for i, tc := range pendingTools {
-		result := a.approvalChecker.CheckApproval(tc.Name, tc.Input)
+		result := a.approvalResultForTool(tc)
 		if result == AutoApproved || result == TrustRuleApproved {
-			autoApproved = append(autoApproved, indexedTool{index: i, tc: tc})
+			autoApproved = append(autoApproved, indexedTool{index: i, tc: tc, approvalResult: result})
 		} else {
-			needsApproval = append(needsApproval, indexedTool{index: i, tc: tc})
+			needsApproval = append(needsApproval, indexedTool{index: i, tc: tc, approvalResult: result})
 		}
 	}
 
@@ -861,7 +878,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			},
 		}
 
-		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc)
+		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc, it.approvalResult)
 	}
 
 	// Emit all results and update conversation in original tool call order.
@@ -891,7 +908,7 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 			},
 		}
 
-		r := a.executeSingleToolWithApproval(ctx, ch, tc)
+		r := a.executeSingleToolWithApproval(ctx, ch, tc, a.approvalResultForTool(tc))
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
@@ -900,43 +917,22 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 }
 
 // executeSingleToolWithApproval runs approval check then delegates to executeSingleTool.
-func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) toolExecResult {
-	if a.approvalChecker != nil {
-		result := a.approvalChecker.CheckApproval(tc.Name, tc.Input)
-		if result == AutoApproved || result == TrustRuleApproved {
-			return a.executeSingleTool(ctx, ch, tc)
-		}
+func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock, approvalResult ApprovalResult) toolExecResult {
+	if approvalResult == AutoApproved || approvalResult == TrustRuleApproved {
+		return a.executeSingleTool(ctx, ch, tc)
 	}
 
 	if a.approve == nil {
-		result := "approval function not configured"
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
+		return toolErrorResult(tc, "approval function not configured")
 	}
 
 	// Check approval.
 	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
 	if approvalErr != nil {
-		result := fmt.Sprintf("approval error: %s", approvalErr)
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
+		return toolErrorResult(tc, fmt.Sprintf("approval error: %s", approvalErr))
 	}
 	if !approved {
-		result := "tool call denied by user"
-		return toolExecResult{
-			toolUseID: tc.ID,
-			content:   result,
-			isError:   true,
-			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
-		}
+		return toolErrorResult(tc, "tool call denied by user")
 	}
 
 	return a.executeSingleTool(ctx, ch, tc)
