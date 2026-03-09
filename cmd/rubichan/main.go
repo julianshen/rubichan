@@ -936,6 +936,11 @@ func runInteractive() error {
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
 
+	// Set git branch in status bar if available.
+	if branch, err := detectGitBranch(cwd); err == nil && branch != "" {
+		model.SetGitBranch(branch)
+	}
+
 	// Register commands that need model callbacks (these need the model instance).
 	if err := cmdRegistry.Register(commands.NewClearCommand(func() {
 		if model.GetAgent() != nil {
@@ -1805,4 +1810,15 @@ func (a *skillListerAdapter) ActivateSkill(name string) error {
 
 func (a *skillListerAdapter) DeactivateSkill(name string) error {
 	return a.rt.Deactivate(name)
+}
+
+// detectGitBranch returns the current git branch name, or an error if
+// the directory is not a git repository.
+func detectGitBranch(dir string) (string, error) {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
