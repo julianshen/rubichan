@@ -83,6 +83,7 @@ type Model struct {
 	turnCancel        context.CancelFunc
 	ralph             *ralphLoopState
 	wikiForm          *WikiForm
+	fileCompletion    *FileCompletionOverlay
 	wikiRunning       bool
 	wikiCfg           WikiCommandConfig
 	wikiCancel        context.CancelFunc
@@ -203,11 +204,19 @@ func (m *Model) SwitchModel(name string) {
 	m.statusBar.SetModel(name)
 }
 
-// syncCompletion updates the completion overlay based on the current input.
+// syncCompletion updates the completion overlays based on the current input.
 func (m *Model) syncCompletion() {
 	if m.completion != nil {
 		m.completion.Update(m.input.Value())
 	}
+	if m.fileCompletion != nil {
+		m.fileCompletion.Update(m.input.Value())
+	}
+}
+
+// SetFileCompletionSource sets the file completion source for @ mentions.
+func (m *Model) SetFileCompletionSource(src *FileCompletionSource) {
+	m.fileCompletion = NewFileCompletionOverlay(src, m.width)
 }
 
 // SetWikiConfig sets the wiki command configuration and registers the /wiki command.
