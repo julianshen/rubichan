@@ -584,48 +584,6 @@ func splitAllShellSegments(command string) []string {
 	return segments
 }
 
-// splitPipeSegments splits a command on pipe characters, respecting quotes.
-func splitPipeSegments(command string) []string {
-	var segments []string
-	var current strings.Builder
-	inSingle := false
-	inDouble := false
-	escaped := false
-
-	for _, r := range command {
-		if escaped {
-			current.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' {
-			current.WriteRune(r)
-			escaped = true
-			continue
-		}
-		if r == '\'' && !inDouble {
-			inSingle = !inSingle
-			current.WriteRune(r)
-			continue
-		}
-		if r == '"' && !inSingle {
-			inDouble = !inDouble
-			current.WriteRune(r)
-			continue
-		}
-		if !inSingle && !inDouble && r == '|' {
-			segments = append(segments, current.String())
-			current.Reset()
-			continue
-		}
-		current.WriteRune(r)
-	}
-	if current.Len() > 0 {
-		segments = append(segments, current.String())
-	}
-	return segments
-}
-
 // containsOutputRedirection checks whether a command segment contains shell
 // output redirection (> or >>), respecting quotes.
 func containsOutputRedirection(segment string) bool {
