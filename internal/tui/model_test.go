@@ -1648,6 +1648,7 @@ func TestModelHandleTurnEventTextDeltaSanitizesStreamingContent(t *testing.T) {
 	m.state = StateStreaming
 	m.content.WriteString("> hello\n")
 	m.assistantStartIdx = m.content.Len()
+	m.assistantEndIdx = m.assistantStartIdx
 
 	ch := make(chan agent.TurnEvent, 1)
 	ch <- agent.TurnEvent{Type: "done"}
@@ -1665,6 +1666,34 @@ func TestModelHandleTurnEventTextDeltaSanitizesStreamingContent(t *testing.T) {
 	assert.NotContains(t, um.content.String(), "assistantcommentary")
 	assert.NotContains(t, um.content.String(), "to=functions.shell")
 	assert.Contains(t, um.content.String(), "Hello there")
+}
+
+func TestModelHandleTurnEventTextDeltaPreservesToolBoxes(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.content.WriteString("> hello\n")
+	m.assistantStartIdx = m.content.Len()
+	m.assistantEndIdx = m.assistantStartIdx
+
+	_, _ = m.handleTurnEvent(TurnEventMsg(agent.TurnEvent{
+		Type: "text_delta",
+		Text: "assistantfinalHello",
+	}))
+	_, _ = m.handleTurnEvent(TurnEventMsg(agent.TurnEvent{
+		Type: "tool_call",
+		ToolCall: &agent.ToolCallEvent{
+			Name:  "shell",
+			Input: json.RawMessage(`{"command":"ls"}`),
+		},
+	}))
+	_, _ = m.handleTurnEvent(TurnEventMsg(agent.TurnEvent{
+		Type: "text_delta",
+		Text: "assistantfinalHello there",
+	}))
+
+	content := m.content.String()
+	assert.Contains(t, content, "Hello there")
+	assert.Contains(t, content, "shell({\"command\":\"ls\"})")
 }
 
 func TestModelWikiOverlayRoutesMessages(t *testing.T) {

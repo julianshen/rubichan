@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/glamour"
 )
@@ -16,6 +17,9 @@ var assistantProtocolMarkers = []struct {
 	token string
 	keep  bool
 }{
+	{token: "analysis", keep: false},
+	{token: "commentary", keep: false},
+	{token: "final", keep: true},
 	{token: "assistantanalysis", keep: false},
 	{token: "assistantcommentary", keep: false},
 	{token: "assistantfinal", keep: true},
@@ -89,17 +93,7 @@ func SanitizeAssistantOutput(text string) string {
 	}
 
 	keep := true
-	for _, marker := range []struct {
-		token string
-		keep  bool
-	}{
-		{token: "assistantanalysis", keep: false},
-		{token: "assistantcommentary", keep: false},
-		{token: "assistantfinal", keep: true},
-		{token: "analysis", keep: false},
-		{token: "commentary", keep: false},
-		{token: "final", keep: true},
-	} {
+	for _, marker := range assistantProtocolMarkers {
 		if strings.HasPrefix(text, marker.token) {
 			text = text[len(marker.token):]
 			keep = marker.keep
@@ -121,7 +115,12 @@ func SanitizeAssistantOutput(text string) string {
 
 		if keep {
 			chunk := text[pos:idx]
-			chunk = strings.TrimSuffix(chunk, "command.")
+			if strings.HasSuffix(chunk, "command.") {
+				prefix := strings.TrimSuffix(chunk, "command.")
+				if prefix == "" || !unicode.IsSpace(rune(prefix[len(prefix)-1])) {
+					chunk = prefix
+				}
+			}
 			cleaned.WriteString(chunk)
 		}
 
@@ -141,6 +140,8 @@ func SanitizeAssistantOutput(text string) string {
 	return result
 }
 
+// nextAssistantProtocolMarker finds the earliest leaked protocol token starting
+// at or after start and reports whether the token introduces visible text.
 func nextAssistantProtocolMarker(text string, start int) (idx int, keep bool, found bool) {
 	bestIdx := -1
 	bestKeep := false

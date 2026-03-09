@@ -101,3 +101,19 @@ func TestSanitizeAssistantOutputHandlesLeadingAnalysisToken(t *testing.T) {
 
 	assert.Equal(t, "Readable answer.", result)
 }
+
+func TestSanitizeAssistantOutputHandlesBareFinalMidString(t *testing.T) {
+	raw := "analysisThinking...finalReadable answer."
+
+	result := SanitizeAssistantOutput(raw)
+
+	assert.Equal(t, "Readable answer.", result)
+}
+
+func TestSanitizeAssistantOutputPreservesVisibleCommandSentence(t *testing.T) {
+	raw := "assistantfinalYou can run the command.assistantanalysishidden"
+
+	result := SanitizeAssistantOutput(raw)
+
+	assert.Equal(t, "You can run the command.", result)
+}
