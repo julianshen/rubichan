@@ -9,6 +9,13 @@ import (
 
 const maxToolResultLines = 20
 
+// Diff colorization styles.
+var (
+	diffAddedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")) // green
+	diffRemovedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")) // red
+	diffHunkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#06b6d4")) // cyan
+)
+
 // ToolBoxRenderer renders tool calls and results in bordered boxes.
 type ToolBoxRenderer struct {
 	width     int
@@ -56,7 +63,7 @@ func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) s
 		lines = lines[:maxToolResultLines]
 	}
 
-	display := strings.Join(lines, "\n")
+	display := ColorizeDiffLines(strings.Join(lines, "\n"))
 	if truncated > 0 {
 		display += fmt.Sprintf("\n[%d more lines]", truncated)
 	}
@@ -79,4 +86,40 @@ func (r *ToolBoxRenderer) RenderToolProgress(name, stage, content string, isErro
 		box = r.errorBox
 	}
 	return box.Render(prefix+content) + "\n"
+}
+
+// isDiffContent returns true if the content appears to be a unified diff
+// (contains at least one @@ hunk header).
+func isDiffContent(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "@@ ") {
+			return true
+		}
+	}
+	return false
+}
+
+// ColorizeDiffLines applies green/red/cyan coloring to unified diff lines.
+// If the content does not appear to be a diff (no @@ hunk headers), it is
+// returned unchanged to avoid false positives.
+func ColorizeDiffLines(content string) string {
+	if content == "" || !isDiffContent(content) {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "@@ "):
+			lines[i] = diffHunkStyle.Render(line)
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			// File headers — leave unstyled (or could style bold)
+			continue
+		case strings.HasPrefix(line, "+"):
+			lines[i] = diffAddedStyle.Render(line)
+		case strings.HasPrefix(line, "-"):
+			lines[i] = diffRemovedStyle.Render(line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
