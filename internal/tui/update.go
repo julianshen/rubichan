@@ -124,7 +124,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				detail = fmt.Sprintf("  Wiki: %s (%d items)", stage, msg.progress.Total)
 			}
 			m.content.WriteString(detail + "\n")
-			m.setContentAndAutoScroll(m.content.String())
+			m.setContentAndAutoScroll()
 		}
 		return m, m.waitForWikiEvent(msg.progressCh, msg.doneCh)
 
@@ -137,7 +137,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.content.WriteString("Wiki generation complete!\n")
 		}
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		return m, nil
 
 	case spinner.TickMsg:

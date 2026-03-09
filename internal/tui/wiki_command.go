@@ -124,7 +124,7 @@ func (wf *WikiForm) Concurrency() int {
 func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 	m.wikiRunning = true
 	m.content.WriteString(fmt.Sprintf("Wiki generation started (%s -> %s)\n", wf.Format, wf.OutDir))
-	m.setContentAndAutoScroll(m.content.String())
+	m.setContentAndAutoScroll()
 	m.statusBar.SetWikiProgress("starting")
 
 	dir := filepath.Clean(filepath.Join(m.wikiCfg.WorkDir, wf.Path))
@@ -133,13 +133,13 @@ func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 	if rel, err := filepath.Rel(base, dir); err != nil || strings.HasPrefix(rel, "..") {
 		m.wikiRunning = false
 		m.content.WriteString(persona.ErrorMessage("project path escapes working directory"))
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		return nil
 	}
 	if rel, err := filepath.Rel(base, outDir); err != nil || strings.HasPrefix(rel, "..") {
 		m.wikiRunning = false
 		m.content.WriteString(persona.ErrorMessage("output directory escapes working directory"))
-		m.setContentAndAutoScroll(m.content.String())
+		m.setContentAndAutoScroll()
 		return nil
 	}
 
