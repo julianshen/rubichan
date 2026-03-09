@@ -78,6 +78,9 @@ func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg Analyzer
 	// Pass 1: per-module summarization (concurrent).
 	modules, err := analyzeModules(ctx, chunks, llm, cfg)
 	if err != nil {
+		if isContextCancellation(err) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("pass 1 (module analysis): %w", err)
 	}
 
@@ -85,10 +88,16 @@ func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg Analyzer
 	summariesText := buildSummariesText(modules)
 
 	// Pass 2: architecture synthesis.
-	architecture, keyAbstractions := synthesizeArchitecture(ctx, summariesText, llm)
+	architecture, keyAbstractions, err := synthesizeArchitecture(ctx, summariesText, llm)
+	if err != nil {
+		return nil, err
+	}
 
 	// Pass 3: suggestions.
-	suggestions := generateSuggestions(ctx, architecture, summariesText, llm)
+	suggestions, err := generateSuggestions(ctx, architecture, summariesText, llm)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AnalysisResult{
 		Modules:         modules,
@@ -116,6 +125,9 @@ func analyzeModules(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg A
 		p.Go(func() {
 			analysis, err := analyzeModule(ctx, chunk, llm)
 			if err != nil {
+				if isContextCancellation(err) {
+					return
+				}
 				log.Printf("WARNING: module %q analysis failed: %v", chunk.Module, err)
 				return // non-fatal: skip this module
 			}
@@ -126,6 +138,9 @@ func analyzeModules(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg A
 	}
 
 	p.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Sort for deterministic output regardless of goroutine scheduling.
 	sort.Slice(results, func(i, j int) bool {
@@ -193,25 +208,29 @@ func buildSummariesText(modules []ModuleAnalysis) string {
 
 // synthesizeArchitecture runs pass 2: architecture synthesis.
 // On LLM failure, returns fallback text instead of failing.
-func synthesizeArchitecture(ctx context.Context, summaries string, llm LLMCompleter) (architecture, keyAbstractions string) {
+func synthesizeArchitecture(ctx context.Context, summaries string, llm LLMCompleter) (architecture, keyAbstractions string, err error) {
 	var buf bytes.Buffer
-	err := architectureTmpl.Execute(&buf, struct {
+	err = architectureTmpl.Execute(&buf, struct {
 		Summaries string
 	}{
 		Summaries: summaries,
 	})
 	if err != nil {
 		log.Printf("WARNING: architecture prompt rendering failed: %v", err)
-		return "Architecture synthesis unavailable.", ""
+		return "Architecture synthesis unavailable.", "", nil
 	}
 
 	response, err := llm.Complete(ctx, buf.String())
 	if err != nil {
+		if isContextCancellation(err) {
+			return "", "", err
+		}
 		log.Printf("WARNING: architecture synthesis failed: %v", err)
-		return "Architecture synthesis unavailable.", ""
+		return "Architecture synthesis unavailable.", "", nil
 	}
 
-	return parseArchitectureResponse(response)
+	architecture, keyAbstractions = parseArchitectureResponse(response)
+	return architecture, keyAbstractions, nil
 }
 
 // parseArchitectureResponse extracts Architecture and KeyAbstractions from LLM response.
@@ -236,7 +255,7 @@ func parseArchitectureResponse(response string) (architecture, keyAbstractions s
 
 // generateSuggestions runs pass 3: improvement suggestions.
 // On LLM failure, returns nil instead of failing the pipeline.
-func generateSuggestions(ctx context.Context, architecture, summaries string, llm LLMCompleter) []string {
+func generateSuggestions(ctx context.Context, architecture, summaries string, llm LLMCompleter) ([]string, error) {
 	var buf bytes.Buffer
 	err := suggestionsTmpl.Execute(&buf, struct {
 		Architecture string
@@ -247,16 +266,19 @@ func generateSuggestions(ctx context.Context, architecture, summaries string, ll
 	})
 	if err != nil {
 		log.Printf("WARNING: suggestions prompt rendering failed: %v", err)
-		return nil
+		return nil, nil
 	}
 
 	response, err := llm.Complete(ctx, buf.String())
 	if err != nil {
+		if isContextCancellation(err) {
+			return nil, err
+		}
 		log.Printf("WARNING: suggestions generation failed: %v", err)
-		return nil
+		return nil, nil
 	}
 
-	return parseSuggestions(response)
+	return parseSuggestions(response), nil
 }
 
 // parseSuggestions splits the LLM response into individual suggestion lines.

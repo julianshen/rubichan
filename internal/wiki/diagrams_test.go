@@ -1,7 +1,9 @@
 package wiki
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"strings"
 	"testing"
 
@@ -119,4 +121,29 @@ func TestGenerateDiagramsWithLLMSequence(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "LLM should have been called with a prompt mentioning sequenceDiagram")
+}
+
+func TestGenerateDiagramsCancellationReturnsContextErrorWithoutWarnings(t *testing.T) {
+	files := []ScannedFile{
+		{Path: "handler.go", Language: "go", Module: "internal/handler"},
+	}
+	analysis := &AnalysisResult{
+		Modules: []ModuleAnalysis{
+			{Module: "internal/handler", Summary: "Handles HTTP requests"},
+		},
+		Architecture: "A layered architecture with HTTP handlers.",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var logs bytes.Buffer
+	origWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(origWriter)
+
+	diagrams, err := GenerateDiagrams(ctx, files, analysis, &cancelingLLMCompleter{}, DefaultDiagramConfig())
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, diagrams)
+	assert.NotContains(t, logs.String(), "WARNING:")
 }

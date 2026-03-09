@@ -25,6 +25,9 @@ func GenerateDiagrams(ctx context.Context, files []ScannedFile, analysis *Analys
 	if cfg.Format != "mermaid" {
 		return nil, fmt.Errorf("unsupported diagram format: %s", cfg.Format)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	var diagrams []Diagram
 
@@ -43,6 +46,9 @@ func GenerateDiagrams(ctx context.Context, files []ScannedFile, analysis *Analys
 	if llm != nil && analysis.Architecture != "" {
 		seq, err := generateSequenceDiagram(ctx, analysis.Architecture, llm)
 		if err != nil {
+			if isContextCancellation(err) {
+				return nil, err
+			}
 			log.Printf("WARNING: sequence diagram generation failed: %v", err)
 		} else {
 			diagrams = append(diagrams, seq)
