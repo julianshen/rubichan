@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -119,7 +120,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wikiRunning = false
 		m.wikiCancel = nil
 		m.statusBar.ClearWikiProgress()
-		if msg.Err != nil {
+		if errors.Is(msg.Err, context.Canceled) || errors.Is(msg.Err, context.DeadlineExceeded) {
+			m.content.WriteString("Wiki generation cancelled.\n")
+		} else if msg.Err != nil {
 			m.content.WriteString(persona.ErrorMessage(fmt.Sprintf("Wiki generation failed: %s", msg.Err)))
 		} else {
 			m.content.WriteString("Wiki generation complete!\n")

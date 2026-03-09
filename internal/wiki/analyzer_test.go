@@ -1,8 +1,10 @@
 package wiki
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"testing"
@@ -135,4 +137,24 @@ func TestAnalyzeModuleFailureContinues(t *testing.T) {
 	// Only the successful module should appear
 	require.Len(t, result.Modules, 1)
 	assert.Equal(t, "good", result.Modules[0].Module)
+}
+
+func TestAnalyzeCancellationReturnsContextErrorWithoutWarnings(t *testing.T) {
+	chunks := []Chunk{
+		{Module: "mod/a", Files: []ScannedFile{{Path: "a.go", Module: "mod/a"}}, Source: []byte("package a")},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// This test redirects the package-level logger and must stay non-parallel.
+	var logs bytes.Buffer
+	origWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(origWriter)
+
+	result, err := Analyze(ctx, chunks, &cancelingLLMCompleter{}, DefaultAnalyzerConfig())
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, result)
+	assert.NotContains(t, logs.String(), "WARNING:")
 }

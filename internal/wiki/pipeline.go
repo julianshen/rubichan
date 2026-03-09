@@ -48,7 +48,13 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	cfg.progress("scanning", 0, 0, fmt.Sprintf("wiki: scanning %s...", cfg.Dir))
 	files, err := Scan(ctx, cfg.Dir, p)
 	if err != nil {
+		if isContextCancellation(err) {
+			return err
+		}
 		return fmt.Errorf("scan: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Stage 2: Chunk
@@ -57,6 +63,9 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	chunks, err := ChunkFiles(files, reader, DefaultChunkerConfig())
 	if err != nil {
 		return fmt.Errorf("chunk: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Stage 3: Analyze
@@ -68,7 +77,13 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	analyzerCfg := AnalyzerConfig{Concurrency: concurrency}
 	analysis, err := Analyze(ctx, chunks, llm, analyzerCfg)
 	if err != nil {
+		if isContextCancellation(err) {
+			return err
+		}
 		return fmt.Errorf("analyze: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Stage 4: Diagrams
@@ -79,7 +94,13 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	}
 	diagrams, err := GenerateDiagrams(ctx, files, analysis, llm, DiagramConfig{Format: diagramFmt})
 	if err != nil {
+		if isContextCancellation(err) {
+			return err
+		}
 		return fmt.Errorf("diagrams: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Stage 5: Assemble
@@ -88,11 +109,17 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	if err != nil {
 		return fmt.Errorf("assemble: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Stage 6: Render
 	cfg.progress("rendering", 0, len(documents), fmt.Sprintf("wiki: rendering %d documents to %s...", len(documents), cfg.OutputDir))
 	if err := Render(documents, RendererConfig{Format: cfg.Format, OutputDir: cfg.OutputDir}); err != nil {
 		return fmt.Errorf("render: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	cfg.progress("done", 0, 0, "wiki: done.")

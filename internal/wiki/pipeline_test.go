@@ -169,12 +169,10 @@ func TestRunPipelineEmptyDir(t *testing.T) {
 func TestRunPipelineCancellation(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {}\n")
+	gitAdd(t, dir, "main.go")
 
 	outDir := t.TempDir()
-
-	llm := &mockLLMCompleter{
-		responses: map[string]string{},
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -189,10 +187,8 @@ func TestRunPipelineCancellation(t *testing.T) {
 
 	p := parser.NewParser()
 
-	// Should not panic — error is acceptable but no panic
-	require.NotPanics(t, func() {
-		_ = Run(ctx, cfg, llm, p)
-	})
+	err := Run(ctx, cfg, &cancelingLLMCompleter{}, p)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRunPipelineIntegration(t *testing.T) {
