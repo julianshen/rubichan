@@ -1619,6 +1619,54 @@ func TestRenderAssistantMarkdownEmpty(t *testing.T) {
 	assert.Equal(t, contentBefore, m.content.String())
 }
 
+func TestRenderAssistantMarkdownSanitizesProtocolContent(t *testing.T) {
+	m := &Model{}
+	r, err := NewMarkdownRenderer(80)
+	require.NoError(t, err)
+	m.mdRenderer = r
+
+	m.content.WriteString("> hello\n")
+	m.assistantStartIdx = m.content.Len()
+	m.rawAssistant.WriteString("assistantanalysisThinking..." +
+		"assistantcommentary to=functions.shell json{\"command\":\"ls\"}" +
+		"assistantfinalHello **world**")
+	m.content.WriteString(m.rawAssistant.String())
+
+	m.renderAssistantMarkdown()
+
+	result := m.content.String()
+	assert.True(t, strings.HasPrefix(result, "> hello\n"))
+	assert.NotContains(t, result, "assistantanalysis")
+	assert.NotContains(t, result, "assistantcommentary")
+	assert.NotContains(t, result, "to=functions.shell")
+	assert.NotContains(t, result, "**world**")
+	assert.Contains(t, result, "world")
+}
+
+func TestModelHandleTurnEventTextDeltaSanitizesStreamingContent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.content.WriteString("> hello\n")
+	m.assistantStartIdx = m.content.Len()
+
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{
+		Type: "text_delta",
+		Text: "assistantanalysisThinking..." +
+			"assistantcommentary to=functions.shell json{\"command\":\"ls\"}" +
+			"assistantfinalHello there",
+	}))
+	um := updated.(*Model)
+
+	assert.NotContains(t, um.content.String(), "assistantanalysis")
+	assert.NotContains(t, um.content.String(), "assistantcommentary")
+	assert.NotContains(t, um.content.String(), "to=functions.shell")
+	assert.Contains(t, um.content.String(), "Hello there")
+}
+
 func TestModelWikiOverlayRoutesMessages(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.SetWikiConfig(WikiCommandConfig{WorkDir: "/tmp"})

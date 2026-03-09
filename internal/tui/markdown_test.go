@@ -83,3 +83,21 @@ func TestIsMarkdownBreakpointCodeFenceOpening(t *testing.T) {
 	// Opening fence is NOT a breakpoint — only closing fences are.
 	assert.False(t, IsMarkdownBreakpoint("text\n```go\n"))
 }
+
+func TestSanitizeAssistantOutputRemovesProtocolSections(t *testing.T) {
+	raw := "assistantanalysisWe need to inspect files." +
+		"assistantcommentary to=functions.shell json{\"command\":\"ls -R\"}" +
+		"assistantfinalHere is the readable answer."
+
+	result := SanitizeAssistantOutput(raw)
+
+	assert.Equal(t, "Here is the readable answer.", result)
+}
+
+func TestSanitizeAssistantOutputHandlesLeadingAnalysisToken(t *testing.T) {
+	raw := "analysisNeed to think first.assistantfinalReadable answer."
+
+	result := SanitizeAssistantOutput(raw)
+
+	assert.Equal(t, "Readable answer.", result)
+}

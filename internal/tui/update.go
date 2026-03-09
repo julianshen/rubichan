@@ -341,8 +341,11 @@ func (m *Model) setContentAndAutoScroll() {
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case "text_delta":
+		if m.rawAssistant.Len() == 0 {
+			m.assistantStartIdx = m.content.Len()
+		}
 		m.rawAssistant.WriteString(msg.Text)
-		m.content.WriteString(msg.Text)
+		m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 		if IsMarkdownBreakpoint(m.rawAssistant.String()) {
 			m.renderAssistantMarkdown()
 		}
@@ -443,18 +446,26 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 // If rendering fails or produces empty output, the existing raw content is
 // kept unchanged.
 func (m *Model) renderAssistantMarkdown() {
-	raw := m.rawAssistant.String()
+	raw := SanitizeAssistantOutput(m.rawAssistant.String())
 	if raw == "" {
+		m.replaceAssistantContent("")
 		return
 	}
 	rendered, err := m.mdRenderer.Render(raw)
 	if err != nil || rendered == "" {
 		return
 	}
+	m.replaceAssistantContent(rendered)
+}
+
+func (m *Model) replaceAssistantContent(text string) {
 	contentStr := m.content.String()
+	if m.assistantStartIdx > len(contentStr) {
+		return
+	}
 	m.content.Reset()
 	m.content.WriteString(contentStr[:m.assistantStartIdx])
-	m.content.WriteString(rendered)
+	m.content.WriteString(text)
 }
 
 func (m *Model) advanceRalphLoop(raw string) tea.Cmd {

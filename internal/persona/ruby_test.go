@@ -14,6 +14,9 @@ func TestSystemPromptContainsIdentity(t *testing.T) {
 	assert.Contains(t, prompt, "ガンバ")
 	assert.Contains(t, prompt, "kaomoji")
 	assert.Contains(t, prompt, "coding assistant")
+	assert.Contains(t, prompt, "Never reveal internal reasoning")
+	assert.Contains(t, prompt, "assistantanalysis")
+	assert.Contains(t, prompt, "to=functions")
 }
 
 func TestWelcomeMessage(t *testing.T) {
