@@ -83,6 +83,8 @@ type Model struct {
 	turnCancel        context.CancelFunc
 	ralph             *ralphLoopState
 	wikiForm          *WikiForm
+	toolResults       []CollapsibleToolResult
+	nextToolResultID  int
 	wikiRunning       bool
 	wikiCfg           WikiCommandConfig
 	wikiCancel        context.CancelFunc

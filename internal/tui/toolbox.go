@@ -88,6 +88,44 @@ func (r *ToolBoxRenderer) RenderToolProgress(name, stage, content string, isErro
 	return box.Render(prefix+content) + "\n"
 }
 
+// CollapsibleToolResult tracks a single tool result with collapse state.
+type CollapsibleToolResult struct {
+	ID        int
+	Name      string
+	Args      string
+	Content   string
+	LineCount int
+	IsError   bool
+	Collapsed bool
+}
+
+// Render returns the rendered view of a tool result, either collapsed
+// (single summary line) or expanded (bordered box with content).
+func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
+	if c.Collapsed {
+		return fmt.Sprintf("▶ %s(%s) — %d lines\n", c.Name, c.Args, c.LineCount)
+	}
+	header := fmt.Sprintf("▼ %s(%s) — %d lines\n", c.Name, c.Args, c.LineCount)
+	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
+}
+
+// toolResultPlaceholder returns a placeholder marker for the given tool result ID.
+// These are embedded in the content buffer and replaced with rendered output
+// in viewportContent().
+func toolResultPlaceholder(id int) string {
+	return fmt.Sprintf("\x00TR:%d\x00", id)
+}
+
+// replaceToolResultPlaceholders replaces all tool result placeholder markers
+// in content with their rendered (collapsed or expanded) representation.
+func replaceToolResultPlaceholders(content string, results []CollapsibleToolResult, r *ToolBoxRenderer) string {
+	for i := range results {
+		placeholder := toolResultPlaceholder(results[i].ID)
+		content = strings.Replace(content, placeholder, results[i].Render(r), 1)
+	}
+	return content
+}
+
 // isDiffContent returns true if the content appears to be a unified diff
 // (contains at least one @@ hunk header).
 func isDiffContent(content string) bool {
