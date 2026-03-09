@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -14,9 +15,16 @@ import (
 	"time"
 )
 
+// maxShellTimeout is the maximum allowed per-command timeout (10 minutes).
+const maxShellTimeout = 600000
+
 // shellInput represents the input for the shell tool.
 type shellInput struct {
-	Command string `json:"command"`
+	Command      string `json:"command"`
+	IsBackground bool   `json:"is_background,omitempty"`
+	Timeout      int    `json:"timeout,omitempty"`     // milliseconds, capped at maxShellTimeout
+	Directory    string `json:"directory,omitempty"`   // absolute path; defaults to workDir
+	Description  string `json:"description,omitempty"` // human-readable explanation
 }
 
 type commandInterceptorAction int
@@ -38,6 +46,11 @@ type commandInterception struct {
 	routeReason string
 	warnings    []string
 }
+
+// commandSubstitutionPattern detects $(...), `...`, <(...), and >(...) patterns
+// that could enable command injection attacks. Plain variable expansion ($VAR)
+// is intentionally allowed.
+var commandSubstitutionPattern = regexp.MustCompile(`\$\(|` + "`" + `|<\(|>\(`)
 
 var defaultShellInterceptionRules = []commandInterceptorRule{
 	{
@@ -74,10 +87,11 @@ var defaultShellInterceptionRules = []commandInterceptorRule{
 
 // ShellTool executes shell commands with timeout and output truncation.
 type ShellTool struct {
-	workDir     string
-	timeout     time.Duration
-	diffTracker *DiffTracker
-	sandbox     ShellSandbox
+	workDir        string
+	timeout        time.Duration
+	diffTracker    *DiffTracker
+	sandbox        ShellSandbox
+	processManager *ProcessManager
 }
 
 // NewShellTool creates a new ShellTool that runs commands in the given
@@ -101,6 +115,11 @@ func (s *ShellTool) SetSandbox(sb ShellSandbox) {
 	s.sandbox = sb
 }
 
+// SetProcessManager attaches a ProcessManager for background execution support.
+func (s *ShellTool) SetProcessManager(pm *ProcessManager) {
+	s.processManager = pm
+}
+
 func (s *ShellTool) Name() string {
 	return "shell"
 }
@@ -116,6 +135,22 @@ func (s *ShellTool) InputSchema() json.RawMessage {
 			"command": {
 				"type": "string",
 				"description": "The shell command to execute"
+			},
+			"is_background": {
+				"type": "boolean",
+				"description": "Run the command in the background, returning immediately with a process ID"
+			},
+			"timeout": {
+				"type": "integer",
+				"description": "Timeout in milliseconds (max 600000). Defaults to the tool-level timeout"
+			},
+			"directory": {
+				"type": "string",
+				"description": "Absolute path to use as working directory. Defaults to the project root"
+			},
+			"description": {
+				"type": "string",
+				"description": "Human-readable explanation of what this command does"
 			}
 		},
 		"required": ["command"]
@@ -134,7 +169,52 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
 		return res, nil
 	}
-	interception := inspectShellCommand(in.Command, s.workDir)
+	// Validate and resolve the working directory.
+	workDir := s.workDir
+	if in.Directory != "" {
+		if !filepath.IsAbs(in.Directory) {
+			res := ToolResult{Content: "directory must be an absolute path", IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
+		if _, statErr := os.Stat(in.Directory); statErr != nil {
+			res := ToolResult{Content: fmt.Sprintf("directory does not exist: %s", in.Directory), IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
+		workDir = in.Directory
+	}
+
+	// Handle background execution.
+	if in.IsBackground {
+		if s.processManager == nil {
+			res := ToolResult{Content: "background execution requires a process manager", IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
+		id, output, bgErr := s.processManager.Exec(ctx, in.Command)
+		if bgErr != nil {
+			res := ToolResult{Content: fmt.Sprintf("background exec failed: %s", bgErr), IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
+		content := fmt.Sprintf("process_id: %s\n%s", id, output)
+		res := ToolResult{Content: content}
+		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: content})
+		return res, nil
+	}
+
+	// Resolve the effective timeout.
+	timeout := s.timeout
+	if in.Timeout > 0 {
+		ms := in.Timeout
+		if ms > maxShellTimeout {
+			ms = maxShellTimeout
+		}
+		timeout = time.Duration(ms) * time.Millisecond
+	}
+
+	interception := inspectShellCommand(in.Command, workDir)
 	if interception.routeReason != "" {
 		res := ToolResult{
 			Content: fmt.Sprintf("command requires routing: %s. Use the file tool for this operation.", interception.routeReason),
@@ -159,7 +239,7 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 		baseline = s.captureBaseline()
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	emitToolEvent(emit, ToolEvent{Stage: EventBegin, Content: in.Command})
@@ -168,7 +248,7 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	}
 
 	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", in.Command)
-	cmd.Dir = s.workDir
+	cmd.Dir = workDir
 	if s.sandbox != nil {
 		if err := s.sandbox.Wrap(cmd); err != nil {
 			res := withInterceptionWarnings(ToolResult{
@@ -247,7 +327,7 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	// Check if the timeout context (not the parent) triggered a deadline exceeded
 	if timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 		res := withInterceptionWarnings(ToolResult{
-			Content: fmt.Sprintf("command timed out after %s", s.timeout),
+			Content: fmt.Sprintf("command timed out after %s", timeout),
 			IsError: true,
 		}, interception.warnings)
 		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
@@ -282,6 +362,11 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 func inspectShellCommand(command, workDir string) commandInterception {
 	out := commandInterception{}
 
+	if containsCommandSubstitution(command) {
+		out.blockReason = "command substitution ($(), ``, <(), >()) is blocked for security"
+		return out
+	}
+
 	if containsCommandToken(command, "apply_patch") {
 		out.routeReason = "apply_patch shell commands must be routed through the file tool"
 	}
@@ -303,6 +388,151 @@ func inspectShellCommand(command, workDir string) commandInterception {
 		}
 	}
 	return out
+}
+
+// readOnlyCommands is the set of command executables considered safe (read-only).
+// These commands do not modify the filesystem and can bypass approval dialogs.
+var readOnlyCommands = map[string]bool{
+	"ls": true, "cat": true, "head": true, "tail": true,
+	"find": true, "grep": true, "rg": true, "ag": true,
+	"wc": true, "pwd": true, "echo": true, "env": true,
+	"which": true, "whoami": true, "date": true, "uname": true,
+	"file": true, "stat": true, "du": true, "df": true,
+	"tree": true, "less": true, "more": true, "diff": true,
+	"sort": true, "uniq": true, "tr": true, "cut": true,
+	"awk": true, "id": true, "printenv": true, "type": true,
+	"test": true, "[": true, "true": true, "false": true,
+	"printf": true, "basename": true, "dirname": true,
+	"realpath": true, "readlink": true, "sha256sum": true,
+	"md5sum": true, "xxd": true, "hexdump": true,
+	"ps": true, "top": true, "uptime": true, "free": true,
+	"go": true, // go commands are checked separately for sub-commands
+}
+
+// readOnlyGitSubCommands is the set of git sub-commands considered read-only.
+var readOnlyGitSubCommands = map[string]bool{
+	"status": true, "log": true, "diff": true, "show": true,
+	"branch": true, "tag": true, "remote": true, "describe": true,
+	"rev-parse": true, "rev-list": true, "ls-files": true,
+	"ls-tree": true, "ls-remote": true, "blame": true,
+	"shortlog": true, "stash": false, "config": false,
+}
+
+// readOnlyGoSubCommands is the set of go sub-commands considered read-only.
+var readOnlyGoSubCommands = map[string]bool{
+	"version": true, "env": true, "list": true, "doc": true,
+	"vet": true, "tool": true,
+}
+
+// IsReadOnlyCommand determines whether a shell command is read-only (safe).
+// Read-only commands do not modify the filesystem and can bypass user approval.
+// It handles pipes by checking all pipeline segments.
+func IsReadOnlyCommand(command string) bool {
+	// Split on pipes.
+	segments := splitPipeSegments(command)
+	for _, seg := range segments {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		if !isSegmentReadOnly(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSegmentReadOnly(segment string) bool {
+	exe, args := parseCommandExecutable(segment)
+	if exe == "" {
+		return true
+	}
+
+	// Handle command prefix wrappers (env, command, sudo).
+	if isCommandPrefixWrapper(exe) {
+		// Rebuild the remaining command without the prefix and env vars.
+		start := 0
+		for start < len(args) {
+			if strings.Contains(args[start], "=") && !strings.HasPrefix(args[start], "=") {
+				start++
+				continue
+			}
+			break
+		}
+		if start >= len(args) {
+			return true
+		}
+		return isSegmentReadOnly(strings.Join(args[start:], " "))
+	}
+
+	// Check git sub-commands.
+	if exe == "git" && len(args) > 0 {
+		subCmd := args[0]
+		if ro, known := readOnlyGitSubCommands[subCmd]; known {
+			return ro
+		}
+		return false
+	}
+
+	// Check go sub-commands.
+	if exe == "go" && len(args) > 0 {
+		subCmd := args[0]
+		if ro, known := readOnlyGoSubCommands[subCmd]; known {
+			return ro
+		}
+		return false
+	}
+
+	return readOnlyCommands[exe]
+}
+
+// splitPipeSegments splits a command on pipe characters, respecting quotes.
+func splitPipeSegments(command string) []string {
+	var segments []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	for _, r := range command {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			current.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			current.WriteRune(r)
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			current.WriteRune(r)
+			continue
+		}
+		if !inSingle && !inDouble && r == '|' {
+			segments = append(segments, current.String())
+			current.Reset()
+			continue
+		}
+		current.WriteRune(r)
+	}
+	if current.Len() > 0 {
+		segments = append(segments, current.String())
+	}
+	return segments
+}
+
+// containsCommandSubstitution checks whether the command string contains
+// shell command substitution patterns that could be used for injection.
+// It scans the raw command text for $(), backticks, <(), and >() patterns.
+func containsCommandSubstitution(command string) bool {
+	return commandSubstitutionPattern.MatchString(command)
 }
 
 func containsCommandToken(command, want string) bool {

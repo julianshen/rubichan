@@ -398,7 +398,7 @@ func TestShellToolInterceptorBlocksRecursiveRMOutsideWorkdir(t *testing.T) {
 	assert.Contains(t, result.Content, "command blocked")
 	assert.Contains(t, result.Content, "escape working directory")
 	_, statErr := os.Stat(parentVictim)
-	assert.NoError(t, statErr, "outside target should remain because command is blocked")
+	assert.NoError(t, statErr, "outside target should remain because command is blocked (abs)")
 }
 
 func TestShellToolInterceptorWarnsOnRedirect(t *testing.T) {
@@ -625,4 +625,299 @@ func TestShellToolInterceptorBlocksRecursiveRMViaShC(t *testing.T) {
 	assert.Contains(t, result.Content, "command blocked")
 	_, statErr := os.Stat(parentVictim)
 	assert.NoError(t, statErr, "outside target should remain because command is blocked")
+}
+
+// --- Command substitution blocking tests ---
+
+func TestShellToolBlocksCommandSubstitutionDollarParen(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo $(whoami)",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command substitution")
+}
+
+func TestShellToolBlocksCommandSubstitutionBackticks(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo `whoami`",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command substitution")
+}
+
+func TestShellToolBlocksProcessSubstitution(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "diff <(ls) >(cat)",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command substitution")
+}
+
+func TestShellToolAllowsDollarSignInStrings(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	// Plain $VAR usage should be allowed (variable expansion, not command substitution)
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo $HOME",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+}
+
+func TestShellToolBlocksNestedCommandSubstitution(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "sh -c 'echo $(whoami)'",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "command substitution")
+}
+
+// --- Extended shell input tests ---
+
+func TestShellToolCustomTimeout(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	// Override timeout via input parameter — 200ms should cause a timeout on sleep 10
+	input, _ := json.Marshal(map[string]interface{}{
+		"command": "sleep 10",
+		"timeout": 200,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "timed out")
+}
+
+func TestShellToolCustomTimeoutMaxCap(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	// Timeout above max (600000ms) should be capped
+	input, _ := json.Marshal(map[string]interface{}{
+		"command": "echo ok",
+		"timeout": 999999,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "ok")
+}
+
+func TestShellToolCustomDirectory(t *testing.T) {
+	dir := t.TempDir()
+	subdir := filepath.Join(dir, "subdir")
+	require.NoError(t, os.Mkdir(subdir, 0755))
+
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":   "pwd",
+		"directory": subdir,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "subdir")
+}
+
+func TestShellToolDirectoryMustBeAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":   "pwd",
+		"directory": "relative/path",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "absolute")
+}
+
+func TestShellToolDirectoryMustExist(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":   "pwd",
+		"directory": "/nonexistent/path",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "does not exist")
+}
+
+func TestShellToolDescriptionField(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":     "echo hello",
+		"description": "Print hello to verify shell works",
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "hello")
+}
+
+func TestShellToolBackgroundExecution(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProcessManager(dir, ProcessManagerConfig{})
+	st := newTestShellTool(dir, 30*time.Second)
+	st.SetProcessManager(pm)
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":       "echo background_output && sleep 60",
+		"is_background": true,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "process_id:")
+	pm.Shutdown(context.Background())
+}
+
+func TestShellToolBackgroundWithoutManager(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+	// No ProcessManager set
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":       "echo test",
+		"is_background": true,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "background")
+}
+
+func TestShellToolInputSchemaIncludesNewFields(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	schema := st.InputSchema()
+	schemaStr := string(schema)
+	assert.Contains(t, schemaStr, "timeout")
+	assert.Contains(t, schemaStr, "directory")
+	assert.Contains(t, schemaStr, "description")
+	assert.Contains(t, schemaStr, "is_background")
+}
+
+// --- Read-only command detection tests ---
+
+func TestIsReadOnlyCommandLS(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("ls -la"))
+}
+
+func TestIsReadOnlyCommandGitStatus(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("git status"))
+}
+
+func TestIsReadOnlyCommandGitLog(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("git log --oneline"))
+}
+
+func TestIsReadOnlyCommandGitDiff(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("git diff HEAD"))
+}
+
+func TestIsReadOnlyCommandCat(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("cat foo.go"))
+}
+
+func TestIsReadOnlyCommandHead(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("head -n 10 foo.go"))
+}
+
+func TestIsReadOnlyCommandTail(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("tail -f server.log"))
+}
+
+func TestIsReadOnlyCommandFind(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("find . -name '*.go'"))
+}
+
+func TestIsReadOnlyCommandGrep(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("grep -r TODO ./src"))
+}
+
+func TestIsReadOnlyCommandWc(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("wc -l *.go"))
+}
+
+func TestIsReadOnlyCommandPwd(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("pwd"))
+}
+
+func TestIsReadOnlyCommandEcho(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("echo hello"))
+}
+
+func TestIsReadOnlyCommandRm(t *testing.T) {
+	assert.False(t, IsReadOnlyCommand("rm file.txt"))
+}
+
+func TestIsReadOnlyCommandMkdir(t *testing.T) {
+	assert.False(t, IsReadOnlyCommand("mkdir newdir"))
+}
+
+func TestIsReadOnlyCommandGitPush(t *testing.T) {
+	assert.False(t, IsReadOnlyCommand("git push origin main"))
+}
+
+func TestIsReadOnlyCommandGitCommit(t *testing.T) {
+	assert.False(t, IsReadOnlyCommand("git commit -m 'msg'"))
+}
+
+func TestIsReadOnlyCommandChmod(t *testing.T) {
+	assert.False(t, IsReadOnlyCommand("chmod +x script.sh"))
+}
+
+func TestIsReadOnlyCommandPipe(t *testing.T) {
+	// A pipe where all commands are read-only should be read-only
+	assert.True(t, IsReadOnlyCommand("ls | grep foo"))
+}
+
+func TestIsReadOnlyCommandPipeWithWrite(t *testing.T) {
+	// A pipe with a write command should not be read-only
+	assert.False(t, IsReadOnlyCommand("echo data | tee file.txt"))
+}
+
+func TestIsReadOnlyCommandEnvPrefix(t *testing.T) {
+	// env prefix with read-only command
+	assert.True(t, IsReadOnlyCommand("env FOO=1 ls"))
+}
+
+func TestIsReadOnlyCommandGitBranch(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("git branch"))
+}
+
+func TestIsReadOnlyCommandGitShow(t *testing.T) {
+	assert.True(t, IsReadOnlyCommand("git show HEAD"))
 }
