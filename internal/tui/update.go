@@ -232,6 +232,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()
 		m.assistantStartIdx = m.content.Len()
+		m.assistantEndIdx = m.assistantStartIdx
 		m.state = StateStreaming
 
 		return m, tea.Batch(m.startTurn(m.agent, text), m.spinner.Tick)
@@ -331,8 +332,12 @@ func (m *Model) setContentAndAutoScroll() {
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case "text_delta":
+		if m.rawAssistant.Len() == 0 {
+			m.assistantStartIdx = m.content.Len()
+			m.assistantEndIdx = m.assistantStartIdx
+		}
 		m.rawAssistant.WriteString(msg.Text)
-		m.content.WriteString(msg.Text)
+		m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 		if IsMarkdownBreakpoint(m.rawAssistant.String()) {
 			m.renderAssistantMarkdown()
 		}
@@ -395,6 +400,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			m.turnCancel = nil
 		}
 		raw := m.rawAssistant.String()
+		visible := SanitizeAssistantOutput(raw)
 		m.renderAssistantMarkdown()
 		m.rawAssistant.Reset()
 		m.diffSummary = msg.DiffSummary
@@ -418,7 +424,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		m.state = StateInput
 		m.eventCh = nil
 		if m.ralph != nil {
-			if cmd := m.advanceRalphLoop(raw); cmd != nil {
+			if cmd := m.advanceRalphLoop(visible); cmd != nil {
 				return m, tea.Batch(cmd, m.spinner.Tick)
 			}
 		}
@@ -433,18 +439,37 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 // If rendering fails or produces empty output, the existing raw content is
 // kept unchanged.
 func (m *Model) renderAssistantMarkdown() {
-	raw := m.rawAssistant.String()
+	raw := SanitizeAssistantOutput(m.rawAssistant.String())
 	if raw == "" {
+		m.replaceAssistantContent("")
 		return
 	}
 	rendered, err := m.mdRenderer.Render(raw)
 	if err != nil || rendered == "" {
 		return
 	}
+	m.replaceAssistantContent(rendered)
+}
+
+// replaceAssistantContent swaps only the assistant's display slice, preserving
+// any tool output appended after the assistant started streaming.
+func (m *Model) replaceAssistantContent(text string) {
 	contentStr := m.content.String()
+	if m.assistantStartIdx > len(contentStr) {
+		return
+	}
+	if m.assistantEndIdx < m.assistantStartIdx {
+		m.assistantEndIdx = len(contentStr)
+	}
+	if m.assistantEndIdx > len(contentStr) {
+		m.assistantEndIdx = len(contentStr)
+	}
+
 	m.content.Reset()
 	m.content.WriteString(contentStr[:m.assistantStartIdx])
-	m.content.WriteString(rendered)
+	m.content.WriteString(text)
+	m.content.WriteString(contentStr[m.assistantEndIdx:])
+	m.assistantEndIdx = m.assistantStartIdx + len(text)
 }
 
 func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
@@ -478,6 +503,7 @@ func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
 	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
 	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
+	m.assistantEndIdx = m.assistantStartIdx
 	m.state = StateStreaming
 	return m.startTurn(m.agent, prompt)
 }

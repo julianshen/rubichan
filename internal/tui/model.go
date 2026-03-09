@@ -65,6 +65,7 @@ type Model struct {
 	alwaysApproved    sync.Map
 	approvalCh        chan approvalRequest
 	assistantStartIdx int
+	assistantEndIdx   int
 	diffSummary       string
 	diffExpanded      bool
 	state             UIState
