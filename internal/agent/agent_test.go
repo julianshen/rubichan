@@ -1361,6 +1361,96 @@ func TestSequentialFallbackForNonAutoApproved(t *testing.T) {
 	assert.True(t, hasResult)
 }
 
+func TestSingleAutoApprovedToolDoesNotRequireApprovalFunc(t *testing.T) {
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, nil, cfg, WithApprovalChecker(AlwaysAutoApprove{}))
+
+	ch, err := a.Turn(context.Background(), "run tool")
+	require.NoError(t, err)
+
+	var hasResult bool
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			hasResult = true
+			assert.Equal(t, "result_a", ev.ToolResult.Content)
+			assert.False(t, ev.ToolResult.IsError)
+		}
+	}
+	assert.True(t, hasResult)
+}
+
+func TestMissingApprovalFuncReturnsToolError(t *testing.T) {
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			t.Fatal("tool should not execute when approval is required without an approval function")
+			return tools.ToolResult{}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, nil, cfg)
+
+	ch, err := a.Turn(context.Background(), "run tool")
+	require.NoError(t, err)
+
+	var results []ToolResultEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			results = append(results, *ev.ToolResult)
+		}
+	}
+
+	require.Len(t, results, 1)
+	assert.True(t, results[0].IsError)
+	assert.Equal(t, "approval function not configured", results[0].Content)
+}
+
 func TestMixedParallelAndSequential(t *testing.T) {
 	// tool_a is auto-approved, tool_b is not. They should be partitioned:
 	// tool_a runs in the parallel batch, tool_b runs sequentially after.

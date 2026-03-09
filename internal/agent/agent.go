@@ -901,6 +901,23 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 
 // executeSingleToolWithApproval runs approval check then delegates to executeSingleTool.
 func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) toolExecResult {
+	if a.approvalChecker != nil {
+		result := a.approvalChecker.CheckApproval(tc.Name, tc.Input)
+		if result == AutoApproved || result == TrustRuleApproved {
+			return a.executeSingleTool(ctx, ch, tc)
+		}
+	}
+
+	if a.approve == nil {
+		result := "approval function not configured"
+		return toolExecResult{
+			toolUseID: tc.ID,
+			content:   result,
+			isError:   true,
+			event:     makeToolResultEvent(tc.ID, tc.Name, result, "", true),
+		}
+	}
+
 	// Check approval.
 	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
 	if approvalErr != nil {
