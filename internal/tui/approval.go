@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -17,6 +18,54 @@ const (
 	ApprovalYes
 	ApprovalNo
 	ApprovalAlways
+	ApprovalDenyAlways
+)
+
+// RiskLevel classifies tool risk for visual indication.
+type RiskLevel int
+
+const (
+	RiskLow    RiskLevel = iota // file read, search
+	RiskMedium                  // file write, patch
+	RiskHigh                    // shell, process
+)
+
+// classifyRisk returns the risk level based on tool name.
+func classifyRisk(tool string) RiskLevel {
+	t := strings.ToLower(tool)
+	switch {
+	case strings.Contains(t, "shell") || strings.Contains(t, "bash") || strings.Contains(t, "exec"):
+		return RiskHigh
+	case strings.Contains(t, "write") || strings.Contains(t, "patch") || strings.Contains(t, "edit"):
+		return RiskMedium
+	default:
+		return RiskLow
+	}
+}
+
+// isDestructiveCommand checks if tool args contain destructive patterns.
+func isDestructiveCommand(args string) bool {
+	lower := strings.ToLower(args)
+	patterns := []string{
+		"rm -rf", "rm -r ",
+		"git reset --hard",
+		"git push --force", "git push -f",
+		"drop table", "drop database",
+		"truncate table",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	riskHighStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")).Bold(true)
+	riskMediumStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b")).Bold(true)
+	riskLowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true)
+	warningStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
 )
 
 // ApprovalPrompt shows an inline approval prompt for a tool call.
@@ -73,14 +122,36 @@ func (a *ApprovalPrompt) HandleKey(msg tea.KeyMsg) bool {
 	case "a", "A":
 		a.SetResult(ApprovalAlways)
 		return true
+	case "d", "D":
+		a.SetResult(ApprovalDenyAlways)
+		return true
 	}
 	return false
 }
 
-// View renders the approval prompt as a bordered box with tool info and options.
+// View renders the approval prompt as a bordered box with tool info,
+// risk level indicator, destructive warning, and options.
 func (a *ApprovalPrompt) View() string {
-	header := persona.ApprovalAsk(a.tool)
+	risk := classifyRisk(a.tool)
+	var riskLabel string
+	switch risk {
+	case RiskHigh:
+		riskLabel = riskHighStyle.Render("⚠ HIGH RISK")
+	case RiskMedium:
+		riskLabel = riskMediumStyle.Render("● MEDIUM")
+	default:
+		riskLabel = riskLowStyle.Render("○ LOW")
+	}
+
+	header := fmt.Sprintf("%s  %s", riskLabel, persona.ApprovalAsk(a.tool))
 	detail := fmt.Sprintf("  args: %s", a.args)
-	prompt := "  (y)es  (n)o  (a)lways"
-	return a.box.Render(header+"\n"+detail+"\n"+prompt) + "\n"
+
+	var body string
+	body = header + "\n" + detail
+	if isDestructiveCommand(a.args) {
+		body += "\n" + warningStyle.Render("  ⚠ Destructive command detected")
+	}
+	body += "\n  (y)es  (n)o  (a)lways  (d)eny always"
+
+	return a.box.Render(body) + "\n"
 }

@@ -84,10 +84,61 @@ func TestApprovalPromptMinWidth(t *testing.T) {
 
 func TestApprovalResultConstants(t *testing.T) {
 	// Verify all result values are distinct
-	results := []ApprovalResult{ApprovalPending, ApprovalYes, ApprovalNo, ApprovalAlways}
+	results := []ApprovalResult{ApprovalPending, ApprovalYes, ApprovalNo, ApprovalAlways, ApprovalDenyAlways}
 	seen := make(map[ApprovalResult]bool)
 	for _, r := range results {
 		assert.False(t, seen[r], "duplicate ApprovalResult value: %d", r)
 		seen[r] = true
 	}
+}
+
+func TestRiskLevel_ShellIsHigh(t *testing.T) {
+	assert.Equal(t, RiskHigh, classifyRisk("shell"))
+	assert.Equal(t, RiskHigh, classifyRisk("bash"))
+}
+
+func TestRiskLevel_FileReadIsLow(t *testing.T) {
+	assert.Equal(t, RiskLow, classifyRisk("file_read"))
+	assert.Equal(t, RiskLow, classifyRisk("read_file"))
+	assert.Equal(t, RiskLow, classifyRisk("search"))
+}
+
+func TestRiskLevel_FileWriteIsMedium(t *testing.T) {
+	assert.Equal(t, RiskMedium, classifyRisk("file_write"))
+	assert.Equal(t, RiskMedium, classifyRisk("write_file"))
+	assert.Equal(t, RiskMedium, classifyRisk("patch"))
+}
+
+func TestIsDestructiveCommand(t *testing.T) {
+	assert.True(t, isDestructiveCommand(`"rm -rf /"`))
+	assert.True(t, isDestructiveCommand(`"git reset --hard"`))
+	assert.True(t, isDestructiveCommand(`"git push --force"`))
+	assert.True(t, isDestructiveCommand(`"DROP TABLE users"`))
+	assert.False(t, isDestructiveCommand(`"ls -la"`))
+	assert.False(t, isDestructiveCommand(`"git status"`))
+}
+
+func TestApprovalPromptDenyKey(t *testing.T) {
+	ap := NewApprovalPrompt("shell", `"ls"`, 60)
+	handled := ap.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	assert.True(t, handled)
+	assert.Equal(t, ApprovalDenyAlways, ap.Result())
+}
+
+func TestApprovalPromptRiskLabel(t *testing.T) {
+	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60)
+	view := ap.View()
+	assert.Contains(t, view, "HIGH")
+}
+
+func TestApprovalPromptDestructiveWarning(t *testing.T) {
+	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60)
+	view := ap.View()
+	assert.Contains(t, view, "Destructive")
+}
+
+func TestApprovalPromptShowsDenyOption(t *testing.T) {
+	ap := NewApprovalPrompt("shell", `"ls"`, 60)
+	view := ap.View()
+	assert.Contains(t, view, "(d)eny always")
 }
