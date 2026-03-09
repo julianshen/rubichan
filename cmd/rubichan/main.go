@@ -918,6 +918,7 @@ func runInteractive() error {
 		commands.NewExitCommand(),
 		commands.NewConfigCommand(),
 		commands.NewHelpCommand(cmdRegistry),
+		commands.NewInitCommand(cwd),
 	} {
 		if err := cmdRegistry.Register(cmd); err != nil {
 			return fmt.Errorf("register built-in command %q: %w", cmd.Name(), err)
