@@ -184,14 +184,24 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 		}
 		// Ensure directory is within or equal to the project workDir to prevent
 		// path traversal attacks that bypass recursive-rm safety checks.
-		cleanDir := filepath.Clean(in.Directory)
-		cleanWork := filepath.Clean(s.workDir)
-		if cleanDir != cleanWork && !strings.HasPrefix(cleanDir, cleanWork+string(filepath.Separator)) {
+		// Resolve symlinks to prevent lexical-only prefix checks from being
+		// bypassed by symlinks pointing outside the project root.
+		resolvedDir, evalErr := filepath.EvalSymlinks(in.Directory)
+		if evalErr != nil {
+			res := ToolResult{Content: fmt.Sprintf("directory cannot be resolved: %s", evalErr), IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
+		resolvedWork, evalErr := filepath.EvalSymlinks(s.workDir)
+		if evalErr != nil {
+			resolvedWork = filepath.Clean(s.workDir)
+		}
+		if resolvedDir != resolvedWork && !strings.HasPrefix(resolvedDir, resolvedWork+string(filepath.Separator)) {
 			res := ToolResult{Content: fmt.Sprintf("directory must be within the project root (%s)", s.workDir), IsError: true}
 			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
 			return res, nil
 		}
-		workDir = in.Directory
+		workDir = resolvedDir
 	}
 
 	// Run security interceptor BEFORE any execution (including background).
@@ -217,6 +227,19 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	if in.IsBackground {
 		if s.processManager == nil {
 			res := ToolResult{Content: "background execution requires a process manager", IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
+		// Background execution does not support per-command directory or timeout
+		// overrides — the ProcessManager runs in the project root with its own
+		// lifecycle. Reject these combinations to avoid silent misuse.
+		if in.Directory != "" {
+			res := ToolResult{Content: "directory override is not supported with background execution", IsError: true}
+			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+			return res, nil
+		}
+		if in.Timeout > 0 {
+			res := ToolResult{Content: "timeout override is not supported with background execution", IsError: true}
 			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
 			return res, nil
 		}
@@ -453,6 +476,11 @@ func IsReadOnlyCommand(command string) bool {
 }
 
 func isSegmentReadOnly(segment string) bool {
+	// Output redirection (> or >>) means the command writes to a file.
+	if containsOutputRedirection(segment) {
+		return false
+	}
+
 	exe, args := parseCommandExecutable(segment)
 	if exe == "" {
 		return true
@@ -596,6 +624,41 @@ func splitPipeSegments(command string) []string {
 		segments = append(segments, current.String())
 	}
 	return segments
+}
+
+// containsOutputRedirection checks whether a command segment contains shell
+// output redirection (> or >>), respecting quotes.
+func containsOutputRedirection(segment string) bool {
+	inSingle := false
+	inDouble := false
+	escaped := false
+	runes := []rune(segment)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		if r == '>' {
+			return true
+		}
+	}
+	return false
 }
 
 // containsCommandSubstitution checks whether the command string contains

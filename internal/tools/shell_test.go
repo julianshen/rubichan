@@ -986,3 +986,74 @@ func TestIsReadOnlyCommandBareGit(t *testing.T) {
 	// bare "git" with no subcommand just prints help — safe
 	assert.True(t, IsReadOnlyCommand("git"))
 }
+
+func TestIsReadOnlyCommandOutputRedirection(t *testing.T) {
+	// Output redirection writes to files — not read-only
+	assert.False(t, IsReadOnlyCommand("echo hi > file.txt"))
+	assert.False(t, IsReadOnlyCommand("grep TODO src >> out.txt"))
+	assert.False(t, IsReadOnlyCommand("cat foo > bar"))
+}
+
+func TestIsReadOnlyCommandRedirectionInQuotesAllowed(t *testing.T) {
+	// Redirection inside quotes is just a string, not actual redirection
+	assert.True(t, IsReadOnlyCommand("echo 'hello > world'"))
+	assert.True(t, IsReadOnlyCommand(`echo "a > b"`))
+}
+
+func TestShellToolDirectorySymlinkBypass(t *testing.T) {
+	dir := t.TempDir()
+	st := newTestShellTool(dir, 30*time.Second)
+
+	// Create a symlink inside workdir pointing outside
+	outsideDir := t.TempDir()
+	linkPath := filepath.Join(dir, "escape-link")
+	err := os.Symlink(outsideDir, linkPath)
+	if err != nil {
+		t.Skip("symlinks not supported")
+	}
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":   "pwd",
+		"directory": linkPath,
+	})
+	result, execErr := st.Execute(context.Background(), input)
+	require.NoError(t, execErr)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "within the project root")
+}
+
+func TestShellToolBackgroundRejectsDirectoryOverride(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProcessManager(dir, ProcessManagerConfig{})
+	st := newTestShellTool(dir, 30*time.Second)
+	st.SetProcessManager(pm)
+	defer pm.Shutdown(context.Background())
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":       "pwd",
+		"is_background": true,
+		"directory":     dir,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "not supported with background")
+}
+
+func TestShellToolBackgroundRejectsTimeoutOverride(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProcessManager(dir, ProcessManagerConfig{})
+	st := newTestShellTool(dir, 30*time.Second)
+	st.SetProcessManager(pm)
+	defer pm.Shutdown(context.Background())
+
+	input, _ := json.Marshal(map[string]interface{}{
+		"command":       "echo test",
+		"is_background": true,
+		"timeout":       5000,
+	})
+	result, err := st.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "not supported with background")
+}

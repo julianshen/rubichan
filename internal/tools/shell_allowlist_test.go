@@ -98,9 +98,30 @@ func TestCommandAllowlistPatternNotExploitableViaSeparators(t *testing.T) {
 	al := NewCommandAllowlist()
 	al.AllowPattern("git status")
 
-	// "git status; rm -rf /" should NOT match the "git status" pattern
+	// Commands with shell separators after prefix should NOT match
 	assert.False(t, al.IsAllowed("git status; rm -rf /"))
-	assert.False(t, al.IsAllowed("git status&& rm -rf /"))
+	assert.False(t, al.IsAllowed("git status && rm -rf /"))
+	assert.False(t, al.IsAllowed("git status || rm -rf /"))
+	assert.False(t, al.IsAllowed("git status | rm -rf /"))
+
+	// Output redirection should also be rejected
+	assert.False(t, al.IsAllowed("git status > /tmp/out"))
+	assert.False(t, al.IsAllowed("git status >> /tmp/out"))
+
+	// But normal arguments should still work
+	assert.True(t, al.IsAllowed("git status --short"))
+	assert.True(t, al.IsAllowed("git status"))
+}
+
+func TestCommandAllowlistPatternArgsWithTrailingSeparator(t *testing.T) {
+	al := NewCommandAllowlist()
+	al.AllowPattern("go test")
+
+	assert.True(t, al.IsAllowed("go test ./..."))
+	assert.True(t, al.IsAllowed("go test -v -count=1"))
+	// Chained commands should be rejected even with valid args before separator
+	assert.False(t, al.IsAllowed("go test ./... && rm -rf ."))
+	assert.False(t, al.IsAllowed("go test ./...; rm -rf ."))
 }
 
 func TestCommandAllowlistDeduplicatesPatterns(t *testing.T) {

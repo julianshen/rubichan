@@ -59,17 +59,65 @@ func (al *CommandAllowlist) IsAllowed(command string) bool {
 	}
 
 	for _, prefix := range al.patterns {
-		if strings.HasPrefix(command, prefix) {
-			// Ensure the match is at a word boundary: the command must either
-			// equal the prefix exactly or the character after the prefix must
-			// be a space. This prevents "git status; rm -rf /" from matching
-			// a pattern of "git status".
-			if len(command) == len(prefix) || command[len(prefix)] == ' ' {
-				return true
-			}
+		if !strings.HasPrefix(command, prefix) {
+			continue
 		}
+		// Ensure the match is at a word boundary.
+		if len(command) > len(prefix) && command[len(prefix)] != ' ' {
+			continue
+		}
+		// Reject commands that contain shell separators (;, &&, ||, |)
+		// after the prefix — these could chain arbitrary commands.
+		// Also reject output redirection (>, >>).
+		if containsShellSeparatorOrRedirect(command) {
+			continue
+		}
+		return true
 	}
 
+	return false
+}
+
+// containsShellSeparatorOrRedirect returns true if the command contains any
+// shell control operator (;, &&, ||, |) or output redirection (>, >>) outside
+// of quoted strings. This prevents pattern-matched allowlist entries from
+// being exploited by appending chained commands.
+func containsShellSeparatorOrRedirect(command string) bool {
+	inSingle := false
+	inDouble := false
+	escaped := false
+	runes := []rune(command)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		if r == ';' || r == '>' {
+			return true
+		}
+		if r == '&' && i+1 < len(runes) && runes[i+1] == '&' {
+			return true
+		}
+		if r == '|' {
+			return true
+		}
+	}
 	return false
 }
 
