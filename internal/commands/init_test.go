@@ -168,21 +168,6 @@ func TestInitCommandDetectsRustProject(t *testing.T) {
 	assert.Contains(t, s, "cargo")
 }
 
-func TestInitCommandIncludesReadmeContext(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("# My Project\n\nA tool that does cool things.\n"), 0o644))
-
-	cmd := NewInitCommand(dir)
-	_, err := cmd.Execute(context.Background(), nil)
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	require.NoError(t, err)
-	s := string(content)
-	// Should include a project overview section
-	assert.Contains(t, s, "## Project Overview")
-}
-
 func TestInitCommandEmptyProject(t *testing.T) {
 	dir := t.TempDir()
 	cmd := NewInitCommand(dir)

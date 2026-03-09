@@ -15,7 +15,6 @@ type projectInfo struct {
 	buildCmds []string
 	testCmds  []string
 	lintCmds  []string
-	hasReadme bool
 }
 
 // initCommand implements the /init slash command that generates AGENTS.md or CLAUDE.md.
@@ -119,14 +118,6 @@ func detectProjectInfo(dir string) projectInfo {
 		info.buildCmds = append(info.buildCmds, "cargo build")
 		info.testCmds = append(info.testCmds, "cargo test")
 		info.lintCmds = append(info.lintCmds, "cargo clippy")
-	}
-
-	// README
-	for _, name := range []string{"README.md", "README", "readme.md"} {
-		if fileExists(filepath.Join(dir, name)) {
-			info.hasReadme = true
-			break
-		}
 	}
 
 	return info
