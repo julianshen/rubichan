@@ -120,7 +120,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wikiRunning = false
 		m.wikiCancel = nil
 		m.statusBar.ClearWikiProgress()
-		if errors.Is(msg.Err, context.Canceled) {
+		if errors.Is(msg.Err, context.Canceled) || errors.Is(msg.Err, context.DeadlineExceeded) {
 			m.content.WriteString("Wiki generation cancelled.\n")
 		} else if msg.Err != nil {
 			m.content.WriteString(persona.ErrorMessage(fmt.Sprintf("Wiki generation failed: %s", msg.Err)))

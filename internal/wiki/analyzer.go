@@ -204,7 +204,8 @@ func buildSummariesText(modules []ModuleAnalysis) string {
 }
 
 // synthesizeArchitecture runs pass 2: architecture synthesis.
-// On LLM failure, returns fallback text instead of failing.
+// On non-context LLM failure, it returns fallback text instead of failing.
+// Context cancellation errors are propagated to the caller.
 func synthesizeArchitecture(ctx context.Context, summaries string, llm LLMCompleter) (architecture, keyAbstractions string, err error) {
 	var buf bytes.Buffer
 	err = architectureTmpl.Execute(&buf, struct {
@@ -251,7 +252,8 @@ func parseArchitectureResponse(response string) (architecture, keyAbstractions s
 }
 
 // generateSuggestions runs pass 3: improvement suggestions.
-// On LLM failure, returns nil instead of failing the pipeline.
+// On non-context LLM failure, it returns nil instead of failing the pipeline.
+// Context cancellation errors are propagated to the caller.
 func generateSuggestions(ctx context.Context, architecture, summaries string, llm LLMCompleter) ([]string, error) {
 	var buf bytes.Buffer
 	err := suggestionsTmpl.Execute(&buf, struct {

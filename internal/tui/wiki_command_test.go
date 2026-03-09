@@ -135,6 +135,16 @@ func TestWikiDoneMsgWithCancellation(t *testing.T) {
 	assert.NotContains(t, m.content.String(), "Wiki generation failed")
 }
 
+func TestWikiDoneMsgWithDeadlineExceeded(t *testing.T) {
+	m := NewModel(nil, "test", "model", 10, "", nil, nil)
+	m.wikiRunning = true
+
+	_, _ = m.Update(wikiDoneMsg{Err: context.DeadlineExceeded})
+	assert.False(t, m.wikiRunning)
+	assert.Contains(t, m.content.String(), "Wiki generation cancelled.")
+	assert.NotContains(t, m.content.String(), "Wiki generation failed")
+}
+
 func TestViewWikiOverlay(t *testing.T) {
 	m := NewModel(nil, "test", "model", 10, "", nil, nil)
 	m.wikiForm = NewWikiForm("/tmp")
