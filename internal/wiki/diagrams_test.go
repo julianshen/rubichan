@@ -137,6 +137,7 @@ func TestGenerateDiagramsCancellationReturnsContextErrorWithoutWarnings(t *testi
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	// This test redirects the package-level logger and must stay non-parallel.
 	var logs bytes.Buffer
 	origWriter := log.Writer()
 	log.SetOutput(&logs)

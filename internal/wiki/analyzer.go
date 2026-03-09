@@ -78,10 +78,7 @@ func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg Analyzer
 	// Pass 1: per-module summarization (concurrent).
 	modules, err := analyzeModules(ctx, chunks, llm, cfg)
 	if err != nil {
-		if isContextCancellation(err) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("pass 1 (module analysis): %w", err)
+		return nil, err
 	}
 
 	// Build concatenated summaries for passes 2 and 3.

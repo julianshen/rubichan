@@ -44,13 +44,6 @@ func (f *failingLLMCompleter) Complete(ctx context.Context, prompt string) (stri
 	return "Summary: test\nKeyTypes: none\nPatterns: none\nConcerns: none", nil
 }
 
-type cancelingLLMCompleter struct{}
-
-func (c *cancelingLLMCompleter) Complete(ctx context.Context, prompt string) (string, error) {
-	<-ctx.Done()
-	return "", ctx.Err()
-}
-
 // ---------- tests ----------
 
 func TestDefaultAnalyzerConfig(t *testing.T) {
@@ -154,6 +147,7 @@ func TestAnalyzeCancellationReturnsContextErrorWithoutWarnings(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	// This test redirects the package-level logger and must stay non-parallel.
 	var logs bytes.Buffer
 	origWriter := log.Writer()
 	log.SetOutput(&logs)
