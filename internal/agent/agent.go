@@ -398,15 +398,21 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	a.deferral = tools.NewDeferralManager(deferralThreshold)
 
 	// Register tool_search tool so the LLM can discover deferred tools.
+	// Skip if already present (e.g. subagent inheriting parent's filtered registry).
 	toolSearchTool := tools.NewToolSearchTool(a.deferral)
-	if err := a.tools.Register(toolSearchTool); err != nil {
-		log.Printf("warning: failed to register tool_search tool: %v", err)
+	if _, exists := a.tools.Get(toolSearchTool.Name()); !exists {
+		if err := a.tools.Register(toolSearchTool); err != nil {
+			log.Printf("warning: failed to register tool_search tool: %v", err)
+		}
 	}
 
 	// Register compact_context tool for agent-initiated compaction.
+	// Skip if already present (e.g. subagent inheriting parent's filtered registry).
 	compactTool := tools.NewCompactContextTool(&agentCompactor{agent: a})
-	if err := a.tools.Register(compactTool); err != nil {
-		log.Printf("warning: failed to register compact_context tool: %v", err)
+	if _, exists := a.tools.Get(compactTool.Name()); !exists {
+		if err := a.tools.Register(compactTool); err != nil {
+			log.Printf("warning: failed to register compact_context tool: %v", err)
+		}
 	}
 
 	return a

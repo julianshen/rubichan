@@ -123,6 +123,29 @@ func TestNewAgentSystemPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "ガンバ")
 }
 
+func TestNewAgentSkipsPreRegisteredTools(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	// Pre-register compact_context and tool_search (simulates subagent
+	// inheriting parent's filtered registry).
+	preCompact := tools.NewCompactContextTool(&agentCompactor{agent: &Agent{}})
+	require.NoError(t, reg.Register(preCompact))
+	preSearch := tools.NewToolSearchTool(tools.NewDeferralManager(0.10))
+	require.NoError(t, reg.Register(preSearch))
+
+	// New should not panic or log warnings about duplicate registration.
+	a := New(mp, reg, autoApprove, cfg)
+	require.NotNil(t, a)
+
+	// Tools should still be present (not removed or double-registered).
+	_, ok := reg.Get("compact_context")
+	assert.True(t, ok)
+	_, ok = reg.Get("tool_search")
+	assert.True(t, ok)
+}
+
 func TestWithWorkingDir(t *testing.T) {
 	mp := &mockProvider{}
 	reg := tools.NewRegistry()
