@@ -35,9 +35,11 @@ type CoreToolsBackend struct {
 // Load creates the file, shell, and process tools using the configured working directory.
 func (b *CoreToolsBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error {
 	pm := tools.NewProcessManager(b.WorkDir, tools.ProcessManagerConfig{})
+	st := tools.NewShellTool(b.WorkDir, defaultShellTimeout)
+	st.SetProcessManager(pm)
 	b.tools = []tools.Tool{
 		tools.NewFileTool(b.WorkDir),
-		tools.NewShellTool(b.WorkDir, defaultShellTimeout),
+		st,
 		tools.NewProcessTool(pm),
 	}
 	return nil
