@@ -797,7 +797,7 @@ func toolErrorResult(tc provider.ToolUseBlock, msg string) toolExecResult {
 
 func approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) toolExecResult {
 	if err != nil {
-		msg = fmt.Sprintf("%s: %s", msg, err)
+		log.Printf("approval failure for tool %s (%s): %v", tc.Name, tc.ID, err)
 	}
 	return toolErrorResult(tc, msg)
 }

@@ -115,12 +115,12 @@ func TestApprovalToolErrorResult(t *testing.T) {
 		result := approvalToolErrorResult(tc, "approval error", fmt.Errorf("approval service unavailable"))
 
 		assert.Equal(t, "tool-1", result.toolUseID)
-		assert.Equal(t, "approval error: approval service unavailable", result.content)
+		assert.Equal(t, "approval error", result.content)
 		assert.True(t, result.isError)
 		require.NotNil(t, result.event)
 		assert.Equal(t, "tool_result", result.event.Type)
 		require.NotNil(t, result.event.ToolResult)
-		assert.Equal(t, "approval error: approval service unavailable", result.event.ToolResult.Content)
+		assert.Equal(t, "approval error", result.event.ToolResult.Content)
 		assert.True(t, result.event.ToolResult.IsError)
 	})
 }
