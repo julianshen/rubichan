@@ -891,6 +891,20 @@ func runInteractive() error {
 	if agentMD != "" {
 		opts = append(opts, agent.WithAgentMD(agentMD))
 	}
+	identityMD, identityErr := config.LoadIdentityMD(cwd)
+	if identityErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load IDENTITY.md: %v\n", identityErr)
+	}
+	if identityMD != "" {
+		opts = append(opts, agent.WithIdentityMD(identityMD))
+	}
+	soulMD, soulErr := config.LoadSoulMD(cwd)
+	if soulErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load SOUL.md: %v\n", soulErr)
+	}
+	if soulMD != "" {
+		opts = append(opts, agent.WithSoulMD(soulMD))
+	}
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.
 	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg, "interactive", cwd)
@@ -1181,6 +1195,20 @@ func runHeadless() error {
 	}
 	if agentMD != "" {
 		opts = append(opts, agent.WithAgentMD(agentMD))
+	}
+	identityMD, identityErr := config.LoadIdentityMD(cwd)
+	if identityErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load IDENTITY.md: %v\n", identityErr)
+	}
+	if identityMD != "" {
+		opts = append(opts, agent.WithIdentityMD(identityMD))
+	}
+	soulMD, soulErr := config.LoadSoulMD(cwd)
+	if soulErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load SOUL.md: %v\n", soulErr)
+	}
+	if soulMD != "" {
+		opts = append(opts, agent.WithSoulMD(soulMD))
 	}
 
 	// Create skill runtime with built-in skills.

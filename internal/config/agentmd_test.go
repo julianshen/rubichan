@@ -35,3 +35,23 @@ func TestLoadAgentMD_EmptyFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
+
+func TestLoadIdentityMD_FileExists(t *testing.T) {
+	dir := t.TempDir()
+	content := "# Identity\nRuby\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte(content), 0o644))
+
+	result, err := LoadIdentityMD(dir)
+	require.NoError(t, err)
+	assert.Equal(t, content, result)
+}
+
+func TestLoadSoulMD_FileExists(t *testing.T) {
+	dir := t.TempDir()
+	content := "# Soul\nBe useful.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte(content), 0o644))
+
+	result, err := LoadSoulMD(dir)
+	require.NoError(t, err)
+	assert.Equal(t, content, result)
+}
