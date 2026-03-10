@@ -19,6 +19,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 5, cfg.Worktree.MaxCount)
 	assert.True(t, cfg.Worktree.AutoCleanup)
 	assert.Empty(t, cfg.Worktree.BaseBranch)
+	assert.Equal(t, "mcp", cfg.Browser.PreferredBackend)
 }
 
 func TestLoadFromFile(t *testing.T) {
@@ -180,6 +181,23 @@ url = "http://localhost:3001/sse"
 	assert.Equal(t, "web-search", cfg.MCP.Servers[1].Name)
 	assert.Equal(t, "sse", cfg.MCP.Servers[1].Transport)
 	assert.Equal(t, "http://localhost:3001/sse", cfg.MCP.Servers[1].URL)
+}
+
+func TestBrowserConfig(t *testing.T) {
+	tomlData := `
+[browser]
+preferred_backend = "native"
+mcp_server = "playwright"
+artifact_dir = ".rubichan/browser-artifacts"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlData), 0o644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.Equal(t, "native", cfg.Browser.PreferredBackend)
+	assert.Equal(t, "playwright", cfg.Browser.MCPServer)
+	assert.Equal(t, ".rubichan/browser-artifacts", cfg.Browser.ArtifactDir)
 }
 
 func TestMCPServerConfigValidate(t *testing.T) {

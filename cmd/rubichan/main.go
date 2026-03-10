@@ -45,6 +45,10 @@ import (
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/internal/tools/browser"
+	dbtools "github.com/julianshen/rubichan/internal/tools/db"
+	gittools "github.com/julianshen/rubichan/internal/tools/git"
+	httptool "github.com/julianshen/rubichan/internal/tools/http"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/internal/wiki"
@@ -773,6 +777,9 @@ func runInteractive() error {
 			return fmt.Errorf("registering process tool: %w", err)
 		}
 	}
+	if err := wireExtendedTools(cwd, registry, cfg, toolsCfg); err != nil {
+		return err
+	}
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
@@ -1132,6 +1139,9 @@ func runHeadless() error {
 		if err := registry.Register(tools.NewProcessTool(pm)); err != nil {
 			return fmt.Errorf("registering process tool: %w", err)
 		}
+	}
+	if err := wireExtendedTools(cwd, registry, cfg, headlessToolsCfg); err != nil {
+		return err
 	}
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
@@ -1546,6 +1556,41 @@ func wireWiki(cwd string, registry *tools.Registry, llm wiki.LLMCompleter, tools
 		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {
 				return fmt.Errorf("registering wiki tool %s: %w", tool.Name(), err)
+			}
+		}
+	}
+	return nil
+}
+
+func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig) error {
+	for _, tool := range []tools.Tool{
+		httptool.NewGetTool(),
+		httptool.NewPostTool(),
+		httptool.NewPutTool(),
+		httptool.NewPatchTool(),
+		httptool.NewDeleteTool(),
+		gittools.NewStatusTool(cwd),
+		gittools.NewDiffTool(cwd),
+		gittools.NewLogTool(cwd),
+		gittools.NewShowTool(cwd),
+		gittools.NewBlameTool(cwd),
+		dbtools.NewQueryTool(cwd),
+	} {
+		if toolsCfg.ShouldEnable(tool.Name()) {
+			if err := registry.Register(tool); err != nil {
+				return fmt.Errorf("registering tool %s: %w", tool.Name(), err)
+			}
+		}
+	}
+
+	browserService, err := browser.NewService(cwd, cfg.Browser, cfg.MCP.Servers)
+	if err != nil {
+		return fmt.Errorf("create browser service: %w", err)
+	}
+	for _, tool := range browser.NewTools(browserService) {
+		if toolsCfg.ShouldEnable(tool.Name()) {
+			if err := registry.Register(tool); err != nil {
+				return fmt.Errorf("registering browser tool %s: %w", tool.Name(), err)
 			}
 		}
 	}

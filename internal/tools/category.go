@@ -18,11 +18,15 @@ func Categorize(name string) ToolCategory {
 	switch {
 	case name == "shell" || name == "file" || name == "process":
 		return CategoryCore
-	case name == "search":
+	case name == "search" || name == "db_query" || strings.HasPrefix(name, "git_"):
 		return CategoryFileSystem
+	case strings.HasPrefix(name, "http_") || strings.HasPrefix(name, "browser_"):
+		return CategoryMCP
 	case strings.HasPrefix(name, "xcode_"):
 		return CategoryPlatform
 	case strings.HasPrefix(name, "mcp-"):
+		return CategoryMCP
+	case strings.HasPrefix(name, "mcp_"):
 		return CategoryMCP
 	default:
 		return CategorySkill
