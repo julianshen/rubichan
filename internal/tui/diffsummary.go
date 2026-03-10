@@ -16,6 +16,10 @@ var diffPanelStyle = lipgloss.NewStyle().
 
 func (m *Model) viewportContent() string {
 	content := m.content.String()
+	// Replace tool result placeholders with rendered (collapsed/expanded) output.
+	if len(m.toolResults) > 0 {
+		content = replaceToolResultPlaceholders(content, m.toolResults, m.toolBox)
+	}
 	panel := m.renderDiffSummaryPanel()
 	if panel == "" {
 		return content

@@ -9,6 +9,13 @@ import (
 
 const maxToolResultLines = 20
 
+// Diff colorization styles.
+var (
+	diffAddedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")) // green
+	diffRemovedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")) // red
+	diffHunkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#06b6d4")) // cyan
+)
+
 // ToolBoxRenderer renders tool calls and results in bordered boxes.
 type ToolBoxRenderer struct {
 	width     int
@@ -56,7 +63,7 @@ func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) s
 		lines = lines[:maxToolResultLines]
 	}
 
-	display := strings.Join(lines, "\n")
+	display := ColorizeDiffLines(strings.Join(lines, "\n"))
 	if truncated > 0 {
 		display += fmt.Sprintf("\n[%d more lines]", truncated)
 	}
@@ -79,4 +86,94 @@ func (r *ToolBoxRenderer) RenderToolProgress(name, stage, content string, isErro
 		box = r.errorBox
 	}
 	return box.Render(prefix+content) + "\n"
+}
+
+// CollapsibleToolResult tracks a single tool result with collapse state.
+type CollapsibleToolResult struct {
+	ID        int
+	Name      string
+	Args      string
+	Content   string
+	LineCount int
+	IsError   bool
+	Collapsed bool
+}
+
+// Render returns the rendered view of a tool result, either collapsed
+// (single summary line) or expanded (bordered box with content).
+func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
+	lineLabel := c.lineLabel()
+	if c.Collapsed {
+		return fmt.Sprintf("▶ %s(%s) — %s\n", c.Name, c.Args, lineLabel)
+	}
+	header := fmt.Sprintf("▼ %s(%s) — %s\n", c.Name, c.Args, lineLabel)
+	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
+}
+
+// lineLabel returns a human-friendly line count label.
+// When content exceeds maxToolResultLines, it shows "N lines (20 shown)".
+func (c *CollapsibleToolResult) lineLabel() string {
+	if c.LineCount == 0 {
+		return "empty"
+	}
+	if c.LineCount > maxToolResultLines {
+		return fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
+	}
+	if c.LineCount == 1 {
+		return "1 line"
+	}
+	return fmt.Sprintf("%d lines", c.LineCount)
+}
+
+// toolResultPlaceholder returns a placeholder marker for the given tool result ID.
+// These are embedded in the content buffer and replaced with rendered output
+// in viewportContent().
+func toolResultPlaceholder(id int) string {
+	return fmt.Sprintf("\x00TR:%d\x00", id)
+}
+
+// replaceToolResultPlaceholders replaces all tool result placeholder markers
+// in content with their rendered (collapsed or expanded) representation.
+func replaceToolResultPlaceholders(content string, results []CollapsibleToolResult, r *ToolBoxRenderer) string {
+	for i := range results {
+		placeholder := toolResultPlaceholder(results[i].ID)
+		content = strings.Replace(content, placeholder, results[i].Render(r), 1)
+	}
+	return content
+}
+
+// isDiffContent returns true if the content appears to be a unified diff
+// (contains at least one @@ hunk header).
+func isDiffContent(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "@@ ") {
+			return true
+		}
+	}
+	return false
+}
+
+// ColorizeDiffLines applies green/red/cyan coloring to unified diff lines.
+// If the content does not appear to be a diff (no @@ hunk headers), it is
+// returned unchanged to avoid false positives.
+func ColorizeDiffLines(content string) string {
+	if content == "" || !isDiffContent(content) {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "@@ "):
+			lines[i] = diffHunkStyle.Render(line)
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			// File headers — leave unstyled (or could style bold)
+			continue
+		case strings.HasPrefix(line, "+"):
+			lines[i] = diffAddedStyle.Render(line)
+		case strings.HasPrefix(line, "-"):
+			lines[i] = diffRemovedStyle.Render(line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
