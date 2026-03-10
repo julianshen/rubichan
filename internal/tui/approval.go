@@ -11,8 +11,14 @@ import (
 	"github.com/julianshen/rubichan/internal/persona"
 )
 
-// ansiEscapePattern matches ANSI escape sequences (CSI, OSC, etc.).
-var ansiEscapePattern = regexp.MustCompile(`\x1b[\[\]()][0-9;]*[a-zA-Z~\\]?`)
+// ansiEscapePattern matches ANSI escape sequences: CSI (e.g. \x1b[31m),
+// OSC with BEL or ST terminators (e.g. \x1b]8;;url\x1b\\), and other
+// single-character Esc sequences (e.g. \x1b7).
+var ansiEscapePattern = regexp.MustCompile(
+	`\x1b\[[0-9;?]*[a-zA-Z~]` + // CSI sequences
+		`|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)` + // OSC sequences (BEL or ST terminated)
+		`|\x1b[^[\]0-9]?`, // Other Esc sequences (single char after ESC)
+)
 
 // stripANSI removes ANSI escape sequences from a string to prevent
 // terminal injection via untrusted LLM-provided tool names or arguments.
@@ -153,12 +159,14 @@ func (a *ApprovalPrompt) View() string {
 		riskLabel = riskLowStyle.Render("○ LOW")
 	}
 
-	header := fmt.Sprintf("%s  %s", riskLabel, persona.ApprovalAsk(stripANSI(a.tool)))
-	detail := fmt.Sprintf("  args: %s", stripANSI(a.args))
+	sanitizedTool := stripANSI(a.tool)
+	sanitizedArgs := stripANSI(a.args)
+	header := fmt.Sprintf("%s  %s", riskLabel, persona.ApprovalAsk(sanitizedTool))
+	detail := fmt.Sprintf("  args: %s", sanitizedArgs)
 
 	var body string
 	body = header + "\n" + detail
-	if isDestructiveCommand(a.args) {
+	if isDestructiveCommand(sanitizedArgs) {
 		body += "\n" + warningStyle.Render("  ⚠ Destructive command detected")
 	}
 	body += "\n  (y)es  (n)o  (a)lways  (d)eny always"

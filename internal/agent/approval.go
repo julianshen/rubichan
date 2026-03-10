@@ -303,11 +303,9 @@ func (a *autoApproveAdapter) CheckApproval(tool string, _ json.RawMessage) Appro
 // non-ApprovalRequired result wins. This lets session caches, trust rules,
 // and built-in defaults compose together.
 //
-// Ordering matters: checkers earlier in the list take priority. In the typical
-// composition [sessionCache, trustRules], a user's explicit "always approve"
-// decision (session cache) intentionally overrides config-based deny rules.
-// This is by design — the session cache represents a real-time user decision
-// which has higher authority than static configuration.
+// Ordering matters: checkers earlier in the list take priority. Place the
+// session cache checker first so that user decisions (AutoApproved, AutoDenied)
+// take precedence over config-based trust rules.
 type CompositeApprovalChecker struct {
 	checkers []ApprovalChecker
 }

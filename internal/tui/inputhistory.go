@@ -1,6 +1,6 @@
 package tui
 
-// InputHistory stores submitted prompts in a ring buffer for recall
+// InputHistory stores submitted prompts in a bounded list for recall
 // via Ctrl+P (previous) and Ctrl+N (next).
 type InputHistory struct {
 	entries []string

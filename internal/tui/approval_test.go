@@ -56,6 +56,7 @@ func TestApprovalPromptHandleKeyUppercase(t *testing.T) {
 		{"Y", ApprovalYes},
 		{"N", ApprovalNo},
 		{"A", ApprovalAlways},
+		{"D", ApprovalDenyAlways},
 	}
 	for _, tt := range tests {
 		ap := NewApprovalPrompt("shell", `"ls"`, 60)
@@ -159,6 +160,10 @@ func TestStripANSI(t *testing.T) {
 	assert.Equal(t, "hello", stripANSI("hello"))
 	assert.Equal(t, "evil", stripANSI("\x1b[31mevil\x1b[0m"))
 	assert.Equal(t, "rm -rf /", stripANSI("rm -rf /"))
+	// OSC 8 hyperlink sequence (ST-terminated)
+	assert.Equal(t, "click", stripANSI("\x1b]8;;http://evil.com\x1b\\click\x1b]8;;\x1b\\"))
+	// OSC sequence (BEL-terminated)
+	assert.Equal(t, "", stripANSI("\x1b]0;title\x07"))
 }
 
 func TestApprovalPromptSanitizesANSI(t *testing.T) {
