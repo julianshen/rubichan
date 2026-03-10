@@ -983,6 +983,9 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		ch <- r.event
 	}
 
+	// Snapshot after all tool results so a resume picks up from here.
+	a.saveSnapshotIfNeeded()
+
 	return false
 }
 
@@ -1006,6 +1009,10 @@ func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- Tur
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
 	}
+
+	// Snapshot after all tool results so a resume picks up from here.
+	a.saveSnapshotIfNeeded()
+
 	return false
 }
 
@@ -1073,6 +1080,7 @@ func (a *Agent) drainWakeEvents(ch chan<- TurnEvent) {
 			wakeMsg := fmt.Sprintf("[Background task %q completed (agent: %s)]\n%s",
 				wake.TaskID, wake.AgentName, wake.Result.Output)
 			a.conversation.AddUser(wakeMsg)
+			a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: wakeMsg}})
 			ch <- TurnEvent{Type: "subagent_done", Text: wakeMsg, SubagentResult: wake.Result}
 		default:
 			return
