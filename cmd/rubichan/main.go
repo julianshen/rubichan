@@ -1723,6 +1723,7 @@ func (a *spawnerAdapter) Spawn(ctx context.Context, cfg tools.TaskSpawnConfig, p
 		InheritSkills: cfg.InheritSkills,
 		ExtraSkills:   cfg.ExtraSkills,
 		DisableSkills: cfg.DisableSkills,
+		Isolation:     cfg.Isolation,
 	}, prompt)
 	if err != nil {
 		return nil, err

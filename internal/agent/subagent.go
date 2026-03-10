@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -120,8 +121,15 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 		defer wtCleanup()
 	}
 
-	// Filter tools.
+	// Filter tools. Re-register the task tool with the child's depth so that
+	// nested spawns enforce correct depth limits through fresh state.
 	childTools := s.ParentTools.Filter(cfg.Tools)
+	if taskTool, ok := childTools.Get("task"); ok {
+		if tt, ok := taskTool.(*tools.TaskTool); ok {
+			_ = childTools.Unregister("task")
+			_ = childTools.Register(tt.WithDepth(cfg.Depth))
+		}
+	}
 
 	// Build child config.
 	childCfg := *s.Config
@@ -152,54 +160,56 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 		}
 	}
 
-	// Create child agent (no store — ephemeral).
-	child := New(s.Provider, childTools, nil, &childCfg, opts...)
+	// Child agents use a deterministic deny-all approval callback for tools
+	// that require interactive approval. The approval checker (set via opts
+	// above) may auto-approve or auto-deny; this callback handles the
+	// fallback when neither applies.
+	denyAllApproval := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+		return false, nil
+	}
+	child := New(s.Provider, childTools, denyAllApproval, &childCfg, opts...)
 
-	// Run turn loop.
+	// Run a single Turn — runLoop handles the full multi-turn loop internally,
+	// calling the LLM and executing tools iteratively until a text-only response
+	// or the turn limit is reached. This avoids appending empty user messages.
 	result := &SubagentResult{Name: cfg.Name}
 	var output strings.Builder
 	toolSet := make(map[string]struct{})
 	var toolsUsed []string
 
-	for turn := 0; turn < cfg.MaxTurns; turn++ {
-		var userMsg string
-		if turn == 0 {
-			userMsg = prompt
-		}
-		eventCh, err := child.Turn(ctx, userMsg)
-		if err != nil {
-			result.Error = err
-			result.TurnCount = turn + 1
-			result.Output = output.String()
-			result.ToolsUsed = toolsUsed
-			return result, nil
-		}
+	eventCh, err := child.Turn(ctx, prompt)
+	if err != nil {
+		result.Error = err
+		result.Output = output.String()
+		result.ToolsUsed = toolsUsed
+		return result, nil
+	}
 
-		var hasTool bool
-		for event := range eventCh {
-			switch event.Type {
-			case "text_delta":
-				output.WriteString(event.Text)
-			case "tool_call":
-				if event.ToolCall != nil {
-					if _, seen := toolSet[event.ToolCall.Name]; !seen {
-						toolSet[event.ToolCall.Name] = struct{}{}
-						toolsUsed = append(toolsUsed, event.ToolCall.Name)
-					}
-					hasTool = true
+	var turnCount int
+	for event := range eventCh {
+		switch event.Type {
+		case "text_delta":
+			output.WriteString(event.Text)
+		case "tool_call":
+			if event.ToolCall != nil {
+				if _, seen := toolSet[event.ToolCall.Name]; !seen {
+					toolSet[event.ToolCall.Name] = struct{}{}
+					toolsUsed = append(toolsUsed, event.ToolCall.Name)
 				}
-			case "error":
-				result.Error = event.Error
-			case "done":
-				result.InputTokens += event.InputTokens
-				result.OutputTokens += event.OutputTokens
+				turnCount++
 			}
-		}
-		result.TurnCount = turn + 1
-		if !hasTool {
-			break
+		case "error":
+			result.Error = event.Error
+		case "done":
+			result.InputTokens += event.InputTokens
+			result.OutputTokens += event.OutputTokens
 		}
 	}
+	// At minimum one turn (the initial prompt), plus one for each tool call round.
+	if turnCount == 0 {
+		turnCount = 1
+	}
+	result.TurnCount = turnCount
 
 	result.Output = output.String()
 	result.ToolsUsed = toolsUsed

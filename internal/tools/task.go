@@ -26,6 +26,7 @@ type TaskSpawnConfig struct {
 	InheritSkills *bool
 	ExtraSkills   []string
 	DisableSkills []string
+	Isolation     string // "", "worktree" — forwarded to SubagentConfig
 }
 
 // TaskSpawnResult is the output of a subagent execution.
@@ -86,6 +87,18 @@ func (t *TaskTool) SetBackgroundManager(mgr BackgroundTaskManager) {
 	t.bgManager = mgr
 }
 
+// WithDepth returns a copy of the TaskTool with the given depth. This is used
+// when creating child registries to ensure nested task calls enforce correct
+// depth limits rather than reusing the parent's depth.
+func (t *TaskTool) WithDepth(depth int) *TaskTool {
+	return &TaskTool{
+		spawner:   t.spawner,
+		agentDefs: t.agentDefs,
+		depth:     depth,
+		bgManager: t.bgManager,
+	}
+}
+
 func (t *TaskTool) Name() string { return "task" }
 func (t *TaskTool) Description() string {
 	return "Delegate a task to a subagent for autonomous execution"
@@ -122,7 +135,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 
 	cfg := TaskSpawnConfig{
 		Name:  "general",
-		Depth: t.depth,
+		Depth: t.depth + 1,
 	}
 
 	if ti.AgentType != "" && t.agentDefs != nil {
