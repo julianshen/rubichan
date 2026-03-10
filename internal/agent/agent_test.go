@@ -2287,3 +2287,134 @@ func TestAgentRunLoopDrainsWakeAfterTools(t *testing.T) {
 	}
 	assert.True(t, foundWake, "should have a subagent_done event from wake manager drain")
 }
+
+func TestSnapshotSavedAfterToolResults(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Agent.ContextBudget = 100000
+
+	// LLM response: tool call → text reply (two turns).
+	p := &dynamicMockProvider{responses: [][]provider.StreamEvent{
+		// Turn 1: call a tool.
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "echo"}},
+			{Type: "text_delta", Text: `{"msg":"hi"}`},
+			{Type: "stop"},
+		},
+		// Turn 2: text reply after tool result.
+		{
+			{Type: "text_delta", Text: "All done"},
+			{Type: "stop"},
+		},
+	}}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "echo",
+		description: "echo tool",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "echoed"}, nil
+		},
+	}))
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s))
+	ch, err := a.Turn(context.Background(), "run echo")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	// After the turn, the snapshot must contain the tool result message.
+	snap, err := s.GetSnapshot(a.sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, snap)
+
+	// The snapshot should include: user, assistant(tool_use), tool_result, assistant(text).
+	// At minimum, it must include the tool_result so a resume is deterministic.
+	var foundToolResult bool
+	for _, msg := range snap {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" {
+				foundToolResult = true
+			}
+		}
+	}
+	assert.True(t, foundToolResult, "snapshot must include tool result for deterministic resume")
+}
+
+func TestWakeEventsPersisted(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Agent.ContextBudget = 100000
+
+	wm := NewWakeManager()
+
+	// LLM response: tool call that completes, then another text response.
+	p := &dynamicMockProvider{responses: [][]provider.StreamEvent{
+		// Turn 1: call a tool (wake event will be drained after tool execution).
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "slow"}},
+			{Type: "text_delta", Text: `{}`},
+			{Type: "stop"},
+		},
+		// Turn 2: text reply.
+		{
+			{Type: "text_delta", Text: "background noticed"},
+			{Type: "stop"},
+		},
+	}}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&mockTool{
+		name:        "slow",
+		description: "slow tool",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			// Simulate a background task completing while this tool runs.
+			wm.Complete("bg-42", &SubagentResult{
+				Name:   "helper",
+				Output: "background work done",
+			})
+			return tools.ToolResult{Content: "done"}, nil
+		},
+	}))
+
+	// Submit a fake background task so Complete can find it.
+	wm.Submit("helper", func() {})
+	// Overwrite pending to use our known ID.
+	wm.mu.Lock()
+	delete(wm.pending, func() string {
+		for k := range wm.pending {
+			return k
+		}
+		return ""
+	}())
+	wm.pending["bg-42"] = &backgroundTask{id: "bg-42", agentName: "helper", cancel: func() {}}
+	wm.mu.Unlock()
+
+	a := New(p, reg, autoApprove, cfg, WithStore(s), WithWakeManager(wm))
+	ch, err := a.Turn(context.Background(), "do something")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	// Wake events must be persisted in the message log.
+	msgs, err := s.GetMessages(a.sessionID)
+	require.NoError(t, err)
+
+	var foundWakeMsg bool
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if strings.Contains(block.Text, "background work done") {
+				foundWakeMsg = true
+			}
+		}
+	}
+	assert.True(t, foundWakeMsg, "wake events must be persisted to message log for deterministic resume")
+}
