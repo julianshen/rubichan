@@ -823,12 +823,12 @@ func approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) to
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
 // Returns true if the context was cancelled during execution.
 func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
-	plannedTools := a.planToolCalls(pendingTools)
-
 	if a.approvalChecker == nil {
 		// No checker — fall back to sequential execution.
-		return a.executePlannedToolsSequential(ctx, ch, plannedTools)
+		return a.executePlannedToolsSequential(ctx, ch, a.planToolCalls(pendingTools))
 	}
+
+	plannedTools := a.planToolCalls(pendingTools)
 
 	// Partition into auto-approved and needs-approval using input-sensitive check.
 	var autoApproved, autoDenied, needsApproval []plannedToolCall
@@ -928,11 +928,6 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	}
 
 	return false
-}
-
-// executeToolsSequential is the original sequential tool execution path.
-func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
-	return a.executePlannedToolsSequential(ctx, ch, a.planToolCalls(pendingTools))
 }
 
 func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- TurnEvent, plannedTools []plannedToolCall) bool {

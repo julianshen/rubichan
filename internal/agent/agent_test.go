@@ -1577,6 +1577,43 @@ func TestExecutePlannedToolsSequentialUsesPrecomputedApprovalResults(t *testing.
 	assert.Equal(t, 0, checker.Calls(), "sequential execution should use the precomputed approval result")
 }
 
+func TestExecuteToolsWithoutApprovalCheckerUsesSequentialPlan(t *testing.T) {
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg)
+
+	ch := make(chan TurnEvent, 4)
+	cancelled := a.executeTools(context.Background(), ch, []provider.ToolUseBlock{{
+		ID:    "t1",
+		Name:  "tool_a",
+		Input: json.RawMessage(`{}`),
+	}})
+	require.False(t, cancelled)
+
+	var events []TurnEvent
+	for len(ch) > 0 {
+		events = append(events, <-ch)
+	}
+	require.Len(t, events, 2)
+	require.NotNil(t, events[0].ToolCall)
+	require.NotNil(t, events[1].ToolResult)
+	assert.Equal(t, "t1", events[0].ToolCall.ID)
+	assert.Equal(t, "t1", events[1].ToolResult.ID)
+	assert.Equal(t, "result_a", events[1].ToolResult.Content)
+	assert.False(t, events[1].ToolResult.IsError)
+}
+
 func TestMixedParallelAndSequential(t *testing.T) {
 	// tool_a is auto-approved, tool_b is not. They should be partitioned:
 	// tool_a runs in the parallel batch, tool_b runs sequentially after.
