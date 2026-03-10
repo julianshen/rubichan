@@ -174,7 +174,7 @@ func TestTaskToolDisplayContent(t *testing.T) {
 	assert.Contains(t, result.DisplayContent, "200 output")
 }
 
-func TestTaskToolDepthPassthrough(t *testing.T) {
+func TestTaskToolDepthIncrement(t *testing.T) {
 	spawner := &fakeSpawner{
 		result: &TaskSpawnResult{Name: "general", Output: "ok"},
 	}
@@ -182,7 +182,27 @@ func TestTaskToolDepthPassthrough(t *testing.T) {
 	input := json.RawMessage(`{"prompt":"test"}`)
 	_, err := tool.Execute(context.Background(), input)
 	require.NoError(t, err)
-	assert.Equal(t, 2, spawner.lastCfg.Depth)
+	// Child should be at depth 3 (parent depth 2 + 1).
+	assert.Equal(t, 3, spawner.lastCfg.Depth)
+}
+
+func TestTaskToolWithDepthClone(t *testing.T) {
+	spawner := &fakeSpawner{
+		result: &TaskSpawnResult{Name: "general", Output: "ok"},
+	}
+	original := NewTaskTool(spawner, nil, 0)
+	cloned := original.WithDepth(3)
+
+	// Original retains its depth.
+	input := json.RawMessage(`{"prompt":"test"}`)
+	_, err := original.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, 1, spawner.lastCfg.Depth) // 0 + 1
+
+	// Cloned uses the new depth.
+	_, err = cloned.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, 4, spawner.lastCfg.Depth) // 3 + 1
 }
 
 func TestTaskToolUnknownAgentType(t *testing.T) {
