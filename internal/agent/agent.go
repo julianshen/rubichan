@@ -795,6 +795,13 @@ func toolErrorResult(tc provider.ToolUseBlock, msg string) toolExecResult {
 	}
 }
 
+func approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) toolExecResult {
+	if err != nil {
+		msg = fmt.Sprintf("%s: %s", msg, err)
+	}
+	return toolErrorResult(tc, msg)
+}
+
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
 // Returns true if the context was cancelled during execution.
 func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
@@ -850,7 +857,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 				Input: it.tc.Input,
 			},
 		}
-		results[it.index] = toolErrorResult(it.tc, "Tool call denied by user (deny-always).")
+		results[it.index] = approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
 	}
 
 	// Execute auto-approved tools in parallel (hooks + execution, no approval).
@@ -939,20 +946,20 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- Tur
 		return a.executeSingleTool(ctx, ch, tc)
 	}
 	if approvalResult == AutoDenied {
-		return toolErrorResult(tc, "Tool call denied by user (deny-always).")
+		return approvalToolErrorResult(tc, "Tool call denied by user (deny-always).", nil)
 	}
 
 	if a.approve == nil {
-		return toolErrorResult(tc, "approval function not configured")
+		return approvalToolErrorResult(tc, "approval function not configured", nil)
 	}
 
 	// Check approval.
 	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
 	if approvalErr != nil {
-		return toolErrorResult(tc, fmt.Sprintf("approval error: %s", approvalErr))
+		return approvalToolErrorResult(tc, "approval error", approvalErr)
 	}
 	if !approved {
-		return toolErrorResult(tc, "tool call denied by user")
+		return approvalToolErrorResult(tc, "tool call denied by user", nil)
 	}
 
 	return a.executeSingleTool(ctx, ch, tc)
