@@ -1924,3 +1924,24 @@ func TestModelToolResultEmptyContentLineCount(t *testing.T) {
 	um := updated.(*Model)
 	assert.Equal(t, 0, um.toolResults[0].LineCount)
 }
+
+func TestHandleSubagentDoneRendersNotification(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "subagent_done",
+		Text: "[Background task \"bg-42\" completed (agent: helper)]\nresults here",
+		SubagentResult: &agent.SubagentResult{
+			Name:   "helper",
+			Output: "results here",
+		},
+	})
+	updated, _ := m.Update(evt)
+	um := updated.(*Model)
+	assert.Contains(t, um.content.String(), "bg-42")
+	assert.Contains(t, um.content.String(), "helper")
+}

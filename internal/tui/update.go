@@ -484,6 +484,15 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitForEvent()
 
+	case "subagent_done":
+		summary := msg.Text
+		if summary == "" && msg.SubagentResult != nil {
+			summary = fmt.Sprintf("[Background task completed (agent: %s)]", msg.SubagentResult.Name)
+		}
+		m.content.WriteString(fmt.Sprintf("\n--- Background Task ---\n%s\n-----------------------\n", summary))
+		m.setContentAndAutoScroll()
+		return m, m.waitForEvent()
+
 	case "error":
 		errMsg := "unknown error"
 		if msg.Error != nil {
