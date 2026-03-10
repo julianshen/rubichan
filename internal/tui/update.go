@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -234,6 +235,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.assistantStartIdx = m.content.Len()
 		m.assistantEndIdx = m.assistantStartIdx
 		m.state = StateStreaming
+		m.statusBar.ClearElapsed()
+		m.turnStartTime = time.Now()
 
 		return m, tea.Batch(m.startTurn(m.agent, text), m.spinner.Tick)
 
@@ -399,6 +402,10 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			m.turnCancel()
 			m.turnCancel = nil
 		}
+		if !m.turnStartTime.IsZero() {
+			m.statusBar.SetElapsed(time.Since(m.turnStartTime))
+			m.turnStartTime = time.Time{}
+		}
 		raw := m.rawAssistant.String()
 		visible := SanitizeAssistantOutput(raw)
 		m.renderAssistantMarkdown()
@@ -505,5 +512,6 @@ func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
 	m.assistantStartIdx = m.content.Len()
 	m.assistantEndIdx = m.assistantStartIdx
 	m.state = StateStreaming
+	m.turnStartTime = time.Now()
 	return m.startTurn(m.agent, prompt)
 }

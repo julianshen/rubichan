@@ -2,6 +2,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -49,4 +50,85 @@ func TestStatusBarDefaults(t *testing.T) {
 	assert.Contains(t, result, "0/0")
 	assert.Contains(t, result, "Turn 0/0")
 	assert.Contains(t, result, "$0.00")
+}
+
+// --- Elapsed time ---
+
+func TestStatusBarElapsedTime(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetModel("test-model")
+	sb.SetElapsed(4100 * time.Millisecond)
+	result := sb.View()
+	assert.Contains(t, result, "4.1s")
+}
+
+func TestStatusBarElapsedTimeRoundsDown(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetElapsed(500 * time.Millisecond)
+	result := sb.View()
+	assert.Contains(t, result, "0.5s")
+}
+
+func TestStatusBarElapsedTimeLarge(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetElapsed(65 * time.Second)
+	result := sb.View()
+	assert.Contains(t, result, "1m5s")
+}
+
+func TestStatusBarNoElapsedWhenZero(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetModel("test-model")
+	result := sb.View()
+	assert.NotContains(t, result, "⏱")
+}
+
+func TestStatusBarClearElapsed(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetElapsed(3 * time.Second)
+	sb.ClearElapsed()
+	result := sb.View()
+	assert.NotContains(t, result, "⏱")
+}
+
+// --- Git branch ---
+
+func TestStatusBarGitBranch(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetModel("test-model")
+	sb.SetGitBranch("feature/cool-stuff")
+	result := sb.View()
+	assert.Contains(t, result, "feature/cool-stuff")
+}
+
+func TestStatusBarNoGitBranchWhenEmpty(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetModel("test-model")
+	result := sb.View()
+	assert.NotContains(t, result, "⎇")
+}
+
+func TestFormatElapsed(t *testing.T) {
+	assert.Equal(t, "0.5s", formatElapsed(500*time.Millisecond))
+	assert.Equal(t, "3.0s", formatElapsed(3*time.Second))
+	assert.Equal(t, "4.1s", formatElapsed(4100*time.Millisecond))
+	assert.Equal(t, "1m5s", formatElapsed(65*time.Second))
+	assert.Equal(t, "2m30s", formatElapsed(150*time.Second))
+}
+
+func TestStatusBarAllFields(t *testing.T) {
+	sb := NewStatusBar(80)
+	sb.SetModel("claude-sonnet-4-5")
+	sb.SetTokens(1200, 100000)
+	sb.SetTurn(3, 50)
+	sb.SetCost(0.02)
+	sb.SetGitBranch("main")
+	sb.SetElapsed(2500 * time.Millisecond)
+	result := sb.View()
+	assert.Contains(t, result, "claude-sonnet-4-5")
+	assert.Contains(t, result, "1.2k/100k")
+	assert.Contains(t, result, "Turn 3/50")
+	assert.Contains(t, result, "$0.02")
+	assert.Contains(t, result, "main")
+	assert.Contains(t, result, "2.5s")
 }
