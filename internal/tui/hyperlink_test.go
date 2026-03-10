@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,7 +22,7 @@ func TestSupportsHyperlinks_Unknown(t *testing.T) {
 }
 
 func TestSupportsHyperlinks_Unset(t *testing.T) {
-	os.Unsetenv("TERM_PROGRAM")
+	t.Setenv("TERM_PROGRAM", "")
 	assert.False(t, SupportsHyperlinks())
 }
 

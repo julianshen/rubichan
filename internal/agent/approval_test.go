@@ -9,16 +9,18 @@ import (
 )
 
 func TestApprovalResultConstants(t *testing.T) {
-	// Three distinct tiers exist with expected ordering.
+	// Four distinct tiers exist with expected ordering.
 	assert.Equal(t, ApprovalResult(0), ApprovalRequired)
 	assert.Equal(t, ApprovalResult(1), AutoApproved)
 	assert.Equal(t, ApprovalResult(2), TrustRuleApproved)
+	assert.Equal(t, ApprovalResult(3), AutoDenied)
 }
 
 func TestApprovalResultString(t *testing.T) {
 	assert.Equal(t, "ApprovalRequired", ApprovalRequired.String())
 	assert.Equal(t, "AutoApproved", AutoApproved.String())
 	assert.Equal(t, "TrustRuleApproved", TrustRuleApproved.String())
+	assert.Equal(t, "AutoDenied", AutoDenied.String())
 }
 
 func TestTrustRuleMatchesSimplePrefix(t *testing.T) {
@@ -200,9 +202,37 @@ func TestCompositeApprovalCheckerFirstWins(t *testing.T) {
 	assert.Equal(t, ApprovalRequired, composite.CheckApproval("unknown", json.RawMessage(`{}`)))
 }
 
+func TestCompositeApprovalCheckerAutoDeniedShortCircuits(t *testing.T) {
+	// A deny-always checker placed before a trust rule checker should
+	// prevent the trust rule from auto-approving the tool.
+	denyChecker := &staticResultChecker{results: map[string]ApprovalResult{
+		"shell": AutoDenied,
+	}}
+	trustRules := NewTrustRuleChecker([]TrustRule{
+		{Tool: "shell", Pattern: `^go test`, Action: "allow"},
+	}, nil)
+
+	composite := NewCompositeApprovalChecker(denyChecker, trustRules)
+
+	// shell is denied by the first checker — trust rule never reached.
+	assert.Equal(t, AutoDenied, composite.CheckApproval("shell", json.RawMessage(`{"command":"go test ./..."}`)))
+}
+
 func TestCompositeApprovalCheckerEmpty(t *testing.T) {
 	composite := NewCompositeApprovalChecker()
 	assert.Equal(t, ApprovalRequired, composite.CheckApproval("any", json.RawMessage(`{}`)))
+}
+
+// staticResultChecker returns a fixed ApprovalResult for each tool name.
+type staticResultChecker struct {
+	results map[string]ApprovalResult
+}
+
+func (s *staticResultChecker) CheckApproval(tool string, _ json.RawMessage) ApprovalResult {
+	if r, ok := s.results[tool]; ok {
+		return r
+	}
+	return ApprovalRequired
 }
 
 func TestValidateTrustRulesValid(t *testing.T) {

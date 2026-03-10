@@ -10,7 +10,11 @@ type InputHistory struct {
 }
 
 // NewInputHistory creates a new history with the given max size.
+// A maxSize less than 1 is clamped to 1.
 func NewInputHistory(maxSize int) *InputHistory {
+	if maxSize < 1 {
+		maxSize = 1
+	}
 	return &InputHistory{
 		cursor:  -1,
 		maxSize: maxSize,

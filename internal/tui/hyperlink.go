@@ -37,6 +37,7 @@ var filePathPattern = regexp.MustCompile(`(?:^|[\s:])(/[^\s:]+\.[a-zA-Z0-9]+|\.\
 
 // LinkifyFilePaths wraps recognized file paths in OSC 8 hyperlinks.
 // Only activates when the terminal supports it.
+// TODO: Wire into viewportContent() once Model carries a workDir field.
 func LinkifyFilePaths(text string, workDir string) string {
 	if !SupportsHyperlinks() {
 		return text

@@ -165,9 +165,11 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			result := m.approvalPrompt.Result()
 			approved := result == ApprovalYes || result == ApprovalAlways
 			if result == ApprovalAlways {
+				m.alwaysDenied.Delete(m.pendingApproval.tool)
 				m.alwaysApproved.Store(m.pendingApproval.tool, true)
 			}
 			if result == ApprovalDenyAlways {
+				m.alwaysApproved.Delete(m.pendingApproval.tool)
 				m.alwaysDenied.Store(m.pendingApproval.tool, true)
 			}
 			m.pendingApproval.response <- approved

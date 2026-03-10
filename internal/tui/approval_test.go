@@ -142,3 +142,15 @@ func TestApprovalPromptShowsDenyOption(t *testing.T) {
 	view := ap.View()
 	assert.Contains(t, view, "(d)eny always")
 }
+
+func TestApprovalPromptMediumRiskLabel(t *testing.T) {
+	ap := NewApprovalPrompt("file_write", `"/tmp/foo.txt"`, 60)
+	view := ap.View()
+	assert.Contains(t, view, "MEDIUM")
+}
+
+func TestApprovalPromptLowRiskLabel(t *testing.T) {
+	ap := NewApprovalPrompt("file_read", `"/tmp/foo.txt"`, 60)
+	view := ap.View()
+	assert.Contains(t, view, "LOW")
+}

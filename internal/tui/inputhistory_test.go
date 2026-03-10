@@ -102,6 +102,38 @@ func TestInputHistory_DuplicateNotAdded(t *testing.T) {
 	assert.Equal(t, 1, h.Len())
 }
 
+func TestInputHistory_MidHistoryNext(t *testing.T) {
+	h := NewInputHistory(100)
+	h.Add("a")
+	h.Add("b")
+	h.Add("c")
+
+	// Go back to "b"
+	val, _ := h.Previous("draft")
+	assert.Equal(t, "c", val)
+	val, _ = h.Previous(val)
+	assert.Equal(t, "b", val)
+
+	// Go forward from mid-history
+	val, ok := h.Next()
+	assert.True(t, ok)
+	assert.Equal(t, "c", val)
+
+	// One more forward restores draft
+	val, ok = h.Next()
+	assert.True(t, ok)
+	assert.Equal(t, "draft", val)
+}
+
+func TestInputHistory_MaxSizeClampedToOne(t *testing.T) {
+	h := NewInputHistory(0)
+	h.Add("only")
+	assert.Equal(t, 1, h.Len())
+	val, ok := h.Previous("")
+	assert.True(t, ok)
+	assert.Equal(t, "only", val)
+}
+
 func TestModelCtrlPRecallsHistory(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.history.Add("first prompt")

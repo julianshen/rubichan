@@ -19,6 +19,8 @@ const (
 	AutoApproved
 	// TrustRuleApproved means the tool input matched a trust rule pattern.
 	TrustRuleApproved
+	// AutoDenied means the tool was explicitly denied by the user (deny-always).
+	AutoDenied
 )
 
 // String returns a human-readable name for the approval result.
@@ -30,6 +32,8 @@ func (r ApprovalResult) String() string {
 		return "AutoApproved"
 	case TrustRuleApproved:
 		return "TrustRuleApproved"
+	case AutoDenied:
+		return "AutoDenied"
 	default:
 		return "Unknown"
 	}
@@ -315,8 +319,10 @@ func NewCompositeApprovalChecker(checkers ...ApprovalChecker) *CompositeApproval
 }
 
 // CheckApproval evaluates checkers in order. The first checker to return
-// AutoApproved or TrustRuleApproved wins. If all return ApprovalRequired,
-// the result is ApprovalRequired.
+// a decisive result (anything other than ApprovalRequired) wins. AutoDenied
+// takes priority — if any checker denies a tool, subsequent checkers cannot
+// override the denial. If all return ApprovalRequired, the result is
+// ApprovalRequired.
 func (c *CompositeApprovalChecker) CheckApproval(tool string, input json.RawMessage) ApprovalResult {
 	for _, checker := range c.checkers {
 		result := checker.CheckApproval(tool, input)

@@ -792,12 +792,15 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		index int
 		tc    provider.ToolUseBlock
 	}
-	var autoApproved, needsApproval []indexedTool
+	var autoApproved, autoDenied, needsApproval []indexedTool
 	for i, tc := range pendingTools {
 		result := a.approvalChecker.CheckApproval(tc.Name, tc.Input)
-		if result == AutoApproved || result == TrustRuleApproved {
+		switch result {
+		case AutoApproved, TrustRuleApproved:
 			autoApproved = append(autoApproved, indexedTool{index: i, tc: tc})
-		} else {
+		case AutoDenied:
+			autoDenied = append(autoDenied, indexedTool{index: i, tc: tc})
+		default:
 			needsApproval = append(needsApproval, indexedTool{index: i, tc: tc})
 		}
 	}
@@ -818,6 +821,24 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 
 	// Results array indexed by original position.
 	results := make([]toolExecResult, len(pendingTools))
+
+	// Fill in auto-denied results immediately — no execution or approval needed.
+	for _, it := range autoDenied {
+		results[it.index] = toolExecResult{
+			toolUseID: it.tc.ID,
+			content:   "Tool call denied by user (deny-always).",
+			isError:   true,
+			event: TurnEvent{
+				Type: "tool_result",
+				ToolResult: &ToolResultEvent{
+					ID:      it.tc.ID,
+					Name:    it.tc.Name,
+					Content: "Tool call denied by user (deny-always).",
+					IsError: true,
+				},
+			},
+		}
+	}
 
 	// Execute auto-approved tools in parallel (hooks + execution, no approval).
 	if len(autoApproved) > 0 {
