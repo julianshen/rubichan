@@ -779,11 +779,29 @@ type toolExecResult struct {
 	isError   bool
 }
 
+type plannedToolCall struct {
+	index          int
+	tc             provider.ToolUseBlock
+	approvalResult ApprovalResult
+}
+
 func (a *Agent) approvalResultForTool(tc provider.ToolUseBlock) ApprovalResult {
 	if a.approvalChecker == nil {
 		return ApprovalRequired
 	}
 	return a.approvalChecker.CheckApproval(tc.Name, tc.Input)
+}
+
+func (a *Agent) planToolCalls(pendingTools []provider.ToolUseBlock) []plannedToolCall {
+	planned := make([]plannedToolCall, 0, len(pendingTools))
+	for i, tc := range pendingTools {
+		planned = append(planned, plannedToolCall{
+			index:          i,
+			tc:             tc,
+			approvalResult: a.approvalResultForTool(tc),
+		})
+	}
+	return planned
 }
 
 func toolErrorResult(tc provider.ToolUseBlock, msg string) toolExecResult {
@@ -807,25 +825,21 @@ func approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) to
 func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
 	if a.approvalChecker == nil {
 		// No checker — fall back to sequential execution.
-		return a.executeToolsSequential(ctx, ch, pendingTools)
+		return a.executePlannedToolsSequential(ctx, ch, a.planToolCalls(pendingTools))
 	}
 
+	plannedTools := a.planToolCalls(pendingTools)
+
 	// Partition into auto-approved and needs-approval using input-sensitive check.
-	type indexedTool struct {
-		index          int
-		tc             provider.ToolUseBlock
-		approvalResult ApprovalResult
-	}
-	var autoApproved, autoDenied, needsApproval []indexedTool
-	for i, tc := range pendingTools {
-		result := a.approvalResultForTool(tc)
-		switch result {
+	var autoApproved, autoDenied, needsApproval []plannedToolCall
+	for _, planned := range plannedTools {
+		switch planned.approvalResult {
 		case AutoApproved, TrustRuleApproved:
-			autoApproved = append(autoApproved, indexedTool{index: i, tc: tc, approvalResult: result})
+			autoApproved = append(autoApproved, planned)
 		case AutoDenied:
-			autoDenied = append(autoDenied, indexedTool{index: i, tc: tc, approvalResult: result})
+			autoDenied = append(autoDenied, planned)
 		default:
-			needsApproval = append(needsApproval, indexedTool{index: i, tc: tc, approvalResult: result})
+			needsApproval = append(needsApproval, planned)
 		}
 	}
 
@@ -916,9 +930,8 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	return false
 }
 
-// executeToolsSequential is the original sequential tool execution path.
-func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
-	for _, tc := range pendingTools {
+func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- TurnEvent, plannedTools []plannedToolCall) bool {
+	for _, planned := range plannedTools {
 		if ctx.Err() != nil {
 			return true
 		}
@@ -926,13 +939,13 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 		ch <- TurnEvent{
 			Type: "tool_call",
 			ToolCall: &ToolCallEvent{
-				ID:    tc.ID,
-				Name:  tc.Name,
-				Input: tc.Input,
+				ID:    planned.tc.ID,
+				Name:  planned.tc.Name,
+				Input: planned.tc.Input,
 			},
 		}
 
-		r := a.executeSingleToolWithApproval(ctx, ch, tc, a.approvalResultForTool(tc))
+		r := a.executeSingleToolWithApproval(ctx, ch, planned.tc, planned.approvalResult)
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
