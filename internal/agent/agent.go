@@ -44,6 +44,21 @@ func (AlwaysAutoApprove) CheckApproval(_ string, _ json.RawMessage) ApprovalResu
 	return AutoApproved
 }
 
+// ToolParallelPolicy determines whether a tool call may be executed in parallel
+// with other auto-approved calls. This separates parallelization decisions from
+// approval decisions: a tool may be auto-approved yet not safe to parallelize.
+type ToolParallelPolicy interface {
+	// CanParallelize returns true if the named tool may run concurrently
+	// with other tool calls in the same batch.
+	CanParallelize(tool string) bool
+}
+
+// AllowAllParallel is a ToolParallelPolicy that permits all tools to run in parallel.
+type AllowAllParallel struct{}
+
+// CanParallelize always returns true.
+func (AllowAllParallel) CanParallelize(_ string) bool { return true }
+
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
 	Type           string           // "text_delta", "tool_call", "tool_result", "error", "done", "subagent_done"
@@ -140,6 +155,15 @@ func WithMemoryStore(ms MemoryStore) AgentOption {
 func WithApprovalChecker(checker ApprovalChecker) AgentOption {
 	return func(a *Agent) {
 		a.approvalChecker = checker
+	}
+}
+
+// WithParallelPolicy attaches a policy that determines which auto-approved
+// tools may execute in parallel. When set, only tools passing both
+// auto-approval AND CanParallelize run concurrently; others run sequentially.
+func WithParallelPolicy(policy ToolParallelPolicy) AgentOption {
+	return func(a *Agent) {
+		a.parallelPolicy = policy
 	}
 }
 
@@ -240,6 +264,7 @@ type Agent struct {
 	wakeManager      *WakeManager
 	pipeline         *toolexec.Pipeline
 	workingDir       string // override working directory (empty = os.Getwd)
+	parallelPolicy   ToolParallelPolicy
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -843,6 +868,21 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		}
 	}
 
+	// When a parallel policy is set, auto-approved tools that fail
+	// CanParallelize are moved to sequential execution (after parallel batch).
+	var sequentialApproved []plannedToolCall
+	if a.parallelPolicy != nil {
+		var parallelizable []plannedToolCall
+		for _, it := range autoApproved {
+			if a.parallelPolicy.CanParallelize(it.tc.Name) {
+				parallelizable = append(parallelizable, it)
+			} else {
+				sequentialApproved = append(sequentialApproved, it)
+			}
+		}
+		autoApproved = parallelizable
+	}
+
 	// Emit tool_call events for auto-approved tools upfront (in order).
 	// Needs-approval tool_call events are emitted just before approval,
 	// matching the sequential path behavior.
@@ -899,6 +939,22 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		if ctx.Err() != nil {
 			return true
 		}
+	}
+
+	// Execute auto-approved but non-parallelizable tools sequentially.
+	for _, it := range sequentialApproved {
+		if ctx.Err() != nil {
+			return true
+		}
+		ch <- TurnEvent{
+			Type: "tool_call",
+			ToolCall: &ToolCallEvent{
+				ID:    it.tc.ID,
+				Name:  it.tc.Name,
+				Input: it.tc.Input,
+			},
+		}
+		results[it.index] = a.executeSingleTool(ctx, ch, it.tc)
 	}
 
 	// Execute needs-approval tools sequentially.

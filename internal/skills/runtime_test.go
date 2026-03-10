@@ -1103,3 +1103,44 @@ func TestRuntimeActivateRegistersDeclarativeAgentDefs(t *testing.T) {
 	_, found = agentReg.defs["review-agent"]
 	assert.False(t, found)
 }
+
+func TestRuntimeActivateRespectsToolAdmission(t *testing.T) {
+	rt, _, _ := newTestRuntime(t, []string{"admitted-skill"}, nil)
+
+	// Only allow tools whose name matches exactly.
+	rt.SetToolAdmissionFunc(func(name string) bool {
+		return name == "admitted-skill-tool"
+	})
+
+	m := testManifest("admitted-skill")
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("admitted-skill"))
+
+	// The tool should be registered because it passes admission.
+	_, ok := rt.registry.Get("admitted-skill-tool")
+	assert.True(t, ok, "admitted tool should be registered")
+}
+
+func TestRuntimeActivateSkipsToolFailingAdmission(t *testing.T) {
+	rt, _, _ := newTestRuntime(t, []string{"denied-tool-skill"}, nil)
+
+	// Deny all tools.
+	rt.SetToolAdmissionFunc(func(name string) bool {
+		return false
+	})
+
+	m := testManifest("denied-tool-skill")
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("denied-tool-skill"))
+
+	// The tool should NOT be registered because it fails admission.
+	_, ok := rt.registry.Get("denied-tool-skill-tool")
+	assert.False(t, ok, "denied tool should not be registered")
+
+	// But the skill should still be active (it just has no tools).
+	assert.Equal(t, SkillStateActive, rt.skills["denied-tool-skill"].State)
+}

@@ -109,6 +109,39 @@ func TestToolsConfigShouldEnableRespectsFeatureFlags(t *testing.T) {
 	assert.True(t, tc.ShouldEnable("file"))
 }
 
+func TestToolsConfigShouldEnableHeadlessDenyByDefault(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		HeadlessMode:      true,
+	}
+	// No CLIOverrides → all tools denied in headless mode.
+	assert.False(t, tc.ShouldEnable("file"))
+	assert.False(t, tc.ShouldEnable("shell"))
+	assert.False(t, tc.ShouldEnable("search"))
+}
+
+func TestToolsConfigShouldEnableHeadlessWithExplicitAllowlist(t *testing.T) {
+	tc := ToolsConfig{
+		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		HeadlessMode:      true,
+		CLIOverrides:      map[string]bool{"file": true, "search": true},
+	}
+	assert.True(t, tc.ShouldEnable("file"))
+	assert.True(t, tc.ShouldEnable("search"))
+	assert.False(t, tc.ShouldEnable("shell"))
+}
+
+func TestParseToolsFlagAllProfile(t *testing.T) {
+	// "all" is a special profile that expands to all standard tools.
+	result := parseToolsFlag("all")
+	assert.NotNil(t, result)
+	assert.True(t, result["file"])
+	assert.True(t, result["shell"])
+	assert.True(t, result["search"])
+	assert.True(t, result["process"])
+	assert.True(t, result["notes"])
+}
+
 func TestIsAppleOnlyTool(t *testing.T) {
 	assert.True(t, isAppleOnlyTool("xcode_build"))
 	assert.True(t, isAppleOnlyTool("swift_test"))
