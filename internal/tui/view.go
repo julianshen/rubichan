@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -51,7 +52,11 @@ func (m *Model) View() string {
 	// Status line / approval prompt
 	switch m.state {
 	case StateStreaming:
-		b.WriteString(fmt.Sprintf("%s %s", m.spinner.View(), persona.ThinkingMessage()))
+		elapsed := ""
+		if !m.turnStartTime.IsZero() {
+			elapsed = fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime)))
+		}
+		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), persona.ThinkingMessage(), elapsed))
 	case StateAwaitingApproval:
 		if m.approvalPrompt != nil {
 			b.WriteString(m.approvalPrompt.View())
@@ -67,6 +72,14 @@ func (m *Model) View() string {
 	if m.completion != nil {
 		if cv := m.completion.View(); cv != "" {
 			b.WriteString(cv)
+			b.WriteString("\n")
+		}
+	}
+
+	// File completion overlay (above input, mutually exclusive with command completion)
+	if m.fileCompletion != nil {
+		if fv := m.fileCompletion.View(); fv != "" {
+			b.WriteString(fv)
 			b.WriteString("\n")
 		}
 	}

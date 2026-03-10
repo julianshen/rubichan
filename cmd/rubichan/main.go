@@ -936,6 +936,11 @@ func runInteractive() error {
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
 
+	// Set git branch in status bar if available.
+	if branch, err := detectGitBranch(cwd); err == nil && branch != "" {
+		model.SetGitBranch(branch)
+	}
+
 	// Register commands that need model callbacks (these need the model instance).
 	if err := cmdRegistry.Register(commands.NewClearCommand(func() {
 		if model.GetAgent() != nil {
@@ -1022,6 +1027,12 @@ func runInteractive() error {
 		WorkDir: cwd,
 		LLM:     llmCompleter,
 	})
+
+	// Index project files for @ mention autocomplete (background).
+	fileSrc := tui.NewFileCompletionSource(cwd)
+	model.SetFileCompletionSource(fileSrc)
+	go indexProjectFiles(cwd, fileSrc)
+
 	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)
@@ -1805,4 +1816,35 @@ func (a *skillListerAdapter) ActivateSkill(name string) error {
 
 func (a *skillListerAdapter) DeactivateSkill(name string) error {
 	return a.rt.Deactivate(name)
+}
+
+// indexProjectFiles populates the file completion source from git ls-files
+// (or falls back to nothing for non-git directories).
+func indexProjectFiles(dir string, src *tui.FileCompletionSource) {
+	cmd := exec.Command("git", "-C", dir, "ls-files")
+	out, err := cmd.Output()
+	if err != nil {
+		return // not a git repo or git not installed — skip silently
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return
+	}
+	src.SetFiles(lines)
+}
+
+// detectGitBranch returns the current git branch name, or an error if
+// the directory is not a git repository.
+func detectGitBranch(dir string) (string, error) {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	branch := strings.TrimSpace(string(out))
+	// In detached HEAD state, git returns literal "HEAD" — filter it out.
+	if branch == "HEAD" {
+		return "", nil
+	}
+	return branch, nil
 }

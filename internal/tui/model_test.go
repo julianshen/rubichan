@@ -431,10 +431,10 @@ func TestModelHandleTurnEventToolResult(t *testing.T) {
 	updated, _ := m.Update(evt)
 
 	um := updated.(*Model)
-	content := um.content.String()
-	// Should render in a bordered box
-	assert.Contains(t, content, "file contents here")
-	assert.Contains(t, content, "\u256d") // rounded border top-left
+	// Content buffer has a placeholder; viewportContent() renders it.
+	vc := um.viewportContent()
+	assert.Contains(t, vc, "file contents here")
+	assert.Contains(t, vc, "\u256d") // rounded border top-left
 }
 
 func TestModelHandleTurnEventToolProgress(t *testing.T) {
@@ -507,9 +507,10 @@ func TestModelHandleTurnEventToolResultTruncation(t *testing.T) {
 	updated, _ := m.Update(evt)
 
 	um := updated.(*Model)
-	content := um.content.String()
+	// Content buffer has a placeholder; viewportContent() renders it.
+	vc := um.viewportContent()
 	// ToolBoxRenderer truncates by line count and shows "[N more lines]"
-	assert.Contains(t, content, "more lines")
+	assert.Contains(t, vc, "more lines")
 }
 
 func TestModelHandleTurnEventError(t *testing.T) {
@@ -839,9 +840,9 @@ func TestModelHandleTurnEventToolResultNilToolResult(t *testing.T) {
 
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
-	// Nil tool_result should render a bordered box with empty content
-	content := um.content.String()
-	assert.Contains(t, content, "\u256d")
+	// Nil tool_result should render via collapsible result (expanded during streaming)
+	vc := um.viewportContent()
+	assert.Contains(t, vc, "\u256d")
 }
 
 func TestModelHandleTurnEventErrorNilError(t *testing.T) {
@@ -1777,4 +1778,149 @@ func TestModelWindowSizeUpdatesCompletionWidth(t *testing.T) {
 	// Completion width should be updated (we can't directly assert the width
 	// field, but we verify no panic and that the width was passed through).
 	assert.Equal(t, 120, m.width)
+}
+
+func TestModelToolResultsCollapsedOnDone(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 2)
+	m.eventCh = ch
+
+	// Simulate tool_result event
+	ch <- agent.TurnEvent{Type: "done"}
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{
+			ID:      "t1",
+			Name:    "read_file",
+			Content: "file contents",
+		},
+	})
+	updated, _ := m.Update(evt)
+	um := updated.(*Model)
+	assert.Len(t, um.toolResults, 1)
+	assert.False(t, um.toolResults[0].Collapsed, "result should be expanded during streaming")
+
+	// Now handle "done" event
+	ch2 := make(chan agent.TurnEvent)
+	close(ch2)
+	um.eventCh = ch2
+	doneEvt := TurnEventMsg(agent.TurnEvent{Type: "done"})
+	updated2, _ := um.Update(doneEvt)
+	um2 := updated2.(*Model)
+	assert.True(t, um2.toolResults[0].Collapsed, "result should be collapsed after done")
+}
+
+func TestModelToolResultsExpandedDuringStreaming(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{
+			ID:      "t1",
+			Name:    "read_file",
+			Content: "file contents",
+		},
+	})
+	updated, _ := m.Update(evt)
+	um := updated.(*Model)
+	assert.Len(t, um.toolResults, 1)
+	assert.False(t, um.toolResults[0].Collapsed)
+	// Viewport content should contain the file contents (expanded)
+	vc := um.viewportContent()
+	assert.Contains(t, vc, "file contents")
+}
+
+func TestModelCtrlTTogglesToolResults(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateInput
+	// Add some collapsed tool results
+	m.toolResults = []CollapsibleToolResult{
+		{ID: 0, Name: "file", Args: "a.go", Content: "content a", LineCount: 1, Collapsed: true},
+		{ID: 1, Name: "file", Args: "b.go", Content: "content b", LineCount: 1, Collapsed: true},
+	}
+
+	// Ctrl+T should expand all
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	um := updated.(*Model)
+	assert.False(t, um.toolResults[0].Collapsed)
+	assert.False(t, um.toolResults[1].Collapsed)
+
+	// Ctrl+T again should collapse all
+	updated2, _ := um.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	um2 := updated2.(*Model)
+	assert.True(t, um2.toolResults[0].Collapsed)
+	assert.True(t, um2.toolResults[1].Collapsed)
+}
+
+func TestModelToolCallArgsCachedForResults(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 2)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	// First send a tool_call to cache args
+	callEvt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_call",
+		ToolCall: &agent.ToolCallEvent{
+			ID:    "t1",
+			Name:  "file_read",
+			Input: []byte(`{"path":"src/main.go"}`),
+		},
+	})
+	updated, _ := m.Update(callEvt)
+	um := updated.(*Model)
+
+	// Then send the tool_result — args should come from the cached call
+	resultEvt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{
+			ID:      "t1",
+			Name:    "file_read",
+			Content: "package main",
+		},
+	})
+	updated2, _ := um.Update(resultEvt)
+	um2 := updated2.(*Model)
+	assert.Len(t, um2.toolResults, 1)
+	assert.Equal(t, `{"path":"src/main.go"}`, um2.toolResults[0].Args)
+}
+
+func TestModelClearContentResetsToolResults(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.toolResults = []CollapsibleToolResult{
+		{ID: 0, Name: "file", Args: "a.go", Content: "x", LineCount: 1},
+	}
+	m.nextToolResultID = 1
+	m.toolCallArgs = map[string]string{"t1": "args"}
+
+	m.ClearContent()
+	assert.Nil(t, m.toolResults)
+	assert.Equal(t, 0, m.nextToolResultID)
+	assert.Nil(t, m.toolCallArgs)
+}
+
+func TestModelToolResultEmptyContentLineCount(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{
+			ID:      "t1",
+			Name:    "shell",
+			Content: "",
+		},
+	})
+	updated, _ := m.Update(evt)
+	um := updated.(*Model)
+	assert.Equal(t, 0, um.toolResults[0].LineCount)
 }

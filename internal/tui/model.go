@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -83,8 +84,13 @@ type Model struct {
 	completion        *CompletionOverlay
 	history           *InputHistory
 	turnCancel        context.CancelFunc
+	turnStartTime     time.Time
 	ralph             *ralphLoopState
 	wikiForm          *WikiForm
+	fileCompletion    *FileCompletionOverlay
+	toolResults       []CollapsibleToolResult
+	nextToolResultID  int
+	toolCallArgs      map[string]string
 	wikiRunning       bool
 	wikiCfg           WikiCommandConfig
 	wikiCancel        context.CancelFunc
@@ -196,6 +202,9 @@ func (m *Model) ClearContent() {
 	m.content.Reset()
 	m.diffSummary = ""
 	m.diffExpanded = false
+	m.toolResults = nil
+	m.nextToolResultID = 0
+	m.toolCallArgs = nil
 	m.viewport.SetContent("")
 }
 
@@ -206,11 +215,24 @@ func (m *Model) SwitchModel(name string) {
 	m.statusBar.SetModel(name)
 }
 
-// syncCompletion updates the completion overlay based on the current input.
+// syncCompletion updates the completion overlays based on the current input.
 func (m *Model) syncCompletion() {
 	if m.completion != nil {
 		m.completion.Update(m.input.Value())
 	}
+	if m.fileCompletion != nil {
+		m.fileCompletion.Update(m.input.Value())
+	}
+}
+
+// SetFileCompletionSource sets the file completion source for @ mentions.
+func (m *Model) SetFileCompletionSource(src *FileCompletionSource) {
+	m.fileCompletion = NewFileCompletionOverlay(src, m.width)
+}
+
+// SetGitBranch sets the git branch name displayed in the status bar.
+func (m *Model) SetGitBranch(branch string) {
+	m.statusBar.SetGitBranch(branch)
 }
 
 // SetWikiConfig sets the wiki command configuration and registers the /wiki command.
@@ -382,5 +404,7 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
 	m.state = StateStreaming
+	m.statusBar.ClearElapsed()
+	m.turnStartTime = time.Now()
 	return m.startTurn(m.agent, prompt)
 }
