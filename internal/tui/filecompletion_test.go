@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -158,6 +159,50 @@ func TestModelAtMentionTriggersFileCompletion(t *testing.T) {
 	// View should include the file overlay
 	v := m.View()
 	assert.Contains(t, v, "model.go")
+}
+
+func TestFileCompletionSource_LimitFilesReturnsCopy(t *testing.T) {
+	src := NewFileCompletionSource("")
+	files := make([]string, 20)
+	for i := range files {
+		files[i] = fmt.Sprintf("file%02d.go", i)
+	}
+	src.SetFiles(files)
+
+	// Match("") returns limitFiles(s.files) — the returned slice
+	// must not alias the internal array.
+	matches := src.Match("")
+	assert.Len(t, matches, maxFileCompletionCandidates)
+
+	original := make([]string, len(matches))
+	copy(original, matches)
+
+	// Mutate the returned slice — should not affect internal state.
+	matches[0] = "MUTATED"
+	fresh := src.Match("")
+	assert.Equal(t, original, fresh, "limitFiles must return a copy, not an alias")
+}
+
+func TestFileCompletionOverlay_DismissedResetOnSpace(t *testing.T) {
+	src := NewFileCompletionSource("")
+	src.SetFiles([]string{"internal/tui/model.go"})
+	fo := NewFileCompletionOverlay(src, 80)
+
+	// 1. Activate overlay with @
+	fo.Update("@internal")
+	assert.True(t, fo.Visible(), "overlay should be visible after @")
+
+	// 2. Dismiss with Escape
+	fo.HandleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	assert.False(t, fo.Visible())
+
+	// 3. Type space after the path (simulates accepting)
+	fo.Update("@internal/tui/model.go ")
+	assert.False(t, fo.Visible())
+
+	// 4. Type a new @ — overlay should reappear because dismissed was reset
+	fo.Update("@internal/tui/model.go @")
+	assert.True(t, fo.Visible(), "new @ after space should re-open overlay")
 }
 
 func TestModelFileCompletionTabAccept(t *testing.T) {

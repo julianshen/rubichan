@@ -81,9 +81,13 @@ func (s *FileCompletionSource) Match(query string) []string {
 
 func (s *FileCompletionSource) limitFiles(files []string) []string {
 	if len(files) <= maxFileCompletionCandidates {
-		return files
+		result := make([]string, len(files))
+		copy(result, files)
+		return result
 	}
-	return files[:maxFileCompletionCandidates]
+	result := make([]string, maxFileCompletionCandidates)
+	copy(result, files[:maxFileCompletionCandidates])
+	return result
 }
 
 // FileCompletionOverlay shows a dropdown of matching files when @ is typed.
@@ -121,10 +125,12 @@ func (fo *FileCompletionOverlay) Update(input string) {
 	// Extract text after @
 	rest := input[atIdx+1:]
 
-	// If there's a space after the query, hide (file path accepted)
+	// If there's a space after the query, hide (file path accepted).
+	// Reset dismissed so a subsequent @ re-opens the overlay.
 	if strings.Contains(rest, " ") {
 		fo.visible = false
 		fo.candidates = nil
+		fo.dismissed = false
 		fo.lastQuery = ""
 		return
 	}
