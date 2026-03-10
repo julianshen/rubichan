@@ -93,6 +93,38 @@ func autoDeny(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
 	return false, nil
 }
 
+func TestApprovalToolErrorResult(t *testing.T) {
+	tc := provider.ToolUseBlock{ID: "tool-1", Name: "file"}
+
+	t.Run("without wrapped error", func(t *testing.T) {
+		result := approvalToolErrorResult(tc, "tool call denied by user", nil)
+
+		assert.Equal(t, "tool-1", result.toolUseID)
+		assert.Equal(t, "tool call denied by user", result.content)
+		assert.True(t, result.isError)
+		require.NotNil(t, result.event)
+		assert.Equal(t, "tool_result", result.event.Type)
+		require.NotNil(t, result.event.ToolResult)
+		assert.Equal(t, "tool-1", result.event.ToolResult.ID)
+		assert.Equal(t, "file", result.event.ToolResult.Name)
+		assert.Equal(t, "tool call denied by user", result.event.ToolResult.Content)
+		assert.True(t, result.event.ToolResult.IsError)
+	})
+
+	t.Run("with wrapped error", func(t *testing.T) {
+		result := approvalToolErrorResult(tc, "approval error", fmt.Errorf("approval service unavailable"))
+
+		assert.Equal(t, "tool-1", result.toolUseID)
+		assert.Equal(t, "approval error", result.content)
+		assert.True(t, result.isError)
+		require.NotNil(t, result.event)
+		assert.Equal(t, "tool_result", result.event.Type)
+		require.NotNil(t, result.event.ToolResult)
+		assert.Equal(t, "approval error", result.event.ToolResult.Content)
+		assert.True(t, result.event.ToolResult.IsError)
+	})
+}
+
 func TestNewAgent(t *testing.T) {
 	mp := &mockProvider{}
 	reg := tools.NewRegistry()
