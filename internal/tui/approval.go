@@ -16,7 +16,7 @@ import (
 // single-character Esc sequences (e.g. \x1b7).
 var ansiEscapePattern = regexp.MustCompile(
 	`\x1b\[[0-9;?]*[a-zA-Z~]` + // CSI sequences
-		`|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)` + // OSC sequences (BEL or ST terminated)
+		`|\x1b\][\x20-\x7e]*(?:\x07|\x1b\\)` + // OSC sequences (BEL or ST terminated, printable params)
 		`|\x1b[^[\]0-9]?`, // Other Esc sequences (single char after ESC)
 )
 
@@ -63,7 +63,7 @@ func classifyRisk(tool string) RiskLevel {
 func isDestructiveCommand(args string) bool {
 	lower := strings.ToLower(args)
 	patterns := []string{
-		"rm -rf", "rm -r ",
+		"rm -rf", "rm -r",
 		"git reset --hard",
 		"git push --force", "git push -f",
 		"drop table", "drop database",
