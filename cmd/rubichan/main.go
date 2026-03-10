@@ -1820,5 +1820,10 @@ func detectGitBranch(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	branch := strings.TrimSpace(string(out))
+	// In detached HEAD state, git returns literal "HEAD" — filter it out.
+	if branch == "HEAD" {
+		return "", nil
+	}
+	return branch, nil
 }

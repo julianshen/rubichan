@@ -380,6 +380,7 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
 	m.state = StateStreaming
+	m.statusBar.ClearElapsed()
 	m.turnStartTime = time.Now()
 	return m.startTurn(m.agent, prompt)
 }

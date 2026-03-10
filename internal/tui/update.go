@@ -235,6 +235,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.assistantStartIdx = m.content.Len()
 		m.assistantEndIdx = m.assistantStartIdx
 		m.state = StateStreaming
+		m.statusBar.ClearElapsed()
 		m.turnStartTime = time.Now()
 
 		return m, tea.Batch(m.startTurn(m.agent, text), m.spinner.Tick)
