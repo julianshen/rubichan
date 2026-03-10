@@ -274,10 +274,80 @@ func (p *Provider) convertUserMessages(msg provider.Message) []apiMessage {
 	}}
 }
 
+// toolCallAccumulator tracks in-flight tool calls by their streamed index.
+// OpenAI interleaves argument fragments across multiple tool calls in the
+// same response, so we must accumulate per-index and flush complete calls.
+type toolCallAccumulator struct {
+	calls []struct {
+		id   string
+		name string
+		args strings.Builder
+	}
+}
+
+// update processes a streamed tool call chunk. Returns true if this chunk
+// started a new tool call (allocated a new slot).
+func (a *toolCallAccumulator) update(tc chunkToolCall) {
+	// Grow the slice to fit the index.
+	for len(a.calls) <= tc.Index {
+		a.calls = append(a.calls, struct {
+			id   string
+			name string
+			args strings.Builder
+		}{})
+	}
+	if tc.ID != "" {
+		a.calls[tc.Index].id = tc.ID
+	}
+	if tc.Function.Name != "" {
+		a.calls[tc.Index].name = tc.Function.Name
+	}
+	if tc.Function.Arguments != "" {
+		a.calls[tc.Index].args.WriteString(tc.Function.Arguments)
+	}
+}
+
+// flush emits all accumulated tool calls as complete StreamEvents.
+func (a *toolCallAccumulator) flush(ctx context.Context, ch chan<- provider.StreamEvent) {
+	for _, call := range a.calls {
+		if call.id == "" {
+			continue
+		}
+		args := call.args.String()
+		if args == "" {
+			args = "{}"
+		}
+		select {
+		case ch <- provider.StreamEvent{
+			Type: "tool_use",
+			ToolUse: &provider.ToolUseBlock{
+				ID:    call.id,
+				Name:  call.name,
+				Input: json.RawMessage(args),
+			},
+		}:
+		case <-ctx.Done():
+			return
+		}
+		// Emit a text_delta with the full arguments for the agent loop's
+		// toolInputBuf accumulation. The agent expects: tool_use (no input)
+		// followed by text_delta fragments, then finalized at next tool_use/stop.
+		select {
+		case ch <- provider.StreamEvent{Type: "text_delta", Text: args}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // processStream reads SSE lines from the response body and sends StreamEvents.
+// Tool call arguments are accumulated per-index to handle OpenAI's interleaved
+// streaming format, then flushed as complete events at stream end.
 func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
 	defer close(ch)
 	defer body.Close()
+
+	var toolAcc toolCallAccumulator
 
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
@@ -300,6 +370,8 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 
 		// Check for end of stream
 		if data == "[DONE]" {
+			// Flush accumulated tool calls before the stop event.
+			toolAcc.flush(ctx, ch)
 			select {
 			case ch <- provider.StreamEvent{Type: "stop"}:
 			case <-ctx.Done():
@@ -331,30 +403,9 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			}
 		}
 
-		// Handle tool calls
+		// Accumulate tool call fragments by index.
 		for _, tc := range delta.ToolCalls {
-			if tc.ID != "" {
-				// New tool call started
-				select {
-				case ch <- provider.StreamEvent{
-					Type: "tool_use",
-					ToolUse: &provider.ToolUseBlock{
-						ID:   tc.ID,
-						Name: tc.Function.Name,
-					},
-				}:
-				case <-ctx.Done():
-					return
-				}
-			}
-			if tc.Function.Arguments != "" {
-				// Emit argument fragments as text_delta for accumulation
-				select {
-				case ch <- provider.StreamEvent{Type: "text_delta", Text: tc.Function.Arguments}:
-				case <-ctx.Done():
-					return
-				}
-			}
+			toolAcc.update(tc)
 		}
 	}
 
