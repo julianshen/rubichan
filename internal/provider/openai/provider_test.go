@@ -132,16 +132,81 @@ data: [DONE]
 		}
 	}
 
-	// Should have tool_use event with correct ID and name
+	// Should have tool_use event with correct ID, name, and accumulated input.
 	require.Len(t, toolUseEvents, 1)
 	require.NotNil(t, toolUseEvents[0].ToolUse)
 	assert.Equal(t, "call_abc123", toolUseEvents[0].ToolUse.ID)
 	assert.Equal(t, "read_file", toolUseEvents[0].ToolUse.Name)
+	assert.JSONEq(t, `{"path":"/tmp/test.txt"}`, string(toolUseEvents[0].ToolUse.Input))
 
-	// Should have argument fragments as text_delta
-	assert.Equal(t, []string{`{"path":`, `"/tmp/test.txt"}`}, textParts)
+	// Should have the complete accumulated arguments as a single text_delta.
+	assert.Equal(t, []string{`{"path":"/tmp/test.txt"}`}, textParts)
 
 	assert.True(t, hasStop, "should have received stop event")
+}
+
+func TestStreamMultiToolCallInterleaved(t *testing.T) {
+	// Simulate OpenAI's interleaved multi-tool-call streaming where argument
+	// fragments from tool 0 and tool 1 arrive alternately.
+	sseBody := `data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_t1","type":"function","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_t2","type":"function","function":{"name":"shell","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"cmd\":"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"foo.txt\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"ls -la\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+
+	req := provider.CompletionRequest{
+		Model:     "gpt-4",
+		Messages:  []provider.Message{provider.NewUserMessage("Read foo.txt and list files")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var events []provider.StreamEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// Collect tool_use events.
+	var toolUseEvents []provider.StreamEvent
+	for _, evt := range events {
+		if evt.Type == "tool_use" {
+			toolUseEvents = append(toolUseEvents, evt)
+		}
+	}
+
+	// Should have two distinct tool calls with correct arguments.
+	require.Len(t, toolUseEvents, 2, "should have 2 tool_use events")
+
+	assert.Equal(t, "call_t1", toolUseEvents[0].ToolUse.ID)
+	assert.Equal(t, "read_file", toolUseEvents[0].ToolUse.Name)
+	assert.JSONEq(t, `{"path":"foo.txt"}`, string(toolUseEvents[0].ToolUse.Input))
+
+	assert.Equal(t, "call_t2", toolUseEvents[1].ToolUse.ID)
+	assert.Equal(t, "shell", toolUseEvents[1].ToolUse.Name)
+	assert.JSONEq(t, `{"cmd":"ls -la"}`, string(toolUseEvents[1].ToolUse.Input))
 }
 
 func TestExtraHeaders(t *testing.T) {
