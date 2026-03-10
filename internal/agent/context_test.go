@@ -238,6 +238,30 @@ func TestContextManagerMeasureUsage(t *testing.T) {
 	assert.Greater(t, cm.budget.Conversation, 0)
 }
 
+func TestMeasureUsageSkillPromptsNotDoubleCounted(t *testing.T) {
+	cm := NewContextManager(100000, 4096)
+
+	basePrompt := "You are a helpful assistant."
+	skillText := "## Skill Instructions\nDo special things."
+	// fullSystemPrompt simulates what PromptBuilder produces: base + skill fragments.
+	fullSystemPrompt := basePrompt + "\n\n" + skillText
+
+	conv := NewConversation(basePrompt)
+	conv.AddUser("hello")
+
+	cm.MeasureUsage(conv, fullSystemPrompt, skillText, nil)
+
+	// SkillPrompts should reflect the skill text.
+	assert.Greater(t, cm.budget.SkillPrompts, 0)
+
+	// SystemPrompt + SkillPrompts must not exceed full system prompt tokens.
+	// If double-counting, SystemPrompt would include skill tokens AND SkillPrompts would too.
+	fullTokens := len(fullSystemPrompt)/4 + 10
+	assert.LessOrEqual(t, cm.budget.SystemPrompt+cm.budget.SkillPrompts, fullTokens,
+		"skill tokens must not be double-counted: SystemPrompt(%d) + SkillPrompts(%d) > full(%d)",
+		cm.budget.SystemPrompt, cm.budget.SkillPrompts, fullTokens)
+}
+
 // makeStringOfTokens returns a string that estimates to approximately n tokens.
 func makeStringOfTokens(n int) string {
 	chars := (n - 10) * 4

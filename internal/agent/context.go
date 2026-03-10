@@ -182,12 +182,16 @@ func estimateMessageTokens(msgs []provider.Message) int {
 
 // MeasureUsage populates the budget's component-level token counts based
 // on the current conversation state. Call before each LLM request.
+// systemPrompt is the full assembled prompt (including skill fragments);
+// skillPrompts is the raw skill text that is already embedded in systemPrompt.
+// We subtract skill tokens from the system prompt total to avoid double-counting.
 func (cm *ContextManager) MeasureUsage(conv *Conversation, systemPrompt, skillPrompts string, toolDefs []provider.ToolDef) {
-	cm.budget.SystemPrompt = len(systemPrompt)/4 + 10
-	cm.budget.SkillPrompts = len(skillPrompts)/4 + 10
-	if skillPrompts == "" {
-		cm.budget.SkillPrompts = 0
+	skillTokens := 0
+	if skillPrompts != "" {
+		skillTokens = len(skillPrompts)/4 + 10
 	}
+	cm.budget.SkillPrompts = skillTokens
+	cm.budget.SystemPrompt = len(systemPrompt)/4 + 10 - skillTokens
 
 	toolTokens := 0
 	for _, td := range toolDefs {

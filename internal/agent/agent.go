@@ -596,9 +596,9 @@ func (a *Agent) buildSystemPromptWithFragments() (string, []int) {
 		}
 	}
 
-	// Skill prompt fragments — dynamic, can change between turns.
+	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
-		for _, f := range a.skillRuntime.GetPromptFragments() {
+		for _, f := range a.skillRuntime.GetBudgetedPromptFragments() {
 			if f.ResolvedPrompt != "" {
 				pb.AddSection(PromptSection{
 					Name:      f.SkillName,
@@ -613,14 +613,14 @@ func (a *Agent) buildSystemPromptWithFragments() (string, []int) {
 }
 
 // getSkillPromptText returns the concatenated skill prompt fragments for
-// token tracking. The text is already included in the system prompt via
-// PromptBuilder; this method extracts it separately for MeasureUsage.
+// token tracking. Uses the same budgeted selection as buildSystemPromptWithFragments
+// so that budget telemetry matches the actual request payload.
 func (a *Agent) getSkillPromptText() string {
 	if a.skillRuntime == nil {
 		return ""
 	}
 	var sb strings.Builder
-	for _, f := range a.skillRuntime.GetPromptFragments() {
+	for _, f := range a.skillRuntime.GetBudgetedPromptFragments() {
 		if f.ResolvedPrompt != "" {
 			if sb.Len() > 0 {
 				sb.WriteString("\n\n")
