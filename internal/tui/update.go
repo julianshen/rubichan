@@ -97,6 +97,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.completion != nil {
 			m.completion.SetWidth(m.width)
 		}
+		if m.fileCompletion != nil {
+			m.fileCompletion.SetWidth(m.width)
+		}
 		return m, nil
 
 	case approvalRequestMsg:
@@ -192,6 +195,29 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEsc:
 			m.completion.HandleKey(msg)
+			return m, nil
+		}
+	}
+
+	// File completion overlay for @ mentions.
+	if m.state == StateInput && m.fileCompletion != nil && m.fileCompletion.Visible() {
+		switch msg.Type {
+		case tea.KeyTab:
+			if accepted, value := m.fileCompletion.HandleTab(); accepted {
+				// Replace the @query with the full path
+				cur := m.input.Value()
+				atIdx := strings.LastIndex(cur, "@")
+				if atIdx >= 0 {
+					m.input.SetValue(cur[:atIdx] + "@" + value + " ")
+				}
+				m.syncCompletion()
+			}
+			return m, nil
+		case tea.KeyUp, tea.KeyDown:
+			m.fileCompletion.HandleKey(msg)
+			return m, nil
+		case tea.KeyEsc:
+			m.fileCompletion.HandleKey(msg)
 			return m, nil
 		}
 	}

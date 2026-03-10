@@ -76,6 +76,14 @@ func (m *Model) View() string {
 		}
 	}
 
+	// File completion overlay (above input, mutually exclusive with command completion)
+	if m.fileCompletion != nil {
+		if fv := m.fileCompletion.View(); fv != "" {
+			b.WriteString(fv)
+			b.WriteString("\n")
+		}
+	}
+
 	// Input line
 	b.WriteString(inputPromptStyle.Render("> "))
 	b.WriteString(m.input.View())

@@ -1027,6 +1027,12 @@ func runInteractive() error {
 		WorkDir: cwd,
 		LLM:     llmCompleter,
 	})
+
+	// Index project files for @ mention autocomplete (background).
+	fileSrc := tui.NewFileCompletionSource(cwd)
+	model.SetFileCompletionSource(fileSrc)
+	go indexProjectFiles(cwd, fileSrc)
+
 	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)
@@ -1810,6 +1816,21 @@ func (a *skillListerAdapter) ActivateSkill(name string) error {
 
 func (a *skillListerAdapter) DeactivateSkill(name string) error {
 	return a.rt.Deactivate(name)
+}
+
+// indexProjectFiles populates the file completion source from git ls-files
+// (or falls back to nothing for non-git directories).
+func indexProjectFiles(dir string, src *tui.FileCompletionSource) {
+	cmd := exec.Command("git", "-C", dir, "ls-files")
+	out, err := cmd.Output()
+	if err != nil {
+		return // not a git repo or git not installed — skip silently
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return
+	}
+	src.SetFiles(lines)
 }
 
 // detectGitBranch returns the current git branch name, or an error if
