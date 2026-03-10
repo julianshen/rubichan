@@ -979,6 +979,81 @@ func TestGetAllSkillSummariesEmpty(t *testing.T) {
 	assert.Empty(t, summaries)
 }
 
+func TestRuntimeActivateWrapsToolsWithBroker(t *testing.T) {
+	rt, _, _ := newTestRuntime(t, []string{"brokered-skill"}, nil)
+
+	m := testManifest("brokered-skill")
+	m.Permissions = []Permission{PermFileRead, PermShellExec}
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("brokered-skill"))
+
+	// The tool in the registry should be a BrokeredTool, not the raw mock.
+	tool, ok := rt.registry.Get("brokered-skill-tool")
+	require.True(t, ok, "tool should be registered")
+
+	bt, ok := tool.(*BrokeredTool)
+	require.True(t, ok, "registered tool should be a *BrokeredTool")
+
+	// The inner tool should be the original mock tool.
+	inner := bt.Inner()
+	assert.Equal(t, "brokered-skill-tool", inner.Name())
+
+	// Executing through the brokered tool should succeed when permissions are granted.
+	result, err := bt.Execute(context.Background(), json.RawMessage(`{}`))
+	assert.NoError(t, err)
+	assert.Equal(t, "ok", result.Content)
+	assert.False(t, result.IsError)
+}
+
+func TestRuntimeActivateWrapsToolsWithBrokerDenied(t *testing.T) {
+	// Create a runtime where shell:exec is denied at execution time.
+	// Note: Activate checks permissions upfront, so we need to allow them
+	// during activation but deny later. We use a permission checker that
+	// starts permissive, then we flip it to deny.
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	registry := tools.NewRegistry()
+	checker := &mockPermissionChecker{denyPerms: map[Permission]bool{}}
+
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{
+			tools: []tools.Tool{
+				&runtimeMockTool{name: manifest.Name + "-tool", description: "from " + manifest.Name},
+			},
+			hooks: map[HookPhase]HookHandler{},
+		}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return checker
+	}
+
+	rt := NewRuntime(NewLoader("", ""), s, registry, []string{"revoke-skill"}, backendFactory, sandboxFactory)
+
+	m := testManifest("revoke-skill")
+	m.Permissions = []Permission{PermFileRead, PermShellExec}
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("revoke-skill"))
+
+	// Now revoke shell:exec permission — simulates post-activation revocation.
+	checker.denyPerms[PermShellExec] = true
+
+	tool, ok := registry.Get("revoke-skill-tool")
+	require.True(t, ok)
+
+	// Executing through the broker should now fail.
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	assert.NoError(t, err, "should return tool error, not Go error")
+	assert.True(t, result.IsError, "result should be an error")
+	assert.Contains(t, result.Content, "shell:exec")
+	assert.Contains(t, result.Content, "denied")
+}
+
 func TestRuntimeActivateRegistersDeclarativeAgentDefs(t *testing.T) {
 	agentReg := newMockAgentDefRegistrar()
 
