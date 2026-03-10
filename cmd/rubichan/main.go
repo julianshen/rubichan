@@ -1255,6 +1255,14 @@ func runHeadless() error {
 			engine.AddScanner(scanner.NewCustomRuleScanner(projectCfg.Rules))
 		}
 
+		// Add skill-provided security scanners so security-rule skills
+		// participate in the same engine used by review workflows.
+		if rt != nil {
+			for _, sc := range rt.GetScanners() {
+				engine.AddScanner(&skillScannerAdapter{scanner: sc})
+			}
+		}
+
 		var wg conc.WaitGroup
 		wg.Go(func() {
 			var runErr error
