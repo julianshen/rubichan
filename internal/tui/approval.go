@@ -2,12 +2,29 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/julianshen/rubichan/internal/persona"
 )
+
+// ansiEscapePattern matches ANSI escape sequences: CSI (e.g. \x1b[31m),
+// OSC with BEL or ST terminators (e.g. \x1b]8;;url\x1b\\), and other
+// single-character Esc sequences (e.g. \x1b7).
+var ansiEscapePattern = regexp.MustCompile(
+	`\x1b\[[0-9;?]*[a-zA-Z~]` + // CSI sequences
+		`|\x1b\][\x20-\x7e]*(?:\x07|\x1b\\)` + // OSC sequences (BEL or ST terminated, printable params)
+		`|\x1b[^[\]0-9]?`, // Other Esc sequences (single char after ESC)
+)
+
+// stripANSI removes ANSI escape sequences from a string to prevent
+// terminal injection via untrusted LLM-provided tool names or arguments.
+func stripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
+}
 
 // ApprovalResult represents the user's choice on a tool approval prompt.
 type ApprovalResult int
@@ -17,6 +34,54 @@ const (
 	ApprovalYes
 	ApprovalNo
 	ApprovalAlways
+	ApprovalDenyAlways
+)
+
+// RiskLevel classifies tool risk for visual indication.
+type RiskLevel int
+
+const (
+	RiskLow    RiskLevel = iota // file read, search
+	RiskMedium                  // file write, patch
+	RiskHigh                    // shell, process
+)
+
+// classifyRisk returns the risk level based on tool name.
+func classifyRisk(tool string) RiskLevel {
+	t := strings.ToLower(tool)
+	switch {
+	case strings.Contains(t, "shell") || strings.Contains(t, "bash") || strings.Contains(t, "exec"):
+		return RiskHigh
+	case strings.Contains(t, "write") || strings.Contains(t, "patch") || strings.Contains(t, "edit"):
+		return RiskMedium
+	default:
+		return RiskLow
+	}
+}
+
+// isDestructiveCommand checks if tool args contain destructive patterns.
+func isDestructiveCommand(args string) bool {
+	lower := strings.ToLower(args)
+	patterns := []string{
+		"rm -rf", "rm -r",
+		"git reset --hard",
+		"git push --force", "git push -f",
+		"drop table", "drop database",
+		"truncate table",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	riskHighStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")).Bold(true)
+	riskMediumStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b")).Bold(true)
+	riskLowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true)
+	warningStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
 )
 
 // ApprovalPrompt shows an inline approval prompt for a tool call.
@@ -73,14 +138,38 @@ func (a *ApprovalPrompt) HandleKey(msg tea.KeyMsg) bool {
 	case "a", "A":
 		a.SetResult(ApprovalAlways)
 		return true
+	case "d", "D":
+		a.SetResult(ApprovalDenyAlways)
+		return true
 	}
 	return false
 }
 
-// View renders the approval prompt as a bordered box with tool info and options.
+// View renders the approval prompt as a bordered box with tool info,
+// risk level indicator, destructive warning, and options.
 func (a *ApprovalPrompt) View() string {
-	header := persona.ApprovalAsk(a.tool)
-	detail := fmt.Sprintf("  args: %s", a.args)
-	prompt := "  (y)es  (n)o  (a)lways"
-	return a.box.Render(header+"\n"+detail+"\n"+prompt) + "\n"
+	risk := classifyRisk(a.tool)
+	var riskLabel string
+	switch risk {
+	case RiskHigh:
+		riskLabel = riskHighStyle.Render("⚠ HIGH RISK")
+	case RiskMedium:
+		riskLabel = riskMediumStyle.Render("● MEDIUM")
+	default:
+		riskLabel = riskLowStyle.Render("○ LOW")
+	}
+
+	sanitizedTool := stripANSI(a.tool)
+	sanitizedArgs := stripANSI(a.args)
+	header := fmt.Sprintf("%s  %s", riskLabel, persona.ApprovalAsk(sanitizedTool))
+	detail := fmt.Sprintf("  args: %s", sanitizedArgs)
+
+	var body string
+	body = header + "\n" + detail
+	if isDestructiveCommand(sanitizedArgs) {
+		body += "\n" + warningStyle.Render("  ⚠ Destructive command detected")
+	}
+	body += "\n  (y)es  (n)o  (a)lways  (d)eny always"
+
+	return a.box.Render(body) + "\n"
 }

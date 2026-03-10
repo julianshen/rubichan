@@ -19,6 +19,8 @@ const (
 	AutoApproved
 	// TrustRuleApproved means the tool input matched a trust rule pattern.
 	TrustRuleApproved
+	// AutoDenied means the tool was explicitly denied by the user (deny-always).
+	AutoDenied
 )
 
 // String returns a human-readable name for the approval result.
@@ -30,6 +32,8 @@ func (r ApprovalResult) String() string {
 		return "AutoApproved"
 	case TrustRuleApproved:
 		return "TrustRuleApproved"
+	case AutoDenied:
+		return "AutoDenied"
 	default:
 		return "Unknown"
 	}
@@ -299,11 +303,9 @@ func (a *autoApproveAdapter) CheckApproval(tool string, _ json.RawMessage) Appro
 // non-ApprovalRequired result wins. This lets session caches, trust rules,
 // and built-in defaults compose together.
 //
-// Ordering matters: checkers earlier in the list take priority. In the typical
-// composition [sessionCache, trustRules], a user's explicit "always approve"
-// decision (session cache) intentionally overrides config-based deny rules.
-// This is by design — the session cache represents a real-time user decision
-// which has higher authority than static configuration.
+// Ordering matters: checkers earlier in the list take priority. Place the
+// session cache checker first so that user decisions (AutoApproved, AutoDenied)
+// take precedence over config-based trust rules.
 type CompositeApprovalChecker struct {
 	checkers []ApprovalChecker
 }
@@ -315,8 +317,9 @@ func NewCompositeApprovalChecker(checkers ...ApprovalChecker) *CompositeApproval
 }
 
 // CheckApproval evaluates checkers in order. The first checker to return
-// AutoApproved or TrustRuleApproved wins. If all return ApprovalRequired,
-// the result is ApprovalRequired.
+// a decisive result (anything other than ApprovalRequired) wins. To ensure
+// deny-always takes priority over trust rules, place the session cache
+// checker (which returns AutoDenied) before trust rule checkers.
 func (c *CompositeApprovalChecker) CheckApproval(tool string, input json.RawMessage) ApprovalResult {
 	for _, checker := range c.checkers {
 		result := checker.CheckApproval(tool, input)

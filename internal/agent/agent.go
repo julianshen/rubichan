@@ -798,8 +798,8 @@ func toolErrorResult(tc provider.ToolUseBlock, msg string) toolExecResult {
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
 // Returns true if the context was cancelled during execution.
 func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
-	if a.approvalChecker == nil || len(pendingTools) <= 1 {
-		// No checker or single tool — fall back to sequential execution.
+	if a.approvalChecker == nil {
+		// No checker — fall back to sequential execution.
 		return a.executeToolsSequential(ctx, ch, pendingTools)
 	}
 
@@ -809,12 +809,15 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		tc             provider.ToolUseBlock
 		approvalResult ApprovalResult
 	}
-	var autoApproved, needsApproval []indexedTool
+	var autoApproved, autoDenied, needsApproval []indexedTool
 	for i, tc := range pendingTools {
 		result := a.approvalResultForTool(tc)
-		if result == AutoApproved || result == TrustRuleApproved {
+		switch result {
+		case AutoApproved, TrustRuleApproved:
 			autoApproved = append(autoApproved, indexedTool{index: i, tc: tc, approvalResult: result})
-		} else {
+		case AutoDenied:
+			autoDenied = append(autoDenied, indexedTool{index: i, tc: tc, approvalResult: result})
+		default:
 			needsApproval = append(needsApproval, indexedTool{index: i, tc: tc, approvalResult: result})
 		}
 	}
@@ -835,6 +838,20 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 
 	// Results array indexed by original position.
 	results := make([]toolExecResult, len(pendingTools))
+
+	// Emit tool_call events for auto-denied tools so headless runners can
+	// match results by call ID, then fill in denied results immediately.
+	for _, it := range autoDenied {
+		ch <- TurnEvent{
+			Type: "tool_call",
+			ToolCall: &ToolCallEvent{
+				ID:    it.tc.ID,
+				Name:  it.tc.Name,
+				Input: it.tc.Input,
+			},
+		}
+		results[it.index] = toolErrorResult(it.tc, "Tool call denied by user (deny-always).")
+	}
 
 	// Execute auto-approved tools in parallel (hooks + execution, no approval).
 	if len(autoApproved) > 0 {
@@ -920,6 +937,9 @@ func (a *Agent) executeToolsSequential(ctx context.Context, ch chan<- TurnEvent,
 func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock, approvalResult ApprovalResult) toolExecResult {
 	if approvalResult == AutoApproved || approvalResult == TrustRuleApproved {
 		return a.executeSingleTool(ctx, ch, tc)
+	}
+	if approvalResult == AutoDenied {
+		return toolErrorResult(tc, "Tool call denied by user (deny-always).")
 	}
 
 	if a.approve == nil {

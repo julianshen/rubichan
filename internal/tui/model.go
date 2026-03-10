@@ -64,6 +64,7 @@ type Model struct {
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
 	alwaysApproved    sync.Map
+	alwaysDenied      sync.Map
 	approvalCh        chan approvalRequest
 	assistantStartIdx int
 	assistantEndIdx   int
@@ -81,6 +82,7 @@ type Model struct {
 	eventCh           <-chan agent.TurnEvent
 	cmdRegistry       *commands.Registry
 	completion        *CompletionOverlay
+	history           *InputHistory
 	turnCancel        context.CancelFunc
 	turnStartTime     time.Time
 	ralph             *ralphLoopState
@@ -146,6 +148,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		height:      24,
 		cmdRegistry: cmdRegistry,
 		completion:  NewCompletionOverlay(cmdRegistry, 80),
+		history:     NewInputHistory(100),
 	}
 
 	// When no registry was provided, populate with default built-in commands.
@@ -243,6 +246,10 @@ func (m *Model) SetWikiConfig(cfg WikiCommandConfig) {
 // Tools previously marked "always" are auto-approved without prompting.
 func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 	return func(_ context.Context, tool string, input json.RawMessage) (bool, error) {
+		// Auto-deny if user previously chose "deny always" for this tool.
+		if _, ok := m.alwaysDenied.Load(tool); ok {
+			return false, nil
+		}
 		// Auto-approve if user previously chose "always" for this tool.
 		if _, ok := m.alwaysApproved.Load(tool); ok {
 			return true, nil
@@ -267,10 +274,12 @@ func (m *Model) IsAutoApproved(tool string) bool {
 }
 
 // CheckApproval implements agent.ApprovalChecker by checking the session
-// cache of "always approved" tools. Returns AutoApproved for cached tools,
-// ApprovalRequired otherwise. Trust rules are composed at a higher level
-// via CompositeApprovalChecker.
+// cache of "always approved" and "deny always" tools. AutoDenied is checked
+// first so that explicit user denials cannot be overridden by trust rules.
 func (m *Model) CheckApproval(tool string, _ json.RawMessage) agent.ApprovalResult {
+	if _, ok := m.alwaysDenied.Load(tool); ok {
+		return agent.AutoDenied
+	}
 	if _, ok := m.alwaysApproved.Load(tool); ok {
 		return agent.AutoApproved
 	}

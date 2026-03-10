@@ -1264,6 +1264,40 @@ func TestModelCheckApproval(t *testing.T) {
 	assert.Equal(t, agent.ApprovalRequired, m.CheckApproval("file", json.RawMessage(`{}`)))
 }
 
+func TestModelCheckApprovalDenyTakesPriority(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	// Mark shell as deny-always.
+	m.alwaysDenied.Store("shell", true)
+	assert.Equal(t, agent.AutoDenied, m.CheckApproval("shell", json.RawMessage(`{}`)))
+
+	// Even if also in always-approved (shouldn't happen, but defensive), deny wins.
+	m.alwaysApproved.Store("shell", true)
+	assert.Equal(t, agent.AutoDenied, m.CheckApproval("shell", json.RawMessage(`{}`)))
+}
+
+func TestModelMakeApprovalFuncAutoDeny(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.alwaysDenied.Store("shell", true)
+
+	fn := m.MakeApprovalFunc()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		approved, err := fn(context.Background(), "shell", json.RawMessage(`{}`))
+		assert.NoError(t, err)
+		assert.False(t, approved)
+	}()
+
+	select {
+	case <-done:
+		// success — auto-denied immediately
+	case <-time.After(time.Second):
+		t.Fatal("MakeApprovalFunc for deny-always tool should return immediately")
+	}
+}
+
 func TestModelImplementsApprovalChecker(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	var _ agent.ApprovalChecker = m // compile-time check
