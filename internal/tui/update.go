@@ -203,6 +203,23 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// Ctrl+T toggles collapse/expand on all tool results.
+	if msg.Type == tea.KeyCtrlT && m.state == StateInput && len(m.toolResults) > 0 {
+		// If any are collapsed, expand all; otherwise collapse all.
+		anyCollapsed := false
+		for _, tr := range m.toolResults {
+			if tr.Collapsed {
+				anyCollapsed = true
+				break
+			}
+		}
+		for i := range m.toolResults {
+			m.toolResults[i].Collapsed = !anyCollapsed
+		}
+		m.viewport.SetContent(m.viewportContent())
+		return m, nil
+	}
+
 	if msg.Type == tea.KeyCtrlG && m.state == StateInput && strings.TrimSpace(m.diffSummary) != "" {
 		m.diffExpanded = !m.diffExpanded
 		m.viewport.SetContent(m.viewportContent())
@@ -226,9 +243,13 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Regular user message: write to content and start agent turn
+		// Regular user message: write to content and start agent turn.
+		// Reset per-turn state.
 		m.diffSummary = ""
 		m.diffExpanded = false
+		m.toolResults = nil
+		m.nextToolResultID = 0
+		m.toolCallArgs = nil
 		m.content.WriteString(fmt.Sprintf("> %s\n", text))
 		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()
@@ -353,6 +374,11 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.ToolCall != nil {
 			name = msg.ToolCall.Name
 			args = string(msg.ToolCall.Input)
+			// Cache args by tool use ID so tool_result can look them up.
+			if m.toolCallArgs == nil {
+				m.toolCallArgs = make(map[string]string)
+			}
+			m.toolCallArgs[msg.ToolCall.ID] = args
 		}
 		m.content.WriteString(m.toolBox.RenderToolCall(name, args))
 		m.setContentAndAutoScroll()
@@ -371,7 +397,26 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			resultName = msg.ToolResult.Name
 			isError = msg.ToolResult.IsError
 		}
-		m.content.WriteString(m.toolBox.RenderToolResult(resultName, resultContent, isError))
+		lineCount := strings.Count(resultContent, "\n") + 1
+		if resultContent == "" {
+			lineCount = 0
+		}
+		args := ""
+		if msg.ToolResult != nil {
+			args = m.toolCallArgs[msg.ToolResult.ID]
+		}
+		cr := CollapsibleToolResult{
+			ID:        m.nextToolResultID,
+			Name:      resultName,
+			Args:      args,
+			Content:   resultContent,
+			LineCount: lineCount,
+			IsError:   isError,
+			Collapsed: false, // expanded during streaming
+		}
+		m.toolResults = append(m.toolResults, cr)
+		m.content.WriteString(toolResultPlaceholder(m.nextToolResultID))
+		m.nextToolResultID++
 		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
@@ -412,6 +457,10 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		m.rawAssistant.Reset()
 		m.diffSummary = msg.DiffSummary
 		m.diffExpanded = false
+		// Collapse all tool results from this turn.
+		for i := range m.toolResults {
+			m.toolResults[i].Collapsed = true
+		}
 		m.content.WriteString(persona.SuccessMessage())
 		m.content.WriteString("\n")
 		m.setContentAndAutoScroll()
