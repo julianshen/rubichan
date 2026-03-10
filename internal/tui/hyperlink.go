@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,7 +63,13 @@ func LinkifyFilePaths(text string, workDir string) string {
 			absPath = filepath.Join(workDir, cleaned)
 		}
 
-		link := fmt.Sprintf("\x1b]8;;file://%s\x1b\\%s\x1b]8;;\x1b\\", absPath, path)
+		// Reject paths containing control characters to prevent terminal injection.
+		if strings.ContainsAny(absPath, "\x1b\x00\x07") {
+			return match
+		}
+
+		fileURL := (&url.URL{Scheme: "file", Path: absPath}).String()
+		link := "\x1b]8;;" + fileURL + "\x1b\\" + path + "\x1b]8;;\x1b\\"
 		return prefix + link
 	})
 }

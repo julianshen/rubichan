@@ -319,10 +319,9 @@ func NewCompositeApprovalChecker(checkers ...ApprovalChecker) *CompositeApproval
 }
 
 // CheckApproval evaluates checkers in order. The first checker to return
-// a decisive result (anything other than ApprovalRequired) wins. AutoDenied
-// takes priority — if any checker denies a tool, subsequent checkers cannot
-// override the denial. If all return ApprovalRequired, the result is
-// ApprovalRequired.
+// a decisive result (anything other than ApprovalRequired) wins. To ensure
+// deny-always takes priority over trust rules, place the session cache
+// checker (which returns AutoDenied) before trust rule checkers.
 func (c *CompositeApprovalChecker) CheckApproval(tool string, input json.RawMessage) ApprovalResult {
 	for _, checker := range c.checkers {
 		result := checker.CheckApproval(tool, input)

@@ -65,3 +65,17 @@ func TestLinkifyFilePaths_PathLikeDir(t *testing.T) {
 	result := LinkifyFilePaths("src/components/Button.tsx", "/proj")
 	assert.Contains(t, result, "file:///proj/src/components/Button.tsx")
 }
+
+func TestLinkifyFilePaths_ProperURLFormat(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	// Verify proper file:// URL construction via url.URL.
+	result := LinkifyFilePaths("/proj/src/main.go", "/home")
+	assert.Contains(t, result, "file:///proj/src/main.go")
+}
+
+func TestLinkifyFilePaths_RejectsEscapeSequences(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	// A path containing an ESC character should not be linkified.
+	input := "/foo/\x1b[31mevil\x1b[0m.go"
+	assert.Equal(t, input, LinkifyFilePaths(input, "/home"))
+}

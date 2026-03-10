@@ -154,3 +154,17 @@ func TestApprovalPromptLowRiskLabel(t *testing.T) {
 	view := ap.View()
 	assert.Contains(t, view, "LOW")
 }
+
+func TestStripANSI(t *testing.T) {
+	assert.Equal(t, "hello", stripANSI("hello"))
+	assert.Equal(t, "evil", stripANSI("\x1b[31mevil\x1b[0m"))
+	assert.Equal(t, "rm -rf /", stripANSI("rm -rf /"))
+}
+
+func TestApprovalPromptSanitizesANSI(t *testing.T) {
+	// Tool name with ANSI injection should be stripped in the rendered view.
+	ap := NewApprovalPrompt("\x1b[31mfake_safe\x1b[0m", `"\x1b[32msafe_args\x1b[0m"`, 80)
+	view := ap.View()
+	assert.NotContains(t, view, "\x1b[31m")
+	assert.NotContains(t, view, "\x1b[32m")
+}

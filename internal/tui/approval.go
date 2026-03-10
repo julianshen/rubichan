@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,6 +10,15 @@ import (
 
 	"github.com/julianshen/rubichan/internal/persona"
 )
+
+// ansiEscapePattern matches ANSI escape sequences (CSI, OSC, etc.).
+var ansiEscapePattern = regexp.MustCompile(`\x1b[\[\]()][0-9;]*[a-zA-Z~\\]?`)
+
+// stripANSI removes ANSI escape sequences from a string to prevent
+// terminal injection via untrusted LLM-provided tool names or arguments.
+func stripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
+}
 
 // ApprovalResult represents the user's choice on a tool approval prompt.
 type ApprovalResult int
@@ -143,8 +153,8 @@ func (a *ApprovalPrompt) View() string {
 		riskLabel = riskLowStyle.Render("○ LOW")
 	}
 
-	header := fmt.Sprintf("%s  %s", riskLabel, persona.ApprovalAsk(a.tool))
-	detail := fmt.Sprintf("  args: %s", a.args)
+	header := fmt.Sprintf("%s  %s", riskLabel, persona.ApprovalAsk(stripANSI(a.tool)))
+	detail := fmt.Sprintf("  args: %s", stripANSI(a.args))
 
 	var body string
 	body = header + "\n" + detail
