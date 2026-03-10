@@ -251,11 +251,17 @@ func (rt *Runtime) Activate(name string) error {
 	}()
 
 	// Phase 3: Register tools, hooks, and integrations under lock.
+	// Wrap all backend tools with a capability broker so that per-call
+	// permission enforcement applies uniformly — including process and
+	// MCP backends that don't self-enforce.
+	broker := NewCapabilityBroker(name, sb, permissions)
+
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
 	var registeredTools []tools.Tool
 	for _, tool := range backend.Tools() {
+		tool = NewBrokeredTool(tool, broker)
 		if err := rt.registry.Register(tool); err != nil {
 			for _, t := range registeredTools {
 				_ = rt.registry.Unregister(t.Name())
