@@ -242,9 +242,13 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Regular user message: write to content and start agent turn
+		// Regular user message: write to content and start agent turn.
+		// Reset per-turn state.
 		m.diffSummary = ""
 		m.diffExpanded = false
+		m.toolResults = nil
+		m.nextToolResultID = 0
+		m.toolCallArgs = nil
 		m.content.WriteString(fmt.Sprintf("> %s\n", text))
 		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()
@@ -367,6 +371,11 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.ToolCall != nil {
 			name = msg.ToolCall.Name
 			args = string(msg.ToolCall.Input)
+			// Cache args by tool use ID so tool_result can look them up.
+			if m.toolCallArgs == nil {
+				m.toolCallArgs = make(map[string]string)
+			}
+			m.toolCallArgs[msg.ToolCall.ID] = args
 		}
 		m.content.WriteString(m.toolBox.RenderToolCall(name, args))
 		m.setContentAndAutoScroll()
@@ -386,9 +395,12 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			isError = msg.ToolResult.IsError
 		}
 		lineCount := strings.Count(resultContent, "\n") + 1
+		if resultContent == "" {
+			lineCount = 0
+		}
 		args := ""
 		if msg.ToolResult != nil {
-			args = msg.ToolResult.Name
+			args = m.toolCallArgs[msg.ToolResult.ID]
 		}
 		cr := CollapsibleToolResult{
 			ID:        m.nextToolResultID,

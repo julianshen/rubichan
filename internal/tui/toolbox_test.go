@@ -190,7 +190,7 @@ func TestCollapsibleToolResult_LineCounting(t *testing.T) {
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.Contains(t, result, "50 lines")
+	assert.Contains(t, result, "50 lines (20 shown)")
 }
 
 func TestToolResultPlaceholder(t *testing.T) {
@@ -214,4 +214,34 @@ func TestReplaceToolResultPlaceholders(t *testing.T) {
 	assert.Contains(t, replaced, "dir output")
 	// Placeholders should be gone
 	assert.NotContains(t, replaced, "\x00TR:")
+}
+
+func TestCollapsibleToolResult_EmptyContentLabel(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        0,
+		Name:      "shell",
+		Args:      `command="true"`,
+		Content:   "",
+		LineCount: 0,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "empty")
+	assert.NotContains(t, result, "0 lines")
+}
+
+func TestCollapsibleToolResult_SingleLineLabel(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        0,
+		Name:      "shell",
+		Args:      `command="echo hi"`,
+		Content:   "hi",
+		LineCount: 1,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "1 line")
+	assert.NotContains(t, result, "1 lines")
 }

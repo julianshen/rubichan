@@ -85,6 +85,7 @@ type Model struct {
 	wikiForm          *WikiForm
 	toolResults       []CollapsibleToolResult
 	nextToolResultID  int
+	toolCallArgs      map[string]string
 	wikiRunning       bool
 	wikiCfg           WikiCommandConfig
 	wikiCancel        context.CancelFunc
@@ -195,6 +196,9 @@ func (m *Model) ClearContent() {
 	m.content.Reset()
 	m.diffSummary = ""
 	m.diffExpanded = false
+	m.toolResults = nil
+	m.nextToolResultID = 0
+	m.toolCallArgs = nil
 	m.viewport.SetContent("")
 }
 

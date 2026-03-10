@@ -102,11 +102,27 @@ type CollapsibleToolResult struct {
 // Render returns the rendered view of a tool result, either collapsed
 // (single summary line) or expanded (bordered box with content).
 func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
+	lineLabel := c.lineLabel()
 	if c.Collapsed {
-		return fmt.Sprintf("▶ %s(%s) — %d lines\n", c.Name, c.Args, c.LineCount)
+		return fmt.Sprintf("▶ %s(%s) — %s\n", c.Name, c.Args, lineLabel)
 	}
-	header := fmt.Sprintf("▼ %s(%s) — %d lines\n", c.Name, c.Args, c.LineCount)
+	header := fmt.Sprintf("▼ %s(%s) — %s\n", c.Name, c.Args, lineLabel)
 	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
+}
+
+// lineLabel returns a human-friendly line count label.
+// When content exceeds maxToolResultLines, it shows "N lines (20 shown)".
+func (c *CollapsibleToolResult) lineLabel() string {
+	if c.LineCount == 0 {
+		return "empty"
+	}
+	if c.LineCount > maxToolResultLines {
+		return fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
+	}
+	if c.LineCount == 1 {
+		return "1 line"
+	}
+	return fmt.Sprintf("%d lines", c.LineCount)
 }
 
 // toolResultPlaceholder returns a placeholder marker for the given tool result ID.

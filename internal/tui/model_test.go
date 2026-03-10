@@ -1822,3 +1822,71 @@ func TestModelCtrlTTogglesToolResults(t *testing.T) {
 	assert.True(t, um2.toolResults[0].Collapsed)
 	assert.True(t, um2.toolResults[1].Collapsed)
 }
+
+func TestModelToolCallArgsCachedForResults(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 2)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	// First send a tool_call to cache args
+	callEvt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_call",
+		ToolCall: &agent.ToolCallEvent{
+			ID:    "t1",
+			Name:  "file_read",
+			Input: []byte(`{"path":"src/main.go"}`),
+		},
+	})
+	updated, _ := m.Update(callEvt)
+	um := updated.(*Model)
+
+	// Then send the tool_result — args should come from the cached call
+	resultEvt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{
+			ID:      "t1",
+			Name:    "file_read",
+			Content: "package main",
+		},
+	})
+	updated2, _ := um.Update(resultEvt)
+	um2 := updated2.(*Model)
+	assert.Len(t, um2.toolResults, 1)
+	assert.Equal(t, `{"path":"src/main.go"}`, um2.toolResults[0].Args)
+}
+
+func TestModelClearContentResetsToolResults(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.toolResults = []CollapsibleToolResult{
+		{ID: 0, Name: "file", Args: "a.go", Content: "x", LineCount: 1},
+	}
+	m.nextToolResultID = 1
+	m.toolCallArgs = map[string]string{"t1": "args"}
+
+	m.ClearContent()
+	assert.Nil(t, m.toolResults)
+	assert.Equal(t, 0, m.nextToolResultID)
+	assert.Nil(t, m.toolCallArgs)
+}
+
+func TestModelToolResultEmptyContentLineCount(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	evt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{
+			ID:      "t1",
+			Name:    "shell",
+			Content: "",
+		},
+	})
+	updated, _ := m.Update(evt)
+	um := updated.(*Model)
+	assert.Equal(t, 0, um.toolResults[0].LineCount)
+}
