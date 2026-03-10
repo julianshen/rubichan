@@ -1104,6 +1104,7 @@ func runHeadless() error {
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
 		},
 		CLIOverrides: allowed,
+		HeadlessMode: true,
 	}
 
 	if headlessToolsCfg.ShouldEnable("file") {
@@ -1196,6 +1197,9 @@ func runHeadless() error {
 	}
 	if rt != nil {
 		emitSkillDiscoveryWarnings(os.Stderr, rt)
+		// Apply the same tool admission policy to skill-contributed tools
+		// that is used for built-in tools, ensuring a unified policy path.
+		rt.SetToolAdmissionFunc(headlessToolsCfg.ShouldEnable)
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
@@ -1204,8 +1208,11 @@ func runHeadless() error {
 	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
-	// Headless always auto-approves, so all tools can run in parallel.
+	// Headless auto-approves all tools (restricted via --tools allowlist).
+	// Parallelization is governed by a separate policy so the two concerns
+	// are independent — a tool can be auto-approved but not parallelizable.
 	opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
+	opts = append(opts, agent.WithParallelPolicy(agent.AllowAllParallel{}))
 
 	// Build tool execution pipeline.
 	hpc := buildPipeline(registry, cfg, cwd, rt)
@@ -1347,11 +1354,23 @@ func runHeadless() error {
 	return nil
 }
 
+// standardToolProfile lists the standard built-in tools included in the "all" profile.
+var standardToolProfile = []string{"file", "shell", "search", "process", "notes"}
+
 // parseToolsFlag splits a comma-separated tools string into a set.
-// Returns nil if the input is empty (meaning all tools allowed).
+// Returns nil if the input is empty (meaning no explicit allowlist).
+// The special value "all" expands to the standard tool profile.
 func parseToolsFlag(s string) map[string]bool {
 	if strings.TrimSpace(s) == "" {
 		return nil
+	}
+	// Expand the "all" profile to standard tools.
+	if strings.TrimSpace(s) == "all" {
+		m := make(map[string]bool, len(standardToolProfile))
+		for _, name := range standardToolProfile {
+			m[name] = true
+		}
+		return m
 	}
 	m := make(map[string]bool)
 	for _, t := range strings.Split(s, ",") {
@@ -1393,6 +1412,10 @@ type ToolsConfig struct {
 	ProjectContext    ProjectContext
 	FeatureFlags      map[string]bool
 	CLIOverrides      map[string]bool
+	// HeadlessMode enables default-deny behavior: when true and CLIOverrides
+	// is nil, ShouldEnable returns false for all tools. This requires headless
+	// callers to provide an explicit --tools allowlist or named profile.
+	HeadlessMode bool
 }
 
 // detectModelCapabilities derives tool-related model capability flags from
@@ -1448,6 +1471,11 @@ func (tc ToolsConfig) ShouldEnable(name string) bool {
 	// CLI overrides act as an explicit whitelist.
 	if tc.CLIOverrides != nil {
 		return tc.CLIOverrides[name]
+	}
+
+	// Headless mode is default-deny: require an explicit --tools allowlist.
+	if tc.HeadlessMode {
+		return false
 	}
 	return true
 }

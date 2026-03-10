@@ -1228,6 +1228,29 @@ func TestAlwaysAutoApproveReturnsTrue(t *testing.T) {
 	assert.True(t, checker.IsAutoApproved(""))
 }
 
+func TestAllowAllParallelReturnsTrue(t *testing.T) {
+	policy := AllowAllParallel{}
+	assert.True(t, policy.CanParallelize("shell"))
+	assert.True(t, policy.CanParallelize("file"))
+	assert.True(t, policy.CanParallelize(""))
+}
+
+func TestToolParallelPolicyRestricts(t *testing.T) {
+	// A policy that only allows "file" to parallelize.
+	policy := &selectiveParallelPolicy{allowed: map[string]bool{"file": true}}
+	assert.True(t, policy.CanParallelize("file"))
+	assert.False(t, policy.CanParallelize("shell"))
+}
+
+// selectiveParallelPolicy is a test helper for ToolParallelPolicy.
+type selectiveParallelPolicy struct {
+	allowed map[string]bool
+}
+
+func (p *selectiveParallelPolicy) CanParallelize(tool string) bool {
+	return p.allowed[tool]
+}
+
 func TestParallelToolExecutionAutoApproved(t *testing.T) {
 	// Two auto-approved tools should run concurrently. We verify by checking
 	// that both tools execute and results are returned in order.
@@ -1302,6 +1325,83 @@ func TestParallelToolExecutionAutoApproved(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"t1", "t2"}, resultIDs)
+}
+
+func TestParallelPolicyRestrictsParallelization(t *testing.T) {
+	// tool_a is parallelizable, tool_b is not. Both should execute successfully,
+	// but tool_b runs sequentially after the parallel batch.
+	var callOrder []string
+	var mu sync.Mutex
+
+	toolA := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			mu.Lock()
+			callOrder = append(callOrder, "a")
+			mu.Unlock()
+			return tools.ToolResult{Content: "result_a"}, nil
+		},
+	}
+	toolB := &mockTool{
+		name:        "tool_b",
+		description: "tool B",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			mu.Lock()
+			callOrder = append(callOrder, "b")
+			mu.Unlock()
+			return tools.ToolResult{Content: "result_b"}, nil
+		},
+	}
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "tool_a"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: "tool_b"}},
+				{Type: "text_delta", Text: `{}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "Both done."},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(toolA))
+	require.NoError(t, reg.Register(toolB))
+
+	// Only tool_a is parallelizable.
+	policy := &selectiveParallelPolicy{allowed: map[string]bool{"tool_a": true}}
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, nil, cfg,
+		WithApprovalChecker(AlwaysAutoApprove{}),
+		WithParallelPolicy(policy),
+	)
+
+	ch, err := a.Turn(context.Background(), "run both tools")
+	require.NoError(t, err)
+
+	var resultContents []string
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			resultContents = append(resultContents, ev.ToolResult.Content)
+		}
+	}
+
+	// Both tools should have executed.
+	mu.Lock()
+	assert.Len(t, callOrder, 2, "both tools should execute")
+	mu.Unlock()
+
+	// Both results should be present.
+	assert.Contains(t, resultContents, "result_a")
+	assert.Contains(t, resultContents, "result_b")
 }
 
 func TestParallelResultsAddedInOrder(t *testing.T) {

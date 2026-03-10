@@ -63,6 +63,7 @@ type Runtime struct {
 	activationReports   []ActivationReport
 	activationThreshold int
 	promptBudgetReport  []PromptFragment
+	toolAdmissionFunc   func(toolName string) bool
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -261,6 +262,10 @@ func (rt *Runtime) Activate(name string) error {
 
 	var registeredTools []tools.Tool
 	for _, tool := range backend.Tools() {
+		// Apply admission policy — skip tools that fail the gate.
+		if rt.toolAdmissionFunc != nil && !rt.toolAdmissionFunc(tool.Name()) {
+			continue
+		}
 		tool = NewBrokeredTool(tool, broker)
 		if err := rt.registry.Register(tool); err != nil {
 			for _, t := range registeredTools {
@@ -603,6 +608,15 @@ func (rt *Runtime) SetAgentDefRegistrar(reg AgentDefRegistrar) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.agentDefRegistrar = reg
+}
+
+// SetToolAdmissionFunc sets a function that gates which skill-contributed tools
+// are registered into the tool registry. Tools whose names fail admission are
+// silently skipped, applying the same policy path used for built-in tools.
+func (rt *Runtime) SetToolAdmissionFunc(fn func(toolName string) bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.toolAdmissionFunc = fn
 }
 
 // GetBudgetedPromptFragments returns prompt fragments constrained by the
