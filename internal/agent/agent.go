@@ -260,6 +260,7 @@ type Agent struct {
 	approvalChecker  ApprovalChecker
 	model            string
 	maxTurns         int
+	basePrompt       string
 	skillRuntime     *skills.Runtime
 	store            *store.Store
 	sessionID        string
@@ -291,6 +292,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	a := &Agent{
 		provider:     p,
 		tools:        t,
+		basePrompt:   systemPrompt,
 		conversation: NewConversation(systemPrompt),
 		context:      newContextManagerFromConfig(cfg),
 		approve:      approve,
@@ -451,7 +453,7 @@ func (a *Agent) assembleSystemPrompt(memories []MemoryEntry) string {
 	pb := NewPromptBuilder()
 	pb.AddSection(PromptSection{
 		Name:      "System",
-		Content:   a.conversation.SystemPrompt(),
+		Content:   a.basePrompt,
 		Cacheable: true,
 	})
 

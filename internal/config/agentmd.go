@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// loadOptionalMarkdown reads an optional workspace markdown file.
+// It trims only for the emptiness check and returns the original file content
+// unchanged when the file exists and is non-empty.
 func loadOptionalMarkdown(projectRoot, filename string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(projectRoot, filename))
 	if err != nil {

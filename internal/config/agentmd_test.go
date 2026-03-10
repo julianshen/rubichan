@@ -46,6 +46,14 @@ func TestLoadIdentityMD_FileExists(t *testing.T) {
 	assert.Equal(t, content, result)
 }
 
+func TestLoadIdentityMD_FileMissing(t *testing.T) {
+	dir := t.TempDir()
+
+	result, err := LoadIdentityMD(dir)
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
 func TestLoadSoulMD_FileExists(t *testing.T) {
 	dir := t.TempDir()
 	content := "# Soul\nBe useful.\n"
@@ -54,4 +62,12 @@ func TestLoadSoulMD_FileExists(t *testing.T) {
 	result, err := LoadSoulMD(dir)
 	require.NoError(t, err)
 	assert.Equal(t, content, result)
+}
+
+func TestLoadSoulMD_FileMissing(t *testing.T) {
+	dir := t.TempDir()
+
+	result, err := LoadSoulMD(dir)
+	require.NoError(t, err)
+	assert.Empty(t, result)
 }
