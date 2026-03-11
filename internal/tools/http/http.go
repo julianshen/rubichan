@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/internal/tools/netutil"
 )
 
 const (
@@ -258,7 +259,7 @@ func validateTarget(ctx context.Context, u *url.URL, resolve ResolveFunc) ([]net
 		return nil, fmt.Errorf("resolve host %q: %w", host, err)
 	}
 	for _, addr := range addrs {
-		if isPrivateAddress(addr.IP) {
+		if netutil.IsPrivateAddress(addr.IP) {
 			return nil, fmt.Errorf("requests to private or local addresses are not allowed")
 		}
 	}
@@ -268,14 +269,16 @@ func validateTarget(ctx context.Context, u *url.URL, resolve ResolveFunc) ([]net
 // pinnedDialer returns a DialContext function that connects only to the
 // pre-resolved IP addresses for the given host, preventing DNS rebinding.
 // For redirect targets (different host), it resolves and validates against
-// private addresses before connecting.
+// private addresses before connecting. Host comparison is case-insensitive
+// per RFC 7230 §2.7.1.
 func pinnedDialer(d *net.Dialer, host string, addrs []net.IPAddr, resolve ResolveFunc) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	lowerHost := strings.ToLower(host)
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		reqHost, reqPort, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
 		}
-		if reqHost != host {
+		if strings.ToLower(reqHost) != lowerHost {
 			// Different host (e.g. redirect) — resolve and validate
 			// against private addresses to prevent SSRF via redirect.
 			redirectAddrs, resolveErr := resolve(ctx, reqHost)
@@ -283,7 +286,7 @@ func pinnedDialer(d *net.Dialer, host string, addrs []net.IPAddr, resolve Resolv
 				return nil, fmt.Errorf("resolve redirect host %q: %w", reqHost, resolveErr)
 			}
 			for _, a := range redirectAddrs {
-				if isPrivateAddress(a.IP) {
+				if netutil.IsPrivateAddress(a.IP) {
 					return nil, fmt.Errorf("redirect to private or local address is not allowed")
 				}
 			}
@@ -306,16 +309,4 @@ func dialPinned(ctx context.Context, d *net.Dialer, network, port string, addrs 
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("no addresses to connect to")
-}
-
-func isPrivateAddress(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	return ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() ||
-		ip.IsUnspecified()
 }

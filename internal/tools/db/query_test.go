@@ -90,6 +90,44 @@ func TestSanitizePostgresDSN(t *testing.T) {
 	}
 }
 
+func TestExtractPostgresHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		dsn  string
+		want string
+	}{
+		{"postgres://user:pass@myhost.com/db", "myhost.com"},
+		{"postgres://user:pass@myhost.com:5432/db", "myhost.com"},
+		{"host=myhost.com port=5432 dbname=mydb", "myhost.com"},
+		{"host='myhost.com' port=5432 dbname=mydb", "myhost.com"},
+		{"dbname=mydb user=test", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.dsn, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, extractPostgresHost(tc.dsn))
+		})
+	}
+}
+
+func TestExtractMySQLHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		dsn  string
+		want string
+	}{
+		{"user:pass@tcp(myhost.com:3306)/db", "myhost.com"},
+		{"user:pass@tcp(myhost.com)/db", "myhost.com"},
+		{"user:pass@/db", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.dsn, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, extractMySQLHost(tc.dsn))
+		})
+	}
+}
+
 func TestSanitizeMySQLDSN(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

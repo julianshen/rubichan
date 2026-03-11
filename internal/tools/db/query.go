@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
+
+	"github.com/julianshen/rubichan/internal/tools/netutil"
 
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -137,6 +140,9 @@ func (t *QueryTool) resolveConnection(engine, database string) (string, string, 
 		if err != nil {
 			return "", "", err
 		}
+		if err := validateDSNHost(extractPostgresHost(sanitized)); err != nil {
+			return "", "", err
+		}
 		return "pgx", sanitized, nil
 	case "mysql":
 		if strings.TrimSpace(database) == "" {
@@ -144,6 +150,9 @@ func (t *QueryTool) resolveConnection(engine, database string) (string, string, 
 		}
 		sanitized, err := sanitizeMySQLDSN(database)
 		if err != nil {
+			return "", "", err
+		}
+		if err := validateDSNHost(extractMySQLHost(sanitized)); err != nil {
 			return "", "", err
 		}
 		return "mysql", sanitized, nil
@@ -283,6 +292,68 @@ func sanitizeMySQLDSN(dsn string) (string, error) {
 		return base, nil
 	}
 	return base + "?" + strings.Join(kept, "&"), nil
+}
+
+// validateDSNHost resolves the given host and rejects connections to
+// private/local IP addresses to prevent SSRF via database connections.
+func validateDSNHost(host string) error {
+	if host == "" || host == "localhost" {
+		// localhost is allowed for local development databases.
+		return nil
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	if err != nil {
+		return fmt.Errorf("resolve database host %q: %w", host, err)
+	}
+	for _, addr := range addrs {
+		if netutil.IsPrivateAddress(addr.IP) {
+			return fmt.Errorf("database connections to private or local addresses are not allowed")
+		}
+	}
+	return nil
+}
+
+// extractPostgresHost extracts the host from a Postgres DSN (URI or key=value).
+func extractPostgresHost(dsn string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return ""
+		}
+		return u.Hostname()
+	}
+	for _, kv := range splitPostgresKV(dsn) {
+		if strings.HasPrefix(kv, "host=") {
+			v := kv[len("host="):]
+			return strings.Trim(v, "'")
+		}
+	}
+	return ""
+}
+
+// extractMySQLHost extracts the host from a go-sql-driver MySQL DSN.
+// Format: [user[:password]@][net[(addr)]]/dbname[?param=value]
+func extractMySQLHost(dsn string) string {
+	// Strip params
+	if idx := strings.IndexByte(dsn, '?'); idx >= 0 {
+		dsn = dsn[:idx]
+	}
+	// Strip dbname
+	if idx := strings.LastIndexByte(dsn, '/'); idx >= 0 {
+		dsn = dsn[:idx]
+	}
+	// Find addr in net[(addr)]
+	if lparen := strings.IndexByte(dsn, '('); lparen >= 0 {
+		if rparen := strings.IndexByte(dsn[lparen:], ')'); rparen >= 0 {
+			addr := dsn[lparen+1 : lparen+rparen]
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return addr // no port, entire string is the host
+			}
+			return host
+		}
+	}
+	return ""
 }
 
 // postgresDSNAllowedParams lists the only DSN parameters that are safe to pass
