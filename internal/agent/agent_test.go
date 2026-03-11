@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/julianshen/rubichan/pkg/agentsdk"
+
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/store"
@@ -113,10 +115,11 @@ func (c *countingApprovalChecker) Calls() int {
 }
 
 func TestApprovalToolErrorResult(t *testing.T) {
+	a := &Agent{logger: agentsdk.DefaultLogger()}
 	tc := provider.ToolUseBlock{ID: "tool-1", Name: "file"}
 
 	t.Run("without wrapped error", func(t *testing.T) {
-		result := approvalToolErrorResult(tc, "tool call denied by user", nil)
+		result := a.approvalToolErrorResult(tc, "tool call denied by user", nil)
 
 		assert.Equal(t, "tool-1", result.toolUseID)
 		assert.Equal(t, "tool call denied by user", result.content)
@@ -131,7 +134,7 @@ func TestApprovalToolErrorResult(t *testing.T) {
 	})
 
 	t.Run("with wrapped error", func(t *testing.T) {
-		result := approvalToolErrorResult(tc, "approval error", fmt.Errorf("approval service unavailable"))
+		result := a.approvalToolErrorResult(tc, "approval error", fmt.Errorf("approval service unavailable"))
 
 		assert.Equal(t, "tool-1", result.toolUseID)
 		assert.Equal(t, "approval error", result.content)

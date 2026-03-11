@@ -92,3 +92,8 @@ type SubagentResult = agentsdk.SubagentResult
 
 // SubagentSpawner creates and runs child agents.
 type SubagentSpawner = agentsdk.SubagentSpawner
+
+// --- Logger ---
+
+// Logger provides structured logging for the agent core.
+type Logger = agentsdk.Logger

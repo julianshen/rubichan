@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/google/uuid"
 	"github.com/sourcegraph/conc/pool"
+
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
@@ -166,6 +167,12 @@ type namedPrompt struct {
 	Content string
 }
 
+// WithLogger attaches a structured logger to the agent. If not set,
+// agentsdk.DefaultLogger() is used.
+func WithLogger(l Logger) AgentOption {
+	return func(a *Agent) { a.logger = l }
+}
+
 // WithExtraSystemPrompt appends a named section to the system prompt.
 // Multiple calls accumulate sections. Each section appears as:
 //
@@ -210,6 +217,7 @@ type Agent struct {
 	pipeline         *toolexec.Pipeline
 	workingDir       string // override working directory (empty = os.Getwd)
 	parallelPolicy   ToolParallelPolicy
+	logger           Logger
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -231,6 +239,10 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	for _, opt := range opts {
 		opt(a)
 	}
+	// Ensure logger is always available.
+	if a.logger == nil {
+		a.logger = agentsdk.DefaultLogger()
+	}
 	// Freeze working directory at construction time.
 	if a.workingDir == "" {
 		a.workingDir, _ = os.Getwd()
@@ -241,7 +253,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		wd := a.WorkingDir()
 		loaded, err := a.memoryStore.LoadMemories(wd)
 		if err != nil {
-			log.Printf("warning: failed to load memories: %v", err)
+			a.logger.Warn("failed to load memories: %v", err)
 		} else {
 			memories = loaded
 		}
@@ -262,7 +274,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			// Resume existing session.
 			sess, err := a.store.GetSession(a.resumeSessionID)
 			if err != nil || sess == nil {
-				log.Printf("warning: failed to resume session %s: %v", a.resumeSessionID, err)
+				a.logger.Warn("failed to resume session %s: %v", a.resumeSessionID, err)
 			} else {
 				a.sessionID = sess.ID
 				a.conversation = NewConversation(sess.SystemPrompt)
@@ -280,7 +292,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 				} else {
 					msgs, err := a.store.GetMessages(sess.ID)
 					if err != nil {
-						log.Printf("warning: failed to load messages: %v", err)
+						a.logger.Warn("failed to load messages: %v", err)
 					} else {
 						providerMsgs := make([]provider.Message, len(msgs))
 						for i, m := range msgs {
@@ -306,7 +318,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 				SystemPrompt: a.conversation.SystemPrompt(),
 			}
 			if err := a.store.CreateSession(sess); err != nil {
-				log.Printf("warning: failed to create session: %v", err)
+				a.logger.Warn("failed to create session: %v", err)
 				a.store = nil // disable persistence for this session
 			}
 		}
@@ -323,7 +335,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		// Register read_result tool so the LLM can retrieve offloaded results.
 		readResultTool := tools.NewReadResultTool(a.resultStore)
 		if err := a.tools.Register(readResultTool); err != nil {
-			log.Printf("warning: failed to register read_result tool: %v", err)
+			a.logger.Warn("failed to register read_result tool: %v", err)
 		}
 	}
 	a.promptBuilder = NewPromptBuilder()
@@ -362,7 +374,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	toolSearchTool := tools.NewToolSearchTool(a.deferral)
 	if _, exists := a.tools.Get(toolSearchTool.Name()); !exists {
 		if err := a.tools.Register(toolSearchTool); err != nil {
-			log.Printf("warning: failed to register tool_search tool: %v", err)
+			a.logger.Warn("failed to register tool_search tool: %v", err)
 		}
 	}
 
@@ -371,7 +383,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	compactTool := tools.NewCompactContextTool(&agentCompactor{agent: a})
 	if _, exists := a.tools.Get(compactTool.Name()); !exists {
 		if err := a.tools.Register(compactTool); err != nil {
-			log.Printf("warning: failed to register compact_context tool: %v", err)
+			a.logger.Warn("failed to register compact_context tool: %v", err)
 		}
 	}
 
@@ -527,7 +539,7 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 		return
 	}
 	if err := a.store.AppendMessage(a.sessionID, role, content); err != nil {
-		log.Printf("warning: failed to persist message: %v", err)
+		a.logger.Warn("failed to persist message: %v", err)
 	}
 }
 
@@ -539,7 +551,7 @@ func (a *Agent) saveSnapshotIfNeeded() {
 	}
 	tokens := a.context.EstimateTokens(a.conversation)
 	if err := a.store.SaveSnapshot(a.sessionID, a.conversation.Messages(), tokens); err != nil {
-		log.Printf("warning: failed to save snapshot: %v", err)
+		a.logger.Warn("failed to save snapshot: %v", err)
 	}
 }
 
@@ -845,9 +857,9 @@ func toolErrorResult(tc provider.ToolUseBlock, msg string) toolExecResult {
 	}
 }
 
-func approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) toolExecResult {
+func (a *Agent) approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) toolExecResult {
 	if err != nil {
-		log.Printf("approval failure for tool %s (%s): %v", tc.Name, tc.ID, err)
+		a.logger.Error("approval failure for tool %s (%s): %v", tc.Name, tc.ID, err)
 	}
 	return toolErrorResult(tc, msg)
 }
@@ -918,7 +930,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 				Input: it.tc.Input,
 			},
 		}
-		results[it.index] = approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
+		results[it.index] = a.approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
 	}
 
 	// Execute auto-approved tools in parallel (hooks + execution, no approval).
@@ -1029,20 +1041,20 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- Tur
 		return a.executeSingleTool(ctx, ch, tc)
 	}
 	if approvalResult == AutoDenied {
-		return approvalToolErrorResult(tc, "Tool call denied by user (deny-always).", nil)
+		return a.approvalToolErrorResult(tc, "Tool call denied by user (deny-always).", nil)
 	}
 
 	if a.approve == nil {
-		return approvalToolErrorResult(tc, "approval function not configured", nil)
+		return a.approvalToolErrorResult(tc, "approval function not configured", nil)
 	}
 
 	// Check approval.
 	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
 	if approvalErr != nil {
-		return approvalToolErrorResult(tc, "approval error", approvalErr)
+		return a.approvalToolErrorResult(tc, "approval error", approvalErr)
 	}
 	if !approved {
-		return approvalToolErrorResult(tc, "tool call denied by user", nil)
+		return a.approvalToolErrorResult(tc, "tool call denied by user", nil)
 	}
 
 	return a.executeSingleTool(ctx, ch, tc)
