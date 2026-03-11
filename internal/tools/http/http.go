@@ -24,7 +24,10 @@ const (
 	maxDisplay     = 100 * 1024
 )
 
-var lookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+// ResolveFunc resolves a hostname to IP addresses. Used for SSRF validation.
+type ResolveFunc func(ctx context.Context, host string) ([]net.IPAddr, error)
+
+var defaultResolver ResolveFunc = func(ctx context.Context, host string) ([]net.IPAddr, error) {
 	return net.DefaultResolver.LookupIPAddr(ctx, host)
 }
 
@@ -38,8 +41,9 @@ type requestInput struct {
 }
 
 type Tool struct {
-	method string
-	name   string
+	method   string
+	name     string
+	resolver ResolveFunc
 }
 
 func NewGetTool() *Tool    { return newTool(http.MethodGet, "http_get") }
@@ -49,7 +53,7 @@ func NewPatchTool() *Tool  { return newTool(http.MethodPatch, "http_patch") }
 func NewDeleteTool() *Tool { return newTool(http.MethodDelete, "http_delete") }
 
 func newTool(method, name string) *Tool {
-	return &Tool{method: method, name: name}
+	return &Tool{method: method, name: name, resolver: defaultResolver}
 }
 
 func (t *Tool) Name() string { return t.name }
@@ -99,7 +103,8 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return tools.ToolResult{Content: "only http and https URLs are allowed", IsError: true}, nil
 	}
-	if err := validateTarget(ctx, u); err != nil {
+	addrs, err := validateTarget(ctx, u, t.resolver)
+	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
@@ -131,7 +136,14 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 			timeout = maxTimeout
 		}
 	}
-	client := &http.Client{Timeout: timeout}
+	// Pin the dialer to the already-validated IP addresses to prevent
+	// DNS rebinding attacks (where a second DNS lookup resolves to a
+	// different, potentially private address).
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := &http.Transport{
+		DialContext: pinnedDialer(dialer, u.Hostname(), addrs),
+	}
+	client := &http.Client{Timeout: timeout, Transport: transport}
 	if in.FollowRedirects != nil && !*in.FollowRedirects {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -236,21 +248,48 @@ func truncate(s string) (string, string) {
 	return s[:maxContent] + "\n... output truncated", display
 }
 
-func validateTarget(ctx context.Context, u *url.URL) error {
+func validateTarget(ctx context.Context, u *url.URL, resolve ResolveFunc) ([]net.IPAddr, error) {
 	host := strings.TrimSpace(u.Hostname())
 	if host == "" {
-		return fmt.Errorf("url host is required")
+		return nil, fmt.Errorf("url host is required")
 	}
-	addrs, err := lookupIPAddr(ctx, host)
+	addrs, err := resolve(ctx, host)
 	if err != nil {
-		return fmt.Errorf("resolve host %q: %w", host, err)
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
 	}
 	for _, addr := range addrs {
 		if isPrivateAddress(addr.IP) {
-			return fmt.Errorf("requests to private or local addresses are not allowed")
+			return nil, fmt.Errorf("requests to private or local addresses are not allowed")
 		}
 	}
-	return nil
+	return addrs, nil
+}
+
+// pinnedDialer returns a DialContext function that connects only to the
+// pre-resolved IP addresses for the given host, preventing DNS rebinding.
+func pinnedDialer(d *net.Dialer, host string, addrs []net.IPAddr) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		reqHost, reqPort, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if reqHost != host {
+			// Different host (e.g. redirect) — fall back to normal dial.
+			return d.DialContext(ctx, network, addr)
+		}
+		var lastErr error
+		for _, ip := range addrs {
+			conn, dialErr := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), reqPort))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("no addresses for host %q", host)
+	}
 }
 
 func isPrivateAddress(ip net.IP) bool {

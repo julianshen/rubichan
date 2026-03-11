@@ -14,32 +14,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func allowResolvedHost(t *testing.T, hosts ...string) {
-	t.Helper()
-	original := lookupIPAddr
-	lookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+// testResolver returns a ResolveFunc that maps the given hosts to a public IP
+// and falls back to the real resolver for everything else. This is safe for
+// parallel tests because it doesn't mutate any package-level state.
+func testResolver(hosts ...string) ResolveFunc {
+	return func(ctx context.Context, host string) ([]net.IPAddr, error) {
 		for _, allowed := range hosts {
 			if host == allowed {
 				return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
 			}
 		}
-		return original(ctx, host)
+		return defaultResolver(ctx, host)
 	}
-	t.Cleanup(func() {
-		lookupIPAddr = original
-	})
 }
 
 func TestGetToolJSONResponse(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "1", r.URL.Query().Get("page"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true,"name":"rubichan"}`))
 	}))
 	defer srv.Close()
-	allowResolvedHost(t, "127.0.0.1")
 
 	tool := NewGetTool()
+	tool.resolver = testResolver("127.0.0.1")
 	input := json.RawMessage(`{"url":"` + srv.URL + `","query":{"page":"1"}}`)
 	result, err := tool.Execute(context.Background(), input)
 	require.NoError(t, err)
@@ -50,6 +49,7 @@ func TestGetToolJSONResponse(t *testing.T) {
 }
 
 func TestPostToolStringBody(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -57,9 +57,9 @@ func TestPostToolStringBody(t *testing.T) {
 		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
-	allowResolvedHost(t, "127.0.0.1")
 
 	tool := NewPostTool()
+	tool.resolver = testResolver("127.0.0.1")
 	input := json.RawMessage(`{"url":"` + srv.URL + `","body":"hello"}`)
 	result, err := tool.Execute(context.Background(), input)
 	require.NoError(t, err)
@@ -68,6 +68,7 @@ func TestPostToolStringBody(t *testing.T) {
 }
 
 func TestRejectNonHTTPURL(t *testing.T) {
+	t.Parallel()
 	tool := NewGetTool()
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"file:///etc/passwd"}`))
 	require.NoError(t, err)
@@ -76,6 +77,7 @@ func TestRejectNonHTTPURL(t *testing.T) {
 }
 
 func TestRejectPrivateAddressTargets(t *testing.T) {
+	t.Parallel()
 	tool := NewGetTool()
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"http://127.0.0.1/test"}`))
 	require.NoError(t, err)

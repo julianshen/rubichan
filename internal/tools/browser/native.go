@@ -265,7 +265,14 @@ func requireNativeSession(handle any) (*nativeSession, error) {
 
 func ensureUniqueSelector(ctx context.Context, selector string) error {
 	var count int64
-	script := fmt.Sprintf(`document.querySelectorAll(%q).length`, selector)
+	// Use json.Marshal to properly escape the selector for JavaScript string
+	// literals. Go's %q uses Go string escaping which may not handle all
+	// Unicode characters correctly in a JS context.
+	jsonSelector, err := json.Marshal(selector)
+	if err != nil {
+		return fmt.Errorf("encode selector: %w", err)
+	}
+	script := fmt.Sprintf(`document.querySelectorAll(%s).length`, jsonSelector)
 	if err := chromedp.Run(ctx, chromedp.Evaluate(script, &count)); err != nil {
 		return err
 	}

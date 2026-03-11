@@ -137,7 +137,11 @@ func (t *QueryTool) resolveConnection(engine, database string) (string, string, 
 		if strings.TrimSpace(database) == "" {
 			return "", "", fmt.Errorf("database DSN is required")
 		}
-		return "mysql", database, nil
+		sanitized, err := sanitizeMySQLDSN(database)
+		if err != nil {
+			return "", "", err
+		}
+		return "mysql", sanitized, nil
 	default:
 		return "", "", fmt.Errorf("unsupported engine %q", engine)
 	}
@@ -229,6 +233,51 @@ func formatRows(rows *sql.Rows, maxRows int) (string, error) {
 		out.WriteString(fmt.Sprintf("\n... row output truncated at %d rows", maxRows))
 	}
 	return strings.TrimRight(out.String(), "\n"), nil
+}
+
+// mysqlDSNAllowedParams lists the only DSN parameters that are safe to pass
+// through. Everything else (e.g. allowAllFiles, allowCleartextPasswords) is
+// stripped to prevent local-file-inclusion and credential-exfiltration attacks.
+var mysqlDSNAllowedParams = map[string]bool{
+	"charset":      true,
+	"collation":    true,
+	"loc":          true,
+	"parseTime":    true,
+	"timeout":      true,
+	"readTimeout":  true,
+	"writeTimeout": true,
+	"tls":          true,
+	"maxAllowedPacket": true,
+}
+
+func sanitizeMySQLDSN(dsn string) (string, error) {
+	// go-sql-driver DSN format: [user[:password]@][net[(addr)]]/dbname[?param1=value1&...]
+	questionMark := strings.IndexByte(dsn, '?')
+	if questionMark < 0 {
+		return dsn, nil // no params — nothing to sanitize
+	}
+	base := dsn[:questionMark]
+	paramStr := dsn[questionMark+1:]
+	if paramStr == "" {
+		return base, nil
+	}
+	var kept []string
+	for _, pair := range strings.Split(paramStr, "&") {
+		eqIdx := strings.IndexByte(pair, '=')
+		var key string
+		if eqIdx >= 0 {
+			key = pair[:eqIdx]
+		} else {
+			key = pair
+		}
+		if mysqlDSNAllowedParams[key] {
+			kept = append(kept, pair)
+		}
+	}
+	if len(kept) == 0 {
+		return base, nil
+	}
+	return base + "?" + strings.Join(kept, "&"), nil
 }
 
 func normalizeValue(v interface{}) interface{} {

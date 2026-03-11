@@ -62,3 +62,26 @@ func TestRejectsWritableCTEInReadOnlyTransaction(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "query failed")
 }
+
+func TestSanitizeMySQLDSN(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		dsn      string
+		expected string
+	}{
+		{"no params", "user:pass@tcp(host)/db", "user:pass@tcp(host)/db"},
+		{"safe params kept", "user:pass@tcp(host)/db?charset=utf8&parseTime=true", "user:pass@tcp(host)/db?charset=utf8&parseTime=true"},
+		{"dangerous params stripped", "user:pass@tcp(host)/db?allowAllFiles=true&charset=utf8", "user:pass@tcp(host)/db?charset=utf8"},
+		{"all dangerous stripped", "user:pass@tcp(host)/db?allowAllFiles=true&allowCleartextPasswords=true", "user:pass@tcp(host)/db"},
+		{"empty params", "user:pass@tcp(host)/db?", "user:pass@tcp(host)/db"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := sanitizeMySQLDSN(tc.dsn)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, got)
+		})
+	}
+}
