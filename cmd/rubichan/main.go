@@ -11,12 +11,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -102,7 +100,43 @@ func versionString() string {
 // shouldIgnoreTUIRunError suppresses Bubble Tea's program-killed error when
 // Rubichan intentionally cancelled the TUI context as part of signal handling.
 func shouldIgnoreTUIRunError(err error, runCtx context.Context) bool {
-	return errors.Is(err, tea.ErrProgramKilled) && errors.Is(runCtx.Err(), context.Canceled)
+	return errors.Is(err, tea.ErrProgramKilled) &&
+		errors.Is(runCtx.Err(), context.Canceled) &&
+		signalAbortFromContext(runCtx) == nil
+}
+
+type interactiveSignalAbort struct {
+	name     string
+	exitCode int
+}
+
+func (e *interactiveSignalAbort) Error() string {
+	return fmt.Sprintf("interactive session aborted by %s", e.name)
+}
+
+func signalAbortFromContext(ctx context.Context) *interactiveSignalAbort {
+	var abort *interactiveSignalAbort
+	if errors.As(context.Cause(ctx), &abort) {
+		return abort
+	}
+	return nil
+}
+
+func interactiveExitError(runCtx context.Context) error {
+	if abort := signalAbortFromContext(runCtx); abort != nil {
+		return &runner.ExitError{Code: abort.exitCode}
+	}
+	return nil
+}
+
+func handleInteractiveProgramError(err error, runCtx context.Context, phase string) error {
+	if exitErr := interactiveExitError(runCtx); exitErr != nil && errors.Is(err, tea.ErrProgramKilled) {
+		return exitErr
+	}
+	if err == nil || shouldIgnoreTUIRunError(err, runCtx) {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", phase, err)
 }
 
 func setActiveSessionLogPath(path string) {
@@ -219,39 +253,6 @@ func writePanicDump(cfgDir string, recovered any, sessionLogPath string) (string
 		sessionLogPath,
 	)
 	return writeStackDump(cfgDir, fmt.Sprintf("panic-%s.log", logFileSuffix(now)), header)
-}
-
-func startInteractiveSignalHandler(cfgDir, sessionLogPath string, cancel context.CancelFunc) func() {
-	sigCh := make(chan os.Signal, 1)
-	stopCh := make(chan struct{})
-	var stopOnce sync.Once
-	// Intercept the first SIGQUIT to persist a diagnostic dump, then stop
-	// handling the signal so repeated SIGQUITs fall back to the runtime default.
-	signal.Notify(sigCh, syscall.SIGQUIT)
-
-	stop := func() {
-		stopOnce.Do(func() {
-			signal.Stop(sigCh)
-			close(stopCh)
-		})
-	}
-
-	go func() {
-		select {
-		case sig := <-sigCh:
-			stop()
-			path, err := writeDiagnosticDump(cfgDir, sig, sessionLogPath)
-			if err != nil {
-				log.Printf("failed to write %s diagnostic dump: %v", sig.String(), err)
-			} else {
-				log.Printf("wrote %s diagnostic dump to %s", sig.String(), path)
-			}
-			cancel()
-		case <-stopCh:
-		}
-	}()
-
-	return stop
 }
 
 // setupWorkingDir determines the effective working directory. When --worktree
@@ -863,10 +864,14 @@ func runInteractive() error {
 	if err != nil {
 		return err
 	}
+	runCtx, cancelRun := context.WithCancelCause(context.Background())
+	defer cancelRun(nil)
 	sessionLog, err := startSessionLogger(cfgDir)
 	if err != nil {
 		return err
 	}
+	stopSignals := startInteractiveSignalHandler(cfgDir, sessionLog.path, cancelRun)
+	defer stopSignals()
 	defer func() {
 		if closeErr := sessionLog.Close(); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to close session log: %v\n", closeErr)
@@ -884,10 +889,10 @@ func runInteractive() error {
 		form := wizard.Form()
 		form.SubmitCmd = tea.Quit
 		form.CancelCmd = tea.Interrupt
-		prog := tea.NewProgram(form)
+		prog := tea.NewProgram(form, tea.WithContext(runCtx))
 		finalModel, err := prog.Run()
-		if err != nil {
-			return fmt.Errorf("bootstrap wizard: %w", err)
+		if err := handleInteractiveProgramError(err, runCtx, "bootstrap wizard"); err != nil {
+			return err
 		}
 		// Bubble Tea returns the final form model after all Updates.
 		// We must check state on the returned model, not the original,
@@ -909,11 +914,17 @@ func runInteractive() error {
 	if err != nil {
 		return err
 	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
+	}
 
 	// Create provider
 	p, err := provider.NewProvider(cfg)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
+	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
 	}
 
 	// Set up effective working directory (creates worktree if --worktree is set).
@@ -922,6 +933,9 @@ func runInteractive() error {
 		return fmt.Errorf("worktree setup: %w", err)
 	}
 	defer wtCleanup()
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
+	}
 
 	// Create tool registry
 	registry := tools.NewRegistry()
@@ -1083,7 +1097,7 @@ func runInteractive() error {
 	}
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.
-	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg, "interactive", cwd)
+	rt, storeCloser, err := createSkillRuntime(runCtx, registry, p, cfg, "interactive", cwd)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
@@ -1223,14 +1237,11 @@ func runInteractive() error {
 	model.SetFileCompletionSource(fileSrc)
 	go indexProjectFiles(cwd, fileSrc)
 
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	stopSignals := startInteractiveSignalHandler(cfgDir, sessionLog.path, cancelRun)
-	defer stopSignals()
-	defer cancelRun()
-
 	prog := tea.NewProgram(model, tea.WithContext(runCtx), tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if _, err := prog.Run(); err != nil && !shouldIgnoreTUIRunError(err, runCtx) {
-		return fmt.Errorf("running TUI: %w", err)
+	if _, err := prog.Run(); err != nil {
+		if err := handleInteractiveProgramError(err, runCtx, "running TUI"); err != nil {
+			return err
+		}
 	}
 
 	// Save memories on graceful shutdown.

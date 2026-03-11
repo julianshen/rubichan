@@ -10,13 +10,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
+	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
@@ -48,6 +48,23 @@ func TestShouldIgnoreTUIRunError(t *testing.T) {
 	assert.False(t, shouldIgnoreTUIRunError(nil, ctx))
 	assert.False(t, shouldIgnoreTUIRunError(context.Canceled, ctx))
 	assert.False(t, shouldIgnoreTUIRunError(tea.ErrProgramKilled, context.Background()))
+}
+
+func TestShouldIgnoreTUIRunErrorSignalAbortReturnsFalse(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&interactiveSignalAbort{name: "quit", exitCode: 131})
+
+	assert.False(t, shouldIgnoreTUIRunError(tea.ErrProgramKilled, ctx))
+}
+
+func TestHandleInteractiveProgramErrorReturnsExitErrorForSignalAbort(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&interactiveSignalAbort{name: "quit", exitCode: 131})
+
+	err := handleInteractiveProgramError(tea.ErrProgramKilled, ctx, "running TUI")
+	var exitErr *runner.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 131, exitErr.Code)
 }
 
 func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
@@ -84,24 +101,6 @@ func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
 	assert.Equal(t, 123, log.Flags())
 }
 
-func TestWriteDiagnosticDumpIncludesSignalAndSessionLog(t *testing.T) {
-	cfgDir := t.TempDir()
-	dumpPath, err := writeDiagnosticDump(cfgDir, syscall.SIGQUIT, "/tmp/session.log")
-	require.NoError(t, err)
-	require.FileExists(t, dumpPath)
-
-	data, err := os.ReadFile(dumpPath)
-	require.NoError(t, err)
-	text := string(data)
-	assert.Contains(t, text, "signal: quit")
-	assert.Contains(t, text, "session_log: /tmp/session.log")
-	assert.Contains(t, text, "goroutine")
-	info, err := os.Stat(dumpPath)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	assert.Contains(t, filepath.Base(dumpPath), strconv.Itoa(os.Getpid()))
-}
-
 func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
 	cfgDir := t.TempDir()
 	dumpPath, err := writePanicDump(cfgDir, "boom", "/tmp/session.log")
@@ -127,7 +126,7 @@ func TestLogFileSuffixIncludesTimestampAndPID(t *testing.T) {
 }
 
 func TestStartInteractiveSignalHandlerStopIsIdempotent(t *testing.T) {
-	stop := startInteractiveSignalHandler(t.TempDir(), "/tmp/session.log", func() {})
+	stop := startInteractiveSignalHandler(t.TempDir(), "/tmp/session.log", func(error) {})
 	stop()
 	stop()
 }
