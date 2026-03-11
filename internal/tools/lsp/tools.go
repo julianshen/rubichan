@@ -588,9 +588,11 @@ func runSymbols(ctx context.Context, m *Manager, input json.RawMessage) (tools.T
 		}
 
 		var symbols []SymbolInformation
-		if err := json.Unmarshal(result, &symbols); err == nil {
-			allSymbols = append(allSymbols, symbols...)
+		if err := json.Unmarshal(result, &symbols); err != nil {
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: unmarshal symbols: %s", lang, err))
+			continue
 		}
+		allSymbols = append(allSymbols, symbols...)
 	}
 
 	if len(allSymbols) == 0 {

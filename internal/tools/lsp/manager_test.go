@@ -399,11 +399,11 @@ func TestManagerEnsureFileOpenReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read file for didOpen")
 
-	// Verify the file was NOT marked as opened (reverted).
+	// Verify the file was NOT marked as opened.
 	uri := pathToURI("/nonexistent/file.go")
-	m.mu.Lock()
+	m.docsMu.Lock()
 	_, opened := m.docs[uri]
-	m.mu.Unlock()
+	m.docsMu.Unlock()
 	assert.False(t, opened)
 }
 
@@ -577,6 +577,126 @@ func TestManagerStartServerBadInitResult(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse initialize result")
 
+	mt.server.Close()
+}
+
+func TestNewClientNilRwcPanics(t *testing.T) {
+	assert.PanicsWithValue(t, "lsp.NewClient: rwc must not be nil", func() {
+		NewClient(nil, nil)
+	})
+}
+
+func TestClientDispatchServerRequest(t *testing.T) {
+	mt := newMockTransport()
+
+	var capturedErr error
+	var mu sync.Mutex
+	errReceived := make(chan struct{})
+
+	client := newClient(mt.client, nil, func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		capturedErr = err
+		select {
+		case <-errReceived:
+		default:
+			close(errReceived)
+		}
+	})
+	defer client.Close()
+
+	// Send a server-to-client request (has both ID and Method).
+	go func() {
+		msg := struct {
+			JSONRPC string `json:"jsonrpc"`
+			ID      int64  `json:"id"`
+			Method  string `json:"method"`
+		}{JSONRPC: "2.0", ID: 42, Method: "window/showMessageRequest"}
+		body, _ := json.Marshal(msg)
+		fmt.Fprintf(mt.server, "Content-Length: %d\r\n\r\n%s", len(body), body)
+	}()
+
+	select {
+	case <-errReceived:
+		mu.Lock()
+		assert.Contains(t, capturedErr.Error(), "unsupported server request")
+		assert.Contains(t, capturedErr.Error(), "window/showMessageRequest")
+		mu.Unlock()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for error handler")
+	}
+
+	mt.server.Close()
+}
+
+func TestManagerPublishDiagnosticsUnmarshalError(t *testing.T) {
+	reg := NewRegistry()
+	reg.lookPath = func(name string) (string, error) {
+		if name == "gopls" {
+			return "/usr/bin/gopls", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+	m := NewManager(reg, "/test")
+
+	var capturedErr error
+	var mu sync.Mutex
+	errReceived := make(chan struct{})
+	m.onError = func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		capturedErr = err
+		select {
+		case <-errReceived:
+		default:
+			close(errReceived)
+		}
+	}
+
+	mt := newMockTransport()
+	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
+		return mt.client, nil
+	}
+
+	// Server goroutine: handle initialize, initialized, then send malformed diagnostics.
+	go func() {
+		req, err := readRequest(mt.server)
+		if err != nil {
+			return
+		}
+		_ = writeResponse(mt.server, req.ID, InitializeResult{
+			Capabilities: ServerCapabilities{DefinitionProvider: true},
+		})
+		_, _ = readRequest(mt.server) // initialized
+
+		// Send malformed publishDiagnostics notification.
+		_ = writeNotification(mt.server, "textDocument/publishDiagnostics", "not-valid-json-params")
+
+		// Handle shutdown/exit.
+		req, err = readRequest(mt.server)
+		if err != nil {
+			return
+		}
+		_ = writeResponse(mt.server, req.ID, nil)
+		_, _ = readRequest(mt.server)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, _, err := m.ServerFor(ctx, "go")
+	require.NoError(t, err)
+
+	select {
+	case <-errReceived:
+		mu.Lock()
+		assert.Contains(t, capturedErr.Error(), "publishDiagnostics unmarshal")
+		mu.Unlock()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for publishDiagnostics error")
+	}
+
+	require.NoError(t, m.Shutdown(ctx))
 	mt.server.Close()
 }
 

@@ -78,6 +78,9 @@ func NewClient(rwc io.ReadWriteCloser, onNotify NotificationHandler) *Client {
 
 // newClient creates a client with an optional error handler for protocol errors.
 func newClient(rwc io.ReadWriteCloser, onNotify NotificationHandler, onError ErrorHandler) *Client {
+	if rwc == nil {
+		panic("lsp.NewClient: rwc must not be nil")
+	}
 	c := &Client{
 		rwc:           rwc,
 		reader:        bufio.NewReaderSize(rwc, 64*1024),
@@ -319,6 +322,15 @@ func (c *Client) dispatch(data []byte) {
 		// Server notification — use params from the probe directly.
 		if c.notifyHandler != nil {
 			c.notifyHandler(probe.Method, probe.Params)
+		}
+		return
+	}
+
+	// Server-to-client request (has both ID and Method). We don't support
+	// handling server requests; report via error handler so it's not silent.
+	if probe.ID != nil && probe.Method != "" {
+		if c.onError != nil {
+			c.onError(fmt.Errorf("unsupported server request: %s (id=%d)", probe.Method, *probe.ID))
 		}
 	}
 }

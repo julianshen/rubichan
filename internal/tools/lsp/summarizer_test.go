@@ -170,7 +170,7 @@ func TestFormatDiagnosticWithoutSource(t *testing.T) {
 	assert.NotContains(t, text, "()")
 }
 
-func TestSummarizeDiagnosticsAllErrors(t *testing.T) {
+func TestSummarizeDiagnosticsErrorsCapped(t *testing.T) {
 	s := DefaultSummarizer()
 	var diags []Diagnostic
 	for i := 0; i < 25; i++ {
@@ -182,9 +182,10 @@ func TestSummarizeDiagnosticsAllErrors(t *testing.T) {
 	}
 
 	result := s.SummarizeDiagnostics(diags, 10)
-	// All errors should be shown even if > maxItems.
-	assert.Equal(t, 25, result.Shown)
-	assert.False(t, result.Truncated)
+	// Errors are capped at maxItems to prevent unbounded token budget.
+	assert.Equal(t, 10, result.Shown)
+	assert.True(t, result.Truncated)
+	assert.Contains(t, result.Text, "Errors (10 of 25)")
 }
 
 func TestURIToPathInvalid(t *testing.T) {

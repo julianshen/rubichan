@@ -23,10 +23,13 @@ type Manager struct {
 	rootURI     string
 	summarizer  *Summarizer
 	spawnServer SpawnFunc
+	onError     func(error) // optional handler for non-fatal errors
 
 	mu      sync.Mutex
 	servers map[string]*serverHandle // language -> handle
-	docs    map[string]int           // URI -> version (for didOpen/didChange tracking)
+
+	docsMu sync.Mutex     // serializes document open/change operations
+	docs   map[string]int // URI -> version (for didOpen/didChange tracking)
 
 	diagMu sync.RWMutex
 	diags  map[string][]Diagnostic // URI -> latest diagnostics
@@ -134,15 +137,16 @@ func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, conten
 
 	uri := pathToURI(filePath)
 
-	m.mu.Lock()
+	// Hold docsMu for the entire operation to prevent races with EnsureFileOpen.
+	m.docsMu.Lock()
+	defer m.docsMu.Unlock()
+
 	version, opened := m.docs[uri]
 	version++
-	m.docs[uri] = version
-	m.mu.Unlock()
 
 	if !opened {
 		// First time seeing this file — send didOpen.
-		return client.Notify(ctx, "textDocument/didOpen", DidOpenTextDocumentParams{
+		err = client.Notify(ctx, "textDocument/didOpen", DidOpenTextDocumentParams{
 			TextDocument: TextDocumentItem{
 				URI:        uri,
 				LanguageID: lang,
@@ -150,30 +154,39 @@ func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, conten
 				Text:       string(content),
 			},
 		})
+	} else {
+		// File already open — send didChange with full content.
+		err = client.Notify(ctx, "textDocument/didChange", DidChangeTextDocumentParams{
+			TextDocument: VersionedTextDocumentIdentifier{
+				URI:     uri,
+				Version: version,
+			},
+			ContentChanges: []TextDocumentContentChangeEvent{
+				{Text: string(content)},
+			},
+		})
 	}
 
-	// File already open — send didChange with full content.
-	return client.Notify(ctx, "textDocument/didChange", DidChangeTextDocumentParams{
-		TextDocument: VersionedTextDocumentIdentifier{
-			URI:     uri,
-			Version: version,
-		},
-		ContentChanges: []TextDocumentContentChangeEvent{
-			{Text: string(content)},
-		},
-	})
+	if err != nil {
+		return err
+	}
+	m.docs[uri] = version
+	return nil
 }
 
 // Shutdown gracefully stops all running servers by sending the LSP shutdown
 // request followed by the exit notification, then closing the transport.
 func (m *Manager) Shutdown(ctx context.Context) error {
+	// Snapshot the server map and clear it under the lock, then release
+	// before doing blocking network I/O (shutdown/exit/close).
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	snapshot := m.servers
+	m.servers = make(map[string]*serverHandle)
+	m.mu.Unlock()
 
 	var errs []error
-	for lang, handle := range m.servers {
+	for lang, handle := range snapshot {
 		if handle.client != nil {
-			// Send shutdown request, then exit notification.
 			_, _ = handle.client.Call(ctx, "shutdown", nil)
 			_ = handle.client.Notify(ctx, "exit", nil)
 			if err := handle.client.Close(); err != nil {
@@ -181,7 +194,6 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			}
 		}
 	}
-	m.servers = make(map[string]*serverHandle)
 	return errors.Join(errs...)
 }
 
@@ -191,22 +203,17 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 func (m *Manager) EnsureFileOpen(ctx context.Context, client *Client, filePath string) error {
 	uri := pathToURI(filePath)
 
-	// Mark the file as opened under the lock to prevent concurrent callers from
-	// racing (TOCTOU). If the notification later fails, we revert the mark.
-	m.mu.Lock()
+	// Hold docsMu for the entire open sequence to prevent races between
+	// EnsureFileOpen and NotifyFileChanged for the same file.
+	m.docsMu.Lock()
+	defer m.docsMu.Unlock()
+
 	if _, opened := m.docs[uri]; opened {
-		m.mu.Unlock()
 		return nil
 	}
-	m.docs[uri] = 1
-	m.mu.Unlock()
 
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		// Revert — file couldn't be read.
-		m.mu.Lock()
-		delete(m.docs, uri)
-		m.mu.Unlock()
 		return fmt.Errorf("read file for didOpen: %w", err)
 	}
 
@@ -221,13 +228,10 @@ func (m *Manager) EnsureFileOpen(ctx context.Context, client *Client, filePath s
 		},
 	})
 	if err != nil {
-		// Revert — notification failed.
-		m.mu.Lock()
-		delete(m.docs, uri)
-		m.mu.Unlock()
 		return fmt.Errorf("didOpen notification: %w", err)
 	}
 
+	m.docs[uri] = 1
 	return nil
 }
 
@@ -238,16 +242,24 @@ func (m *Manager) startServer(ctx context.Context, cfg ServerConfig) (*Client, S
 		return nil, ServerCapabilities{}, fmt.Errorf("spawn: %w", err)
 	}
 
-	client := NewClient(proc, func(method string, params json.RawMessage) {
+	errHandler := func(err error) {
+		if m.onError != nil {
+			m.onError(err)
+		}
+	}
+
+	client := newClient(proc, func(method string, params json.RawMessage) {
 		if method == "textDocument/publishDiagnostics" {
 			var p PublishDiagnosticsParams
-			if err := json.Unmarshal(params, &p); err == nil {
-				m.diagMu.Lock()
-				m.diags[p.URI] = p.Diagnostics
-				m.diagMu.Unlock()
+			if err := json.Unmarshal(params, &p); err != nil {
+				errHandler(fmt.Errorf("publishDiagnostics unmarshal: %w", err))
+				return
 			}
+			m.diagMu.Lock()
+			m.diags[p.URI] = p.Diagnostics
+			m.diagMu.Unlock()
 		}
-	})
+	}, errHandler)
 
 	initParams := InitializeParams{
 		ProcessID: os.Getpid(),

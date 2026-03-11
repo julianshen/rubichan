@@ -169,7 +169,15 @@ func (s *Summarizer) SummarizeDiagnostics(diags []Diagnostic, maxItems int) Summ
 	var sb strings.Builder
 	shown := 0
 
-	if len(errors) > 0 {
+	// Cap errors to prevent unbounded output that could blow token budget.
+	if len(errors) > maxItems {
+		fmt.Fprintf(&sb, "Errors (%d of %d):\n", maxItems, len(errors))
+		for _, d := range errors[:maxItems] {
+			sb.WriteString(formatDiagnostic(d))
+			shown++
+		}
+		sb.WriteString("\n")
+	} else if len(errors) > 0 {
 		fmt.Fprintf(&sb, "Errors (%d):\n", len(errors))
 		for _, d := range errors {
 			sb.WriteString(formatDiagnostic(d))
