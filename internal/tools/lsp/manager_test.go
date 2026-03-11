@@ -356,6 +356,94 @@ func TestServerForConcurrentInitFailure(t *testing.T) {
 	assert.False(t, starting, "starting entry should be cleaned up")
 }
 
+func TestServerForAfterShutdownReturnsError(t *testing.T) {
+	// After Shutdown, ServerFor must return ErrManagerShutdown immediately.
+	m, mt := newTestManager(t)
+
+	// Handle the shutdown/exit for the pre-existing "go" server.
+	go func() {
+		req, err := readRequest(mt.server)
+		if err != nil {
+			return
+		}
+		_ = writeResponse(mt.server, req.ID, nil)
+		_, _ = readRequest(mt.server) // exit
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	require.NoError(t, m.Shutdown(ctx))
+
+	// Now ServerFor should be rejected.
+	_, _, err := m.ServerFor(ctx, "go")
+	assert.ErrorIs(t, err, ErrManagerShutdown)
+}
+
+func TestServerForMidFlightShutdownClosesOrphan(t *testing.T) {
+	// If Shutdown runs while ServerFor is inside startServer (mu released),
+	// the newly-created server should be closed rather than stored in m.servers.
+	reg := NewRegistry()
+	reg.lookPath = func(string) (string, error) { return "/usr/bin/gopls", nil }
+	m := NewManager(reg, "/test")
+
+	spawnReady := make(chan struct{}) // signals spawn has started
+	spawnGo := make(chan struct{})    // lets spawn proceed to completion
+
+	m.spawnServer = func(_ ServerConfig) (io.ReadWriteCloser, error) {
+		close(spawnReady) // signal that we're inside startServer
+		<-spawnGo         // wait for test to run Shutdown
+		mt := newMockTransport()
+		go func() {
+			raw, _ := readRequest(mt.server)
+			_ = writeResponse(mt.server, raw.ID, InitializeResult{
+				Capabilities: ServerCapabilities{DefinitionProvider: true},
+			})
+			_, _ = readRequest(mt.server) // initialized
+		}()
+		return mt.client, nil
+	}
+
+	// Launch ServerFor in background.
+	type result struct {
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		_, _, err := m.ServerFor(context.Background(), "go")
+		resultCh <- result{err: err}
+	}()
+
+	// Wait for ServerFor to enter startServer (mu is released).
+	<-spawnReady
+
+	// Run Shutdown while ServerFor is blocked. Use a background ctx so
+	// Shutdown waits for the init barrier if needed.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- m.Shutdown(shutdownCtx)
+	}()
+
+	// Let the spawn proceed. ServerFor will finish startServer, but by now
+	// m.closed is true — it should close the new client and return an error.
+	close(spawnGo)
+
+	// Wait for both ServerFor and Shutdown to complete.
+	res := <-resultCh
+	assert.ErrorIs(t, res.err, ErrManagerShutdown, "ServerFor should return ErrManagerShutdown")
+
+	err := <-shutdownDone
+	assert.NoError(t, err)
+
+	// The server map should be empty — the orphaned handle was NOT stored.
+	m.mu.Lock()
+	assert.Empty(t, m.servers, "no servers should remain after mid-flight shutdown")
+	m.mu.Unlock()
+}
+
 func TestManagerSetSummarizer(t *testing.T) {
 	reg := NewRegistry()
 	m := NewManager(reg, "/test")

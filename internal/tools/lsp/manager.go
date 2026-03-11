@@ -26,6 +26,7 @@ type Manager struct {
 	onError     func(error) // optional handler for non-fatal errors
 
 	mu       sync.Mutex
+	closed   bool                     // set by Shutdown; prevents new server registration
 	servers  map[string]*serverHandle // language -> handle
 	starting map[string]*serverInit   // language -> in-progress init
 
@@ -80,11 +81,18 @@ func (m *Manager) getSummarizer() *Summarizer {
 }
 
 // ServerFor returns the client for the given language, starting the server if
-// needed. Returns ErrServerNotInstalled if the binary is not on PATH.
+// needed. Returns ErrServerNotInstalled if the binary is not on PATH, or
+// ErrManagerShutdown if Shutdown has been called.
 // The global mu is released during the blocking startServer call so
 // concurrent callers for other languages are not blocked.
 func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *ServerCapabilities, error) {
 	m.mu.Lock()
+
+	// Reject new servers after Shutdown has been called.
+	if m.closed {
+		m.mu.Unlock()
+		return nil, nil, ErrManagerShutdown
+	}
 
 	// Fast path: server already running.
 	if handle, ok := m.servers[languageID]; ok {
@@ -143,17 +151,26 @@ func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *S
 
 	m.mu.Lock()
 	delete(m.starting, languageID)
+	if startErr != nil {
+		init.err = fmt.Errorf("start %s server: %w", languageID, startErr)
+		m.mu.Unlock()
+		return nil, nil, init.err
+	}
+	// If Shutdown ran while we were starting, close the newly-created server
+	// instead of publishing it — otherwise it becomes an orphaned process.
+	if m.closed {
+		m.mu.Unlock()
+		if init.handle != nil && init.handle.client != nil {
+			init.handle.client.Close()
+		}
+		init.err = ErrManagerShutdown
+		return nil, nil, ErrManagerShutdown
+	}
 	if init.handle != nil {
 		m.servers[languageID] = init.handle
 	}
-	if startErr != nil {
-		init.err = fmt.Errorf("start %s server: %w", languageID, startErr)
-	}
 	m.mu.Unlock()
 
-	if startErr != nil {
-		return nil, nil, init.err
-	}
 	return init.handle.client, &init.handle.capabilities, nil
 }
 
@@ -245,9 +262,10 @@ func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, conten
 // It also waits for any in-progress server starts to complete before
 // shutting them down, preventing orphaned server processes.
 func (m *Manager) Shutdown(ctx context.Context) error {
-	// Wait for any in-progress server starts to settle so we don't
-	// leak server processes that finish spawning after Shutdown returns.
+	// Mark the manager as closed so that any in-flight or future ServerFor
+	// calls will not publish new handles into m.servers after we clear it.
 	m.mu.Lock()
+	m.closed = true
 	pending := make([]*serverInit, 0, len(m.starting))
 	for _, init := range m.starting {
 		pending = append(pending, init)
