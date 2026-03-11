@@ -49,9 +49,11 @@ func (pb *PromptBuilder) Build() (string, []int) {
 		if sb.Len() > 0 {
 			sb.WriteString("\n\n")
 		}
-		sb.WriteString("## ")
-		sb.WriteString(s.Name)
-		sb.WriteString("\n\n")
+		if s.Name != "" {
+			sb.WriteString("## ")
+			sb.WriteString(s.Name)
+			sb.WriteString("\n\n")
+		}
 		sb.WriteString(s.Content)
 	}
 
@@ -64,9 +66,11 @@ func (pb *PromptBuilder) Build() (string, []int) {
 		if sb.Len() > 0 {
 			sb.WriteString("\n\n")
 		}
-		sb.WriteString("## ")
-		sb.WriteString(s.Name)
-		sb.WriteString("\n\n")
+		if s.Name != "" {
+			sb.WriteString("## ")
+			sb.WriteString(s.Name)
+			sb.WriteString("\n\n")
+		}
 		sb.WriteString(s.Content)
 	}
 

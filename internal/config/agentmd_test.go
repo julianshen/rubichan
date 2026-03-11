@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,4 +71,21 @@ func TestLoadSoulMD_FileMissing(t *testing.T) {
 	result, err := LoadSoulMD(dir)
 	require.NoError(t, err)
 	assert.Empty(t, result)
+}
+
+func TestLoadIdentityMD_RejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior requires elevated privileges on Windows")
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	require.NoError(t, os.WriteFile(target, []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "IDENTITY.md")))
+
+	result, err := LoadIdentityMD(dir)
+	require.Error(t, err)
+	assert.Empty(t, result)
+	assert.Contains(t, err.Error(), "loadOptionalMarkdown")
+	assert.Contains(t, err.Error(), "IDENTITY.md")
 }

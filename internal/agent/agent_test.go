@@ -346,6 +346,19 @@ func TestPromptSectionOrderWithIdentityAndSoul(t *testing.T) {
 	assert.Less(t, agentIdx, extraIdx)
 }
 
+func TestBuildSystemPromptWithFragmentsDoesNotNestStaticSections(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg, WithIdentityMD("workspace identity"))
+
+	prompt, _ := a.buildSystemPromptWithFragments()
+	assert.Equal(t, 1, strings.Count(prompt, "## System"))
+	assert.Equal(t, 1, strings.Count(prompt, "## Identity"))
+	assert.Equal(t, 1, strings.Count(prompt, "## Soul"))
+}
+
 func TestTurnTextOnly(t *testing.T) {
 	mp := &mockProvider{
 		events: []provider.StreamEvent{
