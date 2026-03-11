@@ -141,7 +141,7 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	// different, potentially private address).
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{
-		DialContext: pinnedDialer(dialer, u.Hostname(), addrs),
+		DialContext: pinnedDialer(dialer, u.Hostname(), addrs, t.resolver),
 	}
 	client := &http.Client{Timeout: timeout, Transport: transport}
 	if in.FollowRedirects != nil && !*in.FollowRedirects {
@@ -267,29 +267,45 @@ func validateTarget(ctx context.Context, u *url.URL, resolve ResolveFunc) ([]net
 
 // pinnedDialer returns a DialContext function that connects only to the
 // pre-resolved IP addresses for the given host, preventing DNS rebinding.
-func pinnedDialer(d *net.Dialer, host string, addrs []net.IPAddr) func(ctx context.Context, network, addr string) (net.Conn, error) {
+// For redirect targets (different host), it resolves and validates against
+// private addresses before connecting.
+func pinnedDialer(d *net.Dialer, host string, addrs []net.IPAddr, resolve ResolveFunc) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		reqHost, reqPort, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
 		}
 		if reqHost != host {
-			// Different host (e.g. redirect) — fall back to normal dial.
-			return d.DialContext(ctx, network, addr)
-		}
-		var lastErr error
-		for _, ip := range addrs {
-			conn, dialErr := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), reqPort))
-			if dialErr == nil {
-				return conn, nil
+			// Different host (e.g. redirect) — resolve and validate
+			// against private addresses to prevent SSRF via redirect.
+			redirectAddrs, resolveErr := resolve(ctx, reqHost)
+			if resolveErr != nil {
+				return nil, fmt.Errorf("resolve redirect host %q: %w", reqHost, resolveErr)
 			}
-			lastErr = dialErr
+			for _, a := range redirectAddrs {
+				if isPrivateAddress(a.IP) {
+					return nil, fmt.Errorf("redirect to private or local address is not allowed")
+				}
+			}
+			return dialPinned(ctx, d, network, reqPort, redirectAddrs)
 		}
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		return nil, fmt.Errorf("no addresses for host %q", host)
+		return dialPinned(ctx, d, network, reqPort, addrs)
 	}
+}
+
+func dialPinned(ctx context.Context, d *net.Dialer, network, port string, addrs []net.IPAddr) (net.Conn, error) {
+	var lastErr error
+	for _, ip := range addrs {
+		conn, dialErr := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no addresses to connect to")
 }
 
 func isPrivateAddress(ip net.IP) bool {

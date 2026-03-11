@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -132,7 +133,11 @@ func (t *QueryTool) resolveConnection(engine, database string) (string, string, 
 		if strings.TrimSpace(database) == "" {
 			return "", "", fmt.Errorf("database DSN is required")
 		}
-		return "pgx", database, nil
+		sanitized, err := sanitizePostgresDSN(database)
+		if err != nil {
+			return "", "", err
+		}
+		return "pgx", sanitized, nil
 	case "mysql":
 		if strings.TrimSpace(database) == "" {
 			return "", "", fmt.Errorf("database DSN is required")
@@ -278,6 +283,96 @@ func sanitizeMySQLDSN(dsn string) (string, error) {
 		return base, nil
 	}
 	return base + "?" + strings.Join(kept, "&"), nil
+}
+
+// postgresDSNAllowedParams lists the only DSN parameters that are safe to pass
+// through. Parameters like sslkey, sslcert, sslrootcert, and service can be
+// used for credential exfiltration or SSRF attacks and are stripped.
+var postgresDSNAllowedParams = map[string]bool{
+	"sslmode":             true,
+	"connect_timeout":     true,
+	"application_name":    true,
+	"search_path":         true,
+	"timezone":            true,
+	"client_encoding":     true,
+	"options":             true,
+	"statement_timeout":   true,
+	"lock_timeout":        true,
+	"idle_in_transaction_session_timeout": true,
+}
+
+func sanitizePostgresDSN(dsn string) (string, error) {
+	// Postgres DSN can be either URI format (postgres://...) or key=value format.
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		return sanitizePostgresURI(dsn)
+	}
+	return sanitizePostgresKeyValue(dsn)
+}
+
+func sanitizePostgresURI(dsn string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("invalid postgres DSN: %w", err)
+	}
+	q := u.Query()
+	for key := range q {
+		if !postgresDSNAllowedParams[key] {
+			q.Del(key)
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func sanitizePostgresKeyValue(dsn string) (string, error) {
+	// key=value pairs separated by spaces; values may be single-quoted.
+	var kept []string
+	// Simple key=value allowlist approach — only keep known-safe keys.
+	pairs := splitPostgresKV(dsn)
+	for _, kv := range pairs {
+		eqIdx := strings.IndexByte(kv, '=')
+		if eqIdx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(kv[:eqIdx])
+		// Always keep connection essentials.
+		switch key {
+		case "host", "port", "dbname", "user", "password":
+			kept = append(kept, kv)
+		default:
+			if postgresDSNAllowedParams[key] {
+				kept = append(kept, kv)
+			}
+		}
+	}
+	return strings.Join(kept, " "), nil
+}
+
+func splitPostgresKV(dsn string) []string {
+	var parts []string
+	var current strings.Builder
+	inQuote := false
+	for i := 0; i < len(dsn); i++ {
+		ch := dsn[i]
+		if ch == '\'' && !inQuote {
+			inQuote = true
+			current.WriteByte(ch)
+		} else if ch == '\'' && inQuote {
+			inQuote = false
+			current.WriteByte(ch)
+		} else if ch == ' ' && !inQuote {
+			if current.Len() > 0 {
+				parts = append(parts, current.String())
+				current.Reset()
+			}
+		} else {
+			current.WriteByte(ch)
+		}
+	}
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+	return parts
 }
 
 func normalizeValue(v interface{}) interface{} {

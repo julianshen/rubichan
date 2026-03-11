@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -165,6 +166,9 @@ func (s *Service) Open(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return errResult("only http and https URLs are allowed"), nil
+	}
+	if err := validateBrowserTarget(u); err != nil {
+		return errResult("%s", err), nil
 	}
 
 	opts := OpenOptions{URL: in.URL, Headless: true, Viewport: Viewport{Width: 1280, Height: 800}}
@@ -388,6 +392,37 @@ func (s *Service) screenshotPath(sessionID string) string {
 	}, sessionID)
 	filename := fmt.Sprintf("%s-%d.png", clean, time.Now().UnixNano())
 	return filepath.Join(s.artifactDir, filename)
+}
+
+// validateBrowserTarget resolves the URL's host and rejects private/local IPs
+// to prevent SSRF attacks via the browser tool.
+func validateBrowserTarget(u *url.URL) error {
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return fmt.Errorf("url host is required")
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	if err != nil {
+		return fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	for _, addr := range addrs {
+		if isPrivateAddress(addr.IP) {
+			return fmt.Errorf("requests to private or local addresses are not allowed")
+		}
+	}
+	return nil
+}
+
+func isPrivateAddress(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
 }
 
 func errResult(format string, args ...any) tools.ToolResult {
