@@ -3,13 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/julianshen/rubichan/internal/config"
@@ -69,6 +72,10 @@ func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
 	assert.Contains(t, string(data), "rubichan session log started")
 	assert.Contains(t, string(data), "captured line")
 	assert.Contains(t, string(data), "rubichan session log finished")
+	info, err := os.Stat(logger.path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	assert.Contains(t, filepath.Base(logger.path), strconv.Itoa(os.Getpid()))
 	log.Print("restored line")
 	assert.Contains(t, sentinel.String(), "restored line")
 	assert.Equal(t, 123, log.Flags())
@@ -86,6 +93,10 @@ func TestWriteDiagnosticDumpIncludesSignalAndSessionLog(t *testing.T) {
 	assert.Contains(t, text, "signal: quit")
 	assert.Contains(t, text, "session_log: /tmp/session.log")
 	assert.Contains(t, text, "goroutine")
+	info, err := os.Stat(dumpPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	assert.Contains(t, filepath.Base(dumpPath), strconv.Itoa(os.Getpid()))
 }
 
 func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
@@ -100,6 +111,16 @@ func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
 	assert.Contains(t, text, "panic: boom")
 	assert.Contains(t, text, "session_log: /tmp/session.log")
 	assert.Contains(t, text, "goroutine")
+	info, err := os.Stat(dumpPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	assert.Contains(t, filepath.Base(dumpPath), strconv.Itoa(os.Getpid()))
+}
+
+func TestLogFileSuffixIncludesTimestampAndPID(t *testing.T) {
+	now := time.Date(2026, time.March, 11, 21, 15, 30, 123456789, time.FixedZone("UTC+8", 8*3600))
+	suffix := logFileSuffix(now)
+	assert.Equal(t, fmt.Sprintf("20260311-131530.123456789-%d", os.Getpid()), suffix)
 }
 
 func TestAutoApproveDefaultsFalse(t *testing.T) {

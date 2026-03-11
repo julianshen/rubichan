@@ -99,6 +99,8 @@ func versionString() string {
 	return fmt.Sprintf("rubichan %s (commit: %s, built: %s)", version, commit, date)
 }
 
+// shouldIgnoreTUIRunError suppresses Bubble Tea's program-killed error when
+// Rubichan intentionally cancelled the TUI context as part of signal handling.
 func shouldIgnoreTUIRunError(err error, runCtx context.Context) bool {
 	return errors.Is(err, tea.ErrProgramKilled) && errors.Is(runCtx.Err(), context.Canceled)
 }
@@ -122,14 +124,54 @@ type sessionLogger struct {
 	prevFlags  int
 }
 
+func logFileSuffix(now time.Time) string {
+	return fmt.Sprintf("%s-%d", now.UTC().Format("20060102-150405.000000000"), os.Getpid())
+}
+
+func captureAllStacks() []byte {
+	buf := make([]byte, 1<<20)
+	for len(buf) <= 16<<20 {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return buf[:n]
+		}
+		buf = make([]byte, len(buf)*2)
+	}
+	n := runtime.Stack(buf, true)
+	return buf[:n]
+}
+
+func writeStackDump(cfgDir, fileName, header string) (string, error) {
+	logDir := filepath.Join(cfgDir, "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating log directory: %w", err)
+	}
+
+	path := filepath.Join(logDir, fileName)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("opening dump file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.WriteString(f, header); err != nil {
+		return "", fmt.Errorf("writing dump header: %w", err)
+	}
+	if _, err := f.Write(captureAllStacks()); err != nil {
+		return "", fmt.Errorf("writing dump stack: %w", err)
+	}
+
+	return path, nil
+}
+
 func startSessionLogger(cfgDir string) (*sessionLogger, error) {
 	logDir := filepath.Join(cfgDir, "logs")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating log directory: %w", err)
 	}
 
-	path := filepath.Join(logDir, fmt.Sprintf("rubichan-%s.log", time.Now().Format("20060102-150405")))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	path := filepath.Join(logDir, fmt.Sprintf("rubichan-%s.log", logFileSuffix(time.Now())))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening session log: %w", err)
 	}
@@ -158,79 +200,38 @@ func (sl *sessionLogger) Close() error {
 }
 
 func writeDiagnosticDump(cfgDir string, sig os.Signal, sessionLogPath string) (string, error) {
-	logDir := filepath.Join(cfgDir, "logs")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return "", fmt.Errorf("creating log directory: %w", err)
-	}
-
-	path := filepath.Join(logDir, fmt.Sprintf("diagnostic-%s-%s.log", strings.ToLower(sig.String()), time.Now().Format("20060102-150405")))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return "", fmt.Errorf("opening diagnostic log: %w", err)
-	}
-	defer f.Close()
-
-	buf := make([]byte, 1<<20)
-	n := runtime.Stack(buf, true)
-	if n == len(buf) {
-		buf = make([]byte, 4<<20)
-		n = runtime.Stack(buf, true)
-	}
-
-	if _, err := fmt.Fprintf(f, "timestamp: %s\nsignal: %s\nsession_log: %s\n\n", time.Now().UTC().Format(time.RFC3339Nano), sig.String(), sessionLogPath); err != nil {
-		return "", fmt.Errorf("writing diagnostic header: %w", err)
-	}
-	if _, err := f.Write(buf[:n]); err != nil {
-		return "", fmt.Errorf("writing diagnostic stack: %w", err)
-	}
-
-	return path, nil
+	now := time.Now()
+	header := fmt.Sprintf(
+		"timestamp: %s\nsignal: %s\nsession_log: %s\n\n",
+		now.UTC().Format(time.RFC3339Nano),
+		sig.String(),
+		sessionLogPath,
+	)
+	return writeStackDump(cfgDir, fmt.Sprintf("diagnostic-%s-%s.log", strings.ToLower(sig.String()), logFileSuffix(now)), header)
 }
 
 func writePanicDump(cfgDir string, recovered any, sessionLogPath string) (string, error) {
-	logDir := filepath.Join(cfgDir, "logs")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return "", fmt.Errorf("creating log directory: %w", err)
-	}
-
-	path := filepath.Join(logDir, fmt.Sprintf("panic-%s.log", time.Now().Format("20060102-150405")))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return "", fmt.Errorf("opening panic log: %w", err)
-	}
-	defer f.Close()
-
-	buf := make([]byte, 1<<20)
-	n := runtime.Stack(buf, true)
-	if n == len(buf) {
-		buf = make([]byte, 4<<20)
-		n = runtime.Stack(buf, true)
-	}
-
-	if _, err := fmt.Fprintf(
-		f,
+	now := time.Now()
+	header := fmt.Sprintf(
 		"timestamp: %s\npanic: %v\nsession_log: %s\n\n",
-		time.Now().UTC().Format(time.RFC3339Nano),
+		now.UTC().Format(time.RFC3339Nano),
 		recovered,
 		sessionLogPath,
-	); err != nil {
-		return "", fmt.Errorf("writing panic header: %w", err)
-	}
-	if _, err := f.Write(buf[:n]); err != nil {
-		return "", fmt.Errorf("writing panic stack: %w", err)
-	}
-
-	return path, nil
+	)
+	return writeStackDump(cfgDir, fmt.Sprintf("panic-%s.log", logFileSuffix(now)), header)
 }
 
 func startInteractiveSignalHandler(cfgDir, sessionLogPath string, cancel context.CancelFunc) func() {
 	sigCh := make(chan os.Signal, 1)
 	stopCh := make(chan struct{})
+	// Intercept the first SIGQUIT to persist a diagnostic dump, then stop
+	// handling the signal so repeated SIGQUITs fall back to the runtime default.
 	signal.Notify(sigCh, syscall.SIGQUIT)
 
 	go func() {
 		select {
 		case sig := <-sigCh:
+			signal.Stop(sigCh)
 			path, err := writeDiagnosticDump(cfgDir, sig, sessionLogPath)
 			if err != nil {
 				log.Printf("failed to write %s diagnostic dump: %v", sig.String(), err)
