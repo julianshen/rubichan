@@ -1,66 +1,31 @@
 package provider
 
 import (
-	"context"
-	"encoding/json"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
+// Type aliases — all existing code using provider.Message etc. compiles unchanged.
+
 // LLMProvider defines the interface for interacting with an LLM provider.
-type LLMProvider interface {
-	Stream(ctx context.Context, req CompletionRequest) (<-chan StreamEvent, error)
-}
+type LLMProvider = agentsdk.LLMProvider
 
 // CompletionRequest represents a request to an LLM for completion.
-type CompletionRequest struct {
-	Model            string    `json:"model"`
-	System           string    `json:"system,omitempty"`
-	Messages         []Message `json:"messages"`
-	Tools            []ToolDef `json:"tools,omitempty"`
-	MaxTokens        int       `json:"max_tokens"`
-	Temperature      *float64  `json:"temperature,omitempty"`
-	CacheBreakpoints []int     `json:"cache_breakpoints,omitempty"` // byte offsets in System for cache hints
-}
+type CompletionRequest = agentsdk.CompletionRequest
 
 // Message represents a single message in a conversation.
-type Message struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
-}
+type Message = agentsdk.Message
 
 // ContentBlock represents a block of content within a message.
-type ContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
-}
+type ContentBlock = agentsdk.ContentBlock
 
 // ToolDef defines a tool that can be used by the LLM.
-type ToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
-}
+type ToolDef = agentsdk.ToolDef
 
 // ToolUseBlock represents a tool use block from the LLM response.
-type ToolUseBlock struct {
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Input json.RawMessage `json:"input"`
-}
+type ToolUseBlock = agentsdk.ToolUseBlock
 
 // StreamEvent represents a single event in a streaming response.
-type StreamEvent struct {
-	Type         string
-	Text         string
-	ToolUse      *ToolUseBlock
-	Error        error
-	InputTokens  int
-	OutputTokens int
-}
+type StreamEvent = agentsdk.StreamEvent
 
 // NewUserMessage creates a new user message with a single text content block.
 func NewUserMessage(text string) Message {
