@@ -143,7 +143,7 @@ func captureAllStacks() []byte {
 
 func writeStackDump(cfgDir, fileName, header string) (string, error) {
 	logDir := filepath.Join(cfgDir, "logs")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return "", fmt.Errorf("creating log directory: %w", err)
 	}
 
@@ -166,7 +166,7 @@ func writeStackDump(cfgDir, fileName, header string) (string, error) {
 
 func startSessionLogger(cfgDir string) (*sessionLogger, error) {
 	logDir := filepath.Join(cfgDir, "logs")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return nil, fmt.Errorf("creating log directory: %w", err)
 	}
 
@@ -224,14 +224,22 @@ func writePanicDump(cfgDir string, recovered any, sessionLogPath string) (string
 func startInteractiveSignalHandler(cfgDir, sessionLogPath string, cancel context.CancelFunc) func() {
 	sigCh := make(chan os.Signal, 1)
 	stopCh := make(chan struct{})
+	var stopOnce sync.Once
 	// Intercept the first SIGQUIT to persist a diagnostic dump, then stop
 	// handling the signal so repeated SIGQUITs fall back to the runtime default.
 	signal.Notify(sigCh, syscall.SIGQUIT)
 
+	stop := func() {
+		stopOnce.Do(func() {
+			signal.Stop(sigCh)
+			close(stopCh)
+		})
+	}
+
 	go func() {
 		select {
 		case sig := <-sigCh:
-			signal.Stop(sigCh)
+			stop()
 			path, err := writeDiagnosticDump(cfgDir, sig, sessionLogPath)
 			if err != nil {
 				log.Printf("failed to write %s diagnostic dump: %v", sig.String(), err)
@@ -243,10 +251,7 @@ func startInteractiveSignalHandler(cfgDir, sessionLogPath string, cancel context
 		}
 	}()
 
-	return func() {
-		signal.Stop(sigCh)
-		close(stopCh)
-	}
+	return stop
 }
 
 // setupWorkingDir determines the effective working directory. When --worktree

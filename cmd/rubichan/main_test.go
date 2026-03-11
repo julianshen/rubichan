@@ -76,6 +76,9 @@ func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	assert.Contains(t, filepath.Base(logger.path), strconv.Itoa(os.Getpid()))
+	dirInfo, err := os.Stat(filepath.Dir(logger.path))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
 	log.Print("restored line")
 	assert.Contains(t, sentinel.String(), "restored line")
 	assert.Equal(t, 123, log.Flags())
@@ -121,6 +124,12 @@ func TestLogFileSuffixIncludesTimestampAndPID(t *testing.T) {
 	now := time.Date(2026, time.March, 11, 21, 15, 30, 123456789, time.FixedZone("UTC+8", 8*3600))
 	suffix := logFileSuffix(now)
 	assert.Equal(t, fmt.Sprintf("20260311-131530.123456789-%d", os.Getpid()), suffix)
+}
+
+func TestStartInteractiveSignalHandlerStopIsIdempotent(t *testing.T) {
+	stop := startInteractiveSignalHandler(t.TempDir(), "/tmp/session.log", func() {})
+	stop()
+	stop()
 }
 
 func TestAutoApproveDefaultsFalse(t *testing.T) {
