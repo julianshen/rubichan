@@ -144,6 +144,54 @@ func TestSummarizeDiagnosticsErrorsPrioritized(t *testing.T) {
 	assert.Contains(t, result.Text, "Warnings/Info (5 of 30)")
 }
 
+func TestFormatDiagnosticWithSource(t *testing.T) {
+	d := Diagnostic{
+		Range:    Range{Start: Position{Line: 5, Character: 10}},
+		Severity: SeverityError,
+		Message:  "undefined: foo",
+		Source:   "compiler",
+	}
+	text := formatDiagnostic(d)
+	assert.Contains(t, text, "error")
+	assert.Contains(t, text, "undefined: foo")
+	assert.Contains(t, text, "(compiler)")
+	assert.Contains(t, text, "line 6:11")
+}
+
+func TestFormatDiagnosticWithoutSource(t *testing.T) {
+	d := Diagnostic{
+		Range:    Range{Start: Position{Line: 0, Character: 0}},
+		Severity: SeverityWarning,
+		Message:  "unused variable",
+	}
+	text := formatDiagnostic(d)
+	assert.Contains(t, text, "warning")
+	assert.Contains(t, text, "unused variable")
+	assert.NotContains(t, text, "()")
+}
+
+func TestSummarizeDiagnosticsAllErrors(t *testing.T) {
+	s := DefaultSummarizer()
+	var diags []Diagnostic
+	for i := 0; i < 25; i++ {
+		diags = append(diags, Diagnostic{
+			Range:    Range{Start: Position{Line: i}},
+			Severity: SeverityError,
+			Message:  fmt.Sprintf("error %d", i),
+		})
+	}
+
+	result := s.SummarizeDiagnostics(diags, 10)
+	// All errors should be shown even if > maxItems.
+	assert.Equal(t, 25, result.Shown)
+	assert.False(t, result.Truncated)
+}
+
+func TestURIToPathInvalid(t *testing.T) {
+	// Non-file URI should be returned as-is.
+	assert.Equal(t, "https://example.com", uriToPath("https://example.com"))
+}
+
 func TestURIToPath(t *testing.T) {
 	assert.Equal(t, "/home/user/main.go", uriToPath("file:///home/user/main.go"))
 	assert.Equal(t, "relative.go", uriToPath("relative.go"))

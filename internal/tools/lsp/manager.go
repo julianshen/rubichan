@@ -23,15 +23,11 @@ type Manager struct {
 	diags  map[string][]Diagnostic // URI -> latest diagnostics
 }
 
-// serverHandle wraps a running language server with restart tracking.
+// serverHandle wraps a running language server.
 type serverHandle struct {
 	client       *Client
 	capabilities ServerCapabilities
-	failures     int
-	disabled     bool
 }
-
-const maxRestartAttempts = 3
 
 // NewManager creates a new manager for the given workspace root.
 func NewManager(registry *Registry, rootDir string) *Manager {
@@ -57,9 +53,6 @@ func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *S
 	defer m.mu.Unlock()
 
 	if handle, ok := m.servers[languageID]; ok {
-		if handle.disabled {
-			return nil, nil, fmt.Errorf("%w: %s (disabled after %d failures)", ErrServerNotInstalled, languageID, maxRestartAttempts)
-		}
 		return handle.client, &handle.capabilities, nil
 	}
 
@@ -95,13 +88,16 @@ func (m *Manager) ServerForFile(ctx context.Context, filePath string) (*Client, 
 }
 
 // DiagnosticsFor returns cached diagnostics for a file URI.
+// Returns a copy so callers cannot mutate the internal cache.
 func (m *Manager) DiagnosticsFor(uri string, includeWarnings bool) []Diagnostic {
 	m.diagMu.RLock()
 	defer m.diagMu.RUnlock()
 
 	all := m.diags[uri]
 	if includeWarnings {
-		return all
+		result := make([]Diagnostic, len(all))
+		copy(result, all)
+		return result
 	}
 
 	var errors []Diagnostic
@@ -178,10 +174,45 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return lastErr
 }
 
+// EnsureFileOpen sends textDocument/didOpen if the file hasn't been opened yet.
+// Must be called before position-based LSP requests to ensure the server knows about the file.
+func (m *Manager) EnsureFileOpen(ctx context.Context, client *Client, filePath string) {
+	uri := pathToURI(filePath)
+
+	m.mu.Lock()
+	_, opened := m.docs[uri]
+	m.mu.Unlock()
+
+	if opened {
+		return
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return
+	}
+
+	lang, _ := m.registry.LanguageForFile(filePath)
+
+	err = client.Notify(ctx, "textDocument/didOpen", DidOpenTextDocumentParams{
+		TextDocument: TextDocumentItem{
+			URI:        uri,
+			LanguageID: lang,
+			Version:    1,
+			Text:       string(content),
+		},
+	})
+
+	// Only mark as opened if the notification succeeded.
+	if err == nil {
+		m.mu.Lock()
+		m.docs[uri] = 1
+		m.mu.Unlock()
+	}
+}
+
 // startServer spawns a language server process and performs the initialize handshake.
 func (m *Manager) startServer(ctx context.Context, cfg ServerConfig) (*Client, ServerCapabilities, error) {
-	// Build command. In production this spawns a process; for now we define
-	// the interface. The actual exec.Command spawning is in server.go.
 	proc, err := spawnServer(cfg)
 	if err != nil {
 		return nil, ServerCapabilities{}, fmt.Errorf("spawn: %w", err)

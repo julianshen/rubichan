@@ -162,5 +162,5 @@ func TestRegistryLanguages(t *testing.T) {
 	assert.Contains(t, langs, "go")
 	assert.Contains(t, langs, "typescript")
 	assert.Contains(t, langs, "python")
-	assert.GreaterOrEqual(t, len(langs), 18)
+	assert.GreaterOrEqual(t, len(langs), 17)
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"time"
 )
 
 // serverProcess wraps an os/exec.Cmd as an io.ReadWriteCloser for the JSON-RPC client.
@@ -21,10 +22,24 @@ func (s *serverProcess) Write(p []byte) (int, error) {
 	return s.stdin.Write(p)
 }
 
+// Close shuts down the server process. It closes stdin to signal the process,
+// waits briefly for a graceful exit, then kills if needed. Always reaps the
+// child to avoid zombie processes.
 func (s *serverProcess) Close() error {
 	_ = s.stdin.Close()
 	_ = s.stdout.Close()
-	return s.cmd.Process.Kill()
+
+	// Try to wait for graceful exit before killing.
+	done := make(chan error, 1)
+	go func() { done <- s.cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(3 * time.Second):
+		_ = s.cmd.Process.Kill()
+		return <-done // reap the zombie
+	}
 }
 
 // spawnServer starts a language server process and returns an io.ReadWriteCloser

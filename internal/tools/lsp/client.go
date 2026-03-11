@@ -12,6 +12,10 @@ import (
 	"sync/atomic"
 )
 
+// maxContentLength is the maximum allowed Content-Length from a language server.
+// Prevents unbounded memory allocation from buggy or malicious servers.
+const maxContentLength = 64 * 1024 * 1024 // 64 MB
+
 // jsonrpcRequest is a JSON-RPC 2.0 request message.
 type jsonrpcRequest struct {
 	JSONRPC string `json:"jsonrpc"`
@@ -49,7 +53,8 @@ func (e *jsonrpcError) Error() string {
 type NotificationHandler func(method string, params json.RawMessage)
 
 // Client is a JSON-RPC 2.0 client that communicates over an io.ReadWriteCloser
-// using LSP Content-Length framing.
+// using LSP Content-Length framing. NewClient starts a background goroutine;
+// callers must call Close to release resources and stop the goroutine.
 type Client struct {
 	rwc     io.ReadWriteCloser
 	reader  *bufio.Reader
@@ -62,11 +67,13 @@ type Client struct {
 	notifyHandler NotificationHandler
 
 	done chan struct{}
+	wg   sync.WaitGroup
 }
 
 // NewClient creates a new JSON-RPC client over the given transport.
 // The onNotify handler is called for server-initiated notifications (e.g.,
 // textDocument/publishDiagnostics). It may be nil if notifications are not needed.
+// Callers must call Close to stop the background read goroutine.
 func NewClient(rwc io.ReadWriteCloser, onNotify NotificationHandler) *Client {
 	c := &Client{
 		rwc:           rwc,
@@ -75,7 +82,11 @@ func NewClient(rwc io.ReadWriteCloser, onNotify NotificationHandler) *Client {
 		notifyHandler: onNotify,
 		done:          make(chan struct{}),
 	}
-	go c.readLoop()
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.readLoop()
+	}()
 	return c
 }
 
@@ -125,7 +136,14 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 
 // Notify sends a JSON-RPC notification (no response expected).
 func (c *Client) Notify(ctx context.Context, method string, params any) error {
-	// Notifications have no ID field.
+	select {
+	case <-c.done:
+		return fmt.Errorf("client closed")
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	msg := struct {
 		JSONRPC string `json:"jsonrpc"`
 		Method  string `json:"method"`
@@ -138,7 +156,7 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 	return c.writeMessage(msg)
 }
 
-// Close shuts down the client.
+// Close shuts down the client and waits for the read goroutine to exit.
 func (c *Client) Close() error {
 	select {
 	case <-c.done:
@@ -146,7 +164,9 @@ func (c *Client) Close() error {
 	default:
 		close(c.done)
 	}
-	return c.rwc.Close()
+	err := c.rwc.Close()
+	c.wg.Wait()
+	return err
 }
 
 // writeMessage encodes a message with Content-Length framing and writes it.
@@ -170,8 +190,12 @@ func (c *Client) writeMessage(msg any) error {
 	return nil
 }
 
-// readLoop reads messages from the transport and dispatches them.
+// readLoop reads messages from the transport and dispatches them. On exit,
+// it signals all pending callers and closes the done channel so blocked
+// Call() invocations fail promptly.
 func (c *Client) readLoop() {
+	defer c.drainPending()
+
 	for {
 		select {
 		case <-c.done:
@@ -181,11 +205,32 @@ func (c *Client) readLoop() {
 
 		data, err := c.readMessage()
 		if err != nil {
-			// Transport closed or error — stop reading.
+			// Transport closed or read error — signal shutdown.
+			select {
+			case <-c.done:
+				// Already shutting down, expected.
+			default:
+				close(c.done)
+			}
 			return
 		}
 
 		c.dispatch(data)
+	}
+}
+
+// drainPending unblocks all goroutines waiting in Call() by sending them
+// a transport-closed error.
+func (c *Client) drainPending() {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+
+	for id, ch := range c.pending {
+		ch <- jsonrpcResponse{
+			ID:    id,
+			Error: &jsonrpcError{Code: -1, Message: "transport closed"},
+		}
+		delete(c.pending, id)
 	}
 }
 
@@ -216,6 +261,9 @@ func (c *Client) readMessage() ([]byte, error) {
 	if contentLength < 0 {
 		return nil, fmt.Errorf("missing Content-Length header")
 	}
+	if contentLength > maxContentLength {
+		return nil, fmt.Errorf("content-length %d exceeds maximum %d", contentLength, maxContentLength)
+	}
 
 	body := make([]byte, contentLength)
 	if _, err := io.ReadFull(c.reader, body); err != nil {
@@ -226,8 +274,6 @@ func (c *Client) readMessage() ([]byte, error) {
 
 // dispatch routes a received message to the appropriate handler.
 func (c *Client) dispatch(data []byte) {
-	// Try to determine if this is a response (has "id" and "result"/"error")
-	// or a notification (has "method" but no "id").
 	var probe struct {
 		ID     *int64          `json:"id"`
 		Method string          `json:"method"`
@@ -235,7 +281,7 @@ func (c *Client) dispatch(data []byte) {
 		Error  *jsonrpcError   `json:"error"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return // malformed message
+		return // malformed JSON — drop silently (server bug)
 	}
 
 	if probe.ID != nil && probe.Method == "" {

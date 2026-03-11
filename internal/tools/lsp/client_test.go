@@ -281,6 +281,85 @@ func TestClientConcurrentCalls(t *testing.T) {
 	wg.Wait()
 }
 
+func TestClientNotifyClosedClient(t *testing.T) {
+	mt := newMockTransport()
+	defer mt.server.Close()
+
+	client := NewClient(mt.client, nil)
+	client.Close()
+
+	err := client.Notify(context.Background(), "test/notify", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "client closed")
+}
+
+func TestClientNotifyCancelledContext(t *testing.T) {
+	mt := newMockTransport()
+	defer mt.client.Close()
+	defer mt.server.Close()
+
+	client := NewClient(mt.client, nil)
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	err := client.Notify(ctx, "test/notify", nil)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestClientTransportCloseUnblocksPending(t *testing.T) {
+	mt := newMockTransport()
+
+	client := NewClient(mt.client, nil)
+
+	// Start a call that will block.
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.Call(context.Background(), "test/blocked", nil)
+		errCh <- err
+	}()
+
+	// Wait for the request to be sent.
+	_, _ = readRequest(mt.server)
+
+	// Close the server side to trigger transport error.
+	mt.server.Close()
+
+	select {
+	case err := <-errCh:
+		assert.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Call was not unblocked after transport close")
+	}
+
+	client.Close()
+}
+
+func TestClientReadMessageMaxContentLength(t *testing.T) {
+	mt := newMockTransport()
+
+	client := NewClient(mt.client, nil)
+	defer client.Close()
+
+	// Send a response with Content-Length exceeding max.
+	go func() {
+		msg := fmt.Sprintf("Content-Length: %d\r\n\r\n", maxContentLength+1)
+		mt.server.Write([]byte(msg))
+	}()
+
+	// The read loop should close when it encounters the oversized message.
+	select {
+	case <-client.done:
+		// Expected — read loop detected the error and closed.
+	case <-time.After(2 * time.Second):
+		t.Fatal("readLoop did not shut down on oversized Content-Length")
+	}
+
+	mt.server.Close()
+}
+
 func TestClientClose(t *testing.T) {
 	mt := newMockTransport()
 	defer mt.server.Close()

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -289,20 +290,21 @@ func formatDiagnostic(d Diagnostic) string {
 	)
 }
 
-// uriToPath converts a file URI to a filesystem path.
+// uriToPath converts a file URI to a filesystem path, handling percent-encoding.
 func uriToPath(uri string) string {
-	if strings.HasPrefix(uri, "file://") {
-		path := strings.TrimPrefix(uri, "file://")
-		return filepath.Clean(path)
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "file" {
+		return uri
 	}
-	return uri
+	return filepath.Clean(u.Path)
 }
 
-// pathToURI converts a filesystem path to a file URI.
+// pathToURI converts a filesystem path to a file URI, percent-encoding special characters.
 func pathToURI(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	return "file://" + abs
+	u := url.URL{Scheme: "file", Path: abs}
+	return u.String()
 }
