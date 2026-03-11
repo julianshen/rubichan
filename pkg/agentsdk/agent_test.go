@@ -476,6 +476,137 @@ func TestAgentApprovalCheckerApprovalFuncError(t *testing.T) {
 	assert.Contains(t, toolResults[0].ToolResult.Content, "approval error")
 }
 
+func TestAgentStreamErrorDiscardsToolCalls(t *testing.T) {
+	// Stream produces a tool_use then an error before stop.
+	// The error should prevent tool execution.
+	errorStream := []StreamEvent{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "echo"}},
+		{Type: "text_delta", Text: `{"text":"hi"}`},
+		{Type: "error", Error: fmt.Errorf("stream interrupted")},
+		{Type: "stop", InputTokens: 50, OutputTokens: 25},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{errorStream, textResponse("ok")}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var types []string
+	for ev := range ch {
+		types = append(types, ev.Type)
+	}
+
+	assert.Contains(t, types, "error")
+	// Tool should NOT have been executed since the stream had an error.
+	assert.NotContains(t, types, "tool_call")
+	assert.NotContains(t, types, "tool_result")
+}
+
+func TestAgentContextCancelledMidToolBatch(t *testing.T) {
+	// Two tool calls in one response; first tool cancels context.
+	twoToolStream := []StreamEvent{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "cancel_tool"}},
+		{Type: "text_delta", Text: `{}`},
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_2", Name: "echo"}},
+		{Type: "text_delta", Text: `{}`},
+		{Type: "stop", InputTokens: 100, OutputTokens: 50},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{twoToolStream}}
+	r := NewRegistry()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelTool := &contextCancelTool{cancel: cancel}
+	require.NoError(t, r.Register(cancelTool))
+	require.NoError(t, r.Register(&echoTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(ctx, "test")
+	require.NoError(t, err)
+
+	var toolCalls []string
+	for ev := range ch {
+		if ev.Type == "tool_call" {
+			toolCalls = append(toolCalls, ev.ToolCall.Name)
+		}
+	}
+
+	// First tool should execute, second should be skipped due to cancellation.
+	assert.Contains(t, toolCalls, "cancel_tool")
+	assert.NotContains(t, toolCalls, "echo")
+}
+
+func TestAgentApprovalFuncErrorLogged(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	logger := &captureLogger{}
+	errApprove := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+		return false, fmt.Errorf("approval service down")
+	}
+
+	a := NewAgent(p, WithTools(r), WithApproval(errApprove), WithLogger(logger))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	// The approval error should be logged.
+	require.Len(t, logger.errors, 1)
+	assert.Contains(t, logger.errors[0], "approval failure")
+	assert.Contains(t, logger.errors[0], "approval service down")
+}
+
+func TestAgentMultipleToolCallsInSingleResponse(t *testing.T) {
+	// Two tool calls in one LLM response.
+	multiToolStream := []StreamEvent{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "echo"}},
+		{Type: "text_delta", Text: `{"text":"a"}`},
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_2", Name: "echo"}},
+		{Type: "text_delta", Text: `{"text":"b"}`},
+		{Type: "stop", InputTokens: 100, OutputTokens: 50},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{multiToolStream, textResponse("done")}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolCallNames []string
+	var toolResultContents []string
+	for ev := range ch {
+		if ev.Type == "tool_call" {
+			toolCallNames = append(toolCallNames, ev.ToolCall.Name)
+		}
+		if ev.Type == "tool_result" {
+			toolResultContents = append(toolResultContents, ev.ToolResult.Content)
+		}
+	}
+
+	assert.Len(t, toolCallNames, 2)
+	assert.Len(t, toolResultContents, 2)
+}
+
+// contextCancelTool cancels the provided context on execution.
+type contextCancelTool struct {
+	cancel context.CancelFunc
+}
+
+func (c *contextCancelTool) Name() string                 { return "cancel_tool" }
+func (c *contextCancelTool) Description() string          { return "cancels context" }
+func (c *contextCancelTool) InputSchema() json.RawMessage { return json.RawMessage(`{}`) }
+func (c *contextCancelTool) Execute(_ context.Context, _ json.RawMessage) (ToolResult, error) {
+	c.cancel()
+	return ToolResult{Content: "cancelled"}, nil
+}
+
 // echoTool is a simple test tool that echoes its input.
 type echoTool struct{}
 

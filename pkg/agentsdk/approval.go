@@ -41,7 +41,7 @@ type AllowAllParallel struct{}
 // CanParallelize always returns true.
 func (AllowAllParallel) CanParallelize(_ string) bool { return true }
 
-// ApprovalResult represents the three-tier approval decision for a tool call.
+// ApprovalResult represents the approval decision for a tool call.
 type ApprovalResult int
 
 const (

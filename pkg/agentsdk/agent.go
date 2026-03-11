@@ -46,7 +46,6 @@ func WithConfig(cfg AgentConfig) Option {
 }
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
-// This is the public SDK entry point for external consumers.
 type Agent struct {
 	provider        LLMProvider
 	tools           *Registry
@@ -77,7 +76,8 @@ func NewAgent(provider LLMProvider, opts ...Option) *Agent {
 
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
-// Concurrent calls are serialized.
+// Concurrent calls are serialized. The caller must consume all events from
+// the returned channel to avoid goroutine leaks.
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.turnMu.Lock()
 
@@ -93,6 +93,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 }
 
 // Conversation returns the agent's conversation for external inspection.
+// It is only safe to call after the Turn event channel has been fully drained.
 func (a *Agent) Conversation() *Conversation {
 	return a.conversation
 }
@@ -196,6 +197,7 @@ func (a *Agent) consumeStream(
 		}
 	}
 
+	var streamError bool
 	for event := range stream {
 		*totalInput += event.InputTokens
 		*totalOutput += event.OutputTokens
@@ -217,13 +219,20 @@ func (a *Agent) consumeStream(
 			}
 		case "error":
 			ch <- TurnEvent{Type: "error", Error: event.Error}
+			// Discard any in-progress tool accumulation to avoid
+			// executing tools built from corrupt/partial data.
+			currentTool = nil
+			toolInputBuf = ""
+			streamError = true
 		case "stop":
 			// handled after loop
 		}
 	}
 
-	finalizeText()
-	finalizeTool()
+	if !streamError {
+		finalizeText()
+		finalizeTool()
+	}
 
 	return blocks, pendingTools, ctx.Err() != nil
 }
@@ -282,6 +291,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 		// No checker — always ask for approval.
 		approved, err := a.approve(ctx, tc.Name, tc.Input)
 		if err != nil {
+			a.logger.Error("approval failure for tool %s: %v", tc.Name, err)
 			return a.toolError(tc, "approval error")
 		}
 		if !approved {

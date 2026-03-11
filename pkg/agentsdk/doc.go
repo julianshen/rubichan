@@ -38,7 +38,7 @@
 // The package is organized into several layers:
 //
 //   - Types: Message, ContentBlock, ToolDef, StreamEvent, CompletionRequest
-//   - Interfaces: LLMProvider, Tool, ApprovalChecker, Summarizer, SubagentSpawner
+//   - Interfaces: LLMProvider, Tool, ApprovalChecker, PersistenceStore, Logger
 //   - Agent: NewAgent() constructor with functional options, Turn() for streaming
 //   - Registry: Standalone tool registry for managing available tools
 //   - Config: AgentConfig with sensible defaults, Logger interface
@@ -53,7 +53,6 @@
 //   - "tool_progress": Streaming output from a tool (ev.ToolProgress)
 //   - "error": An error occurred (ev.Error)
 //   - "done": The turn completed (ev.InputTokens, ev.OutputTokens)
-//   - "subagent_done": A child agent completed (ev.SubagentResult)
 //
 // # Custom Tools
 //

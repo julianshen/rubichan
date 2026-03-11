@@ -38,7 +38,7 @@ type ToolParallelPolicy = agentsdk.ToolParallelPolicy
 // AllowAllParallel is a ToolParallelPolicy that permits all tools to run in parallel.
 type AllowAllParallel = agentsdk.AllowAllParallel
 
-// ApprovalResult represents the three-tier approval decision for a tool call.
+// ApprovalResult represents the approval decision for a tool call.
 type ApprovalResult = agentsdk.ApprovalResult
 
 // Re-export approval result constants.
