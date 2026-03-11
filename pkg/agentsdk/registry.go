@@ -2,6 +2,7 @@ package agentsdk
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -27,10 +28,11 @@ func (r *Registry) Register(t Tool) error {
 	if t == nil {
 		return fmt.Errorf("cannot register nil tool")
 	}
-	if _, exists := r.tools[t.Name()]; exists {
-		return fmt.Errorf("tool already registered: %s", t.Name())
+	name := t.Name()
+	if _, exists := r.tools[name]; exists {
+		return fmt.Errorf("tool already registered: %s", name)
 	}
-	r.tools[t.Name()] = t
+	r.tools[name] = t
 	return nil
 }
 
@@ -57,12 +59,13 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return t, ok
 }
 
-// All returns ToolDef representations of all registered tools.
+// All returns ToolDef representations of all registered tools,
+// sorted alphabetically by name for deterministic ordering.
 func (r *Registry) All() []ToolDef {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var defs []ToolDef
+	defs := make([]ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
 		defs = append(defs, ToolDef{
 			Name:        t.Name(),
@@ -70,6 +73,9 @@ func (r *Registry) All() []ToolDef {
 			InputSchema: t.InputSchema(),
 		})
 	}
+	sort.Slice(defs, func(i, j int) bool {
+		return defs[i].Name < defs[j].Name
+	})
 	return defs
 }
 

@@ -146,22 +146,22 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 			return
 		}
 
-		blocks, pendingTools, cancelled := a.consumeStream(ctx, ch, stream, &totalInputTokens, &totalOutputTokens)
-		if cancelled {
+		sr := a.consumeStream(ctx, ch, stream, &totalInputTokens, &totalOutputTokens)
+		if sr.cancelled || sr.hadError {
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
 
-		if len(blocks) > 0 {
-			a.conversation.AddAssistant(blocks)
+		if len(sr.blocks) > 0 {
+			a.conversation.AddAssistant(sr.blocks)
 		}
 
-		if len(pendingTools) == 0 {
+		if len(sr.pendingTools) == 0 {
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
 
-		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
+		if cancelled := a.executeTools(ctx, ch, sr.pendingTools); cancelled {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
@@ -172,15 +172,22 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 }
 
+// streamResult holds the output of consumeStream.
+type streamResult struct {
+	blocks       []ContentBlock
+	pendingTools []ToolUseBlock
+	cancelled    bool
+	hadError     bool
+}
+
 // consumeStream reads the provider stream, accumulating content blocks and
-// tool calls. Returns the accumulated blocks, pending tool calls, and whether
-// the context was cancelled.
+// tool calls.
 func (a *Agent) consumeStream(
 	ctx context.Context,
 	ch chan<- TurnEvent,
 	stream <-chan StreamEvent,
 	totalInput, totalOutput *int,
-) ([]ContentBlock, []ToolUseBlock, bool) {
+) streamResult {
 	var blocks []ContentBlock
 	var pendingTools []ToolUseBlock
 	var currentTextBuf string
@@ -212,13 +219,15 @@ func (a *Agent) consumeStream(
 		}
 	}
 
-	var streamError bool
+	var hadError bool
 	for event := range stream {
 		*totalInput += event.InputTokens
 		*totalOutput += event.OutputTokens
 
 		switch event.Type {
 		case "text_delta":
+			// During tool accumulation, text deltas carry JSON input
+			// for the tool call, not user-visible text.
 			if currentTool != nil {
 				toolInputBuf += event.Text
 			} else {
@@ -233,23 +242,32 @@ func (a *Agent) consumeStream(
 				Name: event.ToolUse.Name,
 			}
 		case "error":
+			a.logger.Error("stream error: %v", event.Error)
 			ch <- TurnEvent{Type: "error", Error: event.Error}
-			// Discard any in-progress tool accumulation to avoid
-			// executing tools built from corrupt/partial data.
+			// Discard all accumulated state to avoid processing
+			// data from a corrupt/partial stream.
 			currentTool = nil
 			toolInputBuf = ""
-			streamError = true
+			currentTextBuf = ""
+			blocks = nil
+			pendingTools = nil
+			hadError = true
 		case "stop":
 			// handled after loop
 		}
 	}
 
-	if !streamError {
+	if !hadError {
 		finalizeText()
 		finalizeTool()
 	}
 
-	return blocks, pendingTools, ctx.Err() != nil
+	return streamResult{
+		blocks:       blocks,
+		pendingTools: pendingTools,
+		cancelled:    ctx.Err() != nil,
+		hadError:     hadError,
+	}
 }
 
 // executeTools runs the pending tool calls. Returns true if context cancelled.

@@ -534,9 +534,40 @@ func TestAgentStreamErrorDiscardsToolCalls(t *testing.T) {
 	}
 
 	assert.Contains(t, types, "error")
+	assert.Contains(t, types, "done")
 	// Tool should NOT have been executed since the stream had an error.
 	assert.NotContains(t, types, "tool_call")
 	assert.NotContains(t, types, "tool_result")
+	// Conversation should only have the user message — no partial assistant blocks.
+	assert.Len(t, a.Conversation().Messages(), 1)
+	assert.Equal(t, "user", a.Conversation().Messages()[0].Role)
+}
+
+func TestAgentStreamErrorWithPartialText(t *testing.T) {
+	// Stream produces text, then a tool_use (which finalizes text), then an error.
+	// The partial text block should NOT be added to conversation.
+	errorStream := []StreamEvent{
+		{Type: "text_delta", Text: "partial response"},
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "echo"}},
+		{Type: "error", Error: fmt.Errorf("connection lost")},
+		{Type: "stop", InputTokens: 50, OutputTokens: 25},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{errorStream}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	logger := &captureLogger{}
+	a := NewAgent(p, WithTools(r), WithLogger(logger))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	// Conversation should only have the user message.
+	assert.Len(t, a.Conversation().Messages(), 1)
+	// Stream error should have been logged.
+	require.Len(t, logger.errors, 1)
+	assert.Contains(t, logger.errors[0], "connection lost")
 }
 
 func TestAgentContextCancelledMidToolBatch(t *testing.T) {
