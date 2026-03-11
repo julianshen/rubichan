@@ -14,6 +14,7 @@ type Config struct {
 	Agent    AgentConfig    `toml:"agent"`
 	Skills   SkillsConfig   `toml:"skills"`
 	MCP      MCPConfig      `toml:"mcp"`
+	Browser  BrowserConfig  `toml:"browser"`
 	Security SecurityConfig `toml:"security"`
 	Worktree WorktreeConfig `toml:"worktree"`
 }
@@ -128,6 +129,13 @@ type SkillsConfig struct {
 	MaxNetFetchPerTurn  int      `toml:"max_net_fetch_per_turn"`
 }
 
+// BrowserConfig holds settings for browser automation backends.
+type BrowserConfig struct {
+	PreferredBackend string `toml:"preferred_backend"`
+	MCPServer        string `toml:"mcp_server"`
+	ArtifactDir      string `toml:"artifact_dir"`
+}
+
 // MCPConfig holds settings for MCP (Model Context Protocol) server connections.
 type MCPConfig struct {
 	Servers []MCPServerConfig `toml:"servers"`
@@ -235,6 +243,9 @@ func DefaultConfig() *Config {
 			MaxLLMCallsPerTurn:  10,
 			MaxShellExecPerTurn: 20,
 			MaxNetFetchPerTurn:  10,
+		},
+		Browser: BrowserConfig{
+			PreferredBackend: "mcp",
 		},
 		Security: SecurityConfig{
 			FailOn:      "high",

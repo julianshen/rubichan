@@ -8,6 +8,8 @@ type ToolCategory int
 const (
 	CategoryCore       ToolCategory = iota // Always sent: shell, file
 	CategoryFileSystem                     // File search: search
+	CategoryGit                            // First-party git inspection tools
+	CategoryNet                            // First-party networked tools
 	CategoryPlatform                       // Platform-specific: xcode_*
 	CategoryMCP                            // MCP-provided tools
 	CategorySkill                          // Skill-provided tools
@@ -20,9 +22,15 @@ func Categorize(name string) ToolCategory {
 		return CategoryCore
 	case name == "search":
 		return CategoryFileSystem
+	case strings.HasPrefix(name, "git_"):
+		return CategoryGit
+	case name == "db_query" || strings.HasPrefix(name, "http_") || strings.HasPrefix(name, "browser_"):
+		return CategoryNet
 	case strings.HasPrefix(name, "xcode_"):
 		return CategoryPlatform
 	case strings.HasPrefix(name, "mcp-"):
+		return CategoryMCP
+	case strings.HasPrefix(name, "mcp_"):
 		return CategoryMCP
 	default:
 		return CategorySkill

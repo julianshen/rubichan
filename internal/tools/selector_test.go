@@ -21,6 +21,9 @@ func allTestTools() []provider.ToolDef {
 		makeToolDef("shell"),
 		makeToolDef("file"),
 		makeToolDef("search"),
+		makeToolDef("git_status"),
+		makeToolDef("http_get"),
+		makeToolDef("browser_open"),
 		makeToolDef("xcode_build"),
 		makeToolDef("xcode_discover"),
 		makeToolDef("mcp-github"),
@@ -40,6 +43,9 @@ func TestCategorize(t *testing.T) {
 	assert.Equal(t, CategoryCore, Categorize("file"))
 	assert.Equal(t, CategoryCore, Categorize("process"))
 	assert.Equal(t, CategoryFileSystem, Categorize("search"))
+	assert.Equal(t, CategoryGit, Categorize("git_status"))
+	assert.Equal(t, CategoryNet, Categorize("http_get"))
+	assert.Equal(t, CategoryNet, Categorize("browser_open"))
 	assert.Equal(t, CategoryPlatform, Categorize("xcode_build"))
 	assert.Equal(t, CategoryPlatform, Categorize("xcode_discover"))
 	assert.Equal(t, CategoryMCP, Categorize("mcp-github"))

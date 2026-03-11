@@ -26,15 +26,20 @@ func TestClassifyBuiltinTools(t *testing.T) {
 		{"tool_search", toolexec.CategoryAgent},
 		{"task", toolexec.CategoryAgent},
 		{"list_tasks", toolexec.CategoryAgent},
+		{"db_query", toolexec.CategoryNet},
 
 		// Prefix matches
 		{"git-status", toolexec.CategoryGit},
+		{"git_status", toolexec.CategoryGit},
 		{"git-diff", toolexec.CategoryGit},
 		{"git-commit", toolexec.CategoryGit},
+		{"http_get", toolexec.CategoryNet},
+		{"browser_open", toolexec.CategoryNet},
 		{"xcode_build", toolexec.CategoryPlatform},
 		{"xcode_test", toolexec.CategoryPlatform},
 		{"mcp-server-tool", toolexec.CategoryMCP},
 		{"mcp-fetch", toolexec.CategoryMCP},
+		{"mcp_browser_tool", toolexec.CategoryMCP},
 
 		// Default fallback
 		{"unknown_tool", toolexec.CategorySkill},

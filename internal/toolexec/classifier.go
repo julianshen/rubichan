@@ -43,6 +43,7 @@ var builtinExact = map[string]Category{
 	"shell":           CategoryBash,
 	"file":            CategoryFileRead,
 	"search":          CategorySearch,
+	"db_query":        CategoryNet,
 	"process":         CategoryAgent,
 	"compact_context": CategoryAgent,
 	"read_result":     CategoryAgent,
@@ -59,8 +60,12 @@ var builtinPrefixes = []struct {
 	category Category
 }{
 	{"git-", CategoryGit},
+	{"git_", CategoryGit},
+	{"http_", CategoryNet},
+	{"browser_", CategoryNet},
 	{"xcode_", CategoryPlatform},
 	{"mcp-", CategoryMCP},
+	{"mcp_", CategoryMCP},
 }
 
 // Classifier maps tool names to categories using built-in rules and
