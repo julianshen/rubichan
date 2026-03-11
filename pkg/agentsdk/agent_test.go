@@ -242,7 +242,7 @@ func TestAgentApprovalCheckerAutoDenied(t *testing.T) {
 	r := NewRegistry()
 	require.NoError(t, r.Register(&echoTool{}))
 
-	checker := &mockApprovalChecker{results: map[string]ApprovalResult{
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
 		"echo": AutoDenied,
 	}}
 
@@ -281,6 +281,201 @@ func TestAgentConversationGrows(t *testing.T) {
 	assert.Len(t, a.Conversation().Messages(), 4) // 2 + user + assistant
 }
 
+func TestAgentWithLogger(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{textResponse("hi")}}
+	l := &captureLogger{}
+	a := NewAgent(p, WithLogger(l))
+	assert.Equal(t, l, a.logger)
+}
+
+func TestAgentApprovalCheckerRequiresApproval(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	approveAll := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+		return true, nil
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithApproval(approveAll))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.False(t, toolResults[0].ToolResult.IsError)
+}
+
+func TestAgentApprovalCheckerRequiresApprovalNoFunc(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "approval function not configured")
+}
+
+func TestAgentApprovalFuncError(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	errApprove := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+		return false, fmt.Errorf("approval service unavailable")
+	}
+
+	a := NewAgent(p, WithTools(r), WithApproval(errApprove))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "approval error")
+}
+
+func TestAgentStreamingTool(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "stream_echo", `{"text":"hello"}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&streamEchoTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var progressEvents []TurnEvent
+	var resultEvents []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_progress" {
+			progressEvents = append(progressEvents, ev)
+		}
+		if ev.Type == "tool_result" {
+			resultEvents = append(resultEvents, ev)
+		}
+	}
+	assert.Len(t, progressEvents, 1)
+	assert.Equal(t, "streaming...", progressEvents[0].ToolProgress.Content)
+	require.Len(t, resultEvents, 1)
+	assert.False(t, resultEvents[0].ToolResult.IsError)
+	assert.Equal(t, "hello", resultEvents[0].ToolResult.Content)
+}
+
+func TestAgentStreamingToolError(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "fail_stream", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&failStreamTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "tool error")
+}
+
+func TestAgentToolExecuteError(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "fail_tool", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&failTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "tool error")
+}
+
+func TestAgentApprovalCheckerApprovalFuncError(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	errApprove := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+		return false, fmt.Errorf("checker approval error")
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithApproval(errApprove))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "approval error")
+}
+
 // echoTool is a simple test tool that echoes its input.
 type echoTool struct{}
 
@@ -289,4 +484,70 @@ func (e *echoTool) Description() string          { return "echoes input" }
 func (e *echoTool) InputSchema() json.RawMessage { return json.RawMessage(`{}`) }
 func (e *echoTool) Execute(_ context.Context, input json.RawMessage) (ToolResult, error) {
 	return ToolResult{Content: string(input)}, nil
+}
+
+// captureLogger captures log output for testing.
+type captureLogger struct {
+	warns  []string
+	errors []string
+}
+
+func (l *captureLogger) Warn(msg string, args ...any) {
+	l.warns = append(l.warns, fmt.Sprintf(msg, args...))
+}
+func (l *captureLogger) Error(msg string, args ...any) {
+	l.errors = append(l.errors, fmt.Sprintf(msg, args...))
+}
+
+// streamEchoTool implements StreamingTool for testing.
+type streamEchoTool struct{}
+
+func (s *streamEchoTool) Name() string                 { return "stream_echo" }
+func (s *streamEchoTool) Description() string          { return "streaming echo" }
+func (s *streamEchoTool) InputSchema() json.RawMessage { return json.RawMessage(`{}`) }
+func (s *streamEchoTool) Execute(_ context.Context, input json.RawMessage) (ToolResult, error) {
+	return ToolResult{Content: string(input)}, nil
+}
+func (s *streamEchoTool) ExecuteStream(_ context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
+	emit(ToolEvent{Stage: EventBegin, Content: "streaming..."})
+	var args struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(input, &args)
+	return ToolResult{Content: args.Text}, nil
+}
+
+// failStreamTool is a streaming tool that returns an error.
+type failStreamTool struct{}
+
+func (f *failStreamTool) Name() string                 { return "fail_stream" }
+func (f *failStreamTool) Description() string          { return "fails" }
+func (f *failStreamTool) InputSchema() json.RawMessage { return json.RawMessage(`{}`) }
+func (f *failStreamTool) Execute(_ context.Context, _ json.RawMessage) (ToolResult, error) {
+	return ToolResult{}, fmt.Errorf("fail")
+}
+func (f *failStreamTool) ExecuteStream(_ context.Context, _ json.RawMessage, _ ToolEventEmitter) (ToolResult, error) {
+	return ToolResult{}, fmt.Errorf("stream execution failed")
+}
+
+// failTool is a regular tool that returns an error.
+type failTool struct{}
+
+func (f *failTool) Name() string                 { return "fail_tool" }
+func (f *failTool) Description() string          { return "fails" }
+func (f *failTool) InputSchema() json.RawMessage { return json.RawMessage(`{}`) }
+func (f *failTool) Execute(_ context.Context, _ json.RawMessage) (ToolResult, error) {
+	return ToolResult{}, fmt.Errorf("execution failed")
+}
+
+// agentMockChecker returns pre-configured results per tool name (for agent tests).
+type agentMockChecker struct {
+	results map[string]ApprovalResult
+}
+
+func (m *agentMockChecker) CheckApproval(toolName string, _ json.RawMessage) ApprovalResult {
+	if r, ok := m.results[toolName]; ok {
+		return r
+	}
+	return AutoApproved
 }
