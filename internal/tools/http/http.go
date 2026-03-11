@@ -41,28 +41,41 @@ type requestInput struct {
 	FollowRedirects *bool             `json:"follow_redirects,omitempty"`
 }
 
+// Tool implements a single HTTP method as an agent tool with SSRF protection.
 type Tool struct {
 	method   string
 	name     string
 	resolver ResolveFunc
 }
 
-func NewGetTool() *Tool    { return newTool(http.MethodGet, "http_get") }
-func NewPostTool() *Tool   { return newTool(http.MethodPost, "http_post") }
-func NewPutTool() *Tool    { return newTool(http.MethodPut, "http_put") }
-func NewPatchTool() *Tool  { return newTool(http.MethodPatch, "http_patch") }
+// NewGetTool returns an HTTP GET tool.
+func NewGetTool() *Tool { return newTool(http.MethodGet, "http_get") }
+
+// NewPostTool returns an HTTP POST tool.
+func NewPostTool() *Tool { return newTool(http.MethodPost, "http_post") }
+
+// NewPutTool returns an HTTP PUT tool.
+func NewPutTool() *Tool { return newTool(http.MethodPut, "http_put") }
+
+// NewPatchTool returns an HTTP PATCH tool.
+func NewPatchTool() *Tool { return newTool(http.MethodPatch, "http_patch") }
+
+// NewDeleteTool returns an HTTP DELETE tool.
 func NewDeleteTool() *Tool { return newTool(http.MethodDelete, "http_delete") }
 
 func newTool(method, name string) *Tool {
 	return &Tool{method: method, name: name, resolver: defaultResolver}
 }
 
+// Name returns the tool name.
 func (t *Tool) Name() string { return t.name }
 
+// Description returns a human-readable description of the tool.
 func (t *Tool) Description() string {
 	return fmt.Sprintf("Perform an HTTP %s request with optional headers, query parameters, request body, timeout, and redirect control.", t.method)
 }
 
+// InputSchema returns the JSON schema for the tool's input.
 func (t *Tool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -88,6 +101,7 @@ func (t *Tool) InputSchema() json.RawMessage {
 	}`)
 }
 
+// Execute performs the HTTP request with SSRF validation and DNS pinning.
 func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in requestInput
 	if err := json.Unmarshal(input, &in); err != nil {

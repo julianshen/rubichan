@@ -52,6 +52,7 @@ type gitTool struct {
 	run         func(context.Context, *gitTool, json.RawMessage) (tools.ToolResult, error)
 }
 
+// NewStatusTool returns a read-only git status tool.
 func NewStatusTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
@@ -68,6 +69,7 @@ func NewStatusTool(workDir string) tools.Tool {
 	}
 }
 
+// NewDiffTool returns a read-only git diff tool.
 func NewDiffTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
@@ -86,6 +88,7 @@ func NewDiffTool(workDir string) tools.Tool {
 	}
 }
 
+// NewLogTool returns a read-only git log tool.
 func NewLogTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
@@ -103,6 +106,7 @@ func NewLogTool(workDir string) tools.Tool {
 	}
 }
 
+// NewShowTool returns a read-only git show tool.
 func NewShowTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
@@ -119,6 +123,7 @@ func NewShowTool(workDir string) tools.Tool {
 	}
 }
 
+// NewBlameTool returns a read-only git blame tool.
 func NewBlameTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
@@ -137,9 +142,16 @@ func NewBlameTool(workDir string) tools.Tool {
 	}
 }
 
-func (t *gitTool) Name() string                 { return t.name }
-func (t *gitTool) Description() string          { return t.description }
+// Name returns the tool name.
+func (t *gitTool) Name() string { return t.name }
+
+// Description returns a human-readable description of the tool.
+func (t *gitTool) Description() string { return t.description }
+
+// InputSchema returns the JSON schema for the tool's input.
 func (t *gitTool) InputSchema() json.RawMessage { return t.schema }
+
+// Execute runs the git command and returns the output.
 func (t *gitTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	return t.run(ctx, t, input)
 }

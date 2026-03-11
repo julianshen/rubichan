@@ -11,6 +11,7 @@ import (
 	mcpclient "github.com/julianshen/rubichan/internal/tools/mcp"
 )
 
+// MCPBackend drives a browser via an MCP server (e.g. Playwright MCP).
 type MCPBackend struct {
 	workDir string
 	server  config.MCPServerConfig
@@ -20,6 +21,7 @@ type MCPBackend struct {
 	tools  map[string]bool
 }
 
+// NewMCPBackend creates an MCP-based browser backend, or returns nil if no server is configured.
 func NewMCPBackend(workDir string, browserCfg config.BrowserConfig, servers []config.MCPServerConfig) (*MCPBackend, error) {
 	server, ok := selectBrowserServer(browserCfg, servers)
 	if !ok {
@@ -49,8 +51,10 @@ func selectBrowserServer(browserCfg config.BrowserConfig, servers []config.MCPSe
 	return config.MCPServerConfig{}, false
 }
 
+// Name returns the backend identifier.
 func (b *MCPBackend) Name() string { return "mcp" }
 
+// Open navigates to a URL via the MCP server.
 func (b *MCPBackend) Open(ctx context.Context, handle any, opts OpenOptions) (any, OpenResult, error) {
 	if err := b.ensureClient(ctx); err != nil {
 		return nil, OpenResult{}, err
@@ -65,6 +69,7 @@ func (b *MCPBackend) Open(ctx context.Context, handle any, opts OpenOptions) (an
 	return struct{}{}, OpenResult{URL: opts.URL, Title: firstSnapshotLine(snapshot, "title: "), Backend: b.Name()}, nil
 }
 
+// Click clicks an element via MCP browser_run_code.
 func (b *MCPBackend) Click(ctx context.Context, handle any, selector string, waitForNavigation bool) error {
 	_, err := b.call(ctx, "browser_run_code", map[string]any{
 		"code": fmt.Sprintf(`async (page) => { const loc = page.locator(%q); if (await loc.count() !== 1) throw new Error("selector match count must be exactly 1"); await loc.click(); return "ok"; }`, selector),
@@ -78,6 +83,7 @@ func (b *MCPBackend) Click(ctx context.Context, handle any, selector string, wai
 	return nil
 }
 
+// Fill types a value into a form field via MCP.
 func (b *MCPBackend) Fill(ctx context.Context, handle any, selector, value string, submit bool) error {
 	code := fmt.Sprintf(`async (page) => { const loc = page.locator(%q); if (await loc.count() !== 1) throw new Error("selector match count must be exactly 1"); await loc.fill(%q); %s return "ok"; }`, selector, value, "")
 	if submit {
@@ -87,6 +93,7 @@ func (b *MCPBackend) Fill(ctx context.Context, handle any, selector, value strin
 	return err
 }
 
+// Snapshot returns a text summary of the current page via MCP.
 func (b *MCPBackend) Snapshot(ctx context.Context, handle any) (string, error) {
 	if !b.hasTool("browser_snapshot") {
 		result, err := b.call(ctx, "browser_run_code", map[string]any{
@@ -100,6 +107,7 @@ func (b *MCPBackend) Snapshot(ctx context.Context, handle any) (string, error) {
 	return b.call(ctx, "browser_snapshot", map[string]any{})
 }
 
+// Screenshot captures a screenshot via MCP and writes it to the given path.
 func (b *MCPBackend) Screenshot(ctx context.Context, handle any, selector string, fullPage bool, path string) (ScreenshotResult, error) {
 	if selector == "" && b.hasTool("browser_take_screenshot") {
 		_, err := b.call(ctx, "browser_take_screenshot", map[string]any{
@@ -130,6 +138,7 @@ func (b *MCPBackend) Screenshot(ctx context.Context, handle any, selector string
 	return ScreenshotResult{Path: path}, nil
 }
 
+// Wait blocks until a condition is met or the timeout expires via MCP.
 func (b *MCPBackend) Wait(ctx context.Context, handle any, opts WaitOptions) error {
 	if opts.TimeoutMS > 0 && opts.Selector == "" && opts.Text == "" {
 		timer := time.NewTimer(time.Duration(opts.TimeoutMS) * time.Millisecond)
@@ -160,6 +169,7 @@ func (b *MCPBackend) Wait(ctx context.Context, handle any, opts WaitOptions) err
 	return nil
 }
 
+// Close terminates the MCP browser session.
 func (b *MCPBackend) Close(ctx context.Context, handle any) error {
 	if !b.hasTool("browser_close") {
 		return nil

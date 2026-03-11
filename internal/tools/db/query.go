@@ -36,20 +36,25 @@ type queryInput struct {
 	MaxRows   int           `json:"max_rows,omitempty"`
 }
 
+// QueryTool executes read-only SQL queries against SQLite, Postgres, or MySQL.
 type QueryTool struct {
 	workDir string
 }
 
+// NewQueryTool creates a QueryTool rooted at the given working directory.
 func NewQueryTool(workDir string) *QueryTool {
 	return &QueryTool{workDir: workDir}
 }
 
+// Name returns the tool name.
 func (t *QueryTool) Name() string { return "db_query" }
 
+// Description returns a human-readable description of the tool.
 func (t *QueryTool) Description() string {
 	return "Execute a read-only SQL query against SQLite, Postgres, or MySQL and return a truncated result set."
 }
 
+// InputSchema returns the JSON schema for the tool's input.
 func (t *QueryTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -65,6 +70,7 @@ func (t *QueryTool) InputSchema() json.RawMessage {
 	}`)
 }
 
+// Execute runs a read-only SQL query with DSN sanitization and SSRF validation.
 func (t *QueryTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in queryInput
 	if err := json.Unmarshal(input, &in); err != nil {
