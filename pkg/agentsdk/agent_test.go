@@ -144,17 +144,24 @@ func TestAgentTurnContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	ch, err := a.Turn(ctx, "hi")
-	require.NoError(t, err)
+	_, err := a.Turn(ctx, "hi")
+	require.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+}
 
-	var events []TurnEvent
-	for ev := range ch {
-		events = append(events, ev)
-	}
+func TestAgentTurnEmptyMessage(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{textResponse("hi")}}
+	a := NewAgent(p)
 
-	// Should have error + done.
-	assert.GreaterOrEqual(t, len(events), 2)
-	assert.Equal(t, "error", events[0].Type)
+	_, err := a.Turn(context.Background(), "")
+	require.Error(t, err)
+	assert.Equal(t, ErrEmptyMessage, err)
+}
+
+func TestNewAgentNilProviderPanics(t *testing.T) {
+	assert.Panics(t, func() {
+		NewAgent(nil)
+	})
 }
 
 func TestAgentTurnProviderError(t *testing.T) {
@@ -474,6 +481,34 @@ func TestAgentApprovalCheckerApprovalFuncError(t *testing.T) {
 	require.Len(t, toolResults, 1)
 	assert.True(t, toolResults[0].ToolResult.IsError)
 	assert.Contains(t, toolResults[0].ToolResult.Content, "approval error")
+}
+
+func TestAgentContextCancelledDuringLoop(t *testing.T) {
+	// Provider returns a tool call; context is cancelled by the tool.
+	// On the next loop iteration, runLoop should detect cancellation.
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "cancel_tool", `{}`),
+		// Second call won't happen — context is cancelled.
+	}}
+	r := NewRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, r.Register(&contextCancelTool{cancel: cancel}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(ctx, "test")
+	require.NoError(t, err)
+
+	var hasError, hasDone bool
+	for ev := range ch {
+		if ev.Type == "error" {
+			hasError = true
+		}
+		if ev.Type == "done" {
+			hasDone = true
+		}
+	}
+	assert.True(t, hasError)
+	assert.True(t, hasDone)
 }
 
 func TestAgentStreamErrorDiscardsToolCalls(t *testing.T) {

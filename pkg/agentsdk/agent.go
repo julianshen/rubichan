@@ -3,6 +3,7 @@ package agentsdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -58,7 +59,11 @@ type Agent struct {
 }
 
 // NewAgent creates a new Agent with the given LLM provider and options.
+// Panics if provider is nil.
 func NewAgent(provider LLMProvider, opts ...Option) *Agent {
+	if provider == nil {
+		panic("agentsdk: NewAgent called with nil provider")
+	}
 	a := &Agent{
 		provider: provider,
 		config:   DefaultAgentConfig(),
@@ -74,11 +79,21 @@ func NewAgent(provider LLMProvider, opts ...Option) *Agent {
 	return a
 }
 
+// ErrEmptyMessage is returned by Turn when the user message is empty.
+var ErrEmptyMessage = errors.New("agentsdk: empty user message")
+
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
 // Concurrent calls are serialized. The caller must consume all events from
 // the returned channel to avoid goroutine leaks.
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
+	if userMessage == "" {
+		return nil, ErrEmptyMessage
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	a.turnMu.Lock()
 
 	a.conversation.AddUser(userMessage)

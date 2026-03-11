@@ -16,9 +16,9 @@ func (c *Conversation) SystemPrompt() string {
 	return c.systemPrompt
 }
 
-// Messages returns the current message history.
+// Messages returns a copy of the current message history.
 func (c *Conversation) Messages() []Message {
-	return c.messages
+	return append([]Message(nil), c.messages...)
 }
 
 // AddUser appends a user text message.
