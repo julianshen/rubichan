@@ -7,44 +7,8 @@ import (
 	"strings"
 )
 
-// ApprovalResult represents the three-tier approval decision for a tool call.
-// It distinguishes between known-safe tools, trust-rule-matched operations,
-// and operations requiring explicit user approval.
-type ApprovalResult int
-
-const (
-	// ApprovalRequired means the tool call needs explicit user approval.
-	ApprovalRequired ApprovalResult = iota
-	// AutoApproved means the tool is unconditionally safe (e.g., read-only tools).
-	AutoApproved
-	// TrustRuleApproved means the tool input matched a trust rule pattern.
-	TrustRuleApproved
-	// AutoDenied means the tool was explicitly denied by the user (deny-always).
-	AutoDenied
-)
-
-// String returns a human-readable name for the approval result.
-func (r ApprovalResult) String() string {
-	switch r {
-	case ApprovalRequired:
-		return "ApprovalRequired"
-	case AutoApproved:
-		return "AutoApproved"
-	case TrustRuleApproved:
-		return "TrustRuleApproved"
-	case AutoDenied:
-		return "AutoDenied"
-	default:
-		return "Unknown"
-	}
-}
-
-// ApprovalChecker determines the approval status of a tool call based on
-// both the tool name and its input. This replaces the coarse-grained
-// AutoApproveChecker with input-sensitive, pattern-based trust decisions.
-type ApprovalChecker interface {
-	CheckApproval(tool string, input json.RawMessage) ApprovalResult
-}
+// ApprovalResult, ApprovalChecker, and CompositeApprovalChecker are defined
+// in pkg/agentsdk/ and re-exported via sdk_aliases.go.
 
 // TrustRule defines a pattern-based approval rule for tool inputs.
 // Rules can allow or deny specific operations based on regex matching
@@ -295,37 +259,6 @@ type autoApproveAdapter struct {
 func (a *autoApproveAdapter) CheckApproval(tool string, _ json.RawMessage) ApprovalResult {
 	if a.checker.IsAutoApproved(tool) {
 		return AutoApproved
-	}
-	return ApprovalRequired
-}
-
-// CompositeApprovalChecker chains multiple ApprovalCheckers. The first
-// non-ApprovalRequired result wins. This lets session caches, trust rules,
-// and built-in defaults compose together.
-//
-// Ordering matters: checkers earlier in the list take priority. Place the
-// session cache checker first so that user decisions (AutoApproved, AutoDenied)
-// take precedence over config-based trust rules.
-type CompositeApprovalChecker struct {
-	checkers []ApprovalChecker
-}
-
-// NewCompositeApprovalChecker creates a checker that evaluates each checker
-// in order, returning the first non-ApprovalRequired result.
-func NewCompositeApprovalChecker(checkers ...ApprovalChecker) *CompositeApprovalChecker {
-	return &CompositeApprovalChecker{checkers: checkers}
-}
-
-// CheckApproval evaluates checkers in order. The first checker to return
-// a decisive result (anything other than ApprovalRequired) wins. To ensure
-// deny-always takes priority over trust rules, place the session cache
-// checker (which returns AutoDenied) before trust rule checkers.
-func (c *CompositeApprovalChecker) CheckApproval(tool string, input json.RawMessage) ApprovalResult {
-	for _, checker := range c.checkers {
-		result := checker.CheckApproval(tool, input)
-		if result != ApprovalRequired {
-			return result
-		}
 	}
 	return ApprovalRequired
 }
