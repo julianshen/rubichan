@@ -268,17 +268,22 @@ func TestClientConcurrentCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	errs := make([]error, 3)
+	results := make([]json.RawMessage, 3)
 	var wg sync.WaitGroup
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
-		go func() {
+		go func(idx int) {
 			defer wg.Done()
-			result, err := client.Call(ctx, "test/concurrent", nil)
-			require.NoError(t, err)
-			assert.NotNil(t, result)
-		}()
+			results[idx], errs[idx] = client.Call(ctx, "test/concurrent", nil)
+		}(i)
 	}
 	wg.Wait()
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, errs[i], "goroutine %d", i)
+		assert.NotNil(t, results[i], "goroutine %d", i)
+	}
 }
 
 func TestClientNotifyClosedClient(t *testing.T) {
@@ -346,7 +351,7 @@ func TestClientReadMessageMaxContentLength(t *testing.T) {
 	// Send a response with Content-Length exceeding max.
 	go func() {
 		msg := fmt.Sprintf("Content-Length: %d\r\n\r\n", maxContentLength+1)
-		mt.server.Write([]byte(msg))
+		_, _ = mt.server.Write([]byte(msg))
 	}()
 
 	// The read loop should close when it encounters the oversized message.

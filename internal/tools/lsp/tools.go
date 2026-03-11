@@ -148,7 +148,9 @@ func runDefinition(ctx context.Context, m *Manager, input json.RawMessage) (tool
 		return lspUnavailableResult(in.File, err), nil
 	}
 
-	m.EnsureFileOpen(ctx, client, in.File)
+	if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("failed to open file: %s", err), IsError: true}, nil
+	}
 
 	params := TextDocumentPositionParams{
 		TextDocument: TextDocumentIdentifier{URI: pathToURI(in.File)},
@@ -181,10 +183,8 @@ func runDefinition(ctx context.Context, m *Manager, input json.RawMessage) (tool
 // --- lsp_references ---
 
 type referencesInput struct {
-	File       string `json:"file"`
-	Line       int    `json:"line"`
-	Column     int    `json:"column"`
-	MaxResults int    `json:"max_results,omitempty"`
+	positionInput
+	MaxResults int `json:"max_results,omitempty"`
 }
 
 // NewReferencesTool returns a tool that finds all references to a symbol.
@@ -213,7 +213,7 @@ func runReferences(ctx context.Context, m *Manager, input json.RawMessage) (tool
 		return tools.ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
 
-	pos, err := userPosToLSP(in.Line, in.Column)
+	pos, err := in.validate()
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
@@ -223,7 +223,9 @@ func runReferences(ctx context.Context, m *Manager, input json.RawMessage) (tool
 		return lspUnavailableResult(in.File, err), nil
 	}
 
-	m.EnsureFileOpen(ctx, client, in.File)
+	if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("failed to open file: %s", err), IsError: true}, nil
+	}
 
 	params := ReferenceParams{
 		TextDocument: TextDocumentIdentifier{URI: pathToURI(in.File)},
@@ -286,7 +288,9 @@ func runHover(ctx context.Context, m *Manager, input json.RawMessage) (tools.Too
 		return lspUnavailableResult(in.File, err), nil
 	}
 
-	m.EnsureFileOpen(ctx, client, in.File)
+	if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("failed to open file: %s", err), IsError: true}, nil
+	}
 
 	params := TextDocumentPositionParams{
 		TextDocument: TextDocumentIdentifier{URI: pathToURI(in.File)},
@@ -313,9 +317,7 @@ func runHover(ctx context.Context, m *Manager, input json.RawMessage) (tools.Too
 // --- lsp_rename ---
 
 type renameInput struct {
-	File    string `json:"file"`
-	Line    int    `json:"line"`
-	Column  int    `json:"column"`
+	positionInput
 	NewName string `json:"new_name"`
 }
 
@@ -349,7 +351,7 @@ func runRename(ctx context.Context, m *Manager, input json.RawMessage) (tools.To
 		return tools.ToolResult{Content: "new_name is required", IsError: true}, nil
 	}
 
-	pos, err := userPosToLSP(in.Line, in.Column)
+	pos, err := in.validate()
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
@@ -359,7 +361,9 @@ func runRename(ctx context.Context, m *Manager, input json.RawMessage) (tools.To
 		return lspUnavailableResult(in.File, err), nil
 	}
 
-	m.EnsureFileOpen(ctx, client, in.File)
+	if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("failed to open file: %s", err), IsError: true}, nil
+	}
 
 	params := RenameParams{
 		TextDocument: TextDocumentIdentifier{URI: pathToURI(in.File)},
@@ -383,10 +387,8 @@ func runRename(ctx context.Context, m *Manager, input json.RawMessage) (tools.To
 // --- lsp_completions ---
 
 type completionsInput struct {
-	File       string `json:"file"`
-	Line       int    `json:"line"`
-	Column     int    `json:"column"`
-	MaxResults int    `json:"max_results,omitempty"`
+	positionInput
+	MaxResults int `json:"max_results,omitempty"`
 }
 
 // NewCompletionsTool returns a tool that gets code completions at a position.
@@ -415,7 +417,7 @@ func runCompletions(ctx context.Context, m *Manager, input json.RawMessage) (too
 		return tools.ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
 
-	pos, err := userPosToLSP(in.Line, in.Column)
+	pos, err := in.validate()
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
@@ -425,7 +427,9 @@ func runCompletions(ctx context.Context, m *Manager, input json.RawMessage) (too
 		return lspUnavailableResult(in.File, err), nil
 	}
 
-	m.EnsureFileOpen(ctx, client, in.File)
+	if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("failed to open file: %s", err), IsError: true}, nil
+	}
 
 	params := TextDocumentPositionParams{
 		TextDocument: TextDocumentIdentifier{URI: pathToURI(in.File)},
@@ -456,12 +460,6 @@ func runCompletions(ctx context.Context, m *Manager, input json.RawMessage) (too
 
 // --- lsp_code_action ---
 
-type codeActionInput struct {
-	File   string `json:"file"`
-	Line   int    `json:"line"`
-	Column int    `json:"column"`
-}
-
 // NewCodeActionTool returns a tool that gets available code actions at a position.
 func NewCodeActionTool(m *Manager) tools.Tool {
 	return &lspTool{
@@ -482,12 +480,12 @@ func NewCodeActionTool(m *Manager) tools.Tool {
 }
 
 func runCodeAction(ctx context.Context, m *Manager, input json.RawMessage) (tools.ToolResult, error) {
-	var in codeActionInput
+	var in positionInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
 
-	pos, err := userPosToLSP(in.Line, in.Column)
+	pos, err := in.validate()
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
@@ -497,7 +495,9 @@ func runCodeAction(ctx context.Context, m *Manager, input json.RawMessage) (tool
 		return lspUnavailableResult(in.File, err), nil
 	}
 
-	m.EnsureFileOpen(ctx, client, in.File)
+	if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("failed to open file: %s", err), IsError: true}, nil
+	}
 
 	uri := pathToURI(in.File)
 	params := CodeActionParams{
@@ -573,14 +573,17 @@ func runSymbols(ctx context.Context, m *Manager, input json.RawMessage) (tools.T
 	}
 
 	var allSymbols []SymbolInformation
+	var serverErrors []string
 	for _, lang := range available {
 		client, _, err := m.ServerFor(ctx, lang)
 		if err != nil {
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: %s", lang, err))
 			continue
 		}
 
 		result, err := client.Call(ctx, "workspace/symbol", WorkspaceSymbolParams{Query: in.Query})
 		if err != nil {
+			serverErrors = append(serverErrors, fmt.Sprintf("%s: %s", lang, err))
 			continue
 		}
 
@@ -591,7 +594,11 @@ func runSymbols(ctx context.Context, m *Manager, input json.RawMessage) (tools.T
 	}
 
 	if len(allSymbols) == 0 {
-		return tools.ToolResult{Content: fmt.Sprintf("no symbols matching %q found", in.Query)}, nil
+		msg := fmt.Sprintf("no symbols matching %q found", in.Query)
+		if len(serverErrors) > 0 {
+			msg += fmt.Sprintf(" (errors: %s)", strings.Join(serverErrors, "; "))
+		}
+		return tools.ToolResult{Content: msg}, nil
 	}
 
 	summary := m.summarizer.SummarizeSymbols(allSymbols, in.MaxResults)
@@ -601,9 +608,7 @@ func runSymbols(ctx context.Context, m *Manager, input json.RawMessage) (tools.T
 // --- lsp_call_hierarchy ---
 
 type callHierarchyInput struct {
-	File      string `json:"file"`
-	Line      int    `json:"line"`
-	Column    int    `json:"column"`
+	positionInput
 	Direction string `json:"direction"` // "incoming" or "outgoing"
 }
 
@@ -637,7 +642,7 @@ func runCallHierarchy(ctx context.Context, m *Manager, input json.RawMessage) (t
 		return tools.ToolResult{Content: "direction must be 'incoming' or 'outgoing'", IsError: true}, nil
 	}
 
-	pos, err := userPosToLSP(in.Line, in.Column)
+	pos, err := in.validate()
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
@@ -647,7 +652,9 @@ func runCallHierarchy(ctx context.Context, m *Manager, input json.RawMessage) (t
 		return lspUnavailableResult(in.File, err), nil
 	}
 
-	m.EnsureFileOpen(ctx, client, in.File)
+	if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("failed to open file: %s", err), IsError: true}, nil
+	}
 
 	// Step 1: Prepare — get the CallHierarchyItem for the position.
 	prepareParams := CallHierarchyPrepareParams{
@@ -723,7 +730,7 @@ func runCallHierarchy(ctx context.Context, m *Manager, input json.RawMessage) (t
 // lspUnavailableResult returns a graceful error result when no LSP server is available.
 func lspUnavailableResult(file string, err error) tools.ToolResult {
 	return tools.ToolResult{
-		Content: fmt.Sprintf("LSP not available for %s: %s. Falling back to tree-sitter + grep.", file, err),
+		Content: fmt.Sprintf("LSP not available for %s: %s", file, err),
 		IsError: true,
 	}
 }

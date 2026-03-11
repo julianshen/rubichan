@@ -3,19 +3,26 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 )
+
+// SpawnFunc creates a transport for a language server from a config.
+// The default implementation spawns a child process; tests can inject a mock.
+type SpawnFunc func(cfg ServerConfig) (io.ReadWriteCloser, error)
 
 // Manager tracks language servers across the workspace. Servers are started
 // lazily on first use and only if the binary is available on PATH. It also
 // caches diagnostics from publishDiagnostics notifications and tracks document
 // open/version state for didOpen/didChange synchronization.
 type Manager struct {
-	registry   *Registry
-	rootURI    string
-	summarizer *Summarizer
+	registry    *Registry
+	rootURI     string
+	summarizer  *Summarizer
+	spawnServer SpawnFunc
 
 	mu      sync.Mutex
 	servers map[string]*serverHandle // language -> handle
@@ -34,12 +41,13 @@ type serverHandle struct {
 // NewManager creates a new manager for the given workspace root.
 func NewManager(registry *Registry, rootDir string) *Manager {
 	return &Manager{
-		registry:   registry,
-		rootURI:    pathToURI(rootDir),
-		summarizer: DefaultSummarizer(),
-		servers:    make(map[string]*serverHandle),
-		docs:       make(map[string]int),
-		diags:      make(map[string][]Diagnostic),
+		registry:    registry,
+		rootURI:     pathToURI(rootDir),
+		summarizer:  DefaultSummarizer(),
+		spawnServer: spawnServer,
+		servers:     make(map[string]*serverHandle),
+		docs:        make(map[string]int),
+		diags:       make(map[string][]Diagnostic),
 	}
 }
 
@@ -121,7 +129,7 @@ func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, conten
 
 	client, _, err := m.ServerFor(ctx, lang)
 	if err != nil {
-		return nil // server not available, silently skip
+		return fmt.Errorf("server for %s: %w", lang, err)
 	}
 
 	uri := pathToURI(filePath)
@@ -162,37 +170,44 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var lastErr error
+	var errs []error
 	for lang, handle := range m.servers {
 		if handle.client != nil {
 			// Send shutdown request, then exit notification.
 			_, _ = handle.client.Call(ctx, "shutdown", nil)
 			_ = handle.client.Notify(ctx, "exit", nil)
 			if err := handle.client.Close(); err != nil {
-				lastErr = fmt.Errorf("close %s: %w", lang, err)
+				errs = append(errs, fmt.Errorf("close %s: %w", lang, err))
 			}
 		}
 	}
 	m.servers = make(map[string]*serverHandle)
-	return lastErr
+	return errors.Join(errs...)
 }
 
 // EnsureFileOpen sends textDocument/didOpen if the file hasn't been opened yet.
-// Must be called before position-based LSP requests to ensure the server knows about the file.
-func (m *Manager) EnsureFileOpen(ctx context.Context, client *Client, filePath string) {
+// Must be called before position-based LSP requests to ensure the server knows
+// about the file. Returns an error if the file cannot be read or the notification fails.
+func (m *Manager) EnsureFileOpen(ctx context.Context, client *Client, filePath string) error {
 	uri := pathToURI(filePath)
 
+	// Mark the file as opened under the lock to prevent concurrent callers from
+	// racing (TOCTOU). If the notification later fails, we revert the mark.
 	m.mu.Lock()
-	_, opened := m.docs[uri]
-	m.mu.Unlock()
-
-	if opened {
-		return
+	if _, opened := m.docs[uri]; opened {
+		m.mu.Unlock()
+		return nil
 	}
+	m.docs[uri] = 1
+	m.mu.Unlock()
 
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return
+		// Revert — file couldn't be read.
+		m.mu.Lock()
+		delete(m.docs, uri)
+		m.mu.Unlock()
+		return fmt.Errorf("read file for didOpen: %w", err)
 	}
 
 	lang, _ := m.registry.LanguageForFile(filePath)
@@ -205,18 +220,20 @@ func (m *Manager) EnsureFileOpen(ctx context.Context, client *Client, filePath s
 			Text:       string(content),
 		},
 	})
-
-	// Only mark as opened if the notification succeeded.
-	if err == nil {
+	if err != nil {
+		// Revert — notification failed.
 		m.mu.Lock()
-		m.docs[uri] = 1
+		delete(m.docs, uri)
 		m.mu.Unlock()
+		return fmt.Errorf("didOpen notification: %w", err)
 	}
+
+	return nil
 }
 
 // startServer spawns a language server process and performs the initialize handshake.
 func (m *Manager) startServer(ctx context.Context, cfg ServerConfig) (*Client, ServerCapabilities, error) {
-	proc, err := spawnServer(cfg)
+	proc, err := m.spawnServer(cfg)
 	if err != nil {
 		return nil, ServerCapabilities{}, fmt.Errorf("spawn: %w", err)
 	}

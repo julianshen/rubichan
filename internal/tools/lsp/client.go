@@ -32,13 +32,6 @@ type jsonrpcResponse struct {
 	Error   *jsonrpcError   `json:"error,omitempty"`
 }
 
-// jsonrpcNotification is a JSON-RPC 2.0 notification (no ID).
-type jsonrpcNotification struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
 // jsonrpcError is a JSON-RPC 2.0 error object.
 type jsonrpcError struct {
 	Code    int    `json:"code"`
@@ -51,6 +44,9 @@ func (e *jsonrpcError) Error() string {
 
 // NotificationHandler handles server-initiated notifications.
 type NotificationHandler func(method string, params json.RawMessage)
+
+// ErrorHandler is called for non-fatal protocol errors (e.g., malformed JSON).
+type ErrorHandler func(err error)
 
 // Client is a JSON-RPC 2.0 client that communicates over an io.ReadWriteCloser
 // using LSP Content-Length framing. NewClient starts a background goroutine;
@@ -65,9 +61,11 @@ type Client struct {
 	pending   map[int64]chan jsonrpcResponse
 
 	notifyHandler NotificationHandler
+	onError       ErrorHandler
 
-	done chan struct{}
-	wg   sync.WaitGroup
+	done    chan struct{}
+	wg      sync.WaitGroup
+	readErr atomic.Value // stores the error from the read loop
 }
 
 // NewClient creates a new JSON-RPC client over the given transport.
@@ -75,11 +73,17 @@ type Client struct {
 // textDocument/publishDiagnostics). It may be nil if notifications are not needed.
 // Callers must call Close to stop the background read goroutine.
 func NewClient(rwc io.ReadWriteCloser, onNotify NotificationHandler) *Client {
+	return newClient(rwc, onNotify, nil)
+}
+
+// newClient creates a client with an optional error handler for protocol errors.
+func newClient(rwc io.ReadWriteCloser, onNotify NotificationHandler, onError ErrorHandler) *Client {
 	c := &Client{
 		rwc:           rwc,
 		reader:        bufio.NewReaderSize(rwc, 64*1024),
 		pending:       make(map[int64]chan jsonrpcResponse),
 		notifyHandler: onNotify,
+		onError:       onError,
 		done:          make(chan struct{}),
 	}
 	c.wg.Add(1)
@@ -144,11 +148,9 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 	default:
 	}
 
-	msg := struct {
-		JSONRPC string `json:"jsonrpc"`
-		Method  string `json:"method"`
-		Params  any    `json:"params,omitempty"`
-	}{
+	// jsonrpcRequest with ID=0 produces the correct notification wire format
+	// because the ID field has omitempty.
+	msg := jsonrpcRequest{
 		JSONRPC: "2.0",
 		Method:  method,
 		Params:  params,
@@ -206,6 +208,8 @@ func (c *Client) readLoop() {
 
 		data, err := c.readMessage()
 		if err != nil {
+			// Store the transport error so drainPending can include a root cause.
+			c.readErr.Store(err)
 			// Transport closed or read error — signal shutdown.
 			select {
 			case <-c.done:
@@ -227,10 +231,15 @@ func (c *Client) drainPending() {
 	c.pendingMu.Lock()
 	defer c.pendingMu.Unlock()
 
+	msg := "transport closed"
+	if stored := c.readErr.Load(); stored != nil {
+		msg = fmt.Sprintf("transport closed: %v", stored)
+	}
+
 	for id, ch := range c.pending {
 		ch <- jsonrpcResponse{
 			ID:    id,
-			Error: &jsonrpcError{Code: -1, Message: "transport closed"},
+			Error: &jsonrpcError{Code: -1, Message: msg},
 		}
 		delete(c.pending, id)
 	}
@@ -279,11 +288,15 @@ func (c *Client) dispatch(data []byte) {
 	var probe struct {
 		ID     *int64          `json:"id"`
 		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
 		Result json.RawMessage `json:"result"`
 		Error  *jsonrpcError   `json:"error"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return // malformed JSON — drop silently (server bug)
+		if c.onError != nil {
+			c.onError(fmt.Errorf("malformed message (%d bytes): %w", len(data), err))
+		}
+		return
 	}
 
 	if probe.ID != nil && probe.Method == "" {
@@ -303,12 +316,9 @@ func (c *Client) dispatch(data []byte) {
 	}
 
 	if probe.Method != "" && probe.ID == nil {
-		// Server notification.
+		// Server notification — use params from the probe directly.
 		if c.notifyHandler != nil {
-			var notif jsonrpcNotification
-			if err := json.Unmarshal(data, &notif); err == nil {
-				c.notifyHandler(notif.Method, notif.Params)
-			}
+			c.notifyHandler(probe.Method, probe.Params)
 		}
 	}
 }

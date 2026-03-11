@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -179,7 +181,7 @@ func TestManagerEnsureFileOpenIdempotent(t *testing.T) {
 	client := m.servers["go"].client
 
 	// First call should send didOpen.
-	m.EnsureFileOpen(ctx, client, tmpFile)
+	require.NoError(t, m.EnsureFileOpen(ctx, client, tmpFile))
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -187,7 +189,7 @@ func TestManagerEnsureFileOpenIdempotent(t *testing.T) {
 	}
 
 	// Second call should NOT send another notification.
-	m.EnsureFileOpen(ctx, client, tmpFile)
+	require.NoError(t, m.EnsureFileOpen(ctx, client, tmpFile))
 	// Give a short window for any unexpected notification.
 	time.Sleep(50 * time.Millisecond)
 
@@ -311,4 +313,282 @@ func createTempFile(t *testing.T, name, content string) string {
 
 func writeTestFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func TestManagerStartServerViaSpawnFunc(t *testing.T) {
+	reg := NewRegistry()
+	reg.lookPath = func(name string) (string, error) {
+		if name == "gopls" {
+			return "/usr/bin/gopls", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+
+	m := NewManager(reg, "/test/workspace")
+
+	// Inject a mock spawnServer that returns a pipe transport.
+	mt := newMockTransport()
+	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
+		return mt.client, nil
+	}
+
+	// Server goroutine: handle initialize, initialized, then shutdown/exit.
+	go func() {
+		req, err := readRequest(mt.server)
+		if err != nil {
+			return
+		}
+		initResult := InitializeResult{
+			Capabilities: ServerCapabilities{
+				DefinitionProvider: true,
+				HoverProvider:      true,
+			},
+		}
+		_ = writeResponse(mt.server, req.ID, initResult)
+		// Read initialized notification.
+		_, _ = readRequest(mt.server)
+		// Handle shutdown request.
+		req, err = readRequest(mt.server)
+		if err != nil {
+			return
+		}
+		_ = writeResponse(mt.server, req.ID, nil)
+		// Read exit notification.
+		_, _ = readRequest(mt.server)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	client, caps, err := m.ServerFor(ctx, "go")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.True(t, caps.DefinitionProvider)
+	assert.True(t, caps.HoverProvider)
+
+	// Cleanup.
+	require.NoError(t, m.Shutdown(ctx))
+	mt.server.Close()
+}
+
+func TestManagerStartServerSpawnError(t *testing.T) {
+	reg := NewRegistry()
+	reg.lookPath = func(name string) (string, error) {
+		if name == "gopls" {
+			return "/usr/bin/gopls", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+
+	m := NewManager(reg, "/test/workspace")
+	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
+		return nil, fmt.Errorf("binary crashed")
+	}
+
+	_, _, err := m.ServerFor(context.Background(), "go")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "binary crashed")
+}
+
+func TestManagerEnsureFileOpenReturnsError(t *testing.T) {
+	m, _ := newTestManager(t)
+	client := m.servers["go"].client
+
+	// Try to open a file that doesn't exist.
+	err := m.EnsureFileOpen(context.Background(), client, "/nonexistent/file.go")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read file for didOpen")
+
+	// Verify the file was NOT marked as opened (reverted).
+	uri := pathToURI("/nonexistent/file.go")
+	m.mu.Lock()
+	_, opened := m.docs[uri]
+	m.mu.Unlock()
+	assert.False(t, opened)
+}
+
+func TestManagerShutdownJoinsErrors(t *testing.T) {
+	reg := NewRegistry()
+	m := NewManager(reg, "/test")
+
+	// Create two mock servers that will both fail on Close.
+	mt1 := newMockTransport()
+	mt2 := newMockTransport()
+
+	// Close the client sides first to make the real Close fail.
+	mt1.client.Close()
+	mt2.client.Close()
+
+	client1 := NewClient(mt1.client, nil)
+	client2 := NewClient(mt2.client, nil)
+
+	m.servers["lang1"] = &serverHandle{client: client1}
+	m.servers["lang2"] = &serverHandle{client: client2}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Shutdown should not panic and should complete.
+	_ = m.Shutdown(ctx)
+
+	m.mu.Lock()
+	assert.Empty(t, m.servers)
+	m.mu.Unlock()
+
+	mt1.server.Close()
+	mt2.server.Close()
+}
+
+func TestClientErrorHandler(t *testing.T) {
+	mt := newMockTransport()
+
+	var capturedErr error
+	var mu sync.Mutex
+	errReceived := make(chan struct{})
+
+	client := newClient(mt.client, nil, func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		capturedErr = err
+		close(errReceived)
+	})
+	defer client.Close()
+
+	// Send malformed JSON.
+	go func() {
+		msg := "Content-Length: 5\r\n\r\n{bad}"
+		_, _ = mt.server.Write([]byte(msg))
+	}()
+
+	select {
+	case <-errReceived:
+		mu.Lock()
+		assert.Contains(t, capturedErr.Error(), "malformed message")
+		mu.Unlock()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for error handler")
+	}
+
+	mt.server.Close()
+}
+
+func TestClientReadErrStoredInDrainPending(t *testing.T) {
+	mt := newMockTransport()
+
+	client := NewClient(mt.client, nil)
+
+	// Start a call that will block.
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.Call(context.Background(), "test/blocked", nil)
+		errCh <- err
+	}()
+
+	// Wait for the request to be sent, then close server.
+	_, _ = readRequest(mt.server)
+	mt.server.Close()
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		// May unblock via drainPending ("transport closed: ...") or via done channel ("client closed").
+		errMsg := err.Error()
+		assert.True(t, strings.Contains(errMsg, "transport closed") || strings.Contains(errMsg, "client closed"),
+			"unexpected error: %s", errMsg)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Call was not unblocked")
+	}
+
+	// Verify the readErr was stored.
+	stored := client.readErr.Load()
+	assert.NotNil(t, stored, "readErr should be stored from transport failure")
+
+	client.Close()
+}
+
+func TestManagerStartServerInitializeError(t *testing.T) {
+	reg := NewRegistry()
+	reg.lookPath = func(name string) (string, error) {
+		if name == "gopls" {
+			return "/usr/bin/gopls", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+	m := NewManager(reg, "/test")
+
+	mt := newMockTransport()
+	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
+		return mt.client, nil
+	}
+
+	// Server returns an error for initialize.
+	go func() {
+		req, err := readRequest(mt.server)
+		if err != nil {
+			return
+		}
+		resp := struct {
+			JSONRPC string       `json:"jsonrpc"`
+			ID      int64        `json:"id"`
+			Error   jsonrpcError `json:"error"`
+		}{JSONRPC: "2.0", ID: req.ID, Error: jsonrpcError{Code: -32600, Message: "initialize failed"}}
+		body, _ := json.Marshal(resp)
+		fmt.Fprintf(mt.server, "Content-Length: %d\r\n\r\n%s", len(body), body)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, _, err := m.ServerFor(ctx, "go")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "initialize")
+
+	mt.server.Close()
+}
+
+func TestManagerStartServerBadInitResult(t *testing.T) {
+	reg := NewRegistry()
+	reg.lookPath = func(name string) (string, error) {
+		if name == "gopls" {
+			return "/usr/bin/gopls", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+	m := NewManager(reg, "/test")
+
+	mt := newMockTransport()
+	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
+		return mt.client, nil
+	}
+
+	// Server returns non-JSON for initialize result.
+	go func() {
+		req, err := readRequest(mt.server)
+		if err != nil {
+			return
+		}
+		_ = writeResponse(mt.server, req.ID, "not-a-valid-init-result")
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, _, err := m.ServerFor(ctx, "go")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse initialize result")
+
+	mt.server.Close()
+}
+
+func TestManagerNotifyFileChangedPropagatesError(t *testing.T) {
+	reg := NewRegistry()
+	reg.lookPath = func(name string) (string, error) {
+		return "", fmt.Errorf("not installed")
+	}
+	m := NewManager(reg, "/test")
+
+	// NotifyFileChanged for a Go file should now return the server error.
+	err := m.NotifyFileChanged(context.Background(), "/test/main.go", []byte("package main"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "server for go")
 }

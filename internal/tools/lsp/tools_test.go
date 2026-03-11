@@ -213,7 +213,7 @@ func TestReferencesToolSuccess(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, locs)
 	}()
 
-	input, _ := json.Marshal(referencesInput{File: tmpFile, Line: 1, Column: 1})
+	input, _ := json.Marshal(referencesInput{positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -237,7 +237,7 @@ func TestReferencesToolNoResults(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, []Location{})
 	}()
 
-	input, _ := json.Marshal(referencesInput{File: tmpFile, Line: 1, Column: 1})
+	input, _ := json.Marshal(referencesInput{positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -266,7 +266,7 @@ func TestRenameToolSuccess(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, edit)
 	}()
 
-	input, _ := json.Marshal(renameInput{File: tmpFile, Line: 1, Column: 6, NewName: "newName"})
+	input, _ := json.Marshal(renameInput{positionInput: positionInput{File: tmpFile, Line: 1, Column: 6}, NewName: "newName"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -280,7 +280,7 @@ func TestRenameToolSuccess(t *testing.T) {
 func TestRenameToolEmptyName(t *testing.T) {
 	m, _ := newTestManager(t)
 
-	input, _ := json.Marshal(renameInput{File: "/test/main.go", Line: 1, Column: 1, NewName: ""})
+	input, _ := json.Marshal(renameInput{positionInput: positionInput{File: "/test/main.go", Line: 1, Column: 1}, NewName: ""})
 	result, err := runRename(context.Background(), m, input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -306,7 +306,7 @@ func TestCompletionsToolSuccess(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, list)
 	}()
 
-	input, _ := json.Marshal(completionsInput{File: tmpFile, Line: 1, Column: 1})
+	input, _ := json.Marshal(completionsInput{positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -330,7 +330,7 @@ func TestCompletionsToolEmpty(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, CompletionList{Items: []CompletionItem{}})
 	}()
 
-	input, _ := json.Marshal(completionsInput{File: tmpFile, Line: 1, Column: 1})
+	input, _ := json.Marshal(completionsInput{positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -356,7 +356,7 @@ func TestCodeActionToolSuccess(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, actions)
 	}()
 
-	input, _ := json.Marshal(codeActionInput{File: tmpFile, Line: 1, Column: 1})
+	input, _ := json.Marshal(positionInput{File: tmpFile, Line: 1, Column: 1})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -381,7 +381,7 @@ func TestCodeActionToolNone(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, []CodeAction{})
 	}()
 
-	input, _ := json.Marshal(codeActionInput{File: tmpFile, Line: 1, Column: 1})
+	input, _ := json.Marshal(positionInput{File: tmpFile, Line: 1, Column: 1})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -407,7 +407,7 @@ func TestCallHierarchyToolInvalidDirection(t *testing.T) {
 	m, _ := newTestManager(t)
 
 	input, _ := json.Marshal(callHierarchyInput{
-		File: "/test/main.go", Line: 1, Column: 1, Direction: "sideways",
+		positionInput: positionInput{File: "/test/main.go", Line: 1, Column: 1}, Direction: "sideways",
 	})
 	result, err := runCallHierarchy(context.Background(), m, input)
 	require.NoError(t, err)
@@ -448,7 +448,7 @@ func TestCallHierarchyToolIncomingSuccess(t *testing.T) {
 	}()
 
 	input, _ := json.Marshal(callHierarchyInput{
-		File: tmpFile, Line: 11, Column: 1, Direction: "incoming",
+		positionInput: positionInput{File: tmpFile, Line: 11, Column: 1}, Direction: "incoming",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -493,7 +493,7 @@ func TestCallHierarchyToolOutgoingSuccess(t *testing.T) {
 	}()
 
 	input, _ := json.Marshal(callHierarchyInput{
-		File: tmpFile, Line: 1, Column: 1, Direction: "outgoing",
+		positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}, Direction: "outgoing",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -509,7 +509,7 @@ func TestLspUnavailableResult(t *testing.T) {
 	result := lspUnavailableResult("/test/main.go", fmt.Errorf("server not found"))
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "LSP not available")
-	assert.Contains(t, result.Content, "tree-sitter")
+	assert.Contains(t, result.Content, "server not found")
 }
 
 func TestFormatWorkspaceEdit(t *testing.T) {
@@ -696,6 +696,7 @@ func TestCodeActionToolInvalidInput(t *testing.T) {
 	result, err := runCodeAction(context.Background(), m, json.RawMessage(`{invalid`))
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "invalid input")
 }
 
 func TestCallHierarchyToolInvalidInput(t *testing.T) {
@@ -709,7 +710,7 @@ func TestCallHierarchyToolInvalidInput(t *testing.T) {
 func TestReferencesToolInvalidPosition(t *testing.T) {
 	m, _ := newTestManager(t)
 
-	input, _ := json.Marshal(referencesInput{File: "/test/main.go", Line: 0, Column: 1})
+	input, _ := json.Marshal(referencesInput{positionInput: positionInput{File: "/test/main.go", Line: 0, Column: 1}})
 	result, err := runReferences(context.Background(), m, input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -719,7 +720,7 @@ func TestReferencesToolInvalidPosition(t *testing.T) {
 func TestRenameToolInvalidPosition(t *testing.T) {
 	m, _ := newTestManager(t)
 
-	input, _ := json.Marshal(renameInput{File: "/test/main.go", Line: 1, Column: 0, NewName: "x"})
+	input, _ := json.Marshal(renameInput{positionInput: positionInput{File: "/test/main.go", Line: 1, Column: 0}, NewName: "x"})
 	result, err := runRename(context.Background(), m, input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -729,7 +730,7 @@ func TestRenameToolInvalidPosition(t *testing.T) {
 func TestCompletionsToolInvalidPosition(t *testing.T) {
 	m, _ := newTestManager(t)
 
-	input, _ := json.Marshal(completionsInput{File: "/test/main.go", Line: -1, Column: 1})
+	input, _ := json.Marshal(completionsInput{positionInput: positionInput{File: "/test/main.go", Line: -1, Column: 1}})
 	result, err := runCompletions(context.Background(), m, input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -738,7 +739,7 @@ func TestCompletionsToolInvalidPosition(t *testing.T) {
 func TestCodeActionToolInvalidPosition(t *testing.T) {
 	m, _ := newTestManager(t)
 
-	input, _ := json.Marshal(codeActionInput{File: "/test/main.go", Line: 0, Column: 1})
+	input, _ := json.Marshal(positionInput{File: "/test/main.go", Line: 0, Column: 1})
 	result, err := runCodeAction(context.Background(), m, input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -747,7 +748,7 @@ func TestCodeActionToolInvalidPosition(t *testing.T) {
 func TestCallHierarchyToolInvalidPosition(t *testing.T) {
 	m, _ := newTestManager(t)
 
-	input, _ := json.Marshal(callHierarchyInput{File: "/test/main.go", Line: 0, Column: 1, Direction: "incoming"})
+	input, _ := json.Marshal(callHierarchyInput{positionInput: positionInput{File: "/test/main.go", Line: 0, Column: 1}, Direction: "incoming"})
 	result, err := runCallHierarchy(context.Background(), m, input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
@@ -770,7 +771,7 @@ func TestCompletionsToolArrayResponse(t *testing.T) {
 		_ = writeResponse(mt.server, req.ID, items)
 	}()
 
-	input, _ := json.Marshal(completionsInput{File: tmpFile, Line: 1, Column: 1})
+	input, _ := json.Marshal(completionsInput{positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -844,7 +845,7 @@ func TestCallHierarchyToolNoPrepareItems(t *testing.T) {
 	}()
 
 	input, _ := json.Marshal(callHierarchyInput{
-		File: tmpFile, Line: 1, Column: 1, Direction: "incoming",
+		positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}, Direction: "incoming",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -875,7 +876,7 @@ func TestCallHierarchyToolNoIncomingCalls(t *testing.T) {
 	}()
 
 	input, _ := json.Marshal(callHierarchyInput{
-		File: tmpFile, Line: 1, Column: 1, Direction: "incoming",
+		positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}, Direction: "incoming",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -906,7 +907,7 @@ func TestCallHierarchyToolNoOutgoingCalls(t *testing.T) {
 	}()
 
 	input, _ := json.Marshal(callHierarchyInput{
-		File: tmpFile, Line: 1, Column: 1, Direction: "outgoing",
+		positionInput: positionInput{File: tmpFile, Line: 1, Column: 1}, Direction: "outgoing",
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
