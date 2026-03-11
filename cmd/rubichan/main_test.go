@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/security"
@@ -31,6 +35,71 @@ func TestVersionStringDefaults(t *testing.T) {
 	assert.Contains(t, s, "dev")
 	assert.Contains(t, s, "none")
 	assert.Contains(t, s, "unknown")
+}
+
+func TestShouldIgnoreTUIRunError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	assert.True(t, shouldIgnoreTUIRunError(tea.ErrProgramKilled, ctx))
+	assert.False(t, shouldIgnoreTUIRunError(nil, ctx))
+	assert.False(t, shouldIgnoreTUIRunError(context.Canceled, ctx))
+	assert.False(t, shouldIgnoreTUIRunError(tea.ErrProgramKilled, context.Background()))
+}
+
+func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
+	origWriter := log.Writer()
+	origFlags := log.Flags()
+	var sentinel bytes.Buffer
+	log.SetOutput(&sentinel)
+	log.SetFlags(123)
+	defer log.SetOutput(origWriter)
+	defer log.SetFlags(origFlags)
+
+	logger, err := startSessionLogger(t.TempDir())
+	require.NoError(t, err)
+	require.FileExists(t, logger.path)
+
+	log.Printf("captured line")
+
+	require.NoError(t, logger.Close())
+
+	data, err := os.ReadFile(logger.path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "rubichan session log started")
+	assert.Contains(t, string(data), "captured line")
+	assert.Contains(t, string(data), "rubichan session log finished")
+	log.Print("restored line")
+	assert.Contains(t, sentinel.String(), "restored line")
+	assert.Equal(t, 123, log.Flags())
+}
+
+func TestWriteDiagnosticDumpIncludesSignalAndSessionLog(t *testing.T) {
+	cfgDir := t.TempDir()
+	dumpPath, err := writeDiagnosticDump(cfgDir, syscall.SIGQUIT, "/tmp/session.log")
+	require.NoError(t, err)
+	require.FileExists(t, dumpPath)
+
+	data, err := os.ReadFile(dumpPath)
+	require.NoError(t, err)
+	text := string(data)
+	assert.Contains(t, text, "signal: quit")
+	assert.Contains(t, text, "session_log: /tmp/session.log")
+	assert.Contains(t, text, "goroutine")
+}
+
+func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
+	cfgDir := t.TempDir()
+	dumpPath, err := writePanicDump(cfgDir, "boom", "/tmp/session.log")
+	require.NoError(t, err)
+	require.FileExists(t, dumpPath)
+
+	data, err := os.ReadFile(dumpPath)
+	require.NoError(t, err)
+	text := string(data)
+	assert.Contains(t, text, "panic: boom")
+	assert.Contains(t, text, "session_log: /tmp/session.log")
+	assert.Contains(t, text, "goroutine")
 }
 
 func TestAutoApproveDefaultsFalse(t *testing.T) {
