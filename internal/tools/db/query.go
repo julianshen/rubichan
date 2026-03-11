@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +14,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
+
+	"github.com/julianshen/rubichan/internal/tools/netutil"
 
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -32,20 +36,25 @@ type queryInput struct {
 	MaxRows   int           `json:"max_rows,omitempty"`
 }
 
+// QueryTool executes read-only SQL queries against SQLite, Postgres, or MySQL.
 type QueryTool struct {
 	workDir string
 }
 
+// NewQueryTool creates a QueryTool rooted at the given working directory.
 func NewQueryTool(workDir string) *QueryTool {
 	return &QueryTool{workDir: workDir}
 }
 
+// Name returns the tool name.
 func (t *QueryTool) Name() string { return "db_query" }
 
+// Description returns a human-readable description of the tool.
 func (t *QueryTool) Description() string {
 	return "Execute a read-only SQL query against SQLite, Postgres, or MySQL and return a truncated result set."
 }
 
+// InputSchema returns the JSON schema for the tool's input.
 func (t *QueryTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -61,6 +70,7 @@ func (t *QueryTool) InputSchema() json.RawMessage {
 	}`)
 }
 
+// Execute runs a read-only SQL query with DSN sanitization and SSRF validation.
 func (t *QueryTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in queryInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -69,7 +79,7 @@ func (t *QueryTool) Execute(ctx context.Context, input json.RawMessage) (tools.T
 	if err := validateQuery(in.Query); err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
-	driverName, dsn, err := t.resolveConnection(in.Engine, in.Database)
+	driverName, dsn, err := t.resolveConnection(ctx, in.Engine, in.Database)
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
@@ -120,7 +130,7 @@ func (t *QueryTool) Execute(ctx context.Context, input json.RawMessage) (tools.T
 	return tools.ToolResult{Content: content}, nil
 }
 
-func (t *QueryTool) resolveConnection(engine, database string) (string, string, error) {
+func (t *QueryTool) resolveConnection(ctx context.Context, engine, database string) (string, string, error) {
 	switch engine {
 	case "sqlite":
 		resolved, err := t.resolveSQLitePath(database)
@@ -132,13 +142,23 @@ func (t *QueryTool) resolveConnection(engine, database string) (string, string, 
 		if strings.TrimSpace(database) == "" {
 			return "", "", fmt.Errorf("database DSN is required")
 		}
-		return "pgx", database, nil
+		sanitized, err := sanitizePostgresDSN(database)
+		if err != nil {
+			return "", "", err
+		}
+		if err := validateDSNHost(ctx, extractPostgresHost(sanitized)); err != nil {
+			return "", "", err
+		}
+		return "pgx", sanitized, nil
 	case "mysql":
 		if strings.TrimSpace(database) == "" {
 			return "", "", fmt.Errorf("database DSN is required")
 		}
 		sanitized, err := sanitizeMySQLDSN(database)
 		if err != nil {
+			return "", "", err
+		}
+		if err := validateDSNHost(ctx, extractMySQLHost(sanitized)); err != nil {
 			return "", "", err
 		}
 		return "mysql", sanitized, nil
@@ -278,6 +298,158 @@ func sanitizeMySQLDSN(dsn string) (string, error) {
 		return base, nil
 	}
 	return base + "?" + strings.Join(kept, "&"), nil
+}
+
+// validateDSNHost resolves the given host and rejects connections to
+// private/local IP addresses to prevent SSRF via database connections.
+func validateDSNHost(ctx context.Context, host string) error {
+	if host == "" || host == "localhost" {
+		// localhost is allowed for local development databases.
+		return nil
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve database host %q: %w", host, err)
+	}
+	for _, addr := range addrs {
+		if netutil.IsPrivateAddress(addr.IP) {
+			return fmt.Errorf("database connections to private or local addresses are not allowed")
+		}
+	}
+	return nil
+}
+
+// extractPostgresHost extracts the host from a Postgres DSN (URI or key=value).
+func extractPostgresHost(dsn string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return ""
+		}
+		return u.Hostname()
+	}
+	for _, kv := range splitPostgresKV(dsn) {
+		if strings.HasPrefix(kv, "host=") {
+			v := kv[len("host="):]
+			return strings.Trim(v, "'")
+		}
+	}
+	return ""
+}
+
+// extractMySQLHost extracts the host from a go-sql-driver MySQL DSN.
+// Format: [user[:password]@][net[(addr)]]/dbname[?param=value]
+func extractMySQLHost(dsn string) string {
+	// Strip params
+	if idx := strings.IndexByte(dsn, '?'); idx >= 0 {
+		dsn = dsn[:idx]
+	}
+	// Strip dbname
+	if idx := strings.LastIndexByte(dsn, '/'); idx >= 0 {
+		dsn = dsn[:idx]
+	}
+	// Find addr in net[(addr)]
+	if lparen := strings.IndexByte(dsn, '('); lparen >= 0 {
+		if rparen := strings.IndexByte(dsn[lparen:], ')'); rparen >= 0 {
+			addr := dsn[lparen+1 : lparen+rparen]
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return addr // no port, entire string is the host
+			}
+			return host
+		}
+	}
+	return ""
+}
+
+// postgresDSNAllowedParams lists the only DSN parameters that are safe to pass
+// through. Parameters like sslkey, sslcert, sslrootcert, and service can be
+// used for credential exfiltration or SSRF attacks and are stripped.
+var postgresDSNAllowedParams = map[string]bool{
+	"sslmode":             true,
+	"connect_timeout":     true,
+	"application_name":    true,
+	"search_path":         true,
+	"timezone":            true,
+	"client_encoding":     true,
+	"options":             true,
+	"statement_timeout":   true,
+	"lock_timeout":        true,
+	"idle_in_transaction_session_timeout": true,
+}
+
+func sanitizePostgresDSN(dsn string) (string, error) {
+	// Postgres DSN can be either URI format (postgres://...) or key=value format.
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		return sanitizePostgresURI(dsn)
+	}
+	return sanitizePostgresKeyValue(dsn)
+}
+
+func sanitizePostgresURI(dsn string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("invalid postgres DSN: %w", err)
+	}
+	q := u.Query()
+	for key := range q {
+		if !postgresDSNAllowedParams[key] {
+			q.Del(key)
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func sanitizePostgresKeyValue(dsn string) (string, error) {
+	// key=value pairs separated by spaces; values may be single-quoted.
+	var kept []string
+	// Simple key=value allowlist approach — only keep known-safe keys.
+	pairs := splitPostgresKV(dsn)
+	for _, kv := range pairs {
+		eqIdx := strings.IndexByte(kv, '=')
+		if eqIdx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(kv[:eqIdx])
+		// Always keep connection essentials.
+		switch key {
+		case "host", "port", "dbname", "user", "password":
+			kept = append(kept, kv)
+		default:
+			if postgresDSNAllowedParams[key] {
+				kept = append(kept, kv)
+			}
+		}
+	}
+	return strings.Join(kept, " "), nil
+}
+
+func splitPostgresKV(dsn string) []string {
+	var parts []string
+	var current strings.Builder
+	inQuote := false
+	for i := 0; i < len(dsn); i++ {
+		ch := dsn[i]
+		if ch == '\'' && !inQuote {
+			inQuote = true
+			current.WriteByte(ch)
+		} else if ch == '\'' && inQuote {
+			inQuote = false
+			current.WriteByte(ch)
+		} else if ch == ' ' && !inQuote {
+			if current.Len() > 0 {
+				parts = append(parts, current.String())
+				current.Reset()
+			}
+		} else {
+			current.WriteByte(ch)
+		}
+	}
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+	return parts
 }
 
 func normalizeValue(v interface{}) interface{} {

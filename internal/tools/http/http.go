@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/internal/tools/netutil"
 )
 
 const (
@@ -40,28 +41,41 @@ type requestInput struct {
 	FollowRedirects *bool             `json:"follow_redirects,omitempty"`
 }
 
+// Tool implements a single HTTP method as an agent tool with SSRF protection.
 type Tool struct {
 	method   string
 	name     string
 	resolver ResolveFunc
 }
 
-func NewGetTool() *Tool    { return newTool(http.MethodGet, "http_get") }
-func NewPostTool() *Tool   { return newTool(http.MethodPost, "http_post") }
-func NewPutTool() *Tool    { return newTool(http.MethodPut, "http_put") }
-func NewPatchTool() *Tool  { return newTool(http.MethodPatch, "http_patch") }
+// NewGetTool returns an HTTP GET tool.
+func NewGetTool() *Tool { return newTool(http.MethodGet, "http_get") }
+
+// NewPostTool returns an HTTP POST tool.
+func NewPostTool() *Tool { return newTool(http.MethodPost, "http_post") }
+
+// NewPutTool returns an HTTP PUT tool.
+func NewPutTool() *Tool { return newTool(http.MethodPut, "http_put") }
+
+// NewPatchTool returns an HTTP PATCH tool.
+func NewPatchTool() *Tool { return newTool(http.MethodPatch, "http_patch") }
+
+// NewDeleteTool returns an HTTP DELETE tool.
 func NewDeleteTool() *Tool { return newTool(http.MethodDelete, "http_delete") }
 
 func newTool(method, name string) *Tool {
 	return &Tool{method: method, name: name, resolver: defaultResolver}
 }
 
+// Name returns the tool name.
 func (t *Tool) Name() string { return t.name }
 
+// Description returns a human-readable description of the tool.
 func (t *Tool) Description() string {
 	return fmt.Sprintf("Perform an HTTP %s request with optional headers, query parameters, request body, timeout, and redirect control.", t.method)
 }
 
+// InputSchema returns the JSON schema for the tool's input.
 func (t *Tool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
@@ -87,6 +101,7 @@ func (t *Tool) InputSchema() json.RawMessage {
 	}`)
 }
 
+// Execute performs the HTTP request with SSRF validation and DNS pinning.
 func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in requestInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -141,7 +156,7 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	// different, potentially private address).
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{
-		DialContext: pinnedDialer(dialer, u.Hostname(), addrs),
+		DialContext: pinnedDialer(dialer, u.Hostname(), addrs, t.resolver),
 	}
 	client := &http.Client{Timeout: timeout, Transport: transport}
 	if in.FollowRedirects != nil && !*in.FollowRedirects {
@@ -258,7 +273,7 @@ func validateTarget(ctx context.Context, u *url.URL, resolve ResolveFunc) ([]net
 		return nil, fmt.Errorf("resolve host %q: %w", host, err)
 	}
 	for _, addr := range addrs {
-		if isPrivateAddress(addr.IP) {
+		if netutil.IsPrivateAddress(addr.IP) {
 			return nil, fmt.Errorf("requests to private or local addresses are not allowed")
 		}
 	}
@@ -267,39 +282,45 @@ func validateTarget(ctx context.Context, u *url.URL, resolve ResolveFunc) ([]net
 
 // pinnedDialer returns a DialContext function that connects only to the
 // pre-resolved IP addresses for the given host, preventing DNS rebinding.
-func pinnedDialer(d *net.Dialer, host string, addrs []net.IPAddr) func(ctx context.Context, network, addr string) (net.Conn, error) {
+// For redirect targets (different host), it resolves and validates against
+// private addresses before connecting. Host comparison is case-insensitive
+// per RFC 7230 §2.7.1.
+func pinnedDialer(d *net.Dialer, host string, addrs []net.IPAddr, resolve ResolveFunc) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	lowerHost := strings.ToLower(host)
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		reqHost, reqPort, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
 		}
-		if reqHost != host {
-			// Different host (e.g. redirect) — fall back to normal dial.
-			return d.DialContext(ctx, network, addr)
-		}
-		var lastErr error
-		for _, ip := range addrs {
-			conn, dialErr := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), reqPort))
-			if dialErr == nil {
-				return conn, nil
+		if strings.ToLower(reqHost) != lowerHost {
+			// Different host (e.g. redirect) — resolve and validate
+			// against private addresses to prevent SSRF via redirect.
+			redirectAddrs, resolveErr := resolve(ctx, reqHost)
+			if resolveErr != nil {
+				return nil, fmt.Errorf("resolve redirect host %q: %w", reqHost, resolveErr)
 			}
-			lastErr = dialErr
+			for _, a := range redirectAddrs {
+				if netutil.IsPrivateAddress(a.IP) {
+					return nil, fmt.Errorf("redirect to private or local address is not allowed")
+				}
+			}
+			return dialPinned(ctx, d, network, reqPort, redirectAddrs)
 		}
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		return nil, fmt.Errorf("no addresses for host %q", host)
+		return dialPinned(ctx, d, network, reqPort, addrs)
 	}
 }
 
-func isPrivateAddress(ip net.IP) bool {
-	if ip == nil {
-		return true
+func dialPinned(ctx context.Context, d *net.Dialer, network, port string, addrs []net.IPAddr) (net.Conn, error) {
+	var lastErr error
+	for _, ip := range addrs {
+		conn, dialErr := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
 	}
-	return ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() ||
-		ip.IsUnspecified()
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no addresses to connect to")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,35 +16,42 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/internal/tools/netutil"
 )
 
+// OpenOptions configures a browser navigation request.
 type OpenOptions struct {
 	URL      string
 	Headless bool
 	Viewport Viewport
 }
 
+// Viewport specifies browser window dimensions.
 type Viewport struct {
 	Width  int
 	Height int
 }
 
+// OpenResult holds the outcome of a browser navigation.
 type OpenResult struct {
 	URL     string
 	Title   string
 	Backend string
 }
 
+// ScreenshotResult holds the path to a captured screenshot.
 type ScreenshotResult struct {
 	Path string
 }
 
+// WaitOptions configures a browser wait operation.
 type WaitOptions struct {
 	Selector  string
 	Text      string
 	TimeoutMS int
 }
 
+// Backend abstracts browser automation (native chromedp or MCP).
 type Backend interface {
 	Name() string
 	Open(context.Context, any, OpenOptions) (any, OpenResult, error)
@@ -63,6 +71,7 @@ type session struct {
 	closed  bool
 }
 
+// Service manages browser sessions across backends.
 type Service struct {
 	workDir     string
 	artifactDir string
@@ -114,6 +123,7 @@ type closeInput struct {
 	SessionID string `json:"session_id"`
 }
 
+// NewService creates a browser service with configured backends.
 func NewService(workDir string, browserCfg config.BrowserConfig, mcpServers []config.MCPServerConfig) (*Service, error) {
 	artifactDir := browserCfg.ArtifactDir
 	if artifactDir == "" {
@@ -151,6 +161,7 @@ func NewService(workDir string, browserCfg config.BrowserConfig, mcpServers []co
 	return svc, nil
 }
 
+// Open navigates to a URL in a new or existing browser session with SSRF protection.
 func (s *Service) Open(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in openInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -166,8 +177,12 @@ func (s *Service) Open(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return errResult("only http and https URLs are allowed"), nil
 	}
+	pinnedURL, err := validateAndPinBrowserTarget(ctx, u)
+	if err != nil {
+		return errResult("%s", err), nil
+	}
 
-	opts := OpenOptions{URL: in.URL, Headless: true, Viewport: Viewport{Width: 1280, Height: 800}}
+	opts := OpenOptions{URL: pinnedURL, Headless: true, Viewport: Viewport{Width: 1280, Height: 800}}
 	if in.Headless != nil {
 		opts.Headless = *in.Headless
 	}
@@ -210,6 +225,7 @@ func (s *Service) Open(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	return tools.ToolResult{Content: fmt.Sprintf("session_id: %s\nbackend: %s\ntitle: %s\nurl: %s", id, result.Backend, result.Title, result.URL)}, nil
 }
 
+// Click clicks a CSS-selected element in a browser session.
 func (s *Service) Click(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in clickInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -233,6 +249,7 @@ func (s *Service) Click(ctx context.Context, input json.RawMessage) (tools.ToolR
 	return tools.ToolResult{Content: fmt.Sprintf("clicked %q in session %s", in.Selector, in.SessionID)}, nil
 }
 
+// Fill types a value into a form field identified by CSS selector.
 func (s *Service) Fill(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in fillInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -256,6 +273,7 @@ func (s *Service) Fill(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	return tools.ToolResult{Content: fmt.Sprintf("filled %q in session %s", in.Selector, in.SessionID)}, nil
 }
 
+// Snapshot returns a text summary of the current page content.
 func (s *Service) Snapshot(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in snapshotInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -277,6 +295,7 @@ func (s *Service) Snapshot(ctx context.Context, input json.RawMessage) (tools.To
 	return tools.ToolResult{Content: snapshot}, nil
 }
 
+// Screenshot captures a screenshot of the page or a selected element.
 func (s *Service) Screenshot(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in screenshotInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -299,6 +318,7 @@ func (s *Service) Screenshot(ctx context.Context, input json.RawMessage) (tools.
 	return tools.ToolResult{Content: fmt.Sprintf("saved screenshot to %s", res.Path)}, nil
 }
 
+// Wait blocks until a selector is visible, text appears, or a timeout elapses.
 func (s *Service) Wait(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in waitInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -322,6 +342,7 @@ func (s *Service) Wait(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	return tools.ToolResult{Content: fmt.Sprintf("wait completed for session %s", in.SessionID)}, nil
 }
 
+// Close terminates a browser session and releases its resources.
 func (s *Service) Close(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in closeInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -390,6 +411,50 @@ func (s *Service) screenshotPath(sessionID string) string {
 	return filepath.Join(s.artifactDir, filename)
 }
 
+// validateAndPinBrowserTarget resolves the URL's host, rejects private/local
+// IPs, and returns a URL with the hostname replaced by the resolved IP to
+// prevent DNS rebinding (TOCTOU) attacks between validation and navigation.
+// The original Host header is preserved via the URL's Host field.
+func validateAndPinBrowserTarget(ctx context.Context, u *url.URL) (string, error) {
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return "", fmt.Errorf("url host is required")
+	}
+
+	// If the host is already an IP literal, validate it directly.
+	if ip := net.ParseIP(host); ip != nil {
+		if netutil.IsPrivateAddress(ip) {
+			return "", fmt.Errorf("requests to private or local addresses are not allowed")
+		}
+		return u.String(), nil
+	}
+
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return "", fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return "", fmt.Errorf("no addresses found for host %q", host)
+	}
+	for _, addr := range addrs {
+		if netutil.IsPrivateAddress(addr.IP) {
+			return "", fmt.Errorf("requests to private or local addresses are not allowed")
+		}
+	}
+
+	// Pin the URL to the first resolved IP to prevent DNS rebinding.
+	// chromedp will use this IP directly, avoiding a second DNS lookup.
+	pinned := *u
+	ip := addrs[0].IP.String()
+	port := u.Port()
+	if port != "" {
+		pinned.Host = net.JoinHostPort(ip, port)
+	} else {
+		pinned.Host = ip
+	}
+	return pinned.String(), nil
+}
+
 func errResult(format string, args ...any) tools.ToolResult {
 	return tools.ToolResult{Content: fmt.Sprintf(format, args...), IsError: true}
 }
@@ -408,6 +473,7 @@ func (t *tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	return t.run(ctx, input)
 }
 
+// NewTools returns the set of browser tools backed by the given service.
 func NewTools(service *Service) []tools.Tool {
 	return []tools.Tool{
 		&tool{

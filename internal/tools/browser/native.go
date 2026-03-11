@@ -18,14 +18,18 @@ type nativeSession struct {
 	headless    bool
 }
 
+// NativeBackend drives a local Chrome instance via chromedp.
 type NativeBackend struct{}
 
+// NewNativeBackend creates a NativeBackend.
 func NewNativeBackend() *NativeBackend {
 	return &NativeBackend{}
 }
 
+// Name returns the backend identifier.
 func (b *NativeBackend) Name() string { return "native" }
 
+// Open navigates to a URL, creating a new Chrome session if needed.
 func (b *NativeBackend) Open(ctx context.Context, handle any, opts OpenOptions) (any, OpenResult, error) {
 	sess, ok := handle.(*nativeSession)
 	if !ok || sess == nil {
@@ -52,6 +56,7 @@ func (b *NativeBackend) Open(ctx context.Context, handle any, opts OpenOptions) 
 	return sess, OpenResult{URL: current, Title: title, Backend: b.Name()}, nil
 }
 
+// Click clicks an element matched by the CSS selector.
 func (b *NativeBackend) Click(ctx context.Context, handle any, selector string, waitForNavigation bool) error {
 	sess, err := requireNativeSession(handle)
 	if err != nil {
@@ -69,6 +74,7 @@ func (b *NativeBackend) Click(ctx context.Context, handle any, selector string, 
 	return nil
 }
 
+// Fill types a value into a form field and optionally submits.
 func (b *NativeBackend) Fill(ctx context.Context, handle any, selector, value string, submit bool) error {
 	sess, err := requireNativeSession(handle)
 	if err != nil {
@@ -87,6 +93,7 @@ func (b *NativeBackend) Fill(ctx context.Context, handle any, selector, value st
 	return chromedp.Run(sess.ctx, actions...)
 }
 
+// Snapshot extracts a text summary of the current page.
 func (b *NativeBackend) Snapshot(ctx context.Context, handle any) (string, error) {
 	sess, err := requireNativeSession(handle)
 	if err != nil {
@@ -141,6 +148,7 @@ func (b *NativeBackend) Snapshot(ctx context.Context, handle any) (string, error
 	return strings.Join(lines, "\n"), nil
 }
 
+// Screenshot captures a screenshot and writes it to the given path.
 func (b *NativeBackend) Screenshot(ctx context.Context, handle any, selector string, fullPage bool, path string) (ScreenshotResult, error) {
 	sess, err := requireNativeSession(handle)
 	if err != nil {
@@ -169,6 +177,7 @@ func (b *NativeBackend) Screenshot(ctx context.Context, handle any, selector str
 	return ScreenshotResult{Path: path}, nil
 }
 
+// Wait blocks until a condition is met or the timeout expires.
 func (b *NativeBackend) Wait(ctx context.Context, handle any, opts WaitOptions) error {
 	sess, err := requireNativeSession(handle)
 	if err != nil {
@@ -210,6 +219,7 @@ func (b *NativeBackend) Wait(ctx context.Context, handle any, opts WaitOptions) 
 	}
 }
 
+// Close shuts down the Chrome session.
 func (b *NativeBackend) Close(ctx context.Context, handle any) error {
 	sess, err := requireNativeSession(handle)
 	if err != nil {

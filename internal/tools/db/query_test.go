@@ -14,6 +14,7 @@ import (
 )
 
 func TestSQLiteQuery(t *testing.T) {
+	t.Parallel()
 	workDir := t.TempDir()
 	dbPath := filepath.Join(workDir, "test.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -31,6 +32,7 @@ func TestSQLiteQuery(t *testing.T) {
 }
 
 func TestRejectWriteQuery(t *testing.T) {
+	t.Parallel()
 	tool := NewQueryTool(t.TempDir())
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"engine":"sqlite","database":"test.db","query":"update users set name='x'"}`))
 	require.NoError(t, err)
@@ -39,6 +41,7 @@ func TestRejectWriteQuery(t *testing.T) {
 }
 
 func TestRejectPathEscape(t *testing.T) {
+	t.Parallel()
 	tool := NewQueryTool(t.TempDir())
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"engine":"sqlite","database":"../test.db","query":"select 1"}`))
 	require.NoError(t, err)
@@ -47,6 +50,7 @@ func TestRejectPathEscape(t *testing.T) {
 }
 
 func TestRejectsWritableCTEInReadOnlyTransaction(t *testing.T) {
+	t.Parallel()
 	workDir := t.TempDir()
 	dbPath := filepath.Join(workDir, "test.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -61,6 +65,67 @@ func TestRejectsWritableCTEInReadOnlyTransaction(t *testing.T) {
 	require.NoError(t, execErr)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "query failed")
+}
+
+func TestSanitizePostgresDSN(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		dsn      string
+		expected string
+	}{
+		{"uri no params", "postgres://user:pass@host/db", "postgres://user:pass@host/db"},
+		{"uri safe params kept", "postgres://user:pass@host/db?sslmode=require&connect_timeout=10", "postgres://user:pass@host/db?connect_timeout=10&sslmode=require"},
+		{"uri dangerous params stripped", "postgres://user:pass@host/db?sslkey=/tmp/key&sslmode=require", "postgres://user:pass@host/db?sslmode=require"},
+		{"kv format basic", "host=localhost port=5432 dbname=mydb user=test", "host=localhost port=5432 dbname=mydb user=test"},
+		{"kv format strips dangerous", "host=localhost sslkey=/tmp/key sslmode=require dbname=mydb", "host=localhost sslmode=require dbname=mydb"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := sanitizePostgresDSN(tc.dsn)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, got)
+		})
+	}
+}
+
+func TestExtractPostgresHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		dsn  string
+		want string
+	}{
+		{"postgres://user:pass@myhost.com/db", "myhost.com"},
+		{"postgres://user:pass@myhost.com:5432/db", "myhost.com"},
+		{"host=myhost.com port=5432 dbname=mydb", "myhost.com"},
+		{"host='myhost.com' port=5432 dbname=mydb", "myhost.com"},
+		{"dbname=mydb user=test", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.dsn, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, extractPostgresHost(tc.dsn))
+		})
+	}
+}
+
+func TestExtractMySQLHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		dsn  string
+		want string
+	}{
+		{"user:pass@tcp(myhost.com:3306)/db", "myhost.com"},
+		{"user:pass@tcp(myhost.com)/db", "myhost.com"},
+		{"user:pass@/db", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.dsn, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, extractMySQLHost(tc.dsn))
+		})
+	}
 }
 
 func TestSanitizeMySQLDSN(t *testing.T) {
