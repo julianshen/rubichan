@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEventStageString(t *testing.T) {
@@ -83,5 +84,17 @@ func TestStreamingToolEmitsEvents(t *testing.T) {
 	assert.Len(t, events, 3)
 	assert.Equal(t, EventBegin, events[0].Stage)
 	assert.Equal(t, "progress", events[1].Content)
+	assert.False(t, events[1].IsError)
 	assert.Equal(t, EventEnd, events[2].Stage)
+}
+
+func TestStreamingToolEmitsErrorEvent(t *testing.T) {
+	var events []ToolEvent
+	emit := ToolEventEmitter(func(ev ToolEvent) { events = append(events, ev) })
+
+	emit(ToolEvent{Stage: EventDelta, Content: "something went wrong", IsError: true})
+
+	require.Len(t, events, 1)
+	assert.True(t, events[0].IsError)
+	assert.Equal(t, "something went wrong", events[0].Content)
 }
