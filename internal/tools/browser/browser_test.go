@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/tools"
+	mcpclient "github.com/julianshen/rubichan/internal/tools/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,6 +92,44 @@ func TestScreenshotPathSanitizesSessionID(t *testing.T) {
 	path := svc.screenshotPath("../bad session")
 	assert.NotContains(t, path, "..")
 	assert.Contains(t, path, "_bad_session")
+}
+
+func TestServiceRejectsNonHTTPURL(t *testing.T) {
+	svc := &Service{
+		backends: map[string]Backend{"native": &fakeBackend{name: "native"}},
+		order:    []string{"native"},
+		sessions: make(map[string]*session),
+	}
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"file:///tmp/test"}`))
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "http and https")
+}
+
+func TestMCPWaitRespectsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	backend := &MCPBackend{}
+	err := backend.Wait(ctx, nil, WaitOptions{TimeoutMS: 10})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestJoinTextBlocks(t *testing.T) {
+	got := joinTextBlocks([]mcpclient.ContentBlock{
+		{Type: "text", Text: "first"},
+		{Type: "image"},
+		{Type: "text", Text: "second"},
+	})
+	assert.Equal(t, "first\nsecond", got)
+}
+
+func TestNewNativeSessionTracksHeadlessOption(t *testing.T) {
+	sess, err := newNativeSession(OpenOptions{Headless: false})
+	require.NoError(t, err)
+	assert.False(t, sess.headless)
+	sess.close()
 }
 
 var _ tools.Tool = (*tool)(nil)

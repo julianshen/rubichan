@@ -45,3 +45,20 @@ func TestRejectPathEscape(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "workspace")
 }
+
+func TestRejectsWritableCTEInReadOnlyTransaction(t *testing.T) {
+	workDir := t.TempDir()
+	dbPath := filepath.Join(workDir, "test.db")
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+	_, err = db.Exec(`create table users (id integer primary key, name text); insert into users(name) values ('alice');`)
+	require.NoError(t, err)
+
+	tool := NewQueryTool(workDir)
+	input := json.RawMessage(`{"engine":"sqlite","database":"test.db","query":"with changed as (update users set name = 'bob' where id = 1 returning name) select name from changed"}`)
+	result, execErr := tool.Execute(context.Background(), input)
+	require.NoError(t, execErr)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "query failed")
+}

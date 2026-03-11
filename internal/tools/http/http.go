@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -22,6 +23,10 @@ const (
 	maxContent     = 30 * 1024
 	maxDisplay     = 100 * 1024
 )
+
+var lookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(ctx, host)
+}
 
 type requestInput struct {
 	URL             string            `json:"url"`
@@ -93,6 +98,9 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return tools.ToolResult{Content: "only http and https URLs are allowed", IsError: true}, nil
+	}
+	if err := validateTarget(ctx, u); err != nil {
+		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
 	values := u.Query()
@@ -226,4 +234,33 @@ func truncate(s string) (string, string) {
 		display = display[:maxDisplay] + "\n... output truncated"
 	}
 	return s[:maxContent] + "\n... output truncated", display
+}
+
+func validateTarget(ctx context.Context, u *url.URL) error {
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return fmt.Errorf("url host is required")
+	}
+	addrs, err := lookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	for _, addr := range addrs {
+		if isPrivateAddress(addr.IP) {
+			return fmt.Errorf("requests to private or local addresses are not allowed")
+		}
+	}
+	return nil
+}
+
+func isPrivateAddress(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
 }

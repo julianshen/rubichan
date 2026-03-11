@@ -179,6 +179,12 @@ func runDiff(ctx context.Context, t *gitTool, input json.RawMessage) (tools.Tool
 	if in.Staged && (in.Base != "" || in.Head != "") {
 		return errResult("staged cannot be combined with base/head"), nil
 	}
+	if err := rejectLeadingDash("base", in.Base); err != nil {
+		return errResult("%s", err), nil
+	}
+	if err := rejectLeadingDash("head", in.Head); err != nil {
+		return errResult("%s", err), nil
+	}
 	repoRoot, err := repoRoot(ctx, t.workDir)
 	if err != nil {
 		return errResult("%s", err), nil
@@ -218,6 +224,9 @@ func runLog(ctx context.Context, t *gitTool, input json.RawMessage) (tools.ToolR
 	if limit <= 0 {
 		limit = 10
 	}
+	if err := rejectLeadingDash("author", in.Author); err != nil {
+		return errResult("%s", err), nil
+	}
 	args := []string{"log", "--date=short", "--pretty=format:%H %ad %an %s", "--max-count", strconv.Itoa(limit)}
 	if in.Author != "" {
 		args = append(args, "--author", in.Author)
@@ -239,6 +248,9 @@ func runShow(ctx context.Context, t *gitTool, input json.RawMessage) (tools.Tool
 	}
 	if strings.TrimSpace(in.Rev) == "" {
 		return errResult("rev is required"), nil
+	}
+	if err := rejectLeadingDash("rev", in.Rev); err != nil {
+		return errResult("%s", err), nil
 	}
 	repoRoot, err := repoRoot(ctx, t.workDir)
 	if err != nil {
@@ -358,4 +370,11 @@ func resolveRepoPath(repoRoot, workDir, inputPath string) (string, error) {
 
 func errResult(format string, args ...any) tools.ToolResult {
 	return tools.ToolResult{Content: fmt.Sprintf(format, args...), IsError: true}
+}
+
+func rejectLeadingDash(name, value string) error {
+	if value != "" && strings.HasPrefix(value, "-") {
+		return fmt.Errorf("%s must not start with '-'", name)
+	}
+	return nil
 }

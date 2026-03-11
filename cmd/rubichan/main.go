@@ -1583,6 +1583,16 @@ func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config,
 		}
 	}
 
+	var enabledBrowserTools []tools.Tool
+	for _, tool := range browser.NewTools(nil) {
+		if toolsCfg.ShouldEnable(tool.Name()) {
+			enabledBrowserTools = append(enabledBrowserTools, tool)
+		}
+	}
+	if len(enabledBrowserTools) == 0 {
+		return nil
+	}
+
 	browserService, err := browser.NewService(cwd, cfg.Browser, cfg.MCP.Servers)
 	if err != nil {
 		return fmt.Errorf("create browser service: %w", err)

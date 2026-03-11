@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,8 @@ type session struct {
 	id      string
 	backend string
 	handle  any
+	mu      sync.Mutex
+	closed  bool
 }
 
 type Service struct {
@@ -156,6 +159,13 @@ func (s *Service) Open(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	if in.URL == "" {
 		return errResult("url is required"), nil
 	}
+	u, err := url.Parse(in.URL)
+	if err != nil {
+		return errResult("invalid url: %s", err), nil
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errResult("only http and https URLs are allowed"), nil
+	}
 
 	opts := OpenOptions{URL: in.URL, Headless: true, Viewport: Viewport{Width: 1280, Height: 800}}
 	if in.Headless != nil {
@@ -165,20 +175,21 @@ func (s *Service) Open(ctx context.Context, input json.RawMessage) (tools.ToolRe
 		opts.Viewport = *in.Viewport
 	}
 
-	s.mu.Lock()
-	existing := s.sessions[in.SessionID]
-	s.mu.Unlock()
-
-	if existing != nil {
-		backend := s.backends[existing.backend]
-		handle, result, err := backend.Open(ctx, existing.handle, opts)
-		if err != nil {
-			return errResult("browser_open failed: %s", err), nil
+	if in.SessionID != "" {
+		existing, backend, err := s.session(in.SessionID)
+		if err == nil {
+			existing.mu.Lock()
+			defer existing.mu.Unlock()
+			if existing.closed {
+				return errResult("unknown session_id %q", in.SessionID), nil
+			}
+			handle, result, err := backend.Open(ctx, existing.handle, opts)
+			if err != nil {
+				return errResult("browser_open failed: %s", err), nil
+			}
+			existing.handle = handle
+			return tools.ToolResult{Content: fmt.Sprintf("session_id: %s\nbackend: %s\ntitle: %s\nurl: %s", existing.id, result.Backend, result.Title, result.URL)}, nil
 		}
-		s.mu.Lock()
-		existing.handle = handle
-		s.mu.Unlock()
-		return tools.ToolResult{Content: fmt.Sprintf("session_id: %s\nbackend: %s\ntitle: %s\nurl: %s", existing.id, result.Backend, result.Title, result.URL)}, nil
 	}
 
 	id := in.SessionID
@@ -211,6 +222,11 @@ func (s *Service) Click(ctx context.Context, input json.RawMessage) (tools.ToolR
 	if in.Selector == "" {
 		return errResult("selector is required"), nil
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return errResult("unknown session_id %q", in.SessionID), nil
+	}
 	if err := backend.Click(ctx, sess.handle, in.Selector, in.WaitForNavigation); err != nil {
 		return errResult("browser_click failed: %s", err), nil
 	}
@@ -229,6 +245,11 @@ func (s *Service) Fill(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	if in.Selector == "" {
 		return errResult("selector is required"), nil
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return errResult("unknown session_id %q", in.SessionID), nil
+	}
 	if err := backend.Fill(ctx, sess.handle, in.Selector, in.Value, in.Submit); err != nil {
 		return errResult("browser_fill failed: %s", err), nil
 	}
@@ -243,6 +264,11 @@ func (s *Service) Snapshot(ctx context.Context, input json.RawMessage) (tools.To
 	sess, backend, err := s.session(in.SessionID)
 	if err != nil {
 		return errResult("%s", err), nil
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return errResult("unknown session_id %q", in.SessionID), nil
 	}
 	snapshot, err := backend.Snapshot(ctx, sess.handle)
 	if err != nil {
@@ -261,6 +287,11 @@ func (s *Service) Screenshot(ctx context.Context, input json.RawMessage) (tools.
 		return errResult("%s", err), nil
 	}
 	filename := s.screenshotPath(in.SessionID)
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return errResult("unknown session_id %q", in.SessionID), nil
+	}
 	res, err := backend.Screenshot(ctx, sess.handle, in.Selector, in.FullPage, filename)
 	if err != nil {
 		return errResult("browser_screenshot failed: %s", err), nil
@@ -279,6 +310,11 @@ func (s *Service) Wait(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	}
 	if in.Selector == "" && in.Text == "" && in.TimeoutMS <= 0 {
 		return errResult("one of selector, text, or timeout_ms is required"), nil
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return errResult("unknown session_id %q", in.SessionID), nil
 	}
 	if err := backend.Wait(ctx, sess.handle, WaitOptions{Selector: in.Selector, Text: in.Text, TimeoutMS: in.TimeoutMS}); err != nil {
 		return errResult("browser_wait failed: %s", err), nil
@@ -300,9 +336,20 @@ func (s *Service) Close(ctx context.Context, input json.RawMessage) (tools.ToolR
 	if sess == nil {
 		return errResult("unknown session_id %q", in.SessionID), nil
 	}
-	if err := s.backends[sess.backend].Close(ctx, sess.handle); err != nil {
+	backend := s.backends[sess.backend]
+	if backend == nil {
+		return errResult("backend %q is unavailable", sess.backend), nil
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return errResult("unknown session_id %q", in.SessionID), nil
+	}
+	sess.closed = true
+	if err := backend.Close(ctx, sess.handle); err != nil {
 		return errResult("browser_close failed: %s", err), nil
 	}
+	sess.handle = nil
 	return tools.ToolResult{Content: fmt.Sprintf("closed session %s", in.SessionID)}, nil
 }
 

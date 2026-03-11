@@ -50,7 +50,7 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 				nonCoreMatched = true
 			}
 
-		case cat == CategoryMCP || cat == CategorySkill:
+		case cat == CategoryGit || cat == CategoryNet || cat == CategoryMCP || cat == CategorySkill:
 			if recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
 				selected = append(selected, tool)
 				nonCoreMatched = true

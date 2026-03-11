@@ -12,21 +12,16 @@ import (
 )
 
 type nativeSession struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx         context.Context
+	cancel      context.CancelFunc
+	allocCancel context.CancelFunc
+	headless    bool
 }
 
-type NativeBackend struct {
-	allocCtx context.Context
-}
+type NativeBackend struct{}
 
 func NewNativeBackend() *NativeBackend {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", true),
-		chromedp.Flag("disable-gpu", true),
-	)
-	allocCtx, _ := chromedp.NewExecAllocator(context.Background(), opts...)
-	return &NativeBackend{allocCtx: allocCtx}
+	return &NativeBackend{}
 }
 
 func (b *NativeBackend) Name() string { return "native" }
@@ -34,10 +29,20 @@ func (b *NativeBackend) Name() string { return "native" }
 func (b *NativeBackend) Open(ctx context.Context, handle any, opts OpenOptions) (any, OpenResult, error) {
 	sess, ok := handle.(*nativeSession)
 	if !ok || sess == nil {
-		tabCtx, cancel := chromedp.NewContext(b.allocCtx)
-		sess = &nativeSession{ctx: tabCtx, cancel: cancel}
+		var err error
+		sess, err = newNativeSession(opts)
+		if err != nil {
+			return nil, OpenResult{}, err
+		}
+	} else if sess.headless != opts.Headless {
+		sess.close()
+		var err error
+		sess, err = newNativeSession(opts)
+		if err != nil {
+			return nil, OpenResult{}, err
+		}
 	}
-	if err := chromedp.Run(sess.ctx, chromedp.Navigate(opts.URL)); err != nil {
+	if err := chromedp.Run(sess.ctx, viewportAction(opts), chromedp.Navigate(opts.URL)); err != nil {
 		return nil, OpenResult{}, err
 	}
 	var title, current string
@@ -210,8 +215,44 @@ func (b *NativeBackend) Close(ctx context.Context, handle any) error {
 	if err != nil {
 		return err
 	}
-	sess.cancel()
+	sess.close()
 	return nil
+}
+
+func newNativeSession(opts OpenOptions) (*nativeSession, error) {
+	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", opts.Headless),
+		chromedp.Flag("disable-gpu", true),
+	)
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
+	tabCtx, cancel := chromedp.NewContext(allocCtx)
+	return &nativeSession{
+		ctx:         tabCtx,
+		cancel:      cancel,
+		allocCancel: allocCancel,
+		headless:    opts.Headless,
+	}, nil
+}
+
+func (s *nativeSession) close() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if s.allocCancel != nil {
+		s.allocCancel()
+	}
+}
+
+func viewportAction(opts OpenOptions) chromedp.Action {
+	width := opts.Viewport.Width
+	height := opts.Viewport.Height
+	if width <= 0 {
+		width = 1280
+	}
+	if height <= 0 {
+		height = 800
+	}
+	return chromedp.EmulateViewport(int64(width), int64(height))
 }
 
 func requireNativeSession(handle any) (*nativeSession, error) {

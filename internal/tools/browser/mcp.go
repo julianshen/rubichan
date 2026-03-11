@@ -112,6 +112,15 @@ func (b *MCPBackend) Screenshot(ctx context.Context, handle any, selector string
 		}
 		return ScreenshotResult{Path: path}, nil
 	}
+	if selector == "" {
+		_, err := b.call(ctx, "browser_run_code", map[string]any{
+			"code": fmt.Sprintf(`async (page) => { await page.screenshot({ path: %q, fullPage: %t }); return %q; }`, path, fullPage, path),
+		})
+		if err != nil {
+			return ScreenshotResult{}, err
+		}
+		return ScreenshotResult{Path: path}, nil
+	}
 	_, err := b.call(ctx, "browser_run_code", map[string]any{
 		"code": fmt.Sprintf(`async (page) => { const loc = page.locator(%q); if (await loc.count() !== 1) throw new Error("selector match count must be exactly 1"); await loc.screenshot({ path: %q }); return %q; }`, selector, path, path),
 	})
@@ -123,8 +132,14 @@ func (b *MCPBackend) Screenshot(ctx context.Context, handle any, selector string
 
 func (b *MCPBackend) Wait(ctx context.Context, handle any, opts WaitOptions) error {
 	if opts.TimeoutMS > 0 && opts.Selector == "" && opts.Text == "" {
-		time.Sleep(time.Duration(opts.TimeoutMS) * time.Millisecond)
-		return nil
+		timer := time.NewTimer(time.Duration(opts.TimeoutMS) * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
 	}
 	if opts.Selector != "" {
 		_, err := b.call(ctx, "browser_run_code", map[string]any{
@@ -211,15 +226,13 @@ func (b *MCPBackend) call(ctx context.Context, name string, args map[string]any)
 		return "", err
 	}
 	if result.IsError {
+		text := joinTextBlocks(result.Content)
+		if text != "" {
+			return "", fmt.Errorf("mcp browser tool %s returned an error: %s", name, text)
+		}
 		return "", fmt.Errorf("mcp browser tool %s returned an error", name)
 	}
-	var parts []string
-	for _, block := range result.Content {
-		if block.Type == "text" && block.Text != "" {
-			parts = append(parts, block.Text)
-		}
-	}
-	return strings.Join(parts, "\n"), nil
+	return joinTextBlocks(result.Content), nil
 }
 
 func firstSnapshotLine(snapshot, prefix string) string {
@@ -229,4 +242,14 @@ func firstSnapshotLine(snapshot, prefix string) string {
 		}
 	}
 	return ""
+}
+
+func joinTextBlocks(blocks []mcpclient.ContentBlock) string {
+	var parts []string
+	for _, block := range blocks {
+		if block.Type == "text" && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func allowResolvedHost(t *testing.T, hosts ...string) {
+	t.Helper()
+	original := lookupIPAddr
+	lookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		for _, allowed := range hosts {
+			if host == allowed {
+				return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+			}
+		}
+		return original(ctx, host)
+	}
+	t.Cleanup(func() {
+		lookupIPAddr = original
+	})
+}
+
 func TestGetToolJSONResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "1", r.URL.Query().Get("page"))
@@ -20,6 +37,7 @@ func TestGetToolJSONResponse(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true,"name":"rubichan"}`))
 	}))
 	defer srv.Close()
+	allowResolvedHost(t, "127.0.0.1")
 
 	tool := NewGetTool()
 	input := json.RawMessage(`{"url":"` + srv.URL + `","query":{"page":"1"}}`)
@@ -39,6 +57,7 @@ func TestPostToolStringBody(t *testing.T) {
 		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
+	allowResolvedHost(t, "127.0.0.1")
 
 	tool := NewPostTool()
 	input := json.RawMessage(`{"url":"` + srv.URL + `","body":"hello"}`)
@@ -54,4 +73,12 @@ func TestRejectNonHTTPURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.True(t, strings.Contains(result.Content, "http and https"))
+}
+
+func TestRejectPrivateAddressTargets(t *testing.T) {
+	tool := NewGetTool()
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"url":"http://127.0.0.1/test"}`))
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "private or local addresses")
 }

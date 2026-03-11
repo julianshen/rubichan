@@ -98,7 +98,13 @@ func (t *QueryTool) Execute(ctx context.Context, input json.RawMessage) (tools.T
 	}
 	defer db.Close()
 
-	rows, err := db.QueryContext(queryCtx, in.Query, in.Params...)
+	tx, err := db.BeginTx(queryCtx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("begin read-only transaction: %s", err), IsError: true}, nil
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(queryCtx, in.Query, in.Params...)
 	if err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("query failed: %s", err), IsError: true}, nil
 	}

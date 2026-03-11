@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,6 +63,51 @@ func TestGitToolOutsideRepo(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "not in a git repository")
+}
+
+func TestGitRejectsLeadingDashRevisionsAndFilters(t *testing.T) {
+	repo := initRepo(t)
+
+	tests := []struct {
+		name  string
+		tool  tools.Tool
+		input string
+		want  string
+	}{
+		{
+			name:  "show rev",
+			tool:  NewShowTool(repo),
+			input: `{"rev":"--help"}`,
+			want:  "rev must not start with '-'",
+		},
+		{
+			name:  "log author",
+			tool:  NewLogTool(repo),
+			input: `{"author":"--all"}`,
+			want:  "author must not start with '-'",
+		},
+		{
+			name:  "diff base",
+			tool:  NewDiffTool(repo),
+			input: `{"base":"--cached"}`,
+			want:  "base must not start with '-'",
+		},
+		{
+			name:  "diff head",
+			tool:  NewDiffTool(repo),
+			input: `{"base":"HEAD","head":"--cached"}`,
+			want:  "head must not start with '-'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.tool.Execute(context.Background(), json.RawMessage(tt.input))
+			require.NoError(t, err)
+			assert.True(t, result.IsError)
+			assert.Contains(t, result.Content, tt.want)
+		})
+	}
 }
 
 func initRepo(t *testing.T) string {
