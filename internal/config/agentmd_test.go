@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,4 +35,57 @@ func TestLoadAgentMD_EmptyFile(t *testing.T) {
 	result, err := LoadAgentMD(dir)
 	require.NoError(t, err)
 	assert.Empty(t, result)
+}
+
+func TestLoadIdentityMD_FileExists(t *testing.T) {
+	dir := t.TempDir()
+	content := "# Identity\nRuby\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte(content), 0o644))
+
+	result, err := LoadIdentityMD(dir)
+	require.NoError(t, err)
+	assert.Equal(t, content, result)
+}
+
+func TestLoadIdentityMD_FileMissing(t *testing.T) {
+	dir := t.TempDir()
+
+	result, err := LoadIdentityMD(dir)
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+func TestLoadSoulMD_FileExists(t *testing.T) {
+	dir := t.TempDir()
+	content := "# Soul\nBe useful.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte(content), 0o644))
+
+	result, err := LoadSoulMD(dir)
+	require.NoError(t, err)
+	assert.Equal(t, content, result)
+}
+
+func TestLoadSoulMD_FileMissing(t *testing.T) {
+	dir := t.TempDir()
+
+	result, err := LoadSoulMD(dir)
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+func TestLoadIdentityMD_RejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior requires elevated privileges on Windows")
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	require.NoError(t, os.WriteFile(target, []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "IDENTITY.md")))
+
+	result, err := LoadIdentityMD(dir)
+	require.Error(t, err)
+	assert.Empty(t, result)
+	assert.Contains(t, err.Error(), "loadOptionalMarkdown")
+	assert.Contains(t, err.Error(), "IDENTITY.md")
 }

@@ -435,6 +435,35 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".config", "rubichan"), nil
 }
 
+func appendPersonaOptions(opts []agent.AgentOption, cwd string) []agent.AgentOption {
+	type loader struct {
+		name string
+		fn   func(string) (string, error)
+		opt  func(string) agent.AgentOption
+	}
+
+	loaders := []loader{
+		{name: "AGENT.md", fn: config.LoadAgentMD, opt: agent.WithAgentMD},
+		{name: "IDENTITY.md", fn: config.LoadIdentityMD, opt: agent.WithIdentityMD},
+		{name: "SOUL.md", fn: config.LoadSoulMD, opt: agent.WithSoulMD},
+	}
+
+	for _, l := range loaders {
+		content, err := l.fn(cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to load %s: %v\n", l.name, err)
+			continue
+		}
+		if content == "" {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "warning: loading trusted workspace prompt file %s into the system prompt; review it before using Rubichan on untrusted repositories\n", l.name)
+		opts = append(opts, l.opt(content))
+	}
+
+	return opts
+}
+
 func promptFolderAccess(workingDir string, in io.Reader, out io.Writer) (bool, error) {
 	if _, err := fmt.Fprintf(out, "Allow rubichan to access this folder?\n  %s\nType 'yes' to continue: ", workingDir); err != nil {
 		return false, fmt.Errorf("writing folder access prompt: %w", err)
@@ -883,14 +912,7 @@ func runInteractive() error {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
 	}
 
-	// Inject project-level AGENT.md into system prompt.
-	agentMD, agentMDErr := config.LoadAgentMD(cwd)
-	if agentMDErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load AGENT.md: %v\n", agentMDErr)
-	}
-	if agentMD != "" {
-		opts = append(opts, agent.WithAgentMD(agentMD))
-	}
+	opts = appendPersonaOptions(opts, cwd)
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.
 	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg, "interactive", cwd)
@@ -1174,14 +1196,7 @@ func runHeadless() error {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
 	}
 
-	// Inject project-level AGENT.md into system prompt.
-	agentMD, agentMDErr := config.LoadAgentMD(cwd)
-	if agentMDErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to load AGENT.md: %v\n", agentMDErr)
-	}
-	if agentMD != "" {
-		opts = append(opts, agent.WithAgentMD(agentMD))
-	}
+	opts = appendPersonaOptions(opts, cwd)
 
 	// Create skill runtime with built-in skills.
 	headlessMode := modeFlag

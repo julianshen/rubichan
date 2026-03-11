@@ -170,6 +170,8 @@ func TestNewAgentSystemPrompt(t *testing.T) {
 
 	prompt := agent.conversation.SystemPrompt()
 	assert.NotEmpty(t, prompt)
+	assert.Contains(t, prompt, "## Identity")
+	assert.Contains(t, prompt, "## Soul")
 	assert.Contains(t, prompt, "Ruby")
 	assert.Contains(t, prompt, "ガンバ")
 }
@@ -293,6 +295,68 @@ func TestWithAgentMD_Empty(t *testing.T) {
 
 	prompt := a.conversation.SystemPrompt()
 	assert.NotContains(t, prompt, "Project Guidelines")
+}
+
+func TestWithIdentityMD(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg, WithIdentityMD("# Identity\nName: Custom Ruby"))
+
+	prompt := a.conversation.SystemPrompt()
+	assert.Contains(t, prompt, "Workspace Identity (from IDENTITY.md)")
+	assert.Contains(t, prompt, "Name: Custom Ruby")
+}
+
+func TestWithSoulMD(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg, WithSoulMD("# Soul\nPrefer direct technical answers."))
+
+	prompt := a.conversation.SystemPrompt()
+	assert.Contains(t, prompt, "Workspace Soul (from SOUL.md)")
+	assert.Contains(t, prompt, "Prefer direct technical answers")
+}
+
+func TestPromptSectionOrderWithIdentityAndSoul(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg,
+		WithIdentityMD("workspace identity"),
+		WithSoulMD("workspace soul"),
+		WithAgentMD("project rules"),
+		WithExtraSystemPrompt("Extra Section", "Extra content"),
+	)
+
+	prompt := a.conversation.SystemPrompt()
+	systemIdx := strings.Index(prompt, "## System")
+	identityIdx := strings.Index(prompt, "## Identity")
+	soulIdx := strings.Index(prompt, "## Soul")
+	agentIdx := strings.Index(prompt, "## Project Guidelines (from AGENT.md)")
+	extraIdx := strings.Index(prompt, "## Extra Section")
+
+	assert.Less(t, systemIdx, identityIdx)
+	assert.Less(t, identityIdx, soulIdx)
+	assert.Less(t, soulIdx, agentIdx)
+	assert.Less(t, agentIdx, extraIdx)
+}
+
+func TestBuildSystemPromptWithFragmentsDoesNotNestStaticSections(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(mp, reg, autoApprove, cfg, WithIdentityMD("workspace identity"))
+
+	prompt, _ := a.buildSystemPromptWithFragments()
+	assert.Equal(t, 1, strings.Count(prompt, "## System"))
+	assert.Equal(t, 1, strings.Count(prompt, "## Identity"))
+	assert.Equal(t, 1, strings.Count(prompt, "## Soul"))
 }
 
 func TestTurnTextOnly(t *testing.T) {

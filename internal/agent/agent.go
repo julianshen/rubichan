@@ -219,6 +219,20 @@ func WithAgentMD(content string) AgentOption {
 	}
 }
 
+// WithIdentityMD injects project-level IDENTITY.md content into the system prompt.
+func WithIdentityMD(content string) AgentOption {
+	return func(a *Agent) {
+		a.identityMD = content
+	}
+}
+
+// WithSoulMD injects project-level SOUL.md content into the system prompt.
+func WithSoulMD(content string) AgentOption {
+	return func(a *Agent) {
+		a.soulMD = content
+	}
+}
+
 // namedPrompt is a named system prompt section appended after the base prompt.
 type namedPrompt struct {
 	Name    string
@@ -246,11 +260,15 @@ type Agent struct {
 	approvalChecker  ApprovalChecker
 	model            string
 	maxTurns         int
+	basePrompt       string
+	staticPrompts    []PromptSection
 	skillRuntime     *skills.Runtime
 	store            *store.Store
 	sessionID        string
 	resumeSessionID  string
 	agentMD          string
+	identityMD       string
+	soulMD           string
 	extraPrompts     []namedPrompt
 	summarizer       Summarizer
 	scratchpad       *Scratchpad
@@ -275,6 +293,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	a := &Agent{
 		provider:     p,
 		tools:        t,
+		basePrompt:   systemPrompt,
 		conversation: NewConversation(systemPrompt),
 		context:      newContextManagerFromConfig(cfg),
 		approve:      approve,
@@ -289,35 +308,19 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	if a.workingDir == "" {
 		a.workingDir, _ = os.Getwd()
 	}
-	// Rebuild system prompt if AGENT.md content was provided.
-	if a.agentMD != "" {
-		prompt := a.conversation.SystemPrompt() +
-			"\n\n## Project Guidelines (from AGENT.md)\n\n" + a.agentMD
-		a.conversation = NewConversation(prompt)
-	}
-	// Append extra system prompt sections (e.g., from apple-dev skill).
-	if len(a.extraPrompts) > 0 {
-		prompt := a.conversation.SystemPrompt()
-		for _, ep := range a.extraPrompts {
-			prompt += "\n\n## " + ep.Name + "\n\n" + ep.Content
-		}
-		a.conversation = NewConversation(prompt)
-	}
 	// Load cross-session memories into system prompt.
+	var memories []MemoryEntry
 	if a.memoryStore != nil {
 		wd := a.WorkingDir()
-		memories, err := a.memoryStore.LoadMemories(wd)
+		loaded, err := a.memoryStore.LoadMemories(wd)
 		if err != nil {
 			log.Printf("warning: failed to load memories: %v", err)
-		} else if len(memories) > 0 {
-			prompt := a.conversation.SystemPrompt()
-			prompt += "\n\n## Prior Session Insights\n\n"
-			for _, m := range memories {
-				prompt += fmt.Sprintf("- **%s**: %s\n", m.Tag, m.Content)
-			}
-			a.conversation = NewConversation(prompt)
+		} else {
+			memories = loaded
 		}
 	}
+	a.staticPrompts = a.assembleSystemPromptSections(memories)
+	a.conversation = NewConversation(renderPromptSections(a.staticPrompts))
 	// If a summarizer was provided and the caller didn't set custom
 	// strategies, insert summarization between tool clearing and truncation.
 	if a.summarizer != nil && !a.customStrategies {
@@ -336,6 +339,11 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			} else {
 				a.sessionID = sess.ID
 				a.conversation = NewConversation(sess.SystemPrompt)
+				a.staticPrompts = []PromptSection{{
+					Name:      "",
+					Content:   sess.SystemPrompt,
+					Cacheable: true,
+				}}
 				// Prefer compacted snapshot for resume (avoids re-exceeding
 				// context limits). Fall back to full message history for
 				// sessions that were never compacted.
@@ -445,7 +453,74 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 
 // buildSystemPrompt constructs the system prompt from configuration.
 func buildSystemPrompt(_ *config.Config) string {
-	return persona.SystemPrompt()
+	return persona.BaseSystemPrompt()
+}
+
+func (a *Agent) assembleSystemPromptSections(memories []MemoryEntry) []PromptSection {
+	sections := []PromptSection{{
+		Name:      "System",
+		Content:   a.basePrompt,
+		Cacheable: true,
+	}}
+
+	identity := persona.IdentityPrompt()
+	if a.identityMD != "" {
+		identity += "\n\n### Workspace Identity (from IDENTITY.md)\n\n" + a.identityMD
+	}
+	sections = append(sections, PromptSection{
+		Name:      "Identity",
+		Content:   identity,
+		Cacheable: true,
+	})
+
+	soul := persona.SoulPrompt()
+	if a.soulMD != "" {
+		soul += "\n\n### Workspace Soul (from SOUL.md)\n\n" + a.soulMD
+	}
+	sections = append(sections, PromptSection{
+		Name:      "Soul",
+		Content:   soul,
+		Cacheable: true,
+	})
+
+	if a.agentMD != "" {
+		sections = append(sections, PromptSection{
+			Name:      "Project Guidelines (from AGENT.md)",
+			Content:   a.agentMD,
+			Cacheable: true,
+		})
+	}
+
+	for _, ep := range a.extraPrompts {
+		sections = append(sections, PromptSection{
+			Name:      ep.Name,
+			Content:   ep.Content,
+			Cacheable: true,
+		})
+	}
+
+	if len(memories) > 0 {
+		var sb strings.Builder
+		for _, m := range memories {
+			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", m.Tag, m.Content))
+		}
+		sections = append(sections, PromptSection{
+			Name:      "Prior Session Insights",
+			Content:   sb.String(),
+			Cacheable: true,
+		})
+	}
+
+	return sections
+}
+
+func renderPromptSections(sections []PromptSection) string {
+	pb := NewPromptBuilder()
+	for _, section := range sections {
+		pb.AddSection(section)
+	}
+	prompt, _ := pb.Build()
+	return prompt
 }
 
 // agentCompactor adapts the Agent's ForceCompact to the tools.Compactor interface,
@@ -577,12 +652,17 @@ func (a *Agent) DiffTracker() *tools.DiffTracker {
 func (a *Agent) buildSystemPromptWithFragments() (string, []int) {
 	pb := NewPromptBuilder()
 
-	// Base system prompt — static across turns.
-	pb.AddSection(PromptSection{
-		Name:      "System",
-		Content:   a.conversation.SystemPrompt(),
-		Cacheable: true,
-	})
+	if len(a.staticPrompts) > 0 {
+		for _, section := range a.staticPrompts {
+			pb.AddSection(section)
+		}
+	} else {
+		pb.AddSection(PromptSection{
+			Name:      "",
+			Content:   a.conversation.SystemPrompt(),
+			Cacheable: true,
+		})
+	}
 
 	// Scratchpad — dynamic, changes as user adds notes.
 	if a.scratchpad != nil {

@@ -9,6 +9,8 @@ import (
 func TestSystemPromptContainsIdentity(t *testing.T) {
 	prompt := SystemPrompt()
 	assert.NotEmpty(t, prompt)
+	assert.Contains(t, prompt, "## Identity")
+	assert.Contains(t, prompt, "## Soul")
 	assert.Contains(t, prompt, "Ruby")
 	assert.Contains(t, prompt, "Pigi")
 	assert.Contains(t, prompt, "ガンバ")
@@ -17,6 +19,24 @@ func TestSystemPromptContainsIdentity(t *testing.T) {
 	assert.Contains(t, prompt, "Never reveal internal reasoning")
 	assert.Contains(t, prompt, "assistantanalysis")
 	assert.Contains(t, prompt, "to=functions")
+}
+
+func TestBaseSystemPrompt(t *testing.T) {
+	prompt := BaseSystemPrompt()
+	assert.Contains(t, prompt, "coding assistant")
+	assert.NotContains(t, prompt, "Ruby Kurosawa")
+}
+
+func TestIdentityPrompt(t *testing.T) {
+	prompt := IdentityPrompt()
+	assert.Contains(t, prompt, "Ruby Kurosawa")
+	assert.Contains(t, prompt, "Pigi")
+}
+
+func TestSoulPrompt(t *testing.T) {
+	prompt := SoulPrompt()
+	assert.Contains(t, prompt, "Core Principles")
+	assert.Contains(t, prompt, "Boundaries")
 }
 
 func TestWelcomeMessage(t *testing.T) {
