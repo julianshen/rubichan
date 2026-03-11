@@ -2,14 +2,21 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
+	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
@@ -31,6 +38,107 @@ func TestVersionStringDefaults(t *testing.T) {
 	assert.Contains(t, s, "dev")
 	assert.Contains(t, s, "none")
 	assert.Contains(t, s, "unknown")
+}
+
+func TestShouldIgnoreTUIRunError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	assert.True(t, shouldIgnoreTUIRunError(tea.ErrProgramKilled, ctx))
+	assert.False(t, shouldIgnoreTUIRunError(nil, ctx))
+	assert.False(t, shouldIgnoreTUIRunError(context.Canceled, ctx))
+	assert.False(t, shouldIgnoreTUIRunError(tea.ErrProgramKilled, context.Background()))
+}
+
+func TestShouldIgnoreTUIRunErrorSignalAbortReturnsFalse(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&interactiveSignalAbort{name: "quit", exitCode: 131})
+
+	assert.False(t, shouldIgnoreTUIRunError(tea.ErrProgramKilled, ctx))
+}
+
+func TestHandleInteractiveProgramErrorReturnsExitErrorForSignalAbort(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&interactiveSignalAbort{name: "quit", exitCode: 131})
+
+	err := handleInteractiveProgramError(tea.ErrProgramKilled, ctx, "running TUI")
+	var exitErr *runner.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 131, exitErr.Code)
+}
+
+func TestInteractiveExitErrorReturnsExitErrorForSignalAbort(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&interactiveSignalAbort{name: "quit", exitCode: 131})
+
+	err := interactiveExitError(ctx)
+	var exitErr *runner.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 131, exitErr.Code)
+}
+
+func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
+	origWriter := log.Writer()
+	origFlags := log.Flags()
+	var sentinel bytes.Buffer
+	log.SetOutput(&sentinel)
+	log.SetFlags(123)
+	defer log.SetOutput(origWriter)
+	defer log.SetFlags(origFlags)
+
+	logger, err := startSessionLogger(t.TempDir())
+	require.NoError(t, err)
+	require.FileExists(t, logger.path)
+
+	log.Printf("captured line")
+
+	require.NoError(t, logger.Close())
+
+	data, err := os.ReadFile(logger.path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "rubichan session log started")
+	assert.Contains(t, string(data), "captured line")
+	assert.Contains(t, string(data), "rubichan session log finished")
+	info, err := os.Stat(logger.path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	assert.Contains(t, filepath.Base(logger.path), strconv.Itoa(os.Getpid()))
+	dirInfo, err := os.Stat(filepath.Dir(logger.path))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
+	log.Print("restored line")
+	assert.Contains(t, sentinel.String(), "restored line")
+	assert.Equal(t, 123, log.Flags())
+}
+
+func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
+	cfgDir := t.TempDir()
+	dumpPath, err := writePanicDump(cfgDir, "boom", "/tmp/session.log")
+	require.NoError(t, err)
+	require.FileExists(t, dumpPath)
+
+	data, err := os.ReadFile(dumpPath)
+	require.NoError(t, err)
+	text := string(data)
+	assert.Contains(t, text, "panic: boom")
+	assert.Contains(t, text, "session_log: /tmp/session.log")
+	assert.Contains(t, text, "goroutine")
+	info, err := os.Stat(dumpPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	assert.Contains(t, filepath.Base(dumpPath), strconv.Itoa(os.Getpid()))
+}
+
+func TestLogFileSuffixIncludesTimestampAndPID(t *testing.T) {
+	now := time.Date(2026, time.March, 11, 21, 15, 30, 123456789, time.FixedZone("UTC+8", 8*3600))
+	suffix := logFileSuffix(now)
+	assert.Equal(t, fmt.Sprintf("20260311-131530.123456789-%d", os.Getpid()), suffix)
+}
+
+func TestStartInteractiveSignalHandlerStopIsIdempotent(t *testing.T) {
+	stop := startInteractiveSignalHandler(t.TempDir(), "/tmp/session.log", func(error) {})
+	stop()
+	stop()
 }
 
 func TestAutoApproveDefaultsFalse(t *testing.T) {

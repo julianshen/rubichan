@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -89,10 +92,171 @@ var (
 	resumeFlag   string
 	failOnFlag   string
 	worktreeFlag string
+
+	activeSessionLogMu   sync.RWMutex
+	activeSessionLogPath string
 )
 
 func versionString() string {
 	return fmt.Sprintf("rubichan %s (commit: %s, built: %s)", version, commit, date)
+}
+
+// shouldIgnoreTUIRunError suppresses Bubble Tea's program-killed error when
+// Rubichan intentionally cancelled the TUI context as part of signal handling.
+func shouldIgnoreTUIRunError(err error, runCtx context.Context) bool {
+	return errors.Is(err, tea.ErrProgramKilled) &&
+		errors.Is(runCtx.Err(), context.Canceled) &&
+		signalAbortFromContext(runCtx) == nil
+}
+
+type interactiveSignalAbort struct {
+	name     string
+	exitCode int
+}
+
+func (e *interactiveSignalAbort) Error() string {
+	return fmt.Sprintf("interactive session aborted by %s", e.name)
+}
+
+func signalAbortFromContext(ctx context.Context) *interactiveSignalAbort {
+	var abort *interactiveSignalAbort
+	if errors.As(context.Cause(ctx), &abort) {
+		return abort
+	}
+	return nil
+}
+
+func interactiveExitError(runCtx context.Context) error {
+	if abort := signalAbortFromContext(runCtx); abort != nil {
+		return &runner.ExitError{Code: abort.exitCode}
+	}
+	return nil
+}
+
+func handleInteractiveProgramError(err error, runCtx context.Context, phase string) error {
+	if exitErr := interactiveExitError(runCtx); exitErr != nil && errors.Is(err, tea.ErrProgramKilled) {
+		return exitErr
+	}
+	if err == nil || shouldIgnoreTUIRunError(err, runCtx) {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", phase, err)
+}
+
+func setActiveSessionLogPath(path string) {
+	activeSessionLogMu.Lock()
+	defer activeSessionLogMu.Unlock()
+	activeSessionLogPath = path
+}
+
+func getActiveSessionLogPath() string {
+	activeSessionLogMu.RLock()
+	defer activeSessionLogMu.RUnlock()
+	return activeSessionLogPath
+}
+
+type sessionLogger struct {
+	file       *os.File
+	path       string
+	prevWriter io.Writer
+	prevFlags  int
+}
+
+func logFileSuffix(now time.Time) string {
+	return fmt.Sprintf("%s-%d", now.UTC().Format("20060102-150405.000000000"), os.Getpid())
+}
+
+func captureAllStacks() []byte {
+	buf := make([]byte, 1<<20)
+	for len(buf) <= 16<<20 {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return buf[:n]
+		}
+		buf = make([]byte, len(buf)*2)
+	}
+	n := runtime.Stack(buf, true)
+	return buf[:n]
+}
+
+func writeStackDump(cfgDir, fileName, header string) (string, error) {
+	logDir := filepath.Join(cfgDir, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return "", fmt.Errorf("creating log directory: %w", err)
+	}
+
+	path := filepath.Join(logDir, fileName)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("opening dump file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.WriteString(f, header); err != nil {
+		return "", fmt.Errorf("writing dump header: %w", err)
+	}
+	if _, err := f.Write(captureAllStacks()); err != nil {
+		return "", fmt.Errorf("writing dump stack: %w", err)
+	}
+
+	return path, nil
+}
+
+func startSessionLogger(cfgDir string) (*sessionLogger, error) {
+	logDir := filepath.Join(cfgDir, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return nil, fmt.Errorf("creating log directory: %w", err)
+	}
+
+	path := filepath.Join(logDir, fmt.Sprintf("rubichan-%s.log", logFileSuffix(time.Now())))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening session log: %w", err)
+	}
+
+	sl := &sessionLogger{
+		file:       f,
+		path:       path,
+		prevWriter: log.Writer(),
+		prevFlags:  log.Flags(),
+	}
+	setActiveSessionLogPath(path)
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.LUTC)
+	log.Printf("rubichan session log started: %s", path)
+	return sl, nil
+}
+
+func (sl *sessionLogger) Close() error {
+	if sl == nil {
+		return nil
+	}
+	log.Printf("rubichan session log finished")
+	log.SetOutput(sl.prevWriter)
+	log.SetFlags(sl.prevFlags)
+	return sl.file.Close()
+}
+
+func writeDiagnosticDump(cfgDir string, sig os.Signal, sessionLogPath string) (string, error) {
+	now := time.Now()
+	header := fmt.Sprintf(
+		"timestamp: %s\nsignal: %s\nsession_log: %s\n\n",
+		now.UTC().Format(time.RFC3339Nano),
+		sig.String(),
+		sessionLogPath,
+	)
+	return writeStackDump(cfgDir, fmt.Sprintf("diagnostic-%s-%s.log", strings.ToLower(sig.String()), logFileSuffix(now)), header)
+}
+
+func writePanicDump(cfgDir string, recovered any, sessionLogPath string) (string, error) {
+	now := time.Now()
+	header := fmt.Sprintf(
+		"timestamp: %s\npanic: %v\nsession_log: %s\n\n",
+		now.UTC().Format(time.RFC3339Nano),
+		recovered,
+		sessionLogPath,
+	)
+	return writeStackDump(cfgDir, fmt.Sprintf("panic-%s.log", logFileSuffix(now)), header)
 }
 
 // setupWorkingDir determines the effective working directory. When --worktree
@@ -159,6 +323,23 @@ func runGitCommand(args ...string) (string, error) {
 }
 
 func main() {
+	cfgDir, cfgDirErr := configDir()
+	defer func() {
+		if r := recover(); r != nil {
+			sessionLogPath := getActiveSessionLogPath()
+			if cfgDirErr == nil {
+				if path, err := writePanicDump(cfgDir, r, sessionLogPath); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to write panic dump: %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "panic dump written to %s\n", path)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "warning: failed to resolve config directory for panic dump: %v\n", cfgDirErr)
+			}
+			panic(r)
+		}
+	}()
+
 	rootCmd := &cobra.Command{
 		Use:   "rubichan",
 		Short: "An AI coding assistant",
@@ -716,6 +897,20 @@ func runInteractive() error {
 	if err != nil {
 		return err
 	}
+	runCtx, cancelRun := context.WithCancelCause(context.Background())
+	defer cancelRun(nil)
+	sessionLog, err := startSessionLogger(cfgDir)
+	if err != nil {
+		return err
+	}
+	stopSignals := startInteractiveSignalHandler(cfgDir, sessionLog.path, cancelRun)
+	defer stopSignals()
+	defer func() {
+		if closeErr := sessionLog.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close session log: %v\n", closeErr)
+		}
+	}()
+
 	cfgPath := configPath
 	if cfgPath == "" {
 		cfgPath = filepath.Join(cfgDir, "config.toml")
@@ -727,10 +922,10 @@ func runInteractive() error {
 		form := wizard.Form()
 		form.SubmitCmd = tea.Quit
 		form.CancelCmd = tea.Interrupt
-		prog := tea.NewProgram(form)
+		prog := tea.NewProgram(form, tea.WithContext(runCtx))
 		finalModel, err := prog.Run()
-		if err != nil {
-			return fmt.Errorf("bootstrap wizard: %w", err)
+		if err := handleInteractiveProgramError(err, runCtx, "bootstrap wizard"); err != nil {
+			return err
 		}
 		// Bubble Tea returns the final form model after all Updates.
 		// We must check state on the returned model, not the original,
@@ -752,11 +947,17 @@ func runInteractive() error {
 	if err != nil {
 		return err
 	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
+	}
 
 	// Create provider
 	p, err := provider.NewProvider(cfg)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
+	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
 	}
 
 	// Set up effective working directory (creates worktree if --worktree is set).
@@ -765,6 +966,9 @@ func runInteractive() error {
 		return fmt.Errorf("worktree setup: %w", err)
 	}
 	defer wtCleanup()
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
+	}
 
 	// Create tool registry
 	registry := tools.NewRegistry()
@@ -922,7 +1126,7 @@ func runInteractive() error {
 	opts = appendPersonaOptions(opts, cwd)
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.
-	rt, storeCloser, err := createSkillRuntime(context.Background(), registry, p, cfg, "interactive", cwd)
+	rt, storeCloser, err := createSkillRuntime(runCtx, registry, p, cfg, "interactive", cwd)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
@@ -1062,14 +1266,25 @@ func runInteractive() error {
 	model.SetFileCompletionSource(fileSrc)
 	go indexProjectFiles(cwd, fileSrc)
 
-	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	prog := tea.NewProgram(model, tea.WithContext(runCtx), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
-		return fmt.Errorf("running TUI: %w", err)
+		if err := handleInteractiveProgramError(err, runCtx, "running TUI"); err != nil {
+			return err
+		}
+	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
 	}
 
 	// Save memories on graceful shutdown.
-	if err := a.SaveMemories(context.Background()); err != nil {
+	if err := a.SaveMemories(runCtx); err != nil {
+		if exitErr := interactiveExitError(runCtx); exitErr != nil {
+			return exitErr
+		}
 		fmt.Fprintf(os.Stderr, "warning: failed to save memories: %v\n", err)
+	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
 	}
 
 	return nil
