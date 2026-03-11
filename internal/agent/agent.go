@@ -1158,8 +1158,23 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- Tur
 }
 
 // executeSingleTool delegates tool execution to the pipeline.
-// Used by both the parallel and sequential paths.
-func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) toolExecResult {
+// Used by both the parallel and sequential paths. Recovers from panics
+// so that a single tool crash produces an error tool_result instead of
+// unwinding the entire turn and leaving dangling tool_use blocks.
+func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) (res toolExecResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			log.Printf("tool %s panicked: %v\n%s", tc.Name, r, stack)
+			msg := fmt.Sprintf("tool panicked: %v", r)
+			res = toolExecResult{
+				toolUseID: tc.ID,
+				content:   msg,
+				isError:   true,
+				event:     makeToolResultEvent(tc.ID, tc.Name, msg, "", true),
+			}
+		}
+	}()
 	emit := func(ev tools.ToolEvent) {
 		ch <- TurnEvent{
 			Type: "tool_progress",
