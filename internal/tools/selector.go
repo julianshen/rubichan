@@ -50,6 +50,12 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 				nonCoreMatched = true
 			}
 
+		case cat == CategoryLSP:
+			if containsLSPKeywords(recentText) || recentToolNames[tool.Name] {
+				selected = append(selected, tool)
+				nonCoreMatched = true
+			}
+
 		case cat == CategoryGit || cat == CategoryNet || cat == CategoryMCP || cat == CategorySkill:
 			if recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
 				selected = append(selected, tool)
@@ -125,6 +131,22 @@ func containsFileKeywords(text string) bool {
 
 func containsPlatformKeywords(text string) bool {
 	for _, kw := range platformKeywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+var lspKeywords = []string{
+	"lsp", "language server", "definition", "references", "hover",
+	"diagnostics", "completions", "rename", "code action", "symbol",
+	"call hierarchy", "type signature", "go to definition", "find references",
+	"compiler error", "compile error",
+}
+
+func containsLSPKeywords(text string) bool {
+	for _, kw := range lspKeywords {
 		if strings.Contains(text, kw) {
 			return true
 		}
