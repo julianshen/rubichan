@@ -2482,3 +2482,81 @@ func TestWakeEventsPersisted(t *testing.T) {
 	}
 	assert.True(t, foundWakeMsg, "wake events must be persisted to message log for deterministic resume")
 }
+
+func TestTurnPanicRecovery(t *testing.T) {
+	// A tool that panics should be caught by the Turn goroutine's
+	// recover handler, emitting an error event instead of crashing.
+	mp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "call_1", Name: "panicker"}},
+				{Type: "stop"},
+			},
+		},
+	}
+	reg := tools.NewRegistry()
+	panicTool := &mockTool{
+		name:        "panicker",
+		description: "always panics",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			panic("deliberate test panic")
+		},
+	}
+	require.NoError(t, reg.Register(panicTool))
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "trigger panic")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Must contain an error event with the panic message.
+	var foundPanicError bool
+	for _, ev := range events {
+		if ev.Type == "error" && ev.Error != nil && strings.Contains(ev.Error.Error(), "agent panic") {
+			foundPanicError = true
+		}
+	}
+	assert.True(t, foundPanicError, "expected error event with panic message, got events: %v", events)
+}
+
+func TestTurnNilToolUseEvent(t *testing.T) {
+	// A provider sending tool_use with nil ToolUse should produce an error
+	// event, not crash.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hi"},
+			{Type: "tool_use", ToolUse: nil}, // malformed event
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "test nil tool")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have an error event about nil ToolUse and eventually a done.
+	var foundNilError, foundDone bool
+	for _, ev := range events {
+		if ev.Type == "error" && ev.Error != nil && strings.Contains(ev.Error.Error(), "nil ToolUse") {
+			foundNilError = true
+		}
+		if ev.Type == "done" {
+			foundDone = true
+		}
+	}
+	assert.True(t, foundNilError, "expected error event for nil ToolUse")
+	assert.True(t, foundDone, "expected done event")
+}

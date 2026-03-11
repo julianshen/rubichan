@@ -270,6 +270,55 @@ func TestManagerNotifyFileChangedUnknownExt(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestServerForConcurrentInit(t *testing.T) {
+	// Multiple goroutines calling ServerFor for the same language should
+	// only spawn one server. The serverInit barrier serializes them.
+	reg := NewRegistry()
+	reg.lookPath = func(string) (string, error) { return "/usr/bin/gopls", nil }
+	m := NewManager(reg, "/test")
+
+	var spawnCount int
+	var spawnMu sync.Mutex
+	m.spawnServer = func(_ ServerConfig) (io.ReadWriteCloser, error) {
+		spawnMu.Lock()
+		spawnCount++
+		spawnMu.Unlock()
+		// Simulate slow startup.
+		time.Sleep(50 * time.Millisecond)
+		mt := newMockTransport()
+		// Respond to initialize and drain the initialized notification.
+		go func() {
+			raw, _ := readRequest(mt.server)
+			var initResult InitializeResult
+			initResult.Capabilities.DefinitionProvider = true
+			_ = writeResponse(mt.server, raw.ID, initResult)
+			// Drain the "initialized" notification that startServer sends.
+			_, _ = readRequest(mt.server)
+		}()
+		return mt.client, nil
+	}
+
+	const goroutines = 5
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+	for i := range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, errs[i] = m.ServerFor(context.Background(), "go")
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		assert.NoError(t, err, "goroutine %d", i)
+	}
+
+	spawnMu.Lock()
+	assert.Equal(t, 1, spawnCount, "server should be spawned exactly once")
+	spawnMu.Unlock()
+}
+
 func TestManagerSetSummarizer(t *testing.T) {
 	reg := NewRegistry()
 	m := NewManager(reg, "/test")

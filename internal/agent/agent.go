@@ -550,8 +550,11 @@ func newContextManagerFromConfig(cfg *config.Config) *ContextManager {
 }
 
 // ClearConversation removes all messages from the conversation history,
-// preserving the system prompt.
+// preserving the system prompt. It acquires turnMu to prevent races
+// with a concurrent Turn goroutine.
 func (a *Agent) ClearConversation() {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
 	a.conversation.Clear()
 }
 
@@ -567,8 +570,13 @@ func (a *Agent) SaveMemories(ctx context.Context) error {
 		return nil
 	}
 
+	// Snapshot messages under the lock to prevent races with Turn.
+	a.turnMu.Lock()
+	msgs := a.conversation.Messages()
+	a.turnMu.Unlock()
+
 	extractor := NewMemoryExtractor(a.summarizer)
-	memories, err := extractor.Extract(ctx, a.conversation.Messages())
+	memories, err := extractor.Extract(ctx, msgs)
 	if err != nil {
 		return fmt.Errorf("extracting memories: %w", err)
 	}
@@ -636,6 +644,14 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 	go func() {
 		defer a.turnMu.Unlock()
 		defer close(ch)
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- TurnEvent{
+					Type:  "error",
+					Error: fmt.Errorf("agent panic: %v", r),
+				}
+			}
+		}()
 		a.runLoop(ctx, ch, 0)
 	}()
 	return ch, nil
@@ -820,6 +836,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 				}
 
 			case "tool_use":
+				if event.ToolUse == nil {
+					ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")}
+					continue
+				}
 				// Finalize any pending text block
 				finalizeText()
 				// Finalize any previous tool
