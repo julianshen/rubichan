@@ -67,6 +67,16 @@ func TestHandleInteractiveProgramErrorReturnsExitErrorForSignalAbort(t *testing.
 	assert.Equal(t, 131, exitErr.Code)
 }
 
+func TestInteractiveExitErrorReturnsExitErrorForSignalAbort(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&interactiveSignalAbort{name: "quit", exitCode: 131})
+
+	err := interactiveExitError(ctx)
+	var exitErr *runner.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 131, exitErr.Code)
+}
+
 func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
 	origWriter := log.Writer()
 	origFlags := log.Flags()

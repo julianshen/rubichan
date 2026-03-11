@@ -1243,10 +1243,19 @@ func runInteractive() error {
 			return err
 		}
 	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
+	}
 
 	// Save memories on graceful shutdown.
-	if err := a.SaveMemories(context.Background()); err != nil {
+	if err := a.SaveMemories(runCtx); err != nil {
+		if exitErr := interactiveExitError(runCtx); exitErr != nil {
+			return exitErr
+		}
 		fmt.Fprintf(os.Stderr, "warning: failed to save memories: %v\n", err)
+	}
+	if err := interactiveExitError(runCtx); err != nil {
+		return err
 	}
 
 	return nil
