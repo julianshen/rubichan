@@ -2515,14 +2515,20 @@ func TestTurnPanicRecovery(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	// Must contain an error event with the panic message.
-	var foundPanicError bool
+	// Must contain an error event with the panic message and stack trace.
+	var foundPanicError, foundDone bool
 	for _, ev := range events {
 		if ev.Type == "error" && ev.Error != nil && strings.Contains(ev.Error.Error(), "agent panic") {
 			foundPanicError = true
+			// Stack trace must be included for debuggability.
+			assert.Contains(t, ev.Error.Error(), "goroutine", "error should include stack trace")
+		}
+		if ev.Type == "done" {
+			foundDone = true
 		}
 	}
 	assert.True(t, foundPanicError, "expected error event with panic message, got events: %v", events)
+	assert.True(t, foundDone, "expected done event after panic recovery")
 }
 
 func TestTurnNilToolUseEvent(t *testing.T) {
@@ -2559,4 +2565,50 @@ func TestTurnNilToolUseEvent(t *testing.T) {
 	}
 	assert.True(t, foundNilError, "expected error event for nil ToolUse")
 	assert.True(t, foundDone, "expected done event")
+}
+
+func TestClearConversationRaceSafety(t *testing.T) {
+	// ClearConversation must be safe to call concurrently with a running Turn.
+	// This test exercises the turnMu locking added to ClearConversation.
+	// Run with -race to verify.
+	gate := make(chan struct{})
+	mp := &channelProvider{
+		events: func() <-chan provider.StreamEvent {
+			ch := make(chan provider.StreamEvent, 10)
+			go func() {
+				<-gate // wait until ClearConversation is called
+				ch <- provider.StreamEvent{Type: "text_delta", Text: "hello"}
+				ch <- provider.StreamEvent{Type: "stop"}
+				close(ch)
+			}()
+			return ch
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "test race")
+	require.NoError(t, err)
+
+	// Call ClearConversation while Turn goroutine is active.
+	// With turnMu, this blocks until the Turn finishes — no race.
+	go func() {
+		close(gate) // let the provider proceed
+		agent.ClearConversation()
+	}()
+
+	// Drain the channel to let Turn complete.
+	for range ch {
+	}
+}
+
+// channelProvider returns events from a channel factory, allowing
+// synchronization control in tests.
+type channelProvider struct {
+	events func() <-chan provider.StreamEvent
+}
+
+func (p *channelProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	return p.events(), nil
 }

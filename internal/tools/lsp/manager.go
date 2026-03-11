@@ -65,7 +65,7 @@ func NewManager(registry *Registry, rootDir string) *Manager {
 }
 
 // SetSummarizer sets a custom summarizer for response truncation.
-// Must not be called concurrently with tool execution.
+// Safe for concurrent use with tool execution.
 func (m *Manager) SetSummarizer(s *Summarizer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -95,7 +95,11 @@ func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *S
 	// Another goroutine is already starting this server — wait for it.
 	if init, ok := m.starting[languageID]; ok {
 		m.mu.Unlock()
-		<-init.done
+		select {
+		case <-init.done:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
 		if init.err != nil {
 			return nil, nil, init.err
 		}
@@ -118,25 +122,39 @@ func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *S
 	m.starting[languageID] = init
 	m.mu.Unlock()
 
-	client, caps, startErr := m.startServer(ctx, cfg)
+	// Ensure waiters are always unblocked, even if startServer panics.
+	// On panic, init.err will have been set and starting entry cleaned up.
+	defer close(init.done)
+
+	var startErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				startErr = fmt.Errorf("server startup panicked: %v", r)
+			}
+		}()
+		var client *Client
+		var caps ServerCapabilities
+		client, caps, startErr = m.startServer(ctx, cfg)
+		if startErr == nil {
+			init.handle = &serverHandle{client: client, capabilities: caps}
+		}
+	}()
 
 	m.mu.Lock()
 	delete(m.starting, languageID)
-	if startErr == nil {
-		init.handle = &serverHandle{client: client, capabilities: caps}
+	if init.handle != nil {
 		m.servers[languageID] = init.handle
-	} else {
+	}
+	if startErr != nil {
 		init.err = fmt.Errorf("start %s server: %w", languageID, startErr)
 	}
 	m.mu.Unlock()
 
-	// Wake all waiters.
-	close(init.done)
-
 	if startErr != nil {
 		return nil, nil, init.err
 	}
-	return client, &caps, nil
+	return init.handle.client, &init.handle.capabilities, nil
 }
 
 // ServerForFile detects the language from file extension and returns the server.
@@ -224,7 +242,26 @@ func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, conten
 
 // Shutdown gracefully stops all running servers by sending the LSP shutdown
 // request followed by the exit notification, then closing the transport.
+// It also waits for any in-progress server starts to complete before
+// shutting them down, preventing orphaned server processes.
 func (m *Manager) Shutdown(ctx context.Context) error {
+	// Wait for any in-progress server starts to settle so we don't
+	// leak server processes that finish spawning after Shutdown returns.
+	m.mu.Lock()
+	pending := make([]*serverInit, 0, len(m.starting))
+	for _, init := range m.starting {
+		pending = append(pending, init)
+	}
+	m.mu.Unlock()
+
+	for _, init := range pending {
+		select {
+		case <-init.done:
+		case <-ctx.Done():
+			// Best-effort: proceed with what we have.
+		}
+	}
+
 	// Snapshot the server map and clear it under the lock, then release
 	// before doing blocking network I/O (shutdown/exit/close).
 	m.mu.Lock()

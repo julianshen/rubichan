@@ -319,6 +319,43 @@ func TestServerForConcurrentInit(t *testing.T) {
 	spawnMu.Unlock()
 }
 
+func TestServerForConcurrentInitFailure(t *testing.T) {
+	// When startServer fails, all waiting goroutines should receive the error.
+	reg := NewRegistry()
+	reg.lookPath = func(string) (string, error) { return "/usr/bin/gopls", nil }
+	m := NewManager(reg, "/test")
+
+	m.spawnServer = func(_ ServerConfig) (io.ReadWriteCloser, error) {
+		time.Sleep(50 * time.Millisecond)
+		return nil, fmt.Errorf("spawn failed")
+	}
+
+	const goroutines = 5
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+	for i := range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, errs[i] = m.ServerFor(context.Background(), "go")
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		assert.Error(t, err, "goroutine %d should get an error", i)
+		assert.Contains(t, err.Error(), "spawn failed", "goroutine %d", i)
+	}
+
+	// Server should not be cached after failure.
+	m.mu.Lock()
+	_, cached := m.servers["go"]
+	_, starting := m.starting["go"]
+	m.mu.Unlock()
+	assert.False(t, cached, "failed server should not be cached")
+	assert.False(t, starting, "starting entry should be cleaned up")
+}
+
 func TestManagerSetSummarizer(t *testing.T) {
 	reg := NewRegistry()
 	m := NewManager(reg, "/test")

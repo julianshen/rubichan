@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -646,9 +647,21 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 		defer close(ch)
 		defer func() {
 			if r := recover(); r != nil {
-				ch <- TurnEvent{
+				stack := debug.Stack()
+				log.Printf("agent panic recovered: %v\n%s", r, stack)
+				// Non-blocking send to avoid deadlocking turnMu if channel
+				// buffer is full (e.g., reader stopped consuming events).
+				select {
+				case ch <- TurnEvent{
 					Type:  "error",
-					Error: fmt.Errorf("agent panic: %v", r),
+					Error: fmt.Errorf("agent panic: %v\n%s", r, stack),
+				}:
+				default:
+				}
+				// Maintain contract: every turn ends with a "done" event.
+				select {
+				case ch <- TurnEvent{Type: "done"}:
+				default:
 				}
 			}
 		}()
@@ -837,6 +850,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 			case "tool_use":
 				if event.ToolUse == nil {
+					// Finalize any in-progress tool to prevent input corruption.
+					finalizeText()
+					finalizeTool()
 					ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")}
 					continue
 				}
