@@ -587,7 +587,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 		defer func() {
 			if r := recover(); r != nil {
 				stack := debug.Stack()
-				log.Printf("agent panic recovered: %v\n%s", r, stack)
+				a.logger.Error("agent panic recovered: %v\n%s", r, stack)
 				// Non-blocking send to avoid deadlocking turnMu if channel
 				// buffer is full (e.g., reader stopped consuming events).
 				select {
@@ -1104,7 +1104,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
-			log.Printf("tool %s panicked: %v\n%s", tc.Name, r, stack)
+			a.logger.Error("tool %s panicked: %v\n%s", tc.Name, r, stack)
 			msg := fmt.Sprintf("tool panicked: %v", r)
 			res = toolExecResult{
 				toolUseID: tc.ID,
