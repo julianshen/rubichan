@@ -9,7 +9,9 @@ import (
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
-// lspTool is the common base for all LSP tools.
+// lspTool provides a shared implementation of the tools.Tool interface,
+// reducing boilerplate across the individual LSP tool constructors. Each
+// tool only needs to supply a name, description, schema, and run function.
 type lspTool struct {
 	manager     *Manager
 	name        string

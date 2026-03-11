@@ -139,7 +139,9 @@ func (s *Summarizer) SummarizeSymbols(symbols []SymbolInformation, maxItems int)
 	}
 }
 
-// SummarizeDiagnostics truncates a diagnostic list, always showing all errors.
+// SummarizeDiagnostics truncates a diagnostic list. When truncation is needed,
+// all errors are shown first (regardless of the limit), with remaining budget
+// allocated to warnings and info.
 func (s *Summarizer) SummarizeDiagnostics(diags []Diagnostic, maxItems int) SummarizedResult {
 	if maxItems <= 0 {
 		maxItems = s.MaxDiagnostics

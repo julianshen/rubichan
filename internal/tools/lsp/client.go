@@ -190,9 +190,10 @@ func (c *Client) writeMessage(msg any) error {
 	return nil
 }
 
-// readLoop reads messages from the transport and dispatches them. On exit,
-// it signals all pending callers and closes the done channel so blocked
-// Call() invocations fail promptly.
+// readLoop reads messages from the transport and dispatches them. If a read
+// error occurs while the client is still active, it closes the done channel
+// to trigger shutdown. On exit, it drains all pending callers via drainPending
+// so blocked Call() invocations unblock with an error.
 func (c *Client) readLoop() {
 	defer c.drainPending()
 
@@ -220,7 +221,8 @@ func (c *Client) readLoop() {
 }
 
 // drainPending unblocks all goroutines waiting in Call() by sending them
-// a transport-closed error.
+// a synthetic error response (code -1, "transport closed") and clearing the
+// pending map.
 func (c *Client) drainPending() {
 	c.pendingMu.Lock()
 	defer c.pendingMu.Unlock()

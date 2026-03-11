@@ -9,7 +9,9 @@ import (
 )
 
 // Manager tracks language servers across the workspace. Servers are started
-// lazily on first use and only if the binary is available on PATH.
+// lazily on first use and only if the binary is available on PATH. It also
+// caches diagnostics from publishDiagnostics notifications and tracks document
+// open/version state for didOpen/didChange synchronization.
 type Manager struct {
 	registry   *Registry
 	rootURI    string
@@ -110,7 +112,7 @@ func (m *Manager) DiagnosticsFor(uri string, includeWarnings bool) []Diagnostic 
 }
 
 // NotifyFileChanged sends didOpen or didChange to the appropriate server.
-// Called by file tool hooks after writes/patches.
+// Intended to be called whenever a file's content changes.
 func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, content []byte) error {
 	lang, ok := m.registry.LanguageForFile(filePath)
 	if !ok {
@@ -154,7 +156,8 @@ func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, conten
 	})
 }
 
-// Shutdown gracefully stops all running servers.
+// Shutdown gracefully stops all running servers by sending the LSP shutdown
+// request followed by the exit notification, then closing the transport.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

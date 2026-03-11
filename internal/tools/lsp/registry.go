@@ -139,6 +139,7 @@ var defaultConfigs = []ServerConfig{
 	{Language: "python", Command: "pyright-langserver", Args: []string{"--stdio"}, Extensions: []string{".py"}},
 	{Language: "rust", Command: "rust-analyzer", Extensions: []string{".rs"}},
 	{Language: "java", Command: "jdtls", Extensions: []string{".java"}},
+	// "c" covers the C/C++ family; clangd handles both regardless of language ID.
 	{Language: "c", Command: "clangd", Extensions: []string{".c", ".h", ".cpp", ".hpp", ".cc", ".cxx"}},
 	{Language: "ruby", Command: "solargraph", Args: []string{"stdio"}, Extensions: []string{".rb"}},
 	{Language: "php", Command: "phpactor", Args: []string{"language-server"}, Extensions: []string{".php"}},

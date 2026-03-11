@@ -23,8 +23,8 @@ func (s *serverProcess) Write(p []byte) (int, error) {
 }
 
 // Close shuts down the server process. It closes stdin to signal the process,
-// waits briefly for a graceful exit, then kills if needed. Always reaps the
-// child to avoid zombie processes.
+// waits up to 3 seconds for a graceful exit, then kills if needed. Always reaps
+// the child to avoid zombie processes.
 func (s *serverProcess) Close() error {
 	_ = s.stdin.Close()
 	_ = s.stdout.Close()

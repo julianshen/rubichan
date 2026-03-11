@@ -138,21 +138,62 @@ const (
 
 // String returns a human-readable label for the symbol kind.
 func (k SymbolKind) String() string {
-	names := map[SymbolKind]string{
-		SymbolKindFile: "file", SymbolKindModule: "module", SymbolKindNamespace: "namespace",
-		SymbolKindPackage: "package", SymbolKindClass: "class", SymbolKindMethod: "method",
-		SymbolKindProperty: "property", SymbolKindField: "field", SymbolKindConstructor: "constructor",
-		SymbolKindEnum: "enum", SymbolKindInterface: "interface", SymbolKindFunction: "function",
-		SymbolKindVariable: "variable", SymbolKindConstant: "constant", SymbolKindString: "string",
-		SymbolKindNumber: "number", SymbolKindBoolean: "boolean", SymbolKindArray: "array",
-		SymbolKindObject: "object", SymbolKindKey: "key", SymbolKindNull: "null",
-		SymbolKindEnumMember: "enum-member", SymbolKindStruct: "struct", SymbolKindEvent: "event",
-		SymbolKindOperator: "operator", SymbolKindTypeParameter: "type-parameter",
+	switch k {
+	case SymbolKindFile:
+		return "file"
+	case SymbolKindModule:
+		return "module"
+	case SymbolKindNamespace:
+		return "namespace"
+	case SymbolKindPackage:
+		return "package"
+	case SymbolKindClass:
+		return "class"
+	case SymbolKindMethod:
+		return "method"
+	case SymbolKindProperty:
+		return "property"
+	case SymbolKindField:
+		return "field"
+	case SymbolKindConstructor:
+		return "constructor"
+	case SymbolKindEnum:
+		return "enum"
+	case SymbolKindInterface:
+		return "interface"
+	case SymbolKindFunction:
+		return "function"
+	case SymbolKindVariable:
+		return "variable"
+	case SymbolKindConstant:
+		return "constant"
+	case SymbolKindString:
+		return "string"
+	case SymbolKindNumber:
+		return "number"
+	case SymbolKindBoolean:
+		return "boolean"
+	case SymbolKindArray:
+		return "array"
+	case SymbolKindObject:
+		return "object"
+	case SymbolKindKey:
+		return "key"
+	case SymbolKindNull:
+		return "null"
+	case SymbolKindEnumMember:
+		return "enum-member"
+	case SymbolKindStruct:
+		return "struct"
+	case SymbolKindEvent:
+		return "event"
+	case SymbolKindOperator:
+		return "operator"
+	case SymbolKindTypeParameter:
+		return "type-parameter"
+	default:
+		return "unknown"
 	}
-	if name, ok := names[k]; ok {
-		return name
-	}
-	return "unknown"
 }
 
 // SymbolInformation represents information about a symbol.
@@ -282,6 +323,8 @@ type InitializeResult struct {
 
 // ServerCapabilities define the capabilities provided by the server.
 type ServerCapabilities struct {
+	// TextDocumentSync is simplified to int (sync kind). The full
+	// TextDocumentSyncOptions object form is not needed for our use case.
 	TextDocumentSync           int  `json:"textDocumentSync,omitempty"`
 	HoverProvider              bool `json:"hoverProvider,omitempty"`
 	CompletionProvider         any  `json:"completionProvider,omitempty"`
