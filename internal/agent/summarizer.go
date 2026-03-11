@@ -8,10 +8,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
-// Summarizer condenses a sequence of messages into a short text summary.
-type Summarizer interface {
-	Summarize(ctx context.Context, messages []provider.Message) (string, error)
-}
+// Summarizer interface is defined in pkg/agentsdk/ and re-exported via sdk_aliases.go.
 
 // LLMSummarizer implements Summarizer by calling an LLM provider.
 type LLMSummarizer struct {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -12,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sourcegraph/conc/pool"
+
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
@@ -22,82 +23,9 @@ import (
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
-// ApprovalFunc is called before executing a tool to get user approval.
-// Returns true if the tool execution is approved.
-type ApprovalFunc func(ctx context.Context, tool string, input json.RawMessage) (bool, error)
-
-// AutoApproveChecker tests if a tool would be auto-approved without blocking.
-// When the approval function (or the object that provides it) implements this
-// interface, the agent can execute auto-approved tools in parallel.
-type AutoApproveChecker interface {
-	IsAutoApproved(tool string) bool
-}
-
-// AlwaysAutoApprove is an AutoApproveChecker that approves all tools.
-// Use for headless mode or --auto-approve where all tools are pre-approved.
-type AlwaysAutoApprove struct{}
-
-// IsAutoApproved always returns true.
-func (AlwaysAutoApprove) IsAutoApproved(_ string) bool { return true }
-
-// CheckApproval always returns AutoApproved, implementing ApprovalChecker.
-func (AlwaysAutoApprove) CheckApproval(_ string, _ json.RawMessage) ApprovalResult {
-	return AutoApproved
-}
-
-// ToolParallelPolicy determines whether a tool call may be executed in parallel
-// with other auto-approved calls. This separates parallelization decisions from
-// approval decisions: a tool may be auto-approved yet not safe to parallelize.
-type ToolParallelPolicy interface {
-	// CanParallelize returns true if the named tool may run concurrently
-	// with other tool calls in the same batch.
-	CanParallelize(tool string) bool
-}
-
-// AllowAllParallel is a ToolParallelPolicy that permits all tools to run in parallel.
-type AllowAllParallel struct{}
-
-// CanParallelize always returns true.
-func (AllowAllParallel) CanParallelize(_ string) bool { return true }
-
-// TurnEvent represents a streaming event emitted during an agent turn.
-type TurnEvent struct {
-	Type           string           // "text_delta", "tool_call", "tool_result", "error", "done", "subagent_done"
-	Text           string           // text content for text_delta events
-	ToolCall       *ToolCallEvent   // populated for tool_call events
-	ToolResult     *ToolResultEvent // populated for tool_result events
-	ToolProgress   *ToolProgressEvent
-	Error          error           // populated for error events
-	InputTokens    int             // populated for done events: total input tokens used
-	OutputTokens   int             // populated for done events: total output tokens used
-	DiffSummary    string          // populated for done events: markdown-formatted cumulative file change summary
-	SubagentResult *SubagentResult // populated for subagent_done events
-}
-
-// ToolCallEvent contains details about a tool being called.
-type ToolCallEvent struct {
-	ID    string
-	Name  string
-	Input json.RawMessage
-}
-
-// ToolResultEvent contains details about a tool execution result.
-type ToolResultEvent struct {
-	ID             string
-	Name           string
-	Content        string
-	DisplayContent string // shown to user; falls back to Content if empty
-	IsError        bool
-}
-
-// ToolProgressEvent contains a streaming progress chunk from a tool execution.
-type ToolProgressEvent struct {
-	ID      string
-	Name    string
-	Stage   tools.EventStage
-	Content string
-	IsError bool
-}
+// Event types (TurnEvent, ToolCallEvent, etc.), approval types (ApprovalFunc,
+// ApprovalChecker, etc.), and other shared types are defined in
+// pkg/agentsdk/ and re-exported via sdk_aliases.go.
 
 // AgentOption is a functional option for configuring an Agent.
 type AgentOption func(*Agent)
@@ -240,6 +168,12 @@ type namedPrompt struct {
 	Content string
 }
 
+// WithLogger attaches a structured logger to the agent. If not set,
+// agentsdk.DefaultLogger() is used.
+func WithLogger(l Logger) AgentOption {
+	return func(a *Agent) { a.logger = l }
+}
+
 // WithExtraSystemPrompt appends a named section to the system prompt.
 // Multiple calls accumulate sections. Each section appears as:
 //
@@ -284,6 +218,7 @@ type Agent struct {
 	pipeline         *toolexec.Pipeline
 	workingDir       string // override working directory (empty = os.Getwd)
 	parallelPolicy   ToolParallelPolicy
+	logger           Logger
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -305,6 +240,10 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	for _, opt := range opts {
 		opt(a)
 	}
+	// Ensure logger is always available.
+	if a.logger == nil {
+		a.logger = agentsdk.DefaultLogger()
+	}
 	// Freeze working directory at construction time.
 	if a.workingDir == "" {
 		a.workingDir, _ = os.Getwd()
@@ -315,7 +254,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		wd := a.WorkingDir()
 		loaded, err := a.memoryStore.LoadMemories(wd)
 		if err != nil {
-			log.Printf("warning: failed to load memories: %v", err)
+			a.logger.Warn("failed to load memories: %v", err)
 		} else {
 			memories = loaded
 		}
@@ -336,7 +275,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			// Resume existing session.
 			sess, err := a.store.GetSession(a.resumeSessionID)
 			if err != nil || sess == nil {
-				log.Printf("warning: failed to resume session %s: %v", a.resumeSessionID, err)
+				a.logger.Warn("failed to resume session %s: %v", a.resumeSessionID, err)
 			} else {
 				a.sessionID = sess.ID
 				a.conversation = NewConversation(sess.SystemPrompt)
@@ -354,7 +293,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 				} else {
 					msgs, err := a.store.GetMessages(sess.ID)
 					if err != nil {
-						log.Printf("warning: failed to load messages: %v", err)
+						a.logger.Warn("failed to load messages: %v", err)
 					} else {
 						providerMsgs := make([]provider.Message, len(msgs))
 						for i, m := range msgs {
@@ -380,7 +319,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 				SystemPrompt: a.conversation.SystemPrompt(),
 			}
 			if err := a.store.CreateSession(sess); err != nil {
-				log.Printf("warning: failed to create session: %v", err)
+				a.logger.Warn("failed to create session: %v", err)
 				a.store = nil // disable persistence for this session
 			}
 		}
@@ -397,7 +336,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		// Register read_result tool so the LLM can retrieve offloaded results.
 		readResultTool := tools.NewReadResultTool(a.resultStore)
 		if err := a.tools.Register(readResultTool); err != nil {
-			log.Printf("warning: failed to register read_result tool: %v", err)
+			a.logger.Warn("failed to register read_result tool: %v", err)
 		}
 	}
 	a.promptBuilder = NewPromptBuilder()
@@ -436,7 +375,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	toolSearchTool := tools.NewToolSearchTool(a.deferral)
 	if _, exists := a.tools.Get(toolSearchTool.Name()); !exists {
 		if err := a.tools.Register(toolSearchTool); err != nil {
-			log.Printf("warning: failed to register tool_search tool: %v", err)
+			a.logger.Warn("failed to register tool_search tool: %v", err)
 		}
 	}
 
@@ -445,7 +384,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	compactTool := tools.NewCompactContextTool(&agentCompactor{agent: a})
 	if _, exists := a.tools.Get(compactTool.Name()); !exists {
 		if err := a.tools.Register(compactTool); err != nil {
-			log.Printf("warning: failed to register compact_context tool: %v", err)
+			a.logger.Warn("failed to register compact_context tool: %v", err)
 		}
 	}
 
@@ -609,7 +548,7 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 		return
 	}
 	if err := a.store.AppendMessage(a.sessionID, role, content); err != nil {
-		log.Printf("warning: failed to persist message: %v", err)
+		a.logger.Warn("failed to persist message: %v", err)
 	}
 }
 
@@ -621,7 +560,7 @@ func (a *Agent) saveSnapshotIfNeeded() {
 	}
 	tokens := a.context.EstimateTokens(a.conversation)
 	if err := a.store.SaveSnapshot(a.sessionID, a.conversation.Messages(), tokens); err != nil {
-		log.Printf("warning: failed to save snapshot: %v", err)
+		a.logger.Warn("failed to save snapshot: %v", err)
 	}
 }
 
@@ -954,9 +893,9 @@ func toolErrorResult(tc provider.ToolUseBlock, msg string) toolExecResult {
 	}
 }
 
-func approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) toolExecResult {
+func (a *Agent) approvalToolErrorResult(tc provider.ToolUseBlock, msg string, err error) toolExecResult {
 	if err != nil {
-		log.Printf("approval failure for tool %s (%s): %v", tc.Name, tc.ID, err)
+		a.logger.Error("approval failure for tool %s (%s): %v", tc.Name, tc.ID, err)
 	}
 	return toolErrorResult(tc, msg)
 }
@@ -1027,7 +966,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 				Input: it.tc.Input,
 			},
 		}
-		results[it.index] = approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
+		results[it.index] = a.approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
 	}
 
 	// Execute auto-approved tools in parallel (hooks + execution, no approval).
@@ -1138,20 +1077,20 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- Tur
 		return a.executeSingleTool(ctx, ch, tc)
 	}
 	if approvalResult == AutoDenied {
-		return approvalToolErrorResult(tc, "Tool call denied by user (deny-always).", nil)
+		return a.approvalToolErrorResult(tc, "Tool call denied by user (deny-always).", nil)
 	}
 
 	if a.approve == nil {
-		return approvalToolErrorResult(tc, "approval function not configured", nil)
+		return a.approvalToolErrorResult(tc, "approval function not configured", nil)
 	}
 
 	// Check approval.
 	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
 	if approvalErr != nil {
-		return approvalToolErrorResult(tc, "approval error", approvalErr)
+		return a.approvalToolErrorResult(tc, "approval error", approvalErr)
 	}
 	if !approved {
-		return approvalToolErrorResult(tc, "tool call denied by user", nil)
+		return a.approvalToolErrorResult(tc, "tool call denied by user", nil)
 	}
 
 	return a.executeSingleTool(ctx, ch, tc)

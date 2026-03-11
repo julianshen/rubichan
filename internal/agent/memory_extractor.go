@@ -8,17 +8,8 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
-// MemoryStore is the persistence interface for cross-session memories.
-type MemoryStore interface {
-	SaveMemory(workingDir, tag, content string) error
-	LoadMemories(workingDir string) ([]MemoryEntry, error)
-}
-
-// MemoryEntry represents a single cross-session memory.
-type MemoryEntry struct {
-	Tag     string
-	Content string
-}
+// MemoryStore and MemoryEntry are defined in pkg/agentsdk/ and re-exported
+// via sdk_aliases.go.
 
 // MemoryExtractor uses a Summarizer to extract reusable insights from
 // a conversation's message history.
