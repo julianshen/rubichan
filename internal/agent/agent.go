@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -550,8 +551,11 @@ func newContextManagerFromConfig(cfg *config.Config) *ContextManager {
 }
 
 // ClearConversation removes all messages from the conversation history,
-// preserving the system prompt.
+// preserving the system prompt. It acquires turnMu to prevent races
+// with a concurrent Turn goroutine.
 func (a *Agent) ClearConversation() {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
 	a.conversation.Clear()
 }
 
@@ -567,8 +571,13 @@ func (a *Agent) SaveMemories(ctx context.Context) error {
 		return nil
 	}
 
+	// Snapshot messages under the lock to prevent races with Turn.
+	a.turnMu.Lock()
+	msgs := a.conversation.Messages()
+	a.turnMu.Unlock()
+
 	extractor := NewMemoryExtractor(a.summarizer)
-	memories, err := extractor.Extract(ctx, a.conversation.Messages())
+	memories, err := extractor.Extract(ctx, msgs)
 	if err != nil {
 		return fmt.Errorf("extracting memories: %w", err)
 	}
@@ -636,6 +645,26 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 	go func() {
 		defer a.turnMu.Unlock()
 		defer close(ch)
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				log.Printf("agent panic recovered: %v\n%s", r, stack)
+				// Non-blocking send to avoid deadlocking turnMu if channel
+				// buffer is full (e.g., reader stopped consuming events).
+				select {
+				case ch <- TurnEvent{
+					Type:  "error",
+					Error: fmt.Errorf("agent panic: %v\n%s", r, stack),
+				}:
+				default:
+				}
+				// Maintain contract: every turn ends with a "done" event.
+				select {
+				case ch <- TurnEvent{Type: "done"}:
+				default:
+				}
+			}
+		}()
 		a.runLoop(ctx, ch, 0)
 	}()
 	return ch, nil
@@ -820,6 +849,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 				}
 
 			case "tool_use":
+				if event.ToolUse == nil {
+					// Finalize any in-progress tool to prevent input corruption.
+					finalizeText()
+					finalizeTool()
+					ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")}
+					continue
+				}
 				// Finalize any pending text block
 				finalizeText()
 				// Finalize any previous tool
@@ -1122,8 +1158,23 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- Tur
 }
 
 // executeSingleTool delegates tool execution to the pipeline.
-// Used by both the parallel and sequential paths.
-func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) toolExecResult {
+// Used by both the parallel and sequential paths. Recovers from panics
+// so that a single tool crash produces an error tool_result instead of
+// unwinding the entire turn and leaving dangling tool_use blocks.
+func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) (res toolExecResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			log.Printf("tool %s panicked: %v\n%s", tc.Name, r, stack)
+			msg := fmt.Sprintf("tool panicked: %v", r)
+			res = toolExecResult{
+				toolUseID: tc.ID,
+				content:   msg,
+				isError:   true,
+				event:     makeToolResultEvent(tc.ID, tc.Name, msg, "", true),
+			}
+		}
+	}()
 	emit := func(ev tools.ToolEvent) {
 		ch <- TurnEvent{
 			Type: "tool_progress",

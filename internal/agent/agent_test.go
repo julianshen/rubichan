@@ -2482,3 +2482,217 @@ func TestWakeEventsPersisted(t *testing.T) {
 	}
 	assert.True(t, foundWakeMsg, "wake events must be persisted to message log for deterministic resume")
 }
+
+func TestTurnPanicRecovery(t *testing.T) {
+	// A tool that panics should be caught at the tool level (not the Turn
+	// level), producing an error tool_result so the LLM can continue.
+	// The turn should complete normally with a "done" event.
+	mp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			// First LLM call: requests the panicking tool.
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "call_1", Name: "panicker"}},
+				{Type: "stop"},
+			},
+			// Second LLM call: after receiving error tool_result, LLM responds normally.
+			{
+				{Type: "text_delta", Text: "I see the tool failed"},
+				{Type: "stop"},
+			},
+		},
+	}
+	reg := tools.NewRegistry()
+	panicTool := &mockTool{
+		name:        "panicker",
+		description: "always panics",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			panic("deliberate test panic")
+		},
+	}
+	require.NoError(t, reg.Register(panicTool))
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "trigger panic")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Panic is caught at tool level: expect error tool_result, not Turn-level "agent panic".
+	var foundToolResult, foundDone bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" && ev.ToolResult != nil && ev.ToolResult.IsError {
+			foundToolResult = true
+			assert.Contains(t, ev.ToolResult.Content, "panic", "tool_result should mention panic")
+		}
+		if ev.Type == "done" {
+			foundDone = true
+		}
+	}
+	assert.True(t, foundToolResult, "expected error tool_result from panicking tool, got events: %v", events)
+	assert.True(t, foundDone, "expected done event after tool-level panic recovery")
+}
+
+func TestToolPanicAddsErrorToolResult(t *testing.T) {
+	// When a tool panics, executeSingleTool should recover and return an error
+	// tool_result so that the conversation isn't left with a dangling tool_use.
+	// The turn should complete normally (with a done event) rather than via
+	// the Turn-level panic recovery.
+	mp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			// First LLM call: requests the panicking tool.
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "call_panic", Name: "panicker"}},
+				{Type: "stop"},
+			},
+			// Second LLM call: after receiving error tool_result, LLM responds with text.
+			{
+				{Type: "text_delta", Text: "recovered"},
+				{Type: "stop"},
+			},
+		},
+	}
+	reg := tools.NewRegistry()
+	panicTool := &mockTool{
+		name:        "panicker",
+		description: "always panics",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			panic("deliberate tool panic")
+		},
+	}
+	require.NoError(t, reg.Register(panicTool))
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "trigger panic")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have a tool_result event with isError=true for the panicking tool.
+	var foundToolResult, foundDone bool
+	var foundTurnLevelPanic bool
+	for _, ev := range events {
+		if ev.Type == "tool_result" && ev.ToolResult != nil && ev.ToolResult.ID == "call_panic" {
+			foundToolResult = true
+			assert.True(t, ev.ToolResult.IsError, "tool_result should be an error")
+			assert.Contains(t, ev.ToolResult.Content, "panic", "should mention panic")
+		}
+		if ev.Type == "done" {
+			foundDone = true
+		}
+		// If we see a Turn-level panic error, the recovery is at the wrong level.
+		if ev.Type == "error" && ev.Error != nil && strings.Contains(ev.Error.Error(), "agent panic") {
+			foundTurnLevelPanic = true
+		}
+	}
+	assert.True(t, foundToolResult, "expected error tool_result for panicking tool, got events: %v", events)
+	assert.True(t, foundDone, "expected done event")
+	assert.False(t, foundTurnLevelPanic, "panic should be caught at tool level, not Turn level")
+
+	// Conversation should have a tool_result matching the tool_use.
+	msgs := agent.conversation.Messages()
+	// user → assistant(tool_use) → tool_result → assistant(text)
+	require.GreaterOrEqual(t, len(msgs), 3, "expected at least user + assistant + tool_result")
+	// The tool_result message should be present (role=user with tool_result content).
+	foundToolResultInConvo := false
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" && block.ToolUseID == "call_panic" {
+				foundToolResultInConvo = true
+				assert.True(t, block.IsError, "conversation tool_result should be error")
+			}
+		}
+	}
+	assert.True(t, foundToolResultInConvo, "conversation must have error tool_result to avoid corruption")
+}
+
+func TestTurnNilToolUseEvent(t *testing.T) {
+	// A provider sending tool_use with nil ToolUse should produce an error
+	// event, not crash.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hi"},
+			{Type: "tool_use", ToolUse: nil}, // malformed event
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "test nil tool")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have an error event about nil ToolUse and eventually a done.
+	var foundNilError, foundDone bool
+	for _, ev := range events {
+		if ev.Type == "error" && ev.Error != nil && strings.Contains(ev.Error.Error(), "nil ToolUse") {
+			foundNilError = true
+		}
+		if ev.Type == "done" {
+			foundDone = true
+		}
+	}
+	assert.True(t, foundNilError, "expected error event for nil ToolUse")
+	assert.True(t, foundDone, "expected done event")
+}
+
+func TestClearConversationRaceSafety(t *testing.T) {
+	// ClearConversation must be safe to call concurrently with a running Turn.
+	// This test exercises the turnMu locking added to ClearConversation.
+	// Run with -race to verify.
+	gate := make(chan struct{})
+	mp := &channelProvider{
+		events: func() <-chan provider.StreamEvent {
+			ch := make(chan provider.StreamEvent, 10)
+			go func() {
+				<-gate // wait until ClearConversation is called
+				ch <- provider.StreamEvent{Type: "text_delta", Text: "hello"}
+				ch <- provider.StreamEvent{Type: "stop"}
+				close(ch)
+			}()
+			return ch
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "test race")
+	require.NoError(t, err)
+
+	// Call ClearConversation while Turn goroutine is active.
+	// With turnMu, this blocks until the Turn finishes — no race.
+	go func() {
+		close(gate) // let the provider proceed
+		agent.ClearConversation()
+	}()
+
+	// Drain the channel to let Turn complete.
+	for range ch {
+	}
+}
+
+// channelProvider returns events from a channel factory, allowing
+// synchronization control in tests.
+type channelProvider struct {
+	events func() <-chan provider.StreamEvent
+}
+
+func (p *channelProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	return p.events(), nil
+}

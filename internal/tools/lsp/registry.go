@@ -14,6 +14,9 @@ var ErrServerNotInstalled = errors.New("language server not installed")
 // ErrNoConfig is returned when no server config exists for a language.
 var ErrNoConfig = errors.New("no language server configured for this language")
 
+// ErrManagerShutdown is returned when ServerFor is called after Shutdown.
+var ErrManagerShutdown = errors.New("manager has been shut down")
+
 // ServerConfig describes how to launch a language server.
 type ServerConfig struct {
 	Language   string   // language ID (e.g. "go", "typescript")

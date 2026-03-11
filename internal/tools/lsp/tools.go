@@ -97,7 +97,7 @@ func runDiagnostics(_ context.Context, m *Manager, input json.RawMessage) (tools
 		return tools.ToolResult{Content: fmt.Sprintf("No %s found in %s", severity, in.File)}, nil
 	}
 
-	result := m.summarizer.SummarizeDiagnostics(diags, 0)
+	result := m.getSummarizer().SummarizeDiagnostics(diags, 0)
 	return tools.ToolResult{Content: result.Text}, nil
 }
 
@@ -247,7 +247,7 @@ func runReferences(ctx context.Context, m *Manager, input json.RawMessage) (tool
 		return tools.ToolResult{Content: "no references found"}, nil
 	}
 
-	summary := m.summarizer.SummarizeLocations(locs, in.MaxResults)
+	summary := m.getSummarizer().SummarizeLocations(locs, in.MaxResults)
 	return tools.ToolResult{Content: summary.Text}, nil
 }
 
@@ -454,7 +454,7 @@ func runCompletions(ctx context.Context, m *Manager, input json.RawMessage) (too
 		return tools.ToolResult{Content: "no completions available"}, nil
 	}
 
-	summary := m.summarizer.SummarizeCompletions(items, in.MaxResults)
+	summary := m.getSummarizer().SummarizeCompletions(items, in.MaxResults)
 	return tools.ToolResult{Content: summary.Text}, nil
 }
 
@@ -603,7 +603,7 @@ func runSymbols(ctx context.Context, m *Manager, input json.RawMessage) (tools.T
 		return tools.ToolResult{Content: msg}, nil
 	}
 
-	summary := m.summarizer.SummarizeSymbols(allSymbols, in.MaxResults)
+	summary := m.getSummarizer().SummarizeSymbols(allSymbols, in.MaxResults)
 	return tools.ToolResult{Content: summary.Text}, nil
 }
 

@@ -25,8 +25,10 @@ type Manager struct {
 	spawnServer SpawnFunc
 	onError     func(error) // optional handler for non-fatal errors
 
-	mu      sync.Mutex
-	servers map[string]*serverHandle // language -> handle
+	mu       sync.Mutex
+	closed   bool                     // set by Shutdown; prevents new server registration
+	servers  map[string]*serverHandle // language -> handle
+	starting map[string]*serverInit   // language -> in-progress init
 
 	docsMu sync.Mutex     // serializes document open/change operations
 	docs   map[string]int // URI -> version (for didOpen/didChange tracking)
@@ -41,6 +43,14 @@ type serverHandle struct {
 	capabilities ServerCapabilities
 }
 
+// serverInit tracks an in-progress server startup so concurrent callers
+// can wait on the result instead of all attempting to spawn.
+type serverInit struct {
+	done   chan struct{}
+	handle *serverHandle
+	err    error
+}
+
 // NewManager creates a new manager for the given workspace root.
 func NewManager(registry *Registry, rootDir string) *Manager {
 	return &Manager{
@@ -49,46 +59,119 @@ func NewManager(registry *Registry, rootDir string) *Manager {
 		summarizer:  DefaultSummarizer(),
 		spawnServer: spawnServer,
 		servers:     make(map[string]*serverHandle),
+		starting:    make(map[string]*serverInit),
 		docs:        make(map[string]int),
 		diags:       make(map[string][]Diagnostic),
 	}
 }
 
 // SetSummarizer sets a custom summarizer for response truncation.
+// Safe for concurrent use with tool execution.
 func (m *Manager) SetSummarizer(s *Summarizer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.summarizer = s
 }
 
-// ServerFor returns the client for the given language, starting the server if
-// needed. Returns ErrServerNotInstalled if the binary is not on PATH.
-func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *ServerCapabilities, error) {
+// getSummarizer returns the current summarizer under the lock.
+func (m *Manager) getSummarizer() *Summarizer {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.summarizer
+}
 
+// ServerFor returns the client for the given language, starting the server if
+// needed. Returns ErrServerNotInstalled if the binary is not on PATH, or
+// ErrManagerShutdown if Shutdown has been called.
+// The global mu is released during the blocking startServer call so
+// concurrent callers for other languages are not blocked.
+func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *ServerCapabilities, error) {
+	m.mu.Lock()
+
+	// Reject new servers after Shutdown has been called.
+	if m.closed {
+		m.mu.Unlock()
+		return nil, nil, ErrManagerShutdown
+	}
+
+	// Fast path: server already running.
 	if handle, ok := m.servers[languageID]; ok {
+		m.mu.Unlock()
 		return handle.client, &handle.capabilities, nil
+	}
+
+	// Another goroutine is already starting this server — wait for it.
+	if init, ok := m.starting[languageID]; ok {
+		m.mu.Unlock()
+		select {
+		case <-init.done:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+		if init.err != nil {
+			return nil, nil, init.err
+		}
+		return init.handle.client, &init.handle.capabilities, nil
 	}
 
 	cfg, err := m.registry.ConfigFor(languageID)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, nil, err
 	}
 
 	if !m.registry.IsInstalled(languageID) {
+		m.mu.Unlock()
 		return nil, nil, fmt.Errorf("%w: %s (%s not found on PATH)", ErrServerNotInstalled, languageID, cfg.Command)
 	}
 
-	client, caps, err := m.startServer(ctx, cfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("start %s server: %w", languageID, err)
-	}
+	// Claim this language's init and release mu during the blocking spawn.
+	init := &serverInit{done: make(chan struct{})}
+	m.starting[languageID] = init
+	m.mu.Unlock()
 
-	m.servers[languageID] = &serverHandle{
-		client:       client,
-		capabilities: caps,
-	}
+	// Ensure waiters are always unblocked, even if startServer panics.
+	// On panic, init.err will have been set and starting entry cleaned up.
+	defer close(init.done)
 
-	return client, &caps, nil
+	var startErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				startErr = fmt.Errorf("server startup panicked: %v", r)
+			}
+		}()
+		var client *Client
+		var caps ServerCapabilities
+		client, caps, startErr = m.startServer(ctx, cfg)
+		if startErr == nil {
+			init.handle = &serverHandle{client: client, capabilities: caps}
+		}
+	}()
+
+	m.mu.Lock()
+	delete(m.starting, languageID)
+	if startErr != nil {
+		init.err = fmt.Errorf("start %s server: %w", languageID, startErr)
+		m.mu.Unlock()
+		return nil, nil, init.err
+	}
+	// If Shutdown ran while we were starting, close the newly-created server
+	// instead of publishing it — otherwise it becomes an orphaned process.
+	if m.closed {
+		m.mu.Unlock()
+		if init.handle != nil && init.handle.client != nil {
+			init.handle.client.Close()
+		}
+		init.err = ErrManagerShutdown
+		return nil, nil, ErrManagerShutdown
+	}
+	if init.handle != nil {
+		m.servers[languageID] = init.handle
+	}
+	m.mu.Unlock()
+
+	return init.handle.client, &init.handle.capabilities, nil
 }
 
 // ServerForFile detects the language from file extension and returns the server.
@@ -176,7 +259,27 @@ func (m *Manager) NotifyFileChanged(ctx context.Context, filePath string, conten
 
 // Shutdown gracefully stops all running servers by sending the LSP shutdown
 // request followed by the exit notification, then closing the transport.
+// It also waits for any in-progress server starts to complete before
+// shutting them down, preventing orphaned server processes.
 func (m *Manager) Shutdown(ctx context.Context) error {
+	// Mark the manager as closed so that any in-flight or future ServerFor
+	// calls will not publish new handles into m.servers after we clear it.
+	m.mu.Lock()
+	m.closed = true
+	pending := make([]*serverInit, 0, len(m.starting))
+	for _, init := range m.starting {
+		pending = append(pending, init)
+	}
+	m.mu.Unlock()
+
+	for _, init := range pending {
+		select {
+		case <-init.done:
+		case <-ctx.Done():
+			// Best-effort: proceed with what we have.
+		}
+	}
+
 	// Snapshot the server map and clear it under the lock, then release
 	// before doing blocking network I/O (shutdown/exit/close).
 	m.mu.Lock()
