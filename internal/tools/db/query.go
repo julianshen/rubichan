@@ -73,7 +73,7 @@ func (t *QueryTool) Execute(ctx context.Context, input json.RawMessage) (tools.T
 	if err := validateQuery(in.Query); err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
-	driverName, dsn, err := t.resolveConnection(in.Engine, in.Database)
+	driverName, dsn, err := t.resolveConnection(ctx, in.Engine, in.Database)
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
@@ -124,7 +124,7 @@ func (t *QueryTool) Execute(ctx context.Context, input json.RawMessage) (tools.T
 	return tools.ToolResult{Content: content}, nil
 }
 
-func (t *QueryTool) resolveConnection(engine, database string) (string, string, error) {
+func (t *QueryTool) resolveConnection(ctx context.Context, engine, database string) (string, string, error) {
 	switch engine {
 	case "sqlite":
 		resolved, err := t.resolveSQLitePath(database)
@@ -140,7 +140,7 @@ func (t *QueryTool) resolveConnection(engine, database string) (string, string, 
 		if err != nil {
 			return "", "", err
 		}
-		if err := validateDSNHost(extractPostgresHost(sanitized)); err != nil {
+		if err := validateDSNHost(ctx, extractPostgresHost(sanitized)); err != nil {
 			return "", "", err
 		}
 		return "pgx", sanitized, nil
@@ -152,7 +152,7 @@ func (t *QueryTool) resolveConnection(engine, database string) (string, string, 
 		if err != nil {
 			return "", "", err
 		}
-		if err := validateDSNHost(extractMySQLHost(sanitized)); err != nil {
+		if err := validateDSNHost(ctx, extractMySQLHost(sanitized)); err != nil {
 			return "", "", err
 		}
 		return "mysql", sanitized, nil
@@ -296,12 +296,12 @@ func sanitizeMySQLDSN(dsn string) (string, error) {
 
 // validateDSNHost resolves the given host and rejects connections to
 // private/local IP addresses to prevent SSRF via database connections.
-func validateDSNHost(host string) error {
+func validateDSNHost(ctx context.Context, host string) error {
 	if host == "" || host == "localhost" {
 		// localhost is allowed for local development databases.
 		return nil
 	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		return fmt.Errorf("resolve database host %q: %w", host, err)
 	}

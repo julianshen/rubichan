@@ -168,11 +168,12 @@ func (s *Service) Open(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return errResult("only http and https URLs are allowed"), nil
 	}
-	if err := validateBrowserTarget(ctx, u); err != nil {
+	pinnedURL, err := validateAndPinBrowserTarget(ctx, u)
+	if err != nil {
 		return errResult("%s", err), nil
 	}
 
-	opts := OpenOptions{URL: in.URL, Headless: true, Viewport: Viewport{Width: 1280, Height: 800}}
+	opts := OpenOptions{URL: pinnedURL, Headless: true, Viewport: Viewport{Width: 1280, Height: 800}}
 	if in.Headless != nil {
 		opts.Headless = *in.Headless
 	}
@@ -395,23 +396,48 @@ func (s *Service) screenshotPath(sessionID string) string {
 	return filepath.Join(s.artifactDir, filename)
 }
 
-// validateBrowserTarget resolves the URL's host and rejects private/local IPs
-// to prevent SSRF attacks via the browser tool.
-func validateBrowserTarget(ctx context.Context, u *url.URL) error {
+// validateAndPinBrowserTarget resolves the URL's host, rejects private/local
+// IPs, and returns a URL with the hostname replaced by the resolved IP to
+// prevent DNS rebinding (TOCTOU) attacks between validation and navigation.
+// The original Host header is preserved via the URL's Host field.
+func validateAndPinBrowserTarget(ctx context.Context, u *url.URL) (string, error) {
 	host := strings.TrimSpace(u.Hostname())
 	if host == "" {
-		return fmt.Errorf("url host is required")
+		return "", fmt.Errorf("url host is required")
 	}
+
+	// If the host is already an IP literal, validate it directly.
+	if ip := net.ParseIP(host); ip != nil {
+		if netutil.IsPrivateAddress(ip) {
+			return "", fmt.Errorf("requests to private or local addresses are not allowed")
+		}
+		return u.String(), nil
+	}
+
 	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
-		return fmt.Errorf("resolve host %q: %w", host, err)
+		return "", fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return "", fmt.Errorf("no addresses found for host %q", host)
 	}
 	for _, addr := range addrs {
 		if netutil.IsPrivateAddress(addr.IP) {
-			return fmt.Errorf("requests to private or local addresses are not allowed")
+			return "", fmt.Errorf("requests to private or local addresses are not allowed")
 		}
 	}
-	return nil
+
+	// Pin the URL to the first resolved IP to prevent DNS rebinding.
+	// chromedp will use this IP directly, avoiding a second DNS lookup.
+	pinned := *u
+	ip := addrs[0].IP.String()
+	port := u.Port()
+	if port != "" {
+		pinned.Host = net.JoinHostPort(ip, port)
+	} else {
+		pinned.Host = ip
+	}
+	return pinned.String(), nil
 }
 
 func errResult(format string, args ...any) tools.ToolResult {
