@@ -12,7 +12,7 @@ func TestApprovalPromptView(t *testing.T) {
 	view := ap.View()
 	assert.Contains(t, view, "shell")
 	assert.Contains(t, view, "Ruby")
-	assert.Contains(t, view, "(y)es")
+	assert.Contains(t, view, "[y]")
 }
 
 func TestApprovalPromptResult(t *testing.T) {
@@ -71,8 +71,8 @@ func TestApprovalPromptViewContainsArgs(t *testing.T) {
 	view := ap.View()
 	assert.Contains(t, view, "file")
 	assert.Contains(t, view, "/etc/passwd")
-	assert.Contains(t, view, "(n)o")
-	assert.Contains(t, view, "(a)lways")
+	assert.Contains(t, view, "[n]")
+	assert.Contains(t, view, "[a]")
 }
 
 func TestApprovalPromptMinWidth(t *testing.T) {
@@ -141,7 +141,7 @@ func TestApprovalPromptDestructiveWarning(t *testing.T) {
 func TestApprovalPromptShowsDenyOption(t *testing.T) {
 	ap := NewApprovalPrompt("shell", `"ls"`, 60)
 	view := ap.View()
-	assert.Contains(t, view, "(d)eny always")
+	assert.Contains(t, view, "[d]")
 }
 
 func TestApprovalPromptMediumRiskLabel(t *testing.T) {

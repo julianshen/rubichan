@@ -120,6 +120,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
+	sp.Style = styleSpinner
 
 	sb := NewStatusBar(80)
 	sb.SetModel(modelName)
@@ -400,7 +401,7 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	prompt := m.ralph.cfg.Prompt
 	m.diffSummary = ""
 	m.diffExpanded = false
-	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
+	m.content.WriteString(styleUserPrompt.Render("❯ ") + prompt + "\n")
 	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
 	m.state = StateStreaming

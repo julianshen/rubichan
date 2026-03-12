@@ -77,11 +77,12 @@ func isDestructiveCommand(args string) bool {
 	return false
 }
 
+// Risk and warning styles use the centralized pink theme.
 var (
-	riskHighStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")).Bold(true)
-	riskMediumStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b")).Bold(true)
-	riskLowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true)
-	warningStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+	riskHighStyle   = styleRiskHigh
+	riskMediumStyle = styleRiskMedium
+	riskLowStyle    = styleRiskLow
+	warningStyle    = styleDestructiveWarning
 )
 
 // ApprovalPrompt shows an inline approval prompt for a tool call.
@@ -100,11 +101,7 @@ func NewApprovalPrompt(tool, args string, width int) *ApprovalPrompt {
 	if boxWidth < 20 {
 		boxWidth = 20
 	}
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.AdaptiveColor{Light: "#CC8800", Dark: "#FFAA00"}).
-		Width(boxWidth).
-		Padding(0, 1)
+	box := styleApprovalBorder.Width(boxWidth)
 
 	return &ApprovalPrompt{
 		tool: tool,
@@ -162,14 +159,22 @@ func (a *ApprovalPrompt) View() string {
 	sanitizedTool := stripANSI(a.tool)
 	sanitizedArgs := stripANSI(a.args)
 	header := fmt.Sprintf("%s  %s", riskLabel, persona.ApprovalAsk(sanitizedTool))
-	detail := fmt.Sprintf("  args: %s", sanitizedArgs)
+	detail := styleSectionLabel.Render("  args: ") + sanitizedArgs
 
 	var body string
 	body = header + "\n" + detail
 	if isDestructiveCommand(sanitizedArgs) {
 		body += "\n" + warningStyle.Render("  ⚠ Destructive command detected")
 	}
-	body += "\n  (y)es  (n)o  (a)lways  (d)eny always"
+
+	// Render options with highlighted keys for clarity.
+	options := fmt.Sprintf("\n  %s%s  %s%s  %s%s  %s%s",
+		styleApprovalKey.Render("[y]"), styleApprovalLabel.Render("es"),
+		styleApprovalKey.Render("[n]"), styleApprovalLabel.Render("o"),
+		styleApprovalKey.Render("[a]"), styleApprovalLabel.Render("lways"),
+		styleApprovalKey.Render("[d]"), styleApprovalLabel.Render("eny always"),
+	)
+	body += options
 
 	return a.box.Render(body) + "\n"
 }

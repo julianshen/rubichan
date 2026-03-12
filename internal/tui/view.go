@@ -5,15 +5,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/julianshen/rubichan/internal/persona"
 )
 
-// Style definitions for the TUI view.
+// headerStyle and inputPromptStyle are aliases for the centralized pink theme styles.
 var (
-	headerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#333333", Dark: "#EEEEEE"})
-	inputPromptStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"})
+	headerStyle      = styleHeader
+	inputPromptStyle = styleInputPrompt
 )
 
 // View implements tea.Model. It renders the TUI as a string.
@@ -42,7 +40,7 @@ func (m *Model) View() string {
 	if dividerWidth < 1 {
 		dividerWidth = 80
 	}
-	b.WriteString(strings.Repeat("─", dividerWidth))
+	b.WriteString(styleDivider.Render(strings.Repeat("━", dividerWidth)))
 	b.WriteString("\n")
 
 	// Viewport
@@ -54,9 +52,9 @@ func (m *Model) View() string {
 	case StateStreaming:
 		elapsed := ""
 		if !m.turnStartTime.IsZero() {
-			elapsed = fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime)))
+			elapsed = styleTextDim.Render(fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime))))
 		}
-		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), persona.ThinkingMessage(), elapsed))
+		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(persona.ThinkingMessage()), elapsed))
 	case StateAwaitingApproval:
 		if m.approvalPrompt != nil {
 			b.WriteString(m.approvalPrompt.View())
@@ -85,7 +83,7 @@ func (m *Model) View() string {
 	}
 
 	// Input line
-	b.WriteString(inputPromptStyle.Render("> "))
+	b.WriteString(inputPromptStyle.Render("❯ "))
 	b.WriteString(m.input.View())
 
 	return b.String()

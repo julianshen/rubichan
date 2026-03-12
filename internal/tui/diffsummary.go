@@ -6,13 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 )
 
 var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file(?:\(s\)|s)?\s+changed`)
-var diffPanelStyle = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	Padding(0, 1)
 
 func (m *Model) viewportContent() string {
 	content := m.content.String()
@@ -45,7 +41,12 @@ func (m *Model) renderDiffSummaryPanel() string {
 	}
 
 	var body strings.Builder
-	body.WriteString(fmt.Sprintf("%s Turn changes (%s) [ctrl+g]", indicator, label))
+	body.WriteString(fmt.Sprintf("%s %s (%s) %s",
+		indicator,
+		styleToolResultHeader.Render("Turn changes"),
+		styleSectionLabel.Render(label),
+		styleKeyHint.Render("[ctrl+g]"),
+	))
 	if m.diffExpanded {
 		rendered := m.diffSummary
 		if m.mdRenderer != nil {
@@ -57,7 +58,7 @@ func (m *Model) renderDiffSummaryPanel() string {
 		body.WriteString(strings.TrimRight(rendered, "\n"))
 	}
 
-	return diffPanelStyle.Render(body.String()) + "\n"
+	return styleDiffPanel.Render(body.String()) + "\n"
 }
 
 func diffSummaryLabel(summary string) string {

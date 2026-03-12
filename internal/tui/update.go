@@ -302,7 +302,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toolResults = nil
 		m.nextToolResultID = 0
 		m.toolCallArgs = nil
-		m.content.WriteString(fmt.Sprintf("> %s\n", text))
+		m.content.WriteString(styleUserPrompt.Render("❯ ") + text + "\n")
 		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()
 		m.assistantStartIdx = m.content.Len()
@@ -617,7 +617,7 @@ func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
 	prompt := loop.cfg.Prompt
 	m.diffSummary = ""
 	m.diffExpanded = false
-	m.content.WriteString(fmt.Sprintf("> %s\n", prompt))
+	m.content.WriteString(styleUserPrompt.Render("❯ ") + prompt + "\n")
 	m.setContentAndAutoScroll()
 	m.assistantStartIdx = m.content.Len()
 	m.assistantEndIdx = m.assistantStartIdx
