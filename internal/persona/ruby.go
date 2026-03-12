@@ -105,31 +105,38 @@ var rubyThinkingIndex atomic.Int64
 // shy, gentle personality.
 type RubyPersona struct{}
 
+// ThinkingMessage returns the next rotating spinner message with kaomoji.
 func (r *RubyPersona) ThinkingMessage() string {
 	idx := rubyThinkingIndex.Add(1) - 1
 	return rubyThinkingMessages[int(idx)%len(rubyThinkingMessages)]
 }
 
+// WelcomeMessage returns Ruby's shy startup greeting.
 func (r *RubyPersona) WelcomeMessage() string {
 	return "  R-Ruby is ready to help you code... please be gentle (>_<)"
 }
 
+// GoodbyeMessage returns Ruby's farewell when the TUI exits.
 func (r *RubyPersona) GoodbyeMessage() string {
 	return "B-bye bye... Ruby will miss you... (>_<)\n"
 }
 
+// ErrorMessage wraps the error string with Ruby's startled Pigi reaction.
 func (r *RubyPersona) ErrorMessage(err string) string {
 	return fmt.Sprintf("P-Pigi!! %s (>_<)\n", err)
 }
 
+// SuccessMessage returns Ruby's celebratory completion message.
 func (r *RubyPersona) SuccessMessage() string {
 	return "Ruby did it! (^_^) (┘ω└)ガンバ└(。`・ω・´。)┘ルビィ!"
 }
 
+// StatusPrefix returns the heart-decorated label for the status bar.
 func (r *RubyPersona) StatusPrefix() string {
 	return "Ruby \u2661"
 }
 
+// ApprovalAsk returns the shy permission request for the given tool.
 func (r *RubyPersona) ApprovalAsk(tool string) string {
 	return fmt.Sprintf("U-um... Ruby wants to use %s... is that okay? (///)", tool)
 }
