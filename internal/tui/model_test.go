@@ -691,7 +691,7 @@ func TestModelViewAwaitingApproval(t *testing.T) {
 	view := m.View()
 
 	assert.Contains(t, view, "Ruby")
-	assert.Contains(t, view, "[y]")
+	assert.Contains(t, view, "[Y]")
 }
 
 func TestModelUpdateEnterUserMessage(t *testing.T) {
@@ -1226,7 +1226,7 @@ func TestModelApprovalViewShowsPrompt(t *testing.T) {
 	view := m.View()
 	assert.Contains(t, view, "file")
 	assert.Contains(t, view, "Ruby")
-	assert.Contains(t, view, "[y]")
+	assert.Contains(t, view, "[Y]")
 }
 
 func TestModelMakeApprovalFunc(t *testing.T) {
