@@ -679,9 +679,12 @@ func TestModelViewStreaming(t *testing.T) {
 	m.state = StateStreaming
 	view := m.View()
 
-	// During streaming, should show spinner/thinking indicator with persona
-	assert.Contains(t, view, "thinking")
+	// During streaming, should show spinner/thinking indicator with persona.
+	// The thinking message rotates, so we check for a kaomoji marker that
+	// all Ruby thinking messages share (parenthesised expression).
 	assert.Contains(t, view, "Ruby")
+	assert.True(t, strings.Contains(view, "(") && strings.Contains(view, ")"),
+		"thinking message should contain kaomoji")
 }
 
 func TestModelViewAwaitingApproval(t *testing.T) {
