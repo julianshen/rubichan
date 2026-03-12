@@ -49,7 +49,8 @@ const (
 func classifyRisk(tool string) RiskLevel {
 	t := strings.ToLower(tool)
 	switch {
-	case strings.Contains(t, "shell") || strings.Contains(t, "bash") || strings.Contains(t, "exec"):
+	case strings.Contains(t, "shell") || strings.Contains(t, "bash") ||
+		strings.Contains(t, "exec") || strings.Contains(t, "process"):
 		return RiskHigh
 	case strings.Contains(t, "write") || strings.Contains(t, "patch") || strings.Contains(t, "edit"):
 		return RiskMedium
@@ -87,9 +88,13 @@ var (
 // OptionsForRisk returns the default set of approval options based on risk
 // level and whether the command is destructive. Destructive or high-risk
 // commands omit "always" to prevent accidental blanket approval.
+// Inputs are sanitized to prevent ANSI escape sequences from evading risk
+// classification.
 func OptionsForRisk(tool, args string) []ApprovalResult {
-	risk := classifyRisk(tool)
-	destructive := isDestructiveCommand(args)
+	sanitizedTool := stripANSI(tool)
+	sanitizedArgs := stripANSI(args)
+	risk := classifyRisk(sanitizedTool)
+	destructive := isDestructiveCommand(sanitizedArgs)
 
 	if destructive {
 		// Destructive commands: only yes/no, no blanket approval.
@@ -261,12 +266,7 @@ func formatToolArgs(tool, rawArgs string) string {
 		if path == "" {
 			break
 		}
-		switch op {
-		case "read":
-			return path
-		case "write":
-			return path
-		case "patch":
+		if op == "patch" {
 			old := getString("old_string")
 			if old != "" {
 				// Show a short preview of what's being replaced.
@@ -276,10 +276,8 @@ func formatToolArgs(tool, rawArgs string) string {
 				}
 				return path + "\n    " + styleTextDim.Render("replace: "+preview)
 			}
-			return path
-		default:
-			return path
 		}
+		return path
 
 	case strings.Contains(t, "edit") || strings.Contains(t, "patch"):
 		path := getString("path")
@@ -399,9 +397,9 @@ func optionLabel(opt ApprovalResult) string {
 // View renders the approval prompt as a bordered box with tool info,
 // risk level indicator, destructive warning, and only the allowed options.
 func (a *ApprovalPrompt) View() string {
-	risk := classifyRisk(a.tool)
 	sanitizedTool := stripANSI(a.tool)
 	sanitizedArgs := stripANSI(a.args)
+	risk := classifyRisk(sanitizedTool)
 	displayName := toolDisplayName(sanitizedTool)
 
 	// Tool name with risk icon.

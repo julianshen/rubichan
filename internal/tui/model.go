@@ -91,6 +91,7 @@ type Model struct {
 	toolResults       []CollapsibleToolResult
 	nextToolResultID  int
 	toolCallArgs      map[string]string
+	thinkingMsg       string
 	wikiRunning       bool
 	wikiCfg           WikiCommandConfig
 	wikiCancel        context.CancelFunc
@@ -251,9 +252,24 @@ func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 		if _, ok := m.alwaysDenied.Load(tool); ok {
 			return false, nil
 		}
-		// Auto-approve if user previously chose "always" for this tool.
+		// Auto-approve if user previously chose "always" for this tool,
+		// but only if the current command is not destructive. Destructive
+		// commands must always be re-validated per invocation to prevent
+		// a benign "shell ls" approval from auto-approving "shell rm -rf /".
 		if _, ok := m.alwaysApproved.Load(tool); ok {
-			return true, nil
+			opts := OptionsForRisk(tool, string(input))
+			hasAlways := false
+			for _, o := range opts {
+				if o == ApprovalAlways {
+					hasAlways = true
+					break
+				}
+			}
+			if hasAlways {
+				return true, nil
+			}
+			// Destructive command — fall through to prompt even though
+			// the tool was previously marked "always".
 		}
 
 		respCh := make(chan bool, 1)

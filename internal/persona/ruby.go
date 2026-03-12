@@ -25,21 +25,26 @@ type Persona interface {
 	ApprovalAsk(tool string) string
 }
 
+// personaHolder wraps a Persona so that atomic.Value always stores the same
+// concrete type. Go's atomic.Value panics if Store is called with a different
+// concrete type after the first Store.
+type personaHolder struct{ p Persona }
+
 // active holds the currently active persona. Defaults to Ruby.
 var active atomic.Value
 
 func init() {
-	active.Store(&RubyPersona{})
+	active.Store(personaHolder{p: &RubyPersona{}})
 }
 
 // Active returns the currently active persona.
-// Falls back to the default RubyPersona if the stored value is not a valid Persona.
+// Falls back to the default RubyPersona if the stored value is not a valid holder.
 func Active() Persona {
-	p, ok := active.Load().(Persona)
-	if !ok || p == nil {
+	h, ok := active.Load().(personaHolder)
+	if !ok || h.p == nil {
 		return &RubyPersona{}
 	}
-	return p
+	return h.p
 }
 
 // SetActive sets the active persona for the TUI.
@@ -49,7 +54,7 @@ func SetActive(p Persona) {
 	if p == nil {
 		panic("persona: SetActive called with nil Persona")
 	}
-	active.Store(p)
+	active.Store(personaHolder{p: p})
 }
 
 // BaseSystemPrompt returns the core operational instructions shared by all

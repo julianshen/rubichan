@@ -54,7 +54,7 @@ func (m *Model) View() string {
 		if !m.turnStartTime.IsZero() {
 			elapsed = styleTextDim.Render(fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime))))
 		}
-		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(persona.ThinkingMessage()), elapsed))
+		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(m.thinkingMsg), elapsed))
 	case StateAwaitingApproval:
 		if m.approvalPrompt != nil {
 			b.WriteString(m.approvalPrompt.View())

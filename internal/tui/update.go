@@ -308,6 +308,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.assistantStartIdx = m.content.Len()
 		m.assistantEndIdx = m.assistantStartIdx
 		m.state = StateStreaming
+		m.thinkingMsg = persona.ThinkingMessage()
 		m.statusBar.ClearElapsed()
 		m.turnStartTime = time.Now()
 
@@ -432,6 +433,8 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			}
 			m.toolCallArgs[msg.ToolCall.ID] = args
 		}
+		// Rotate thinking message on each tool call (state update, not render).
+		m.thinkingMsg = persona.ThinkingMessage()
 		m.content.WriteString(m.toolBox.RenderToolCall(name, args))
 		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
@@ -622,6 +625,7 @@ func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
 	m.assistantStartIdx = m.content.Len()
 	m.assistantEndIdx = m.assistantStartIdx
 	m.state = StateStreaming
+	m.thinkingMsg = persona.ThinkingMessage()
 	m.turnStartTime = time.Now()
 	return m.startTurn(m.agent, prompt)
 }

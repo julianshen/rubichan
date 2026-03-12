@@ -677,6 +677,7 @@ func TestModelToggleDiffSummaryPreservesScrollPosition(t *testing.T) {
 func TestModelViewStreaming(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming
+	m.thinkingMsg = persona.ThinkingMessage()
 	view := m.View()
 
 	// During streaming, should show the persona thinking message.
