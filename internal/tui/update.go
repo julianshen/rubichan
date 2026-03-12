@@ -104,7 +104,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalRequestMsg:
 		m.state = StateAwaitingApproval
-		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, m.width)
+		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, m.width, nil)
 		m.pendingApproval = &approvalRequest{
 			tool:     msg.tool,
 			input:    msg.input,
