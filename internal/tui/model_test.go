@@ -687,7 +687,7 @@ func TestModelViewStreaming(t *testing.T) {
 func TestModelViewAwaitingApproval(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 80)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 80, nil)
 	view := m.View()
 
 	assert.Contains(t, view, "Ruby")
@@ -1098,7 +1098,7 @@ func TestModelApprovalKeyYes(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,
@@ -1131,7 +1131,7 @@ func TestModelApprovalKeyNo(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"rm -rf /"}`,
@@ -1162,7 +1162,7 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,
@@ -1194,7 +1194,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,
@@ -1221,7 +1221,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 func TestModelApprovalViewShowsPrompt(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, 60)
+	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, 60, nil)
 
 	view := m.View()
 	assert.Contains(t, view, "file")
@@ -1452,7 +1452,7 @@ func TestModelCtrlCDuringApproval(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,
