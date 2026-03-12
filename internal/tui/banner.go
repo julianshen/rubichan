@@ -8,18 +8,8 @@ import (
 	"github.com/julianshen/rubichan/internal/persona"
 )
 
-// bannerColors is a rainbow gradient applied line-by-line to the banner.
-var bannerColors = []lipgloss.Color{
-	"#FF6B6B", // red
-	"#FF8E53", // orange
-	"#FFC857", // yellow
-	"#A8E06C", // lime
-	"#56D6A0", // green
-	"#4ECDC4", // teal
-	"#45B7D1", // cyan
-	"#7C83FD", // blue
-	"#B983FF", // purple
-}
+// bannerColors is a pink gradient applied line-by-line to the banner.
+var bannerColors = bannerGradient
 
 // Banner is the ASCII art displayed on TUI startup. It spells "RUBICHAN".
 const Banner = ` _  .-')             .-. .-')                             ('-. .-.   ('-.         .-') _
@@ -42,8 +32,5 @@ func RenderBanner() string {
 		style := lipgloss.NewStyle().Foreground(color).Bold(true)
 		styled[i] = style.Render(line)
 	}
-	welcomeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FF6B9D")).
-		Italic(true)
-	return strings.Join(styled, "\n") + "\n" + welcomeStyle.Render(persona.WelcomeMessage())
+	return strings.Join(styled, "\n") + "\n" + styleWelcome.Render(persona.WelcomeMessage())
 }

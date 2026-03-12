@@ -124,7 +124,7 @@ func TestModelHandleSlashRalphLoopParsesQuotedArgs(t *testing.T) {
 	assert.Equal(t, "ALL DONE", m.ralph.cfg.CompletionPromise)
 	assert.Equal(t, 3, m.ralph.cfg.MaxIterations)
 	assert.Equal(t, StateStreaming, m.state)
-	assert.Contains(t, m.content.String(), "> finish the feature")
+	assert.Contains(t, m.content.String(), "finish the feature")
 }
 
 func TestModelHandleCommandParseError(t *testing.T) {
@@ -251,7 +251,7 @@ func TestModelAdvanceRalphLoopSchedulesNextIteration(t *testing.T) {
 	require.NotNil(t, cmd)
 	assert.Equal(t, 1, m.ralph.iteration)
 	assert.Equal(t, StateStreaming, m.state)
-	assert.Contains(t, m.content.String(), "> keep going")
+	assert.Contains(t, m.content.String(), "keep going")
 }
 
 func TestModelAdvanceRalphLoopClearsPriorDiffSummary(t *testing.T) {
@@ -349,7 +349,7 @@ func TestModelMaybeStartRalphLoopNoopWhenAlreadyIterating(t *testing.T) {
 	cmd := m.maybeStartRalphLoop()
 	assert.Nil(t, cmd)
 	assert.Equal(t, StateInput, m.state)
-	assert.NotContains(t, m.content.String(), "> keep going")
+	assert.NotContains(t, m.content.String(), "keep going")
 }
 
 func TestModelUpdateEnterEmptyInput(t *testing.T) {
@@ -677,21 +677,22 @@ func TestModelToggleDiffSummaryPreservesScrollPosition(t *testing.T) {
 func TestModelViewStreaming(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateStreaming
+	m.thinkingMsg = persona.ThinkingMessage()
 	view := m.View()
 
-	// During streaming, should show spinner/thinking indicator with persona
-	assert.Contains(t, view, "thinking")
+	// During streaming, should show the persona thinking message.
+	// The message rotates, but all variants contain "Ruby".
 	assert.Contains(t, view, "Ruby")
 }
 
 func TestModelViewAwaitingApproval(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 80)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 80, nil)
 	view := m.View()
 
 	assert.Contains(t, view, "Ruby")
-	assert.Contains(t, view, "(y)es")
+	assert.Contains(t, view, "[Y]")
 }
 
 func TestModelUpdateEnterUserMessage(t *testing.T) {
@@ -702,7 +703,7 @@ func TestModelUpdateEnterUserMessage(t *testing.T) {
 
 	um := updated.(*Model)
 	assert.Equal(t, StateStreaming, um.state)
-	assert.Contains(t, um.content.String(), "> hello agent")
+	assert.Contains(t, um.content.String(), "hello agent")
 	// Should return a batch command (startTurn + spinner tick)
 	assert.NotNil(t, cmd)
 }
@@ -1098,7 +1099,7 @@ func TestModelApprovalKeyYes(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,
@@ -1131,7 +1132,7 @@ func TestModelApprovalKeyNo(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"rm -rf /"}`,
@@ -1162,7 +1163,7 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,
@@ -1194,7 +1195,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,
@@ -1221,12 +1222,12 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 func TestModelApprovalViewShowsPrompt(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, 60)
+	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, 60, nil)
 
 	view := m.View()
 	assert.Contains(t, view, "file")
 	assert.Contains(t, view, "Ruby")
-	assert.Contains(t, view, "(y)es")
+	assert.Contains(t, view, "[Y]")
 }
 
 func TestModelMakeApprovalFunc(t *testing.T) {
@@ -1452,7 +1453,7 @@ func TestModelCtrlCDuringApproval(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan bool, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:     "shell",
 		input:    `{"command":"ls"}`,

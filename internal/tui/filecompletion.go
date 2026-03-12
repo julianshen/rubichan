@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 const maxFileCompletionCandidates = 8
@@ -220,14 +219,8 @@ func (fo *FileCompletionOverlay) View() string {
 		boxWidth = 20
 	}
 
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"}).
-		Width(boxWidth)
-
-	selectedStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("#5A56E0")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+	borderStyle := styleCompletionBorder.Width(boxWidth)
+	selectedStyle := styleCompletionSelected
 
 	start := 0
 	total := len(fo.candidates)

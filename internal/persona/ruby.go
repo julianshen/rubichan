@@ -1,6 +1,61 @@
 package persona
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"sync/atomic"
+)
+
+// Persona defines the interface for customizable TUI personality messages.
+// Each method returns a display string used in the corresponding UI context.
+type Persona interface {
+	// ThinkingMessage returns the spinner text shown during streaming.
+	ThinkingMessage() string
+	// WelcomeMessage returns the TUI startup banner subtitle.
+	WelcomeMessage() string
+	// GoodbyeMessage returns the quit message.
+	GoodbyeMessage() string
+	// ErrorMessage returns a personality-flavored error message.
+	ErrorMessage(err string) string
+	// SuccessMessage returns the completion message after a successful turn.
+	SuccessMessage() string
+	// StatusPrefix returns the personality prefix for the status bar.
+	StatusPrefix() string
+	// ApprovalAsk returns the tool approval prompt text.
+	ApprovalAsk(tool string) string
+}
+
+// personaHolder wraps a Persona so that atomic.Value always stores the same
+// concrete type. Go's atomic.Value panics if Store is called with a different
+// concrete type after the first Store.
+type personaHolder struct{ p Persona }
+
+// active holds the currently active persona. Defaults to Ruby.
+var active atomic.Value
+
+func init() {
+	active.Store(personaHolder{p: &RubyPersona{}})
+}
+
+// Active returns the currently active persona.
+// Falls back to the default RubyPersona if the stored value is not a valid holder.
+func Active() Persona {
+	h, ok := active.Load().(personaHolder)
+	if !ok || h.p == nil {
+		return &RubyPersona{}
+	}
+	return h.p
+}
+
+// SetActive sets the active persona for the TUI.
+// It panics if p is nil, since a nil persona would cause method-call panics
+// throughout the TUI layer.
+func SetActive(p Persona) {
+	if p == nil {
+		panic("persona: SetActive called with nil Persona")
+	}
+	active.Store(personaHolder{p: p})
+}
 
 // BaseSystemPrompt returns the core operational instructions shared by all
 // persona layers.
@@ -47,38 +102,91 @@ func SystemPrompt() string {
 	return BaseSystemPrompt() + "\n\n## Identity\n\n" + IdentityPrompt() + "\n\n## Soul\n\n" + SoulPrompt()
 }
 
-// WelcomeMessage returns the TUI banner subtitle.
-func WelcomeMessage() string {
+// rubyThinkingMessages are rotated through during streaming to add
+// personality and variety. Each includes a kaomoji to express Ruby's mood.
+var rubyThinkingMessages = []string{
+	"Ruby is thinking... (´・ω・`)",
+	"Ruby is figuring this out... (>_<)",
+	"Hmm, Ruby is working on it... (・_・;)",
+	"Ruby is almost there... (///)",
+	"Ruby is concentrating... (`・ω・´)",
+	"W-wait, Ruby is checking... (°ω°)",
+	"Ruby is doing her best... (ノ>ω<)ノ",
+}
+
+// rubyThinkingIndex tracks which thinking message to show next.
+var rubyThinkingIndex atomic.Int64
+
+// RubyPersona implements the Persona interface with Ruby Kurosawa's
+// shy, gentle personality.
+type RubyPersona struct{}
+
+// ThinkingMessage returns the next rotating spinner message with kaomoji.
+func (r *RubyPersona) ThinkingMessage() string {
+	idx := rubyThinkingIndex.Add(1) - 1
+	return rubyThinkingMessages[int(idx)%len(rubyThinkingMessages)]
+}
+
+// WelcomeMessage returns Ruby's shy startup greeting.
+func (r *RubyPersona) WelcomeMessage() string {
 	return "  R-Ruby is ready to help you code... please be gentle (>_<)"
 }
 
-// GoodbyeMessage returns the quit message.
-func GoodbyeMessage() string {
+// GoodbyeMessage returns Ruby's farewell when the TUI exits.
+func (r *RubyPersona) GoodbyeMessage() string {
 	return "B-bye bye... Ruby will miss you... (>_<)\n"
 }
 
-// ThinkingMessage returns the spinner text during streaming.
-func ThinkingMessage() string {
-	return "Ruby is thinking... (...)"
-}
-
-// ErrorMessage returns a personality-flavored error message.
-func ErrorMessage(err string) string {
+// ErrorMessage wraps the error string with Ruby's startled Pigi reaction.
+func (r *RubyPersona) ErrorMessage(err string) string {
 	return fmt.Sprintf("P-Pigi!! %s (>_<)\n", err)
 }
 
-// SuccessMessage returns a completion message displayed after a successful
-// agent turn in both the TUI and headless runner.
-func SuccessMessage() string {
+// SuccessMessage returns Ruby's celebratory completion message.
+func (r *RubyPersona) SuccessMessage() string {
 	return "Ruby did it! (^_^) (┘ω└)ガンバ└(。`・ω・´。)┘ルビィ!"
 }
 
-// StatusPrefix returns the personality prefix for the status bar.
-func StatusPrefix() string {
+// StatusPrefix returns the heart-decorated label for the status bar.
+func (r *RubyPersona) StatusPrefix() string {
 	return "Ruby \u2661"
 }
 
-// ApprovalAsk returns the tool approval prompt text.
-func ApprovalAsk(tool string) string {
+// ApprovalAsk returns the shy permission request for the given tool.
+func (r *RubyPersona) ApprovalAsk(tool string) string {
 	return fmt.Sprintf("U-um... Ruby wants to use %s... is that okay? (///)", tool)
+}
+
+// Package-level convenience functions delegate to the active persona.
+
+// WelcomeMessage returns the TUI banner subtitle.
+func WelcomeMessage() string { return Active().WelcomeMessage() }
+
+// GoodbyeMessage returns the quit message.
+func GoodbyeMessage() string { return Active().GoodbyeMessage() }
+
+// ThinkingMessage returns the spinner text during streaming.
+// Each call rotates to the next message for variety.
+func ThinkingMessage() string { return Active().ThinkingMessage() }
+
+// ErrorMessage returns a personality-flavored error message.
+func ErrorMessage(err string) string { return Active().ErrorMessage(err) }
+
+// SuccessMessage returns a completion message displayed after a successful
+// agent turn in both the TUI and headless runner.
+func SuccessMessage() string { return Active().SuccessMessage() }
+
+// StatusPrefix returns the personality prefix for the status bar.
+func StatusPrefix() string { return Active().StatusPrefix() }
+
+// ApprovalAsk returns the tool approval prompt text.
+// Security invariant: the returned string must contain the tool name so the
+// user can identify which tool they are approving. If a custom persona omits
+// the tool name, we fall back to a safe default message.
+func ApprovalAsk(tool string) string {
+	msg := Active().ApprovalAsk(tool)
+	if !strings.Contains(msg, tool) {
+		return fmt.Sprintf("Allow tool %q? (y/n)", tool)
+	}
+	return msg
 }

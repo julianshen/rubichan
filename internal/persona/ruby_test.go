@@ -1,6 +1,7 @@
 package persona
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,7 +56,27 @@ func TestGoodbyeMessage(t *testing.T) {
 func TestThinkingMessage(t *testing.T) {
 	msg := ThinkingMessage()
 	assert.NotEmpty(t, msg)
-	assert.Contains(t, msg, "Ruby")
+	// All Ruby thinking messages contain a kaomoji (parenthesized expression).
+	assert.Contains(t, msg, "(")
+	assert.Contains(t, msg, ")")
+}
+
+func TestThinkingMessageRotates(t *testing.T) {
+	// Calling ThinkingMessage multiple times should produce different messages.
+	seen := make(map[string]bool)
+	for i := 0; i < len(rubyThinkingMessages)+1; i++ {
+		msg := ThinkingMessage()
+		seen[msg] = true
+	}
+	// Should have seen at least 2 distinct messages.
+	assert.GreaterOrEqual(t, len(seen), 2, "ThinkingMessage should rotate through multiple messages")
+}
+
+func TestThinkingMessageAllContainKaomoji(t *testing.T) {
+	for i, msg := range rubyThinkingMessages {
+		assert.Contains(t, msg, "(", "message %d should contain kaomoji: %s", i, msg)
+		assert.Contains(t, msg, ")", "message %d should contain kaomoji: %s", i, msg)
+	}
 }
 
 func TestErrorMessageIncludesError(t *testing.T) {
@@ -80,4 +101,70 @@ func TestApprovalAskIncludesTool(t *testing.T) {
 	msg := ApprovalAsk("shell_exec")
 	assert.Contains(t, msg, "Ruby")
 	assert.Contains(t, msg, "shell_exec")
+}
+
+// --- Persona interface tests ---
+
+func TestRubyPersonaImplementsInterface(t *testing.T) {
+	var _ Persona = (*RubyPersona)(nil)
+}
+
+func TestActivePersonaDefaultsToRuby(t *testing.T) {
+	p := Active()
+	assert.IsType(t, &RubyPersona{}, p)
+}
+
+func TestSetActivePersona(t *testing.T) {
+	original := Active()
+	defer SetActive(original) // restore
+
+	custom := &mockPersona{}
+	SetActive(custom)
+	assert.Equal(t, custom, Active())
+
+	// Package-level functions should delegate to the custom persona.
+	assert.Equal(t, "mock thinking", ThinkingMessage())
+	assert.Equal(t, "mock welcome", WelcomeMessage())
+	assert.Equal(t, "mock goodbye\n", GoodbyeMessage())
+	assert.Equal(t, "mock error: oops", ErrorMessage("oops"))
+	assert.Equal(t, "mock success", SuccessMessage())
+	assert.Equal(t, "mock status", StatusPrefix())
+	assert.Equal(t, "mock approval: shell", ApprovalAsk("shell"))
+}
+
+func TestApprovalAskFallbackWhenToolNameMissing(t *testing.T) {
+	original := Active()
+	defer SetActive(original)
+
+	SetActive(&unsafePersona{})
+	msg := ApprovalAsk("shell_exec")
+	// The unsafe persona omits the tool name, so the package-level function
+	// must fall back to a safe default that includes the tool name.
+	assert.Contains(t, msg, "shell_exec",
+		"ApprovalAsk must always contain the tool name for security")
+}
+
+func TestSetActiveNilPanics(t *testing.T) {
+	assert.Panics(t, func() {
+		SetActive(nil)
+	}, "SetActive(nil) should panic")
+}
+
+// mockPersona is a test persona that returns predictable strings.
+type mockPersona struct{}
+
+func (m *mockPersona) ThinkingMessage() string        { return "mock thinking" }
+func (m *mockPersona) WelcomeMessage() string         { return "mock welcome" }
+func (m *mockPersona) GoodbyeMessage() string         { return "mock goodbye\n" }
+func (m *mockPersona) ErrorMessage(err string) string { return "mock error: " + err }
+func (m *mockPersona) SuccessMessage() string         { return "mock success" }
+func (m *mockPersona) StatusPrefix() string           { return "mock status" }
+func (m *mockPersona) ApprovalAsk(tool string) string { return fmt.Sprintf("mock approval: %s", tool) }
+
+// unsafePersona deliberately omits the tool name from ApprovalAsk to test
+// the security fallback.
+type unsafePersona struct{ mockPersona }
+
+func (u *unsafePersona) ApprovalAsk(string) string {
+	return "Sure, go ahead!"
 }

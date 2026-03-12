@@ -2,9 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/julianshen/rubichan/internal/persona"
 )
 
@@ -20,16 +20,13 @@ type StatusBar struct {
 	cost        float64
 	wikiStage   string
 	gitBranch   string
-	elapsed     time.Duration
-	style       lipgloss.Style
+	elapsed time.Duration
 }
 
 // NewStatusBar creates a new StatusBar with the given terminal width.
 func NewStatusBar(width int) *StatusBar {
 	return &StatusBar{
 		width: width,
-		style: lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"}),
 	}
 }
 
@@ -60,26 +57,36 @@ func (s *StatusBar) SetElapsed(d time.Duration) { s.elapsed = d }
 // ClearElapsed resets the elapsed time display.
 func (s *StatusBar) ClearElapsed() { s.elapsed = 0 }
 
-// View renders the status bar as a styled string.
+// View renders the status bar as a styled string with clear segments.
 func (s *StatusBar) View() string {
-	base := fmt.Sprintf(" %s  %s  %s/%s  Turn %d/%d  ~$%.2f",
-		persona.StatusPrefix(),
-		s.model,
-		formatTokens(s.inputTokens),
-		formatTokens(s.maxTokens),
-		s.turn, s.maxTurns,
-		s.cost,
-	)
+	sep := styleTextDim.Render(" │ ")
+
+	segments := []string{
+		styleStatusLabel.Render(persona.StatusPrefix()),
+		styleStatusValue.Render(s.model),
+		styleTextDim.Render(fmt.Sprintf("%s/%s", formatTokens(s.inputTokens), formatTokens(s.maxTokens))),
+		styleStatusValue.Render(fmt.Sprintf("Turn %d/%d", s.turn, s.maxTurns)),
+		styleTextDim.Render(fmt.Sprintf("~$%.2f", s.cost)),
+	}
 	if s.gitBranch != "" {
-		base += fmt.Sprintf("  ⎇ %s", s.gitBranch)
+		segments = append(segments, styleStatusLabel.Render("⎇ ")+styleStatusValue.Render(s.gitBranch))
 	}
 	if s.elapsed > 0 {
-		base += fmt.Sprintf("  ⏱ %s", formatElapsed(s.elapsed))
+		segments = append(segments, styleTextDim.Render("⏱ "+formatElapsed(s.elapsed)))
 	}
 	if s.wikiStage != "" {
-		base += fmt.Sprintf("  Wiki: %s", s.wikiStage)
+		segments = append(segments, styleStatusLabel.Render("Wiki: ")+styleStatusValue.Render(s.wikiStage))
 	}
-	return s.style.Render(base)
+
+	var b strings.Builder
+	b.WriteString(" ")
+	for i, seg := range segments {
+		if i > 0 {
+			b.WriteString(sep)
+		}
+		b.WriteString(seg)
+	}
+	return b.String()
 }
 
 // formatTokens formats a token count for compact display.

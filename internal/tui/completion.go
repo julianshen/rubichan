@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/julianshen/rubichan/internal/commands"
 )
@@ -169,17 +168,9 @@ func (co *CompletionOverlay) View() string {
 		boxWidth = 20
 	}
 
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#666666"}).
-		Width(boxWidth)
-
-	selectedStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("#5A56E0")).
-		Foreground(lipgloss.Color("#FFFFFF"))
-
-	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"})
+	borderStyle := styleCompletionBorder.Width(boxWidth)
+	selectedStyle := styleCompletionSelected
+	descStyle := styleCompletionDesc
 
 	// Compute a scroll window that keeps the selected item visible.
 	start := 0

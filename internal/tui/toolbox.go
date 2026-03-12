@@ -9,11 +9,11 @@ import (
 
 const maxToolResultLines = 20
 
-// Diff colorization styles.
+// Diff colorization styles use the centralized pink theme.
 var (
-	diffAddedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")) // green
-	diffRemovedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")) // red
-	diffHunkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#06b6d4")) // cyan
+	diffAddedStyle   = styleDiffAdded
+	diffRemovedStyle = styleDiffRemoved
+	diffHunkStyle    = styleDiffHunk
 )
 
 // ToolBoxRenderer renders tool calls and results in bordered boxes.
@@ -29,16 +29,8 @@ func NewToolBoxRenderer(width int) *ToolBoxRenderer {
 	if boxWidth < 20 {
 		boxWidth = 20
 	}
-	normal := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"}).
-		Width(boxWidth).
-		Padding(0, 1)
-	errStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#FF0000")).
-		Width(boxWidth).
-		Padding(0, 1)
+	normal := styleToolBoxBorder.Width(boxWidth)
+	errStyle := styleToolBoxErrorBorder.Width(boxWidth)
 
 	return &ToolBoxRenderer{
 		width:     width,
@@ -104,9 +96,11 @@ type CollapsibleToolResult struct {
 func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	lineLabel := c.lineLabel()
 	if c.Collapsed {
-		return fmt.Sprintf("▶ %s(%s) — %s\n", c.Name, c.Args, lineLabel)
+		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s(%s)", c.Name, c.Args)) +
+			styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	}
-	header := fmt.Sprintf("▼ %s(%s) — %s\n", c.Name, c.Args, lineLabel)
+	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s(%s)", c.Name, c.Args)) +
+		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
 }
 
