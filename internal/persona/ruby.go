@@ -90,11 +90,11 @@ func SystemPrompt() string {
 // personality and variety. Each includes a kaomoji to express Ruby's mood.
 var rubyThinkingMessages = []string{
 	"Ruby is thinking... (´・ω・`)",
-	"L-let me figure this out... (>_<)",
+	"Ruby is figuring this out... (>_<)",
 	"Hmm, Ruby is working on it... (・_・;)",
-	"A-almost there... (///)",
+	"Ruby is almost there... (///)",
 	"Ruby is concentrating... (`・ω・´)",
-	"W-wait, let Ruby check... (°ω°)",
+	"W-wait, Ruby is checking... (°ω°)",
 	"Ruby is doing her best... (ノ>ω<)ノ",
 }
 
