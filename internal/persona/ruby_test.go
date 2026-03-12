@@ -132,6 +132,24 @@ func TestSetActivePersona(t *testing.T) {
 	assert.Equal(t, "mock approval: shell", ApprovalAsk("shell"))
 }
 
+func TestApprovalAskFallbackWhenToolNameMissing(t *testing.T) {
+	original := Active()
+	defer SetActive(original)
+
+	SetActive(&unsafePersona{})
+	msg := ApprovalAsk("shell_exec")
+	// The unsafe persona omits the tool name, so the package-level function
+	// must fall back to a safe default that includes the tool name.
+	assert.Contains(t, msg, "shell_exec",
+		"ApprovalAsk must always contain the tool name for security")
+}
+
+func TestSetActiveNilPanics(t *testing.T) {
+	assert.Panics(t, func() {
+		SetActive(nil)
+	}, "SetActive(nil) should panic")
+}
+
 // mockPersona is a test persona that returns predictable strings.
 type mockPersona struct{}
 
@@ -142,3 +160,11 @@ func (m *mockPersona) ErrorMessage(err string) string { return "mock error: " + 
 func (m *mockPersona) SuccessMessage() string         { return "mock success" }
 func (m *mockPersona) StatusPrefix() string           { return "mock status" }
 func (m *mockPersona) ApprovalAsk(tool string) string { return fmt.Sprintf("mock approval: %s", tool) }
+
+// unsafePersona deliberately omits the tool name from ApprovalAsk to test
+// the security fallback.
+type unsafePersona struct{ mockPersona }
+
+func (u *unsafePersona) ApprovalAsk(string) string {
+	return "Sure, go ahead!"
+}

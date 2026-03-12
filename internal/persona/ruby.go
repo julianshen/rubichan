@@ -2,6 +2,7 @@ package persona
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 )
 
@@ -32,12 +33,22 @@ func init() {
 }
 
 // Active returns the currently active persona.
+// Falls back to the default RubyPersona if the stored value is not a valid Persona.
 func Active() Persona {
-	return active.Load().(Persona)
+	p, ok := active.Load().(Persona)
+	if !ok || p == nil {
+		return &RubyPersona{}
+	}
+	return p
 }
 
 // SetActive sets the active persona for the TUI.
+// It panics if p is nil, since a nil persona would cause method-call panics
+// throughout the TUI layer.
 func SetActive(p Persona) {
+	if p == nil {
+		panic("persona: SetActive called with nil Persona")
+	}
 	active.Store(p)
 }
 
@@ -164,4 +175,13 @@ func SuccessMessage() string { return Active().SuccessMessage() }
 func StatusPrefix() string { return Active().StatusPrefix() }
 
 // ApprovalAsk returns the tool approval prompt text.
-func ApprovalAsk(tool string) string { return Active().ApprovalAsk(tool) }
+// Security invariant: the returned string must contain the tool name so the
+// user can identify which tool they are approving. If a custom persona omits
+// the tool name, we fall back to a safe default message.
+func ApprovalAsk(tool string) string {
+	msg := Active().ApprovalAsk(tool)
+	if !strings.Contains(msg, tool) {
+		return fmt.Sprintf("Allow tool %q? (y/n)", tool)
+	}
+	return msg
+}
