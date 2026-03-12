@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -215,6 +216,170 @@ func toolDisplayName(tool string) string {
 	return tool
 }
 
+// formatToolArgs converts raw JSON tool input into a clear, human-readable
+// description. Each tool type extracts the most relevant fields and presents
+// them as a concise action summary instead of raw JSON.
+func formatToolArgs(tool, rawArgs string) string {
+	t := strings.ToLower(tool)
+
+	// Try to parse as JSON object.
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		// Not valid JSON — return the raw string, trimmed of outer quotes.
+		return strings.Trim(strings.TrimSpace(rawArgs), `"`)
+	}
+
+	getString := func(key string) string {
+		v, ok := args[key]
+		if !ok {
+			return ""
+		}
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			return s
+		}
+		// Not a string — return the raw JSON value without quotes.
+		return strings.Trim(string(v), `"`)
+	}
+
+	switch {
+	case strings.Contains(t, "shell") || strings.Contains(t, "bash") || strings.Contains(t, "exec"):
+		cmd := getString("command")
+		if cmd == "" {
+			break
+		}
+		desc := getString("description")
+		if desc != "" {
+			return desc + "\n    " + styleTextDim.Render(cmd)
+		}
+		return cmd
+
+	case t == "file" || strings.Contains(t, "file_read") || strings.Contains(t, "read_file") ||
+		strings.Contains(t, "file_write") || strings.Contains(t, "write_file"):
+		op := getString("operation")
+		path := getString("path")
+		if path == "" {
+			break
+		}
+		switch op {
+		case "read":
+			return path
+		case "write":
+			return path
+		case "patch":
+			old := getString("old_string")
+			if old != "" {
+				// Show a short preview of what's being replaced.
+				preview := old
+				if len(preview) > 60 {
+					preview = preview[:57] + "..."
+				}
+				return path + "\n    " + styleTextDim.Render("replace: "+preview)
+			}
+			return path
+		default:
+			return path
+		}
+
+	case strings.Contains(t, "edit") || strings.Contains(t, "patch"):
+		path := getString("path")
+		if path == "" {
+			path = getString("file_path")
+		}
+		if path != "" {
+			old := getString("old_string")
+			if old != "" {
+				preview := old
+				if len(preview) > 60 {
+					preview = preview[:57] + "..."
+				}
+				return path + "\n    " + styleTextDim.Render("replace: "+preview)
+			}
+			return path
+		}
+
+	case strings.Contains(t, "search") || strings.Contains(t, "grep"):
+		pattern := getString("pattern")
+		path := getString("path")
+		if pattern == "" {
+			break
+		}
+		if path != "" {
+			return pattern + " in " + path
+		}
+		return pattern
+
+	case strings.Contains(t, "glob"):
+		pattern := getString("pattern")
+		path := getString("path")
+		if pattern == "" {
+			break
+		}
+		if path != "" {
+			return pattern + " in " + path
+		}
+		return pattern
+
+	case strings.Contains(t, "http") || strings.Contains(t, "fetch") || strings.Contains(t, "browser"):
+		url := getString("url")
+		if url == "" {
+			url = getString("URL")
+		}
+		if url != "" {
+			return url
+		}
+
+	case strings.Contains(t, "process"):
+		pid := getString("pid")
+		signal := getString("signal")
+		if pid != "" {
+			if signal != "" {
+				return "pid " + pid + " signal " + signal
+			}
+			return "pid " + pid
+		}
+	}
+
+	// Fallback: extract the most salient value from the JSON.
+	return fallbackFormatArgs(args)
+}
+
+// fallbackFormatArgs produces a compact summary from arbitrary JSON args
+// by picking the most useful-looking fields.
+func fallbackFormatArgs(args map[string]json.RawMessage) string {
+	// Priority keys that are most likely to be informative.
+	priorities := []string{"command", "path", "file_path", "query", "pattern", "url", "name"}
+	for _, key := range priorities {
+		if v, ok := args[key]; ok {
+			var s string
+			if json.Unmarshal(v, &s) == nil && s != "" {
+				return s
+			}
+		}
+	}
+
+	// Show up to 2 key=value pairs.
+	var parts []string
+	for k, v := range args {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			if len(s) > 40 {
+				s = s[:37] + "..."
+			}
+			parts = append(parts, k+": "+s)
+		} else {
+			parts = append(parts, k+": "+string(v))
+		}
+		if len(parts) >= 2 {
+			break
+		}
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, ", ")
+	}
+	return "(no arguments)"
+}
+
 // optionLabel returns the rendered label for an approval option.
 func optionLabel(opt ApprovalResult) string {
 	switch opt {
@@ -252,8 +417,14 @@ func (a *ApprovalPrompt) View() string {
 
 	header := fmt.Sprintf("  %s %s", icon, styleApprovalKey.Render(displayName))
 
-	// Args on next line, indented.
-	detail := styleSectionLabel.Render("    " + sanitizedArgs)
+	// Format args as human-readable description instead of raw JSON.
+	formatted := formatToolArgs(sanitizedTool, sanitizedArgs)
+	// Indent each line of the formatted args.
+	lines := strings.Split(formatted, "\n")
+	for i := range lines {
+		lines[i] = "    " + lines[i]
+	}
+	detail := styleSectionLabel.Render(strings.Join(lines, "\n"))
 
 	body := header + "\n" + detail
 

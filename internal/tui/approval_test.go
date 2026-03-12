@@ -8,15 +8,18 @@ import (
 )
 
 func TestApprovalPromptView(t *testing.T) {
-	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"rm -rf /tmp"}`, 60, nil)
 	view := ap.View()
 	// Should show display name, not raw tool name.
 	assert.Contains(t, view, "Bash")
+	// Should show the command, not raw JSON.
+	assert.Contains(t, view, "rm -rf /tmp")
+	assert.NotContains(t, view, `"command"`)
 	assert.Contains(t, view, "[Y]")
 }
 
 func TestApprovalPromptResult(t *testing.T) {
-	ap := NewApprovalPrompt("shell", `"ls"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	assert.False(t, ap.Done())
 
 	ap.SetResult(ApprovalYes)
@@ -34,7 +37,7 @@ func TestApprovalPromptHandleKey(t *testing.T) {
 		{"a", ApprovalAlways},
 	}
 	for _, tt := range tests {
-		ap := NewApprovalPrompt("shell", `"ls"`, 60, nil)
+		ap := NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 		handled := ap.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.key)})
 		assert.True(t, handled)
 		assert.Equal(t, tt.result, ap.Result())
@@ -42,7 +45,7 @@ func TestApprovalPromptHandleKey(t *testing.T) {
 }
 
 func TestApprovalPromptHandleKeyUnknown(t *testing.T) {
-	ap := NewApprovalPrompt("shell", `"ls"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	handled := ap.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	assert.False(t, handled)
 	assert.False(t, ap.Done())
@@ -58,7 +61,7 @@ func TestApprovalPromptHandleKeyUppercase(t *testing.T) {
 		{"A", ApprovalAlways},
 	}
 	for _, tt := range tests {
-		ap := NewApprovalPrompt("shell", `"ls"`, 60, nil)
+		ap := NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 		handled := ap.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.key)})
 		assert.True(t, handled)
 		assert.Equal(t, tt.result, ap.Result())
@@ -66,17 +69,17 @@ func TestApprovalPromptHandleKeyUppercase(t *testing.T) {
 }
 
 func TestApprovalPromptViewContainsArgs(t *testing.T) {
-	ap := NewApprovalPrompt("file_read", `"/etc/passwd"`, 80, nil)
+	ap := NewApprovalPrompt("file", `{"operation":"read","path":"/etc/passwd"}`, 80, nil)
 	view := ap.View()
-	assert.Contains(t, view, "Read file")
 	assert.Contains(t, view, "/etc/passwd")
+	assert.NotContains(t, view, `"operation"`)
 	assert.Contains(t, view, "[N]")
 	assert.Contains(t, view, "[A]")
 }
 
 func TestApprovalPromptMinWidth(t *testing.T) {
 	// Very small width should clamp to minimum.
-	ap := NewApprovalPrompt("shell", `"ls"`, 10, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"ls"}`, 10, nil)
 	view := ap.View()
 	assert.Contains(t, view, "Bash")
 }
@@ -118,27 +121,27 @@ func TestIsDestructiveCommand(t *testing.T) {
 }
 
 func TestApprovalPromptRiskLabel(t *testing.T) {
-	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"rm -rf /tmp"}`, 60, nil)
 	view := ap.View()
 	// High risk icon should appear.
 	assert.Contains(t, view, "⚠")
 }
 
 func TestApprovalPromptDestructiveWarning(t *testing.T) {
-	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"rm -rf /tmp"}`, 60, nil)
 	view := ap.View()
 	assert.Contains(t, view, "Destructive")
 }
 
 func TestApprovalPromptMediumRiskLabel(t *testing.T) {
-	ap := NewApprovalPrompt("file_write", `"/tmp/foo.txt"`, 60, nil)
+	ap := NewApprovalPrompt("file_write", `{"operation":"write","path":"/tmp/foo.txt"}`, 60, nil)
 	view := ap.View()
 	assert.Contains(t, view, "●")
 	assert.Contains(t, view, "Write file")
 }
 
 func TestApprovalPromptLowRiskLabel(t *testing.T) {
-	ap := NewApprovalPrompt("file_read", `"/tmp/foo.txt"`, 60, nil)
+	ap := NewApprovalPrompt("file_read", `{"operation":"read","path":"/tmp/foo.txt"}`, 60, nil)
 	view := ap.View()
 	assert.Contains(t, view, "●")
 	assert.Contains(t, view, "Read file")
@@ -172,26 +175,110 @@ func TestToolDisplayName(t *testing.T) {
 	assert.Equal(t, "custom_tool", toolDisplayName("custom_tool"))
 }
 
+// --- formatToolArgs tests ---
+
+func TestFormatToolArgs_ShellCommand(t *testing.T) {
+	result := formatToolArgs("shell", `{"command":"ls -la /tmp"}`)
+	assert.Equal(t, "ls -la /tmp", result)
+}
+
+func TestFormatToolArgs_ShellWithDescription(t *testing.T) {
+	result := formatToolArgs("shell", `{"command":"npm install","description":"Install dependencies"}`)
+	assert.Contains(t, result, "Install dependencies")
+	assert.Contains(t, result, "npm install")
+}
+
+func TestFormatToolArgs_FileRead(t *testing.T) {
+	result := formatToolArgs("file", `{"operation":"read","path":"internal/tui/model.go"}`)
+	assert.Equal(t, "internal/tui/model.go", result)
+}
+
+func TestFormatToolArgs_FileWrite(t *testing.T) {
+	result := formatToolArgs("file", `{"operation":"write","path":"foo.go","content":"package main"}`)
+	assert.Equal(t, "foo.go", result)
+}
+
+func TestFormatToolArgs_FilePatch(t *testing.T) {
+	result := formatToolArgs("file", `{"operation":"patch","path":"foo.go","old_string":"func old()","new_string":"func new()"}`)
+	assert.Contains(t, result, "foo.go")
+	assert.Contains(t, result, "func old()")
+}
+
+func TestFormatToolArgs_FilePatchLongOldString(t *testing.T) {
+	long := "this is a very long string that should be truncated because it exceeds sixty characters total"
+	result := formatToolArgs("file", `{"operation":"patch","path":"foo.go","old_string":"`+long+`","new_string":"short"}`)
+	assert.Contains(t, result, "foo.go")
+	assert.Contains(t, result, "...")
+	assert.NotContains(t, result, long) // should be truncated
+}
+
+func TestFormatToolArgs_Search(t *testing.T) {
+	result := formatToolArgs("search", `{"pattern":"TODO","path":"internal/"}`)
+	assert.Equal(t, "TODO in internal/", result)
+}
+
+func TestFormatToolArgs_SearchNoPath(t *testing.T) {
+	result := formatToolArgs("search", `{"pattern":"TODO"}`)
+	assert.Equal(t, "TODO", result)
+}
+
+func TestFormatToolArgs_Grep(t *testing.T) {
+	result := formatToolArgs("grep", `{"pattern":"func main","path":"cmd/"}`)
+	assert.Equal(t, "func main in cmd/", result)
+}
+
+func TestFormatToolArgs_Glob(t *testing.T) {
+	result := formatToolArgs("glob", `{"pattern":"**/*.go","path":"internal/"}`)
+	assert.Equal(t, "**/*.go in internal/", result)
+}
+
+func TestFormatToolArgs_Edit(t *testing.T) {
+	result := formatToolArgs("edit", `{"file_path":"main.go","old_string":"old","new_string":"new"}`)
+	assert.Contains(t, result, "main.go")
+	assert.Contains(t, result, "old")
+}
+
+func TestFormatToolArgs_HTTP(t *testing.T) {
+	result := formatToolArgs("http", `{"url":"https://example.com/api"}`)
+	assert.Equal(t, "https://example.com/api", result)
+}
+
+func TestFormatToolArgs_RawString(t *testing.T) {
+	// Non-JSON input should be returned as-is (trimmed of quotes).
+	result := formatToolArgs("shell", `"ls -la"`)
+	assert.Equal(t, "ls -la", result)
+}
+
+func TestFormatToolArgs_UnknownToolFallback(t *testing.T) {
+	result := formatToolArgs("custom_tool", `{"query":"find stuff"}`)
+	assert.Equal(t, "find stuff", result)
+}
+
+func TestFormatToolArgs_EmptyArgs(t *testing.T) {
+	result := formatToolArgs("shell", `{}`)
+	assert.Equal(t, "(no arguments)", result)
+}
+
 // --- Configurable options tests ---
 
 func TestOptionsForRisk_DestructiveOnlyYesNo(t *testing.T) {
-	opts := OptionsForRisk("shell", `"rm -rf /"`)
+	opts := OptionsForRisk("shell", `{"command":"rm -rf /"}`)
 	assert.Equal(t, []ApprovalResult{ApprovalYes, ApprovalNo}, opts)
 }
 
 func TestOptionsForRisk_HighRiskNoDestructive(t *testing.T) {
-	opts := OptionsForRisk("shell", `"ls -la"`)
+	opts := OptionsForRisk("shell", `{"command":"ls -la"}`)
 	assert.Equal(t, []ApprovalResult{ApprovalYes, ApprovalNo, ApprovalAlways}, opts)
 }
 
 func TestOptionsForRisk_LowRiskAllOptions(t *testing.T) {
-	opts := OptionsForRisk("file_read", `"/tmp/foo"`)
+	opts := OptionsForRisk("file_read", `{"path":"/tmp/foo"}`)
 	assert.Equal(t, []ApprovalResult{ApprovalYes, ApprovalNo, ApprovalAlways, ApprovalDenyAlways}, opts)
 }
 
 func TestApprovalPromptDestructiveHidesAlways(t *testing.T) {
 	// Destructive commands should not show "always" or "deny always" options.
-	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"rm -rf /tmp"}`, 60, nil)
 	view := ap.View()
 	assert.Contains(t, view, "[Y]")
 	assert.Contains(t, view, "[N]")
@@ -201,7 +288,7 @@ func TestApprovalPromptDestructiveHidesAlways(t *testing.T) {
 
 func TestApprovalPromptDestructiveRejectsAlwaysKey(t *testing.T) {
 	// Pressing 'a' on a destructive command should be ignored.
-	ap := NewApprovalPrompt("shell", `"rm -rf /tmp"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"rm -rf /tmp"}`, 60, nil)
 	handled := ap.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	assert.False(t, handled)
 	assert.False(t, ap.Done())
@@ -210,7 +297,7 @@ func TestApprovalPromptDestructiveRejectsAlwaysKey(t *testing.T) {
 func TestApprovalPromptCustomOptions(t *testing.T) {
 	// Caller can specify custom options.
 	opts := []ApprovalResult{ApprovalYes, ApprovalNo}
-	ap := NewApprovalPrompt("file_read", `"/etc/passwd"`, 60, opts)
+	ap := NewApprovalPrompt("file_read", `{"path":"/etc/passwd"}`, 60, opts)
 	view := ap.View()
 	assert.Contains(t, view, "[Y]")
 	assert.Contains(t, view, "[N]")
@@ -224,14 +311,14 @@ func TestApprovalPromptCustomOptions(t *testing.T) {
 
 func TestApprovalPromptShowsDenyOption(t *testing.T) {
 	// Low-risk tool should show deny always option.
-	ap := NewApprovalPrompt("file_read", `"ls"`, 60, nil)
+	ap := NewApprovalPrompt("file_read", `{"path":"foo.go"}`, 60, nil)
 	view := ap.View()
 	assert.Contains(t, view, "[D]")
 }
 
 func TestApprovalPromptDenyKey(t *testing.T) {
 	// Low-risk tool allows deny always.
-	ap := NewApprovalPrompt("file_read", `"ls"`, 60, nil)
+	ap := NewApprovalPrompt("file_read", `{"path":"foo.go"}`, 60, nil)
 	handled := ap.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	assert.True(t, handled)
 	assert.Equal(t, ApprovalDenyAlways, ap.Result())
@@ -239,10 +326,37 @@ func TestApprovalPromptDenyKey(t *testing.T) {
 
 func TestApprovalPromptHighRiskHidesDenyAlways(t *testing.T) {
 	// High-risk (non-destructive) should not show deny-always.
-	ap := NewApprovalPrompt("shell", `"ls"`, 60, nil)
+	ap := NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	view := ap.View()
 	assert.NotContains(t, view, "[D]")
 
 	handled := ap.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	assert.False(t, handled)
+}
+
+// --- View shows formatted args, not raw JSON ---
+
+func TestApprovalPromptView_NoRawJSON(t *testing.T) {
+	ap := NewApprovalPrompt("shell", `{"command":"git status","description":"Check working tree"}`, 80, nil)
+	view := ap.View()
+	// Should show the description and command, not JSON keys.
+	assert.Contains(t, view, "Check working tree")
+	assert.Contains(t, view, "git status")
+	assert.NotContains(t, view, `"command"`)
+	assert.NotContains(t, view, `"description"`)
+}
+
+func TestApprovalPromptView_FileShowsPath(t *testing.T) {
+	ap := NewApprovalPrompt("file", `{"operation":"read","path":"src/main.go"}`, 80, nil)
+	view := ap.View()
+	assert.Contains(t, view, "src/main.go")
+	assert.NotContains(t, view, `"operation"`)
+}
+
+func TestApprovalPromptView_SearchShowsPattern(t *testing.T) {
+	ap := NewApprovalPrompt("search", `{"pattern":"func Test","path":"internal/"}`, 80, nil)
+	view := ap.View()
+	assert.Contains(t, view, "func Test")
+	assert.Contains(t, view, "internal/")
+	assert.NotContains(t, view, `"pattern"`)
 }
