@@ -110,14 +110,16 @@ func makeTestRuntime(t *testing.T, skillName string, manifest *skills.SkillManif
 	return rt
 }
 
-func makeTriggeredRuntime(t *testing.T, manifest *skills.SkillManifest, backendTools []tools.Tool) *skills.Runtime {
+func makeTriggeredRuntime(t *testing.T, manifest *skills.SkillManifest, registry *tools.Registry, backendTools []tools.Tool) *skills.Runtime {
 	t.Helper()
 
 	s, err := store.NewStore(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 
-	registry := tools.NewRegistry()
+	if registry == nil {
+		registry = tools.NewRegistry()
+	}
 	backendFactory := func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
 		return &skillMockBackend{backendTools: backendTools, hooks: map[skills.HookPhase]skills.HookHandler{}}, nil
 	}
@@ -394,7 +396,7 @@ func TestAgentTurnEvaluatesKeywordTriggersForPromptSkills(t *testing.T) {
 		},
 	}
 
-	rt := makeTriggeredRuntime(t, promptManifest, nil)
+	rt := makeTriggeredRuntime(t, promptManifest, nil, nil)
 
 	var reqs []provider.CompletionRequest
 	cp := &requestCapturingProvider{
@@ -438,22 +440,11 @@ func TestAgentTurnEvaluatesKeywordTriggersForToolContributions(t *testing.T) {
 		Permissions: []skills.Permission{skills.PermFileRead},
 	}
 
-	s, err := store.NewStore(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { s.Close() })
-
 	agentReg := tools.NewRegistry()
-	loader := skills.NewLoader("", "")
-	loader.RegisterBuiltin(manifest)
-	backendFactory := func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
-		return &skillMockBackend{backendTools: []tools.Tool{triggeredTool}, hooks: map[skills.HookPhase]skills.HookHandler{}}, nil
-	}
-	sandboxFactory := func(_ string, _ []skills.Permission) skills.PermissionChecker { return &skillMockChecker{} }
-	rt := skills.NewRuntime(loader, s, agentReg, nil, backendFactory, sandboxFactory)
-	require.NoError(t, rt.Discover(nil))
+	rt := makeTriggeredRuntime(t, manifest, agentReg, []tools.Tool{triggeredTool})
 
 	var reqs []provider.CompletionRequest
-	provider := &requestCapturingProvider{
+	cp := &requestCapturingProvider{
 		events: []provider.StreamEvent{{Type: "stop"}},
 		onRequest: func(req provider.CompletionRequest) {
 			reqs = append(reqs, req)
@@ -461,7 +452,7 @@ func TestAgentTurnEvaluatesKeywordTriggersForToolContributions(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	a := New(provider, agentReg, autoApprove, cfg, WithSkillRuntime(rt), WithMode("interactive"))
+	a := New(cp, agentReg, autoApprove, cfg, WithSkillRuntime(rt), WithMode("interactive"))
 
 	ch, err := a.Turn(context.Background(), "hello there")
 	require.NoError(t, err)

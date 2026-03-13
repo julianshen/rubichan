@@ -869,7 +869,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 func (a *Agent) buildSkillTriggerContext(lastUserMessage string) skills.TriggerContext {
 	entries, err := os.ReadDir(a.WorkingDir())
 	projectFiles := make([]string, 0, len(entries))
-	if err == nil {
+	if err != nil {
+		a.logger.Warn("failed to read working directory for skill triggers: %v", err)
+	} else {
 		for _, entry := range entries {
 			projectFiles = append(projectFiles, entry.Name())
 		}
@@ -878,7 +880,6 @@ func (a *Agent) buildSkillTriggerContext(lastUserMessage string) skills.TriggerC
 	return skills.TriggerContext{
 		LastUserMessage: lastUserMessage,
 		Mode:            a.mode,
-		CurrentPath:     a.WorkingDir(),
 		ProjectFiles:    projectFiles,
 	}
 }
