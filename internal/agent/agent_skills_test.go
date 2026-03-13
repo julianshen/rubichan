@@ -426,7 +426,7 @@ func TestAgentTurnEvaluatesKeywordTriggersForPromptSkills(t *testing.T) {
 }
 
 func TestAgentTurnEvaluatesKeywordTriggersForToolContributions(t *testing.T) {
-	triggeredTool := &mockTool{name: "skill-triggered", description: "skill tool"}
+	triggeredTool := &mockTool{name: "deploy", description: "skill tool"}
 	manifest := &skills.SkillManifest{
 		Name:        "keyword-tool-skill",
 		Version:     "1.0.0",
@@ -459,14 +459,14 @@ func TestAgentTurnEvaluatesKeywordTriggersForToolContributions(t *testing.T) {
 	for range ch {
 	}
 	require.Len(t, reqs, 1)
-	assert.NotContains(t, toolNames(reqs[0].Tools), "skill-triggered")
+	assert.NotContains(t, toolNames(reqs[0].Tools), "deploy")
 
 	ch, err = a.Turn(context.Background(), "deploy this service")
 	require.NoError(t, err)
 	for range ch {
 	}
 	require.Len(t, reqs, 2)
-	assert.Contains(t, toolNames(reqs[1].Tools), "skill-triggered")
+	assert.Contains(t, toolNames(reqs[1].Tools), "deploy")
 }
 
 func toolNames(defs []provider.ToolDef) []string {
