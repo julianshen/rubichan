@@ -62,6 +62,23 @@ func (c *capturingMockProvider) Stream(_ context.Context, req provider.Completio
 	return ch, nil
 }
 
+type requestCapturingProvider struct {
+	events    []provider.StreamEvent
+	onRequest func(provider.CompletionRequest)
+}
+
+func (p *requestCapturingProvider) Stream(_ context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	if p.onRequest != nil {
+		p.onRequest(req)
+	}
+	ch := make(chan provider.StreamEvent, len(p.events))
+	for _, e := range p.events {
+		ch <- e
+	}
+	close(ch)
+	return ch, nil
+}
+
 // makeTestRuntime creates a skills.Runtime with a built-in skill that has
 // the given hooks. It discovers and activates the skill.
 func makeTestRuntime(t *testing.T, skillName string, manifest *skills.SkillManifest, backendTools []tools.Tool, hooks map[skills.HookPhase]skills.HookHandler) *skills.Runtime {
@@ -90,6 +107,29 @@ func makeTestRuntime(t *testing.T, skillName string, manifest *skills.SkillManif
 	require.NoError(t, rt.Discover(nil))
 	require.NoError(t, rt.Activate(skillName))
 
+	return rt
+}
+
+func makeTriggeredRuntime(t *testing.T, manifest *skills.SkillManifest, backendTools []tools.Tool) *skills.Runtime {
+	t.Helper()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+
+	registry := tools.NewRegistry()
+	backendFactory := func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
+		return &skillMockBackend{backendTools: backendTools, hooks: map[skills.HookPhase]skills.HookHandler{}}, nil
+	}
+	sandboxFactory := func(_ string, _ []skills.Permission) skills.PermissionChecker {
+		return &skillMockChecker{}
+	}
+
+	loader := skills.NewLoader("", "")
+	loader.RegisterBuiltin(manifest)
+
+	rt := skills.NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
 	return rt
 }
 
@@ -340,4 +380,108 @@ func TestAgentPromptInjection(t *testing.T) {
 	// The system prompt should include the prompt fragment from the skill.
 	assert.Contains(t, capturedReq.System, "security expert",
 		"system prompt should include prompt fragment from skill runtime")
+}
+
+func TestAgentTurnEvaluatesKeywordTriggersForPromptSkills(t *testing.T) {
+	promptManifest := &skills.SkillManifest{
+		Name:        "keyword-prompt-skill",
+		Version:     "1.0.0",
+		Description: "Prompt activated by keyword",
+		Types:       []skills.SkillType{skills.SkillTypePrompt},
+		Triggers:    skills.TriggerConfig{Keywords: []string{"security"}},
+		Prompt: skills.PromptConfig{
+			SystemPromptFile: "Security-specific guidance.",
+		},
+	}
+
+	rt := makeTriggeredRuntime(t, promptManifest, nil)
+
+	var reqs []provider.CompletionRequest
+	cp := &requestCapturingProvider{
+		events: []provider.StreamEvent{{Type: "stop"}},
+		onRequest: func(req provider.CompletionRequest) {
+			reqs = append(reqs, req)
+		},
+	}
+
+	agentReg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(cp, agentReg, autoApprove, cfg, WithSkillRuntime(rt), WithMode("interactive"))
+
+	ch, err := a.Turn(context.Background(), "hello there")
+	require.NoError(t, err)
+	for range ch {
+	}
+	require.Len(t, reqs, 1)
+	assert.NotContains(t, reqs[0].System, "Security-specific guidance.")
+
+	ch, err = a.Turn(context.Background(), "please run a security review")
+	require.NoError(t, err)
+	for range ch {
+	}
+	require.Len(t, reqs, 2)
+	assert.Contains(t, reqs[1].System, "Security-specific guidance.")
+}
+
+func TestAgentTurnEvaluatesKeywordTriggersForToolContributions(t *testing.T) {
+	triggeredTool := &mockTool{name: "skill-triggered", description: "skill tool"}
+	manifest := &skills.SkillManifest{
+		Name:        "keyword-tool-skill",
+		Version:     "1.0.0",
+		Description: "Tool activated by keyword",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Triggers:    skills.TriggerConfig{Keywords: []string{"deploy"}},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: "main.star",
+		},
+		Permissions: []skills.Permission{skills.PermFileRead},
+	}
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+
+	agentReg := tools.NewRegistry()
+	loader := skills.NewLoader("", "")
+	loader.RegisterBuiltin(manifest)
+	backendFactory := func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
+		return &skillMockBackend{backendTools: []tools.Tool{triggeredTool}, hooks: map[skills.HookPhase]skills.HookHandler{}}, nil
+	}
+	sandboxFactory := func(_ string, _ []skills.Permission) skills.PermissionChecker { return &skillMockChecker{} }
+	rt := skills.NewRuntime(loader, s, agentReg, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
+
+	var reqs []provider.CompletionRequest
+	provider := &requestCapturingProvider{
+		events: []provider.StreamEvent{{Type: "stop"}},
+		onRequest: func(req provider.CompletionRequest) {
+			reqs = append(reqs, req)
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(provider, agentReg, autoApprove, cfg, WithSkillRuntime(rt), WithMode("interactive"))
+
+	ch, err := a.Turn(context.Background(), "hello there")
+	require.NoError(t, err)
+	for range ch {
+	}
+	require.Len(t, reqs, 1)
+	assert.NotContains(t, toolNames(reqs[0].Tools), "skill-triggered")
+
+	ch, err = a.Turn(context.Background(), "deploy this service")
+	require.NoError(t, err)
+	for range ch {
+	}
+	require.Len(t, reqs, 2)
+	assert.Contains(t, toolNames(reqs[1].Tools), "skill-triggered")
+}
+
+func toolNames(defs []provider.ToolDef) []string {
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		names = append(names, def.Name)
+	}
+	return names
 }
