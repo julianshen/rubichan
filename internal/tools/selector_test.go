@@ -20,6 +20,8 @@ func allTestTools() []provider.ToolDef {
 	return []provider.ToolDef{
 		makeToolDef("shell"),
 		makeToolDef("file"),
+		makeToolDef("process"),
+		makeToolDef("tool_search"),
 		makeToolDef("search"),
 		makeToolDef("git_status"),
 		makeToolDef("http_get"),
@@ -52,6 +54,10 @@ func TestCategorize(t *testing.T) {
 	assert.Equal(t, CategorySkill, Categorize("custom_tool"))
 }
 
+func safeBaselineToolNames() []string {
+	return []string{"shell", "file", "process", "tool_search"}
+}
+
 func TestSelectorCoreToolsAlwaysPresent(t *testing.T) {
 	ts := NewToolSelector()
 	messages := []provider.Message{
@@ -63,6 +69,7 @@ func TestSelectorCoreToolsAlwaysPresent(t *testing.T) {
 
 	assert.Contains(t, names, "shell")
 	assert.Contains(t, names, "file")
+	assert.Contains(t, names, "tool_search")
 }
 
 func TestSelectorFileToolsIncludedOnFileMentions(t *testing.T) {
@@ -92,7 +99,7 @@ func TestSelectorPlatformToolsIncludedOnPlatformMentions(t *testing.T) {
 	assert.Contains(t, names, "xcode_discover")
 }
 
-func TestSelectorAllToolsFallback(t *testing.T) {
+func TestSelectorSafeBaselineFallback(t *testing.T) {
 	ts := NewToolSelector()
 	// Generic message with no file/platform keywords
 	messages := []provider.Message{
@@ -101,8 +108,7 @@ func TestSelectorAllToolsFallback(t *testing.T) {
 
 	result := ts.Select(messages, allTestTools())
 
-	// Should fall back to all tools
-	assert.ElementsMatch(t, toolNames(result), toolNames(allTestTools()))
+	assert.ElementsMatch(t, safeBaselineToolNames(), toolNames(result))
 }
 
 func TestSelectorRecentToolUsageIncluded(t *testing.T) {
@@ -126,11 +132,11 @@ func TestSelectorRecentToolUsageIncluded(t *testing.T) {
 	assert.Contains(t, names, "xcode_build")
 }
 
-func TestSelectorEmptyMessagesReturnsAll(t *testing.T) {
+func TestSelectorEmptyMessagesReturnSafeBaseline(t *testing.T) {
 	ts := NewToolSelector()
 
 	result := ts.Select(nil, allTestTools())
-	assert.ElementsMatch(t, toolNames(result), toolNames(allTestTools()))
+	assert.ElementsMatch(t, safeBaselineToolNames(), toolNames(result))
 }
 
 func TestSelectorKeywordDetection(t *testing.T) {
@@ -151,4 +157,22 @@ func TestSelectorKeywordDetection(t *testing.T) {
 	result = ts.Select(messages, allTestTools())
 	names = toolNames(result)
 	assert.Contains(t, names, "xcode_build")
+}
+
+func TestSelectorGenericPromptsDoNotExposeSensitiveCategories(t *testing.T) {
+	ts := NewToolSelector()
+	messages := []provider.Message{
+		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "please help me with this task"}}},
+	}
+
+	result := ts.Select(messages, allTestTools())
+	names := toolNames(result)
+
+	assert.ElementsMatch(t, safeBaselineToolNames(), names)
+	assert.NotContains(t, names, "http_get")
+	assert.NotContains(t, names, "browser_open")
+	assert.NotContains(t, names, "xcode_build")
+	assert.NotContains(t, names, "xcode_discover")
+	assert.NotContains(t, names, "mcp-github")
+	assert.NotContains(t, names, "git_status")
 }
