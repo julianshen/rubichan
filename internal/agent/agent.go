@@ -618,16 +618,128 @@ func (a *Agent) DiffTracker() *tools.DiffTracker {
 // cache breakpoint offsets using the PromptBuilder. Cacheable (static)
 // sections are placed first for optimal provider caching.
 func (a *Agent) buildSystemPromptWithFragments() (string, []int) {
+	type skillPromptFragmentData struct {
+		SkillName string `json:"skill_name"`
+		Prompt    string `json:"prompt"`
+	}
+
+	type promptBuildContext struct {
+		BaseSystemPrompt      string                    `json:"base_system_prompt"`
+		SkillPromptFragments  []skillPromptFragmentData `json:"skill_prompt_fragments"`
+		ContextBudgetTotal    int                       `json:"context_budget_total"`
+		ContextBudgetMaxOut   int                       `json:"context_budget_max_output_tokens"`
+		ContextBudgetWindow   int                       `json:"context_budget_effective_window"`
+		ContextBudgetSystem   int                       `json:"context_budget_system_prompt_tokens"`
+		ContextBudgetSkills   int                       `json:"context_budget_skill_prompt_tokens"`
+		ContextBudgetTools    int                       `json:"context_budget_tool_description_tokens"`
+		ContextBudgetMessages int                       `json:"context_budget_conversation_tokens"`
+	}
+
+	type promptBuildMutation struct {
+		ReplaceBaseSystemPrompt string                    `json:"replace_base_system_prompt"`
+		AppendSystemPrompt      string                    `json:"append_system_prompt"`
+		ReplaceSkillFragments   []skillPromptFragmentData `json:"replace_skill_fragments"`
+		AppendSkillFragments    []skillPromptFragmentData `json:"append_skill_fragments"`
+	}
+
+	baseSystemPrompt := a.conversation.SystemPrompt()
+	builtFragments := make([]skillPromptFragmentData, 0)
+	if a.skillRuntime != nil {
+		fragments := a.skillRuntime.GetBudgetedPromptFragments()
+		builtFragments = make([]skillPromptFragmentData, 0, len(fragments))
+		for _, f := range fragments {
+			if f.ResolvedPrompt == "" {
+				continue
+			}
+			builtFragments = append(builtFragments, skillPromptFragmentData{
+				SkillName: f.SkillName,
+				Prompt:    f.ResolvedPrompt,
+			})
+		}
+	}
+
+	if a.skillRuntime != nil {
+		budget := a.context.Budget()
+		hookEvent := skills.HookEvent{
+			Phase: skills.HookOnBeforePromptBuild,
+			Data: map[string]any{
+				"prompt_build": promptBuildContext{
+					BaseSystemPrompt:      baseSystemPrompt,
+					SkillPromptFragments:  builtFragments,
+					ContextBudgetTotal:    budget.Total,
+					ContextBudgetMaxOut:   budget.MaxOutputTokens,
+					ContextBudgetWindow:   budget.EffectiveWindow(),
+					ContextBudgetSystem:   budget.SystemPrompt,
+					ContextBudgetSkills:   budget.SkillPrompts,
+					ContextBudgetTools:    budget.ToolDescriptions,
+					ContextBudgetMessages: budget.Conversation,
+				},
+			},
+		}
+		if result, err := a.skillRuntime.DispatchHook(hookEvent); err != nil {
+			a.logger.Warn("before-prompt-build hook failed: %v", err)
+		} else if result != nil {
+			mutation := promptBuildMutation{}
+			if result.Modified != nil {
+				if v, ok := result.Modified["replace_base_system_prompt"].(string); ok {
+					mutation.ReplaceBaseSystemPrompt = v
+				}
+				if v, ok := result.Modified["append_system_prompt"].(string); ok {
+					mutation.AppendSystemPrompt = v
+				}
+				if v, ok := result.Modified["replace_skill_fragments"].([]skillPromptFragmentData); ok {
+					mutation.ReplaceSkillFragments = v
+				} else if raw, ok := result.Modified["replace_skill_fragments"].([]any); ok {
+					for _, item := range raw {
+						if fragMap, ok := item.(map[string]any); ok {
+							name, _ := fragMap["skill_name"].(string)
+							prompt, _ := fragMap["prompt"].(string)
+							if name != "" && prompt != "" {
+								mutation.ReplaceSkillFragments = append(mutation.ReplaceSkillFragments, skillPromptFragmentData{SkillName: name, Prompt: prompt})
+							}
+						}
+					}
+				}
+				if v, ok := result.Modified["append_skill_fragments"].([]skillPromptFragmentData); ok {
+					mutation.AppendSkillFragments = v
+				} else if raw, ok := result.Modified["append_skill_fragments"].([]any); ok {
+					for _, item := range raw {
+						if fragMap, ok := item.(map[string]any); ok {
+							name, _ := fragMap["skill_name"].(string)
+							prompt, _ := fragMap["prompt"].(string)
+							if name != "" && prompt != "" {
+								mutation.AppendSkillFragments = append(mutation.AppendSkillFragments, skillPromptFragmentData{SkillName: name, Prompt: prompt})
+							}
+						}
+					}
+				}
+			}
+
+			if mutation.ReplaceBaseSystemPrompt != "" {
+				baseSystemPrompt = mutation.ReplaceBaseSystemPrompt
+			}
+			if mutation.AppendSystemPrompt != "" {
+				baseSystemPrompt = strings.TrimSpace(baseSystemPrompt + "\n\n" + mutation.AppendSystemPrompt)
+			}
+			if mutation.ReplaceSkillFragments != nil {
+				builtFragments = mutation.ReplaceSkillFragments
+			}
+			if len(mutation.AppendSkillFragments) > 0 {
+				builtFragments = append(builtFragments, mutation.AppendSkillFragments...)
+			}
+		}
+	}
+
 	pb := NewPromptBuilder()
 
-	if len(a.staticPrompts) > 0 {
+	if len(a.staticPrompts) > 0 && baseSystemPrompt == a.conversation.SystemPrompt() {
 		for _, section := range a.staticPrompts {
 			pb.AddSection(section)
 		}
 	} else {
 		pb.AddSection(PromptSection{
 			Name:      "",
-			Content:   a.conversation.SystemPrompt(),
+			Content:   baseSystemPrompt,
 			Cacheable: true,
 		})
 	}
@@ -646,14 +758,12 @@ func (a *Agent) buildSystemPromptWithFragments() (string, []int) {
 
 	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
-		for _, f := range a.skillRuntime.GetBudgetedPromptFragments() {
-			if f.ResolvedPrompt != "" {
-				pb.AddSection(PromptSection{
-					Name:      f.SkillName,
-					Content:   f.ResolvedPrompt,
-					Cacheable: false,
-				})
-			}
+		for _, f := range builtFragments {
+			pb.AddSection(PromptSection{
+				Name:      f.SkillName,
+				Content:   f.Prompt,
+				Cacheable: false,
+			})
 		}
 	}
 
