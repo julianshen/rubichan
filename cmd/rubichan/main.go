@@ -1124,6 +1124,7 @@ func runInteractive() error {
 	}
 
 	opts = appendPersonaOptions(opts, cwd)
+	opts = append(opts, agent.WithMode("interactive"))
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.
 	rt, storeCloser, err := createSkillRuntime(runCtx, registry, p, cfg, "interactive", cwd)
@@ -1428,6 +1429,7 @@ func runHeadless() error {
 	if headlessMode == "" {
 		headlessMode = "headless"
 	}
+	opts = append(opts, agent.WithMode(headlessMode))
 	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg, headlessMode, cwd)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
