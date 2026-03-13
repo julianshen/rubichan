@@ -38,6 +38,14 @@ func WithSkillRuntime(rt *skills.Runtime) AgentOption {
 	}
 }
 
+// WithMode sets the agent's execution mode for turn-level skill trigger
+// evaluation (e.g. "interactive", "headless", "code-review").
+func WithMode(mode string) AgentOption {
+	return func(a *Agent) {
+		a.mode = mode
+	}
+}
+
 // WithStore attaches a persistence store to the agent, enabling automatic
 // session and message saving.
 func WithStore(st *store.Store) AgentOption {
@@ -219,6 +227,7 @@ type Agent struct {
 	workingDir       string // override working directory (empty = os.Getwd)
 	parallelPolicy   ToolParallelPolicy
 	logger           Logger
+	mode             string
 }
 
 // New creates a new Agent with the given provider, tool registry, approval
@@ -604,7 +613,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 				}
 			}
 		}()
-		a.runLoop(ctx, ch, 0)
+		a.runLoop(ctx, ch, 0, userMessage)
 	}()
 	return ch, nil
 }
@@ -804,8 +813,18 @@ func (a *Agent) makeDoneEvent(inputTokens, outputTokens int) TurnEvent {
 }
 
 // runLoop iteratively processes LLM responses and tool calls.
-func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
+func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
+
+	if a.skillRuntime != nil {
+		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
+		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("activate skills for turn: %w", err)}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			return
+		}
+	}
+
 	for ; turnCount < a.maxTurns; turnCount++ {
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
@@ -955,6 +974,24 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
 	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+}
+
+func (a *Agent) buildSkillTriggerContext(lastUserMessage string) skills.TriggerContext {
+	entries, err := os.ReadDir(a.WorkingDir())
+	projectFiles := make([]string, 0, len(entries))
+	if err != nil {
+		a.logger.Warn("failed to read working directory for skill triggers: %v", err)
+	} else {
+		for _, entry := range entries {
+			projectFiles = append(projectFiles, entry.Name())
+		}
+	}
+
+	return skills.TriggerContext{
+		LastUserMessage: lastUserMessage,
+		Mode:            a.mode,
+		ProjectFiles:    projectFiles,
+	}
 }
 
 // maxParallelTools is the upper bound on concurrent tool goroutines.

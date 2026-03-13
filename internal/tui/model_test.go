@@ -15,6 +15,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/tools"
 )
 

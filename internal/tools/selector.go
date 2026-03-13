@@ -18,10 +18,11 @@ func NewToolSelector() *ToolSelector {
 
 // Select returns the subset of tools relevant to the current conversation.
 // Core tools are always included. Other tools are included based on keyword
-// heuristics and recent tool usage. Falls back to all tools if no heuristic matches.
+// heuristics and recent tool usage. When nothing else matches, it falls back
+// to a safe baseline so deferred tools remain discoverable via tool_search.
 func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.ToolDef) []provider.ToolDef {
 	if len(messages) == 0 {
-		return allTools
+		return selectSafeBaseline(allTools)
 	}
 
 	// Collect recent text for keyword analysis.
@@ -35,7 +36,7 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 		cat := Categorize(tool.Name)
 
 		switch {
-		case cat == CategoryCore:
+		case cat == CategoryCore || tool.Name == "tool_search":
 			selected = append(selected, tool)
 
 		case cat == CategoryFileSystem:
@@ -64,11 +65,21 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 		}
 	}
 
-	// Fallback: if no non-core tools matched, include everything.
+	// Fallback: if no non-core tools matched, expose only the safe baseline.
 	if !nonCoreMatched {
-		return allTools
+		return selectSafeBaseline(allTools)
 	}
 
+	return selected
+}
+
+func selectSafeBaseline(allTools []provider.ToolDef) []provider.ToolDef {
+	var selected []provider.ToolDef
+	for _, tool := range allTools {
+		if Categorize(tool.Name) == CategoryCore || tool.Name == "tool_search" {
+			selected = append(selected, tool)
+		}
+	}
 	return selected
 }
 
