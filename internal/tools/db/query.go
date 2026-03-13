@@ -259,14 +259,14 @@ func formatRows(rows *sql.Rows, maxRows int) (string, error) {
 // through. Everything else (e.g. allowAllFiles, allowCleartextPasswords) is
 // stripped to prevent local-file-inclusion and credential-exfiltration attacks.
 var mysqlDSNAllowedParams = map[string]bool{
-	"charset":      true,
-	"collation":    true,
-	"loc":          true,
-	"parseTime":    true,
-	"timeout":      true,
-	"readTimeout":  true,
-	"writeTimeout": true,
-	"tls":          true,
+	"charset":          true,
+	"collation":        true,
+	"loc":              true,
+	"parseTime":        true,
+	"timeout":          true,
+	"readTimeout":      true,
+	"writeTimeout":     true,
+	"tls":              true,
 	"maxAllowedPacket": true,
 }
 
@@ -366,15 +366,15 @@ func extractMySQLHost(dsn string) string {
 // through. Parameters like sslkey, sslcert, sslrootcert, and service can be
 // used for credential exfiltration or SSRF attacks and are stripped.
 var postgresDSNAllowedParams = map[string]bool{
-	"sslmode":             true,
-	"connect_timeout":     true,
-	"application_name":    true,
-	"search_path":         true,
-	"timezone":            true,
-	"client_encoding":     true,
-	"options":             true,
-	"statement_timeout":   true,
-	"lock_timeout":        true,
+	"sslmode":                             true,
+	"connect_timeout":                     true,
+	"application_name":                    true,
+	"search_path":                         true,
+	"timezone":                            true,
+	"client_encoding":                     true,
+	"options":                             true,
+	"statement_timeout":                   true,
+	"lock_timeout":                        true,
 	"idle_in_transaction_session_timeout": true,
 }
 

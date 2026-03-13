@@ -113,12 +113,12 @@ func TestGitRejectsLeadingDashRevisionsAndFilters(t *testing.T) {
 func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	run(t, dir, "init")
-	run(t, dir, "config", "user.email", "test@example.com")
-	run(t, dir, "config", "user.name", "Test User")
+	_, _ = run(t, dir, "init")
+	_, _ = run(t, dir, "config", "user.email", "test@example.com")
+	_, _ = run(t, dir, "config", "user.name", "Test User")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644))
-	run(t, dir, "add", "README.md")
-	run(t, dir, "commit", "-m", "initial commit")
+	_, _ = run(t, dir, "add", "README.md")
+	_, _ = run(t, dir, "commit", "-m", "initial commit")
 	return dir
 }
 

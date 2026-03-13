@@ -3,7 +3,6 @@ package browser
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -133,21 +132,6 @@ func TestNewNativeSessionTracksHeadlessOption(t *testing.T) {
 }
 
 var _ tools.Tool = (*tool)(nil)
-
-type errBackend struct{}
-
-func (b *errBackend) Name() string { return "err" }
-func (b *errBackend) Open(context.Context, any, OpenOptions) (any, OpenResult, error) {
-	return nil, OpenResult{}, errors.New("boom")
-}
-func (b *errBackend) Click(context.Context, any, string, bool) error        { return nil }
-func (b *errBackend) Fill(context.Context, any, string, string, bool) error { return nil }
-func (b *errBackend) Snapshot(context.Context, any) (string, error)         { return "", nil }
-func (b *errBackend) Screenshot(context.Context, any, string, bool, string) (ScreenshotResult, error) {
-	return ScreenshotResult{}, nil
-}
-func (b *errBackend) Wait(context.Context, any, WaitOptions) error { return nil }
-func (b *errBackend) Close(context.Context, any) error             { return nil }
 
 func splitLines(s string) []string {
 	var lines []string

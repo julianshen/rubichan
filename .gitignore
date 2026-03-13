@@ -1,5 +1,6 @@
 /rubichan
 .gocache/
 .worktrees/
+.claude/
 coverage.out
 coverage_xcode.out

@@ -90,7 +90,7 @@ func TestSuperpowersRegisterCommands(t *testing.T) {
 		"test-driven-development":        "tdd",
 		"requesting-code-review":         "review",
 		"systematic-debugging":           "debug",
-		"finishing-a-development-branch":  "finish",
+		"finishing-a-development-branch": "finish",
 	}
 
 	for skillName, cmdName := range wantCommands {
