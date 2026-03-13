@@ -813,7 +813,7 @@ func TestShellToolBackgroundExecution(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 	assert.Contains(t, result.Content, "process_id:")
-	pm.Shutdown(context.Background())
+	require.NoError(t, pm.Shutdown(context.Background()))
 }
 
 func TestShellToolBackgroundBlockedByInterceptor(t *testing.T) {
@@ -821,7 +821,9 @@ func TestShellToolBackgroundBlockedByInterceptor(t *testing.T) {
 	pm := NewProcessManager(dir, ProcessManagerConfig{})
 	st := newTestShellTool(dir, 30*time.Second)
 	st.SetProcessManager(pm)
-	defer pm.Shutdown(context.Background())
+	defer func() {
+		require.NoError(t, pm.Shutdown(context.Background()))
+	}()
 
 	// Command substitution should be blocked even in background mode
 	input, _ := json.Marshal(map[string]interface{}{
@@ -1027,7 +1029,9 @@ func TestShellToolBackgroundRejectsDirectoryOverride(t *testing.T) {
 	pm := NewProcessManager(dir, ProcessManagerConfig{})
 	st := newTestShellTool(dir, 30*time.Second)
 	st.SetProcessManager(pm)
-	defer pm.Shutdown(context.Background())
+	defer func() {
+		require.NoError(t, pm.Shutdown(context.Background()))
+	}()
 
 	input, _ := json.Marshal(map[string]interface{}{
 		"command":       "pwd",
@@ -1045,7 +1049,9 @@ func TestShellToolBackgroundRejectsTimeoutOverride(t *testing.T) {
 	pm := NewProcessManager(dir, ProcessManagerConfig{})
 	st := newTestShellTool(dir, 30*time.Second)
 	st.SetProcessManager(pm)
-	defer pm.Shutdown(context.Background())
+	defer func() {
+		require.NoError(t, pm.Shutdown(context.Background()))
+	}()
 
 	input, _ := json.Marshal(map[string]interface{}{
 		"command":       "echo test",
