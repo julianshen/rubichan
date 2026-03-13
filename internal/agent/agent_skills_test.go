@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/commands"
@@ -382,6 +384,195 @@ func TestAgentPromptInjection(t *testing.T) {
 	// The system prompt should include the prompt fragment from the skill.
 	assert.Contains(t, capturedReq.System, "security expert",
 		"system prompt should include prompt fragment from skill runtime")
+}
+
+func TestAgentBeforePromptBuildHookCanModifyPrompt(t *testing.T) {
+	hookCalled := false
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnBeforePromptBuild: func(event skills.HookEvent) (skills.HookResult, error) {
+			hookCalled = true
+			require.NotNil(t, event.Ctx)
+			ctxData, ok := event.Data["prompt_build"]
+			require.True(t, ok)
+
+			payload, err := json.Marshal(ctxData)
+			require.NoError(t, err)
+			assert.Contains(t, string(payload), `"base_system_prompt":`)
+			assert.Contains(t, string(payload), `"context_budget_effective_window":`)
+
+			return skills.HookResult{
+				Modified: map[string]any{
+					"append_system_prompt": "hook-appended-system-guidance",
+					"append_skill_fragments": []any{
+						map[string]any{"skill_name": "hook-fragment", "prompt": "hook-fragment-text"},
+					},
+				},
+			}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "before-prompt-hook", toolManifest("before-prompt-hook"), nil, hooks)
+
+	var capturedReq provider.CompletionRequest
+	cp := &capturingMockProvider{
+		events:     []provider.StreamEvent{{Type: "text_delta", Text: "ok"}, {Type: "stop"}},
+		captureReq: &capturedReq,
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assert.True(t, hookCalled)
+	assert.Contains(t, capturedReq.System, "hook-appended-system-guidance")
+	assert.Contains(t, capturedReq.System, "## hook-fragment")
+	assert.Contains(t, capturedReq.System, "hook-fragment-text")
+}
+
+func TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder(t *testing.T) {
+	basePromptManifest := &skills.SkillManifest{
+		Name:        "prompt-hook-order",
+		Version:     "1.0.0",
+		Description: "Prompt hook precedence test",
+		Types:       []skills.SkillType{skills.SkillTypePrompt},
+		Prompt: skills.PromptConfig{
+			SystemPromptFile: "collector-fragment-text",
+		},
+	}
+	runPromptHookTurn := func(t *testing.T, hookSkillNames []string, hookMap map[string]skills.HookHandler) provider.CompletionRequest {
+		t.Helper()
+
+		s, err := store.NewStore(":memory:")
+		require.NoError(t, err)
+		t.Cleanup(func() { s.Close() })
+
+		registry := tools.NewRegistry()
+		backendFactory := func(manifest skills.SkillManifest, _ string) (skills.SkillBackend, error) {
+			backendHooks := map[skills.HookPhase]skills.HookHandler{}
+			if hook, ok := hookMap[manifest.Name]; ok {
+				backendHooks[skills.HookOnBeforePromptBuild] = hook
+			}
+			return &skillMockBackend{hooks: backendHooks}, nil
+		}
+		sandboxFactory := func(_ string, _ []skills.Permission) skills.PermissionChecker {
+			return &skillMockChecker{}
+		}
+
+		loader := skills.NewLoader("", "")
+		loader.RegisterBuiltin(basePromptManifest)
+		activeSkills := []string{basePromptManifest.Name}
+		for _, skillName := range hookSkillNames {
+			loader.RegisterBuiltin(toolManifest(skillName))
+			activeSkills = append(activeSkills, skillName)
+		}
+
+		rt := skills.NewRuntime(loader, s, registry, activeSkills, backendFactory, sandboxFactory)
+		require.NoError(t, rt.Discover(nil))
+		for _, skillName := range activeSkills {
+			require.NoError(t, rt.Activate(skillName))
+		}
+
+		var capturedReq provider.CompletionRequest
+		cp := &capturingMockProvider{
+			events:     []provider.StreamEvent{{Type: "text_delta", Text: "ok"}, {Type: "stop"}},
+			captureReq: &capturedReq,
+		}
+
+		cfg := config.DefaultConfig()
+		a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+		ch, err := a.Turn(context.Background(), "test")
+		require.NoError(t, err)
+		for range ch {
+		}
+
+		return capturedReq
+	}
+
+	t.Run("replace then append preserves order", func(t *testing.T) {
+		capturedReq := runPromptHookTurn(t,
+			[]string{"prompt-hook-modifier"},
+			map[string]skills.HookHandler{
+				"prompt-hook-modifier": func(event skills.HookEvent) (skills.HookResult, error) {
+					return skills.HookResult{
+						Modified: map[string]any{
+							"replace_skill_fragments": []any{
+								map[string]any{"skill_name": "replaced-fragment", "prompt": "replaced-fragment-text"},
+							},
+							"append_skill_fragments": []any{
+								map[string]any{"skill_name": "appended-fragment", "prompt": "appended-fragment-text"},
+							},
+						},
+					}, nil
+				},
+			},
+		)
+
+		assert.NotContains(t, capturedReq.System, "collector-fragment-text")
+		assert.Contains(t, capturedReq.System, "replaced-fragment-text")
+		assert.Contains(t, capturedReq.System, "appended-fragment-text")
+
+		replacedIdx := strings.Index(capturedReq.System, "## replaced-fragment")
+		appendedIdx := strings.Index(capturedReq.System, "## appended-fragment")
+		assert.GreaterOrEqual(t, replacedIdx, 0)
+		assert.GreaterOrEqual(t, appendedIdx, 0)
+		assert.Less(t, replacedIdx, appendedIdx)
+	})
+
+	t.Run("explicit empty replacement clears fragments", func(t *testing.T) {
+		capturedReq := runPromptHookTurn(t,
+			[]string{"prompt-hook-clearer"},
+			map[string]skills.HookHandler{
+				"prompt-hook-clearer": func(event skills.HookEvent) (skills.HookResult, error) {
+					return skills.HookResult{
+						Modified: map[string]any{
+							"replace_skill_fragments": []any{},
+						},
+					}, nil
+				},
+			},
+		)
+
+		assert.NotContains(t, capturedReq.System, "collector-fragment-text")
+		assert.NotContains(t, capturedReq.System, "## prompt-hook-order")
+	})
+
+	t.Run("chained hooks preserve prior mutations when later hook is noop", func(t *testing.T) {
+		capturedReq := runPromptHookTurn(t,
+			[]string{"prompt-hook-first", "prompt-hook-second"},
+			map[string]skills.HookHandler{
+				"prompt-hook-first": func(event skills.HookEvent) (skills.HookResult, error) {
+					return skills.HookResult{
+						Modified: map[string]any{
+							"replace_skill_fragments": []any{
+								map[string]any{"skill_name": "replaced-fragment", "prompt": "replaced-fragment-text"},
+							},
+							"append_skill_fragments": []any{
+								map[string]any{"skill_name": "appended-fragment", "prompt": "appended-fragment-text"},
+							},
+						},
+					}, nil
+				},
+				"prompt-hook-second": func(event skills.HookEvent) (skills.HookResult, error) {
+					return skills.HookResult{}, nil
+				},
+			},
+		)
+
+		assert.NotContains(t, capturedReq.System, "collector-fragment-text")
+		assert.Contains(t, capturedReq.System, "replaced-fragment-text")
+		assert.Contains(t, capturedReq.System, "appended-fragment-text")
+
+		replacedIdx := strings.Index(capturedReq.System, "## replaced-fragment")
+		appendedIdx := strings.Index(capturedReq.System, "## appended-fragment")
+		assert.GreaterOrEqual(t, replacedIdx, 0)
+		assert.GreaterOrEqual(t, appendedIdx, 0)
+		assert.Less(t, replacedIdx, appendedIdx)
+	})
 }
 
 func TestAgentTurnEvaluatesKeywordTriggersForPromptSkills(t *testing.T) {
