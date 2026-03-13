@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -28,6 +29,18 @@ func testResolver(hosts ...string) ResolveFunc {
 	}
 }
 
+func testDialContext(rawURL string) func(context.Context, string, string) (net.Conn, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	target := u.Host
+	var d net.Dialer
+	return func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return d.DialContext(ctx, network, target)
+	}
+}
+
 func TestGetToolJSONResponse(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +52,7 @@ func TestGetToolJSONResponse(t *testing.T) {
 
 	tool := NewGetTool()
 	tool.resolver = testResolver("127.0.0.1")
+	tool.dialContext = testDialContext(srv.URL)
 	input := json.RawMessage(`{"url":"` + srv.URL + `","query":{"page":"1"}}`)
 	result, err := tool.Execute(context.Background(), input)
 	require.NoError(t, err)
@@ -60,6 +74,7 @@ func TestPostToolStringBody(t *testing.T) {
 
 	tool := NewPostTool()
 	tool.resolver = testResolver("127.0.0.1")
+	tool.dialContext = testDialContext(srv.URL)
 	input := json.RawMessage(`{"url":"` + srv.URL + `","body":"hello"}`)
 	result, err := tool.Execute(context.Background(), input)
 	require.NoError(t, err)

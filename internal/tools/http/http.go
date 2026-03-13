@@ -46,6 +46,9 @@ type Tool struct {
 	method   string
 	name     string
 	resolver ResolveFunc
+	// dialContext is a test seam for directing requests to local fixtures
+	// without weakening production SSRF checks.
+	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // NewGetTool returns an HTTP GET tool.
@@ -155,8 +158,12 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 	// DNS rebinding attacks (where a second DNS lookup resolves to a
 	// different, potentially private address).
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transportDialContext := pinnedDialer(dialer, u.Hostname(), addrs, t.resolver)
+	if t.dialContext != nil {
+		transportDialContext = t.dialContext
+	}
 	transport := &http.Transport{
-		DialContext: pinnedDialer(dialer, u.Hostname(), addrs, t.resolver),
+		DialContext: transportDialContext,
 	}
 	client := &http.Client{Timeout: timeout, Transport: transport}
 	if in.FollowRedirects != nil && !*in.FollowRedirects {

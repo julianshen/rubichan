@@ -105,7 +105,7 @@ func (r *Registry) Filter(names []string) *Registry {
 
 // SelectForContext returns tool definitions filtered for relevance to the
 // current conversation context. Uses keyword heuristics and recent tool
-// usage to select relevant tools, falling back to all tools when no
+// usage to select relevant tools, falling back to a safe baseline when no
 // heuristic matches.
 func (r *Registry) SelectForContext(messages []provider.Message) []provider.ToolDef {
 	all := r.All()
