@@ -356,7 +356,7 @@ func TestBuildSystemPromptWithFragmentsDoesNotNestStaticSections(t *testing.T) {
 
 	a := New(mp, reg, autoApprove, cfg, WithIdentityMD("workspace identity"))
 
-	prompt, _ := a.buildSystemPromptWithFragments()
+	prompt, _, _ := a.buildSystemPromptWithFragments(context.Background())
 	assert.Equal(t, 1, strings.Count(prompt, "## System"))
 	assert.Equal(t, 1, strings.Count(prompt, "## Identity"))
 	assert.Equal(t, 1, strings.Count(prompt, "## Soul"))
