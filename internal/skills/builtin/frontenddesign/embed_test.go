@@ -57,3 +57,27 @@ func TestFrontendDesignRegisterDesignCommand(t *testing.T) {
 		t.Errorf("command name = %q, want %q", cmds[0].Name, "design")
 	}
 }
+
+func TestFrontendDesignIncludesAutoTriggers(t *testing.T) {
+	loader := skills.NewLoader("", "")
+	Register(loader)
+
+	discovered, _, err := loader.Discover(nil)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	ds := discovered[0]
+	if len(ds.Manifest.Triggers.Files) == 0 {
+		t.Fatal("expected file triggers")
+	}
+	if len(ds.Manifest.Triggers.Languages) == 0 {
+		t.Fatal("expected language triggers")
+	}
+	if len(ds.Manifest.Triggers.Modes) == 0 {
+		t.Fatal("expected mode triggers")
+	}
+	if len(ds.Manifest.Triggers.Keywords) == 0 {
+		t.Fatal("expected keyword triggers")
+	}
+}

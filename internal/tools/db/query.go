@@ -62,7 +62,19 @@ func (t *QueryTool) InputSchema() json.RawMessage {
 			"engine": {"type": "string", "enum": ["sqlite", "postgres", "mysql"], "description": "Database engine"},
 			"database": {"type": "string", "description": "SQLite file path or Postgres/MySQL DSN"},
 			"query": {"type": "string", "description": "Read-only SQL query"},
-			"params": {"type": "array", "description": "Optional positional query parameters"},
+			"params": {
+				"type": "array",
+				"description": "Optional positional query parameters",
+				"items": {
+					"anyOf": [
+						{"type": "string"},
+						{"type": "number"},
+						{"type": "integer"},
+						{"type": "boolean"},
+						{"type": "null"}
+					]
+				}
+			},
 			"timeout_ms": {"type": "integer", "description": "Query timeout in milliseconds (max 120000)"},
 			"max_rows": {"type": "integer", "description": "Maximum rows to return (default 50, max 200)"}
 		},

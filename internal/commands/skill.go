@@ -27,9 +27,19 @@ type skillCommand struct {
 	lister SkillLister
 }
 
+type skillLogCommand struct {
+	lister SkillLister
+}
+
 // NewSkillCommand creates a command to list, activate, and deactivate skills.
 func NewSkillCommand(lister SkillLister) SlashCommand {
 	return &skillCommand{lister: lister}
+}
+
+// NewSkillLogCommand creates a debug-friendly command that dumps the current
+// skill state snapshot without mutating any activation state.
+func NewSkillLogCommand(lister SkillLister) SlashCommand {
+	return &skillLogCommand{lister: lister}
 }
 
 func (c *skillCommand) Name() string        { return "skill" }
@@ -129,4 +139,29 @@ func (c *skillCommand) executeDeactivate(name string) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Output: fmt.Sprintf("Skill %q deactivated.", name)}, nil
+}
+
+func (c *skillLogCommand) Name() string        { return "skill-log" }
+func (c *skillLogCommand) Description() string { return "Dump current skill state for debugging" }
+
+func (c *skillLogCommand) Arguments() []ArgumentDef { return nil }
+
+func (c *skillLogCommand) Complete(_ context.Context, _ []string) []Candidate {
+	return nil
+}
+
+func (c *skillLogCommand) Execute(_ context.Context, _ []string) (Result, error) {
+	skills := c.lister.ListSkills()
+	if len(skills) == 0 {
+		return Result{Output: "No skills discovered."}, nil
+	}
+
+	var b strings.Builder
+	b.WriteString("Skill log:\n")
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	for _, sk := range skills {
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", sk.Name, sk.State, sk.Source, sk.Description)
+	}
+	tw.Flush()
+	return Result{Output: b.String()}, nil
 }

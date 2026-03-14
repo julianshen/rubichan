@@ -21,7 +21,7 @@ func TestSelectShellSandboxDarwinUsesSeatbeltWhenAvailable(t *testing.T) {
 			return "/usr/bin/sandbox-exec", nil
 		}
 		return "", errors.New("unexpected lookup")
-	})
+	}, func(_, _, _ string) bool { return true })
 
 	require.NotNil(t, sb)
 	assert.Equal(t, "seatbelt", sb.Name())
@@ -33,7 +33,7 @@ func TestSelectShellSandboxLinuxUsesBubblewrapWhenAvailable(t *testing.T) {
 			return "/usr/bin/bwrap", nil
 		}
 		return "", errors.New("unexpected lookup")
-	})
+	}, func(_, _, _ string) bool { return true })
 
 	require.NotNil(t, sb)
 	assert.Equal(t, "bubblewrap", sb.Name())
@@ -42,7 +42,7 @@ func TestSelectShellSandboxLinuxUsesBubblewrapWhenAvailable(t *testing.T) {
 func TestSelectShellSandboxFallsBackWhenBackendMissing(t *testing.T) {
 	sb := selectShellSandbox("linux", t.TempDir(), func(string) (string, error) {
 		return "", errors.New("missing")
-	})
+	}, func(_, _, _ string) bool { return true })
 
 	assert.Nil(t, sb)
 }

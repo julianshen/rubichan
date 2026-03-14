@@ -86,6 +86,39 @@ func TestToolUseBlockJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, tu, got)
 }
 
+func TestContentBlockMarshalJSONFallsBackForInvalidInput(t *testing.T) {
+	cb := ContentBlock{
+		Type:  "tool_use",
+		ID:    "tu_bad",
+		Name:  "file.patch",
+		Input: json.RawMessage(`{"path":"broken"`),
+	}
+
+	data, err := json.Marshal(cb)
+	require.NoError(t, err)
+	assert.Equal(t, `{"type":"tool_use","id":"tu_bad","name":"file.patch","input":"{\"path\":\"broken\""}`, string(data))
+
+	var got ContentBlock
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, json.RawMessage(`"{\"path\":\"broken\""`), got.Input)
+}
+
+func TestToolUseBlockMarshalJSONFallsBackForInvalidInput(t *testing.T) {
+	tu := ToolUseBlock{
+		ID:    "tu_bad",
+		Name:  "file.patch",
+		Input: json.RawMessage(`{"path":"broken"`),
+	}
+
+	data, err := json.Marshal(tu)
+	require.NoError(t, err)
+	assert.Equal(t, `{"id":"tu_bad","name":"file.patch","input":"{\"path\":\"broken\""}`, string(data))
+
+	var got ToolUseBlock
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, json.RawMessage(`"{\"path\":\"broken\""`), got.Input)
+}
+
 func TestCompletionRequestJSONRoundTrip(t *testing.T) {
 	temp := 0.7
 	req := CompletionRequest{

@@ -172,6 +172,9 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	// Validate and resolve the working directory.
 	workDir := s.workDir
 	if in.Directory != "" {
+		if in.Directory == "." {
+			in.Directory = s.workDir
+		}
 		if !filepath.IsAbs(in.Directory) {
 			res := ToolResult{Content: "directory must be an absolute path", IsError: true}
 			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
@@ -284,6 +287,10 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	cmd.Dir = workDir
 	if s.sandbox != nil {
 		if err := s.sandbox.Wrap(cmd); err != nil {
+			if isSandboxUnavailableError(err) {
+				s.sandbox = nil
+				return s.ExecuteStream(ctx, input, emit)
+			}
 			res := withInterceptionWarnings(ToolResult{
 				Content: fmt.Sprintf("tool execution error: sandbox setup failed: %s", err.Error()),
 				IsError: true,
@@ -382,6 +389,9 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 
 	// Non-zero exit code
 	if waitErr != nil {
+		if strings.TrimSpace(content) == "" {
+			content = waitErr.Error()
+		}
 		res := withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent, IsError: true}, interception.warnings)
 		emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
 		return res, nil
@@ -390,6 +400,17 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	res := withInterceptionWarnings(ToolResult{Content: content, DisplayContent: displayContent}, interception.warnings)
 	emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display()})
 	return res, nil
+}
+
+func isSandboxUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "sandbox unavailable") ||
+		strings.Contains(msg, "sandbox_apply: operation not permitted") ||
+		strings.Contains(msg, "operation not permitted")
 }
 
 func inspectShellCommand(command, workDir string) commandInterception {

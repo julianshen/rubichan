@@ -11,16 +11,17 @@ import (
 // StatusBar displays model, token usage, turn count, estimated cost,
 // git branch, and turn elapsed time.
 type StatusBar struct {
-	width       int
-	model       string
-	inputTokens int
-	maxTokens   int
-	turn        int
-	maxTurns    int
-	cost        float64
-	wikiStage   string
-	gitBranch   string
-	elapsed time.Duration
+	width        int
+	model        string
+	inputTokens  int
+	maxTokens    int
+	turn         int
+	maxTurns     int
+	cost         float64
+	wikiStage    string
+	gitBranch    string
+	elapsed      time.Duration
+	skillSummary string
 }
 
 // NewStatusBar creates a new StatusBar with the given terminal width.
@@ -57,6 +58,9 @@ func (s *StatusBar) SetElapsed(d time.Duration) { s.elapsed = d }
 // ClearElapsed resets the elapsed time display.
 func (s *StatusBar) ClearElapsed() { s.elapsed = 0 }
 
+// SetSkillSummary sets the active skill summary for display.
+func (s *StatusBar) SetSkillSummary(summary string) { s.skillSummary = summary }
+
 // View renders the status bar as a styled string with clear segments.
 func (s *StatusBar) View() string {
 	sep := styleTextDim.Render(" │ ")
@@ -76,6 +80,9 @@ func (s *StatusBar) View() string {
 	}
 	if s.wikiStage != "" {
 		segments = append(segments, styleStatusLabel.Render("Wiki: ")+styleStatusValue.Render(s.wikiStage))
+	}
+	if s.skillSummary != "" {
+		segments = append(segments, styleStatusLabel.Render("Skills: ")+styleStatusValue.Render(s.skillSummary))
 	}
 
 	var b strings.Builder

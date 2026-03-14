@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ShellSandbox wraps shell executions in an OS-specific sandbox backend.
@@ -60,26 +62,58 @@ func DefaultShellSandboxPolicy(workDir string) ShellSandboxPolicy {
 
 // NewDefaultShellSandbox selects the best available platform sandbox backend.
 func NewDefaultShellSandbox(workDir string) ShellSandbox {
-	return selectShellSandbox(runtime.GOOS, workDir, exec.LookPath)
+	return selectShellSandbox(runtime.GOOS, workDir, exec.LookPath, sandboxBackendAvailable)
 }
 
 type lookPathFunc func(file string) (string, error)
+type sandboxProbeFunc func(goos, binary, workDir string) bool
 
-func selectShellSandbox(goos, workDir string, lookPath lookPathFunc) ShellSandbox {
+func selectShellSandbox(goos, workDir string, lookPath lookPathFunc, probe sandboxProbeFunc) ShellSandbox {
 	policy := DefaultShellSandboxPolicy(workDir)
 
 	switch goos {
 	case "darwin":
 		if binary, err := lookPath("sandbox-exec"); err == nil {
+			if probe != nil && !probe(goos, binary, workDir) {
+				return nil
+			}
 			return &seatbeltSandbox{binary: binary, policy: policy}
 		}
 	case "linux":
 		if binary, err := lookPath("bwrap"); err == nil {
+			if probe != nil && !probe(goos, binary, workDir) {
+				return nil
+			}
 			return &bubblewrapSandbox{binary: binary, policy: policy}
 		}
 	}
 
 	return nil
+}
+
+func sandboxBackendAvailable(goos, binary, workDir string) bool {
+	switch goos {
+	case "darwin":
+		if filepath.Base(binary) != "sandbox-exec" {
+			return true
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "sh", "-c", "pwd")
+		cmd.Dir = workDir
+		sb := &seatbeltSandbox{
+			binary: binary,
+			policy: DefaultShellSandboxPolicy(workDir),
+		}
+		if err := sb.Wrap(cmd); err != nil {
+			return false
+		}
+		return cmd.Run() == nil
+	default:
+		return true
+	}
 }
 
 type seatbeltSandbox struct {

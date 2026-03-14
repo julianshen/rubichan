@@ -35,6 +35,7 @@ func TestBootstrapFormSave(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "anthropic", loaded.Provider.Default)
 	assert.Equal(t, "sk-test-key", loaded.Provider.Anthropic.APIKey)
+	assert.Equal(t, "config", loaded.Provider.Anthropic.APIKeySource)
 }
 
 func TestNeedsBootstrapNoConfigFile(t *testing.T) {
@@ -47,6 +48,7 @@ func TestNeedsBootstrapWithAnthropicKey(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 
 	cfg := config.DefaultConfig()
+	cfg.Provider.Anthropic.APIKeySource = "config"
 	cfg.Provider.Anthropic.APIKey = "sk-test"
 	require.NoError(t, config.Save(path, cfg))
 
@@ -81,8 +83,9 @@ func TestNeedsBootstrapWithOpenAIKey(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 
 	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "test"
 	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
-		{Name: "test", APIKey: "sk-openai-test"},
+		{Name: "test", APIKey: "sk-openai-test", APIKeySource: "config"},
 	}
 	require.NoError(t, config.Save(path, cfg))
 
@@ -94,12 +97,28 @@ func TestNeedsBootstrapWithOpenAIEnvKey(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 
 	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "openai"
 	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
-		{Name: "test", APIKeySource: "MY_OPENAI_KEY"},
+		{Name: "openai", APIKeySource: "env"},
 	}
 	require.NoError(t, config.Save(path, cfg))
 
-	t.Setenv("MY_OPENAI_KEY", "sk-from-env")
+	t.Setenv("OPENAI_API_KEY", "sk-from-env")
+	assert.False(t, NeedsBootstrap(path))
+}
+
+func TestNeedsBootstrapWithOpenRouterEnvKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "openrouter"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{Name: "openrouter", APIKeySource: "env"},
+	}
+	require.NoError(t, config.Save(path, cfg))
+
+	t.Setenv("OPENROUTER_API_KEY", "sk-from-env")
 	assert.False(t, NeedsBootstrap(path))
 }
 

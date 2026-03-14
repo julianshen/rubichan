@@ -34,7 +34,8 @@ func (p *ProcessTool) Name() string {
 func (p *ProcessTool) Description() string {
 	return "Manage long-running processes. Supports operations: exec (start a process), " +
 		"read_output (get recent output), write_stdin (send input), kill (terminate), " +
-		"and list (show all processes)."
+		"and list (show all processes). Use exec for servers or watchers, then read_output " +
+		"to confirm startup or detect port/conflict errors before assuming the process is ready."
 }
 
 func (p *ProcessTool) InputSchema() json.RawMessage {

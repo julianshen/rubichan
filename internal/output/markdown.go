@@ -21,12 +21,23 @@ func (f *MarkdownFormatter) Format(result *RunResult) ([]byte, error) {
 	if result.Error != "" {
 		b.WriteString("## Error\n\n")
 		b.WriteString(result.Error)
-		b.WriteString("\n")
-		return []byte(b.String()), nil
+		b.WriteString("\n\n")
 	}
 
-	b.WriteString(result.Response)
-	b.WriteString("\n")
+	body := strings.TrimSpace(result.Response)
+	if body == "" {
+		body = strings.TrimSpace(result.Summary)
+	}
+	if body != "" {
+		b.WriteString(body)
+		b.WriteString("\n")
+	}
+
+	if strings.TrimSpace(result.EvidenceSummary) != "" {
+		b.WriteString("\n## Evidence\n\n")
+		b.WriteString(strings.TrimSpace(result.EvidenceSummary))
+		b.WriteString("\n")
+	}
 
 	if len(result.ToolCalls) > 0 {
 		b.WriteString("\n## Tool Calls\n\n")
