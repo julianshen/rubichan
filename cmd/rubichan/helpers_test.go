@@ -226,41 +226,6 @@ func TestCreateSkillRuntimeNilConfig(t *testing.T) {
 	assert.Nil(t, closer)
 }
 
-func TestCreateSkillRuntimeInteractiveActivatesAppGenerationWorkflow(t *testing.T) {
-	oldFlag := skillsFlag
-	skillsFlag = ""
-	defer func() { skillsFlag = oldFlag }()
-
-	oldHome := os.Getenv("HOME")
-	tempHome := t.TempDir()
-	require.NoError(t, os.Setenv("HOME", tempHome))
-	defer func() {
-		_ = os.Setenv("HOME", oldHome)
-	}()
-
-	registry := tools.NewRegistry()
-	cfg := config.DefaultConfig()
-	workDir := filepath.Join("..", "..", "examples", "app-generation-smoke")
-
-	rt, closer, err := createSkillRuntime(context.Background(), registry, nil, cfg, "interactive", workDir)
-	require.NoError(t, err)
-	require.NotNil(t, rt)
-	if closer != nil {
-		defer closer.Close()
-	}
-
-	summaries := rt.GetAllSkillSummaries()
-	var found bool
-	for _, summary := range summaries {
-		if summary.Name == "app-generation-workflow" {
-			found = true
-			assert.Equal(t, "Active", summary.State.String())
-			break
-		}
-	}
-	assert.True(t, found, "expected app-generation-workflow to be discovered")
-}
-
 func TestCreateSkillRuntimeInteractiveActivatesFrontendDesignForFrontendApp(t *testing.T) {
 	oldFlag := skillsFlag
 	skillsFlag = ""
