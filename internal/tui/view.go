@@ -30,10 +30,39 @@ func (m *Model) View() string {
 
 	var b strings.Builder
 
+	if m.plainMode {
+		b.WriteString(m.viewport.View())
+		b.WriteString("\n")
+		switch m.state {
+		case StateStreaming:
+			elapsed := ""
+			if !m.turnStartTime.IsZero() {
+				elapsed = styleTextDim.Render(fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime))))
+			}
+			b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(m.thinkingMsg), elapsed))
+		case StateAwaitingApproval:
+			if m.approvalPrompt != nil {
+				b.WriteString(m.approvalPrompt.View())
+			} else {
+				b.WriteString(m.statusBar.View())
+			}
+		default:
+			b.WriteString(m.statusBar.View())
+		}
+		b.WriteString("\n")
+		b.WriteString(inputPromptStyle.Render("❯ "))
+		b.WriteString(m.input.View())
+		return b.String()
+	}
+
 	// Header
 	header := headerStyle.Render(fmt.Sprintf("%s · %s", m.appName, m.modelName))
 	b.WriteString(header)
 	b.WriteString("\n")
+	if line := m.activeSkillsLine(); line != "" {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
 
 	// Divider
 	dividerWidth := m.width
@@ -87,4 +116,20 @@ func (m *Model) View() string {
 	b.WriteString(m.input.View())
 
 	return b.String()
+}
+
+func (m *Model) activeSkillsLine() string {
+	if len(m.activeSkills) == 0 {
+		return ""
+	}
+
+	line := "Skills: " + strings.Join(m.activeSkills, ", ")
+	if m.width > 0 && len(line) > m.width {
+		if m.width <= 3 {
+			line = line[:m.width]
+		} else {
+			line = line[:m.width-3] + "..."
+		}
+	}
+	return styleTextDim.Render(line)
 }

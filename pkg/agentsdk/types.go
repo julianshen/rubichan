@@ -32,6 +32,28 @@ type ContentBlock struct {
 	IsError   bool            `json:"is_error,omitempty"`
 }
 
+type contentBlockJSON struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+}
+
+func (c ContentBlock) MarshalJSON() ([]byte, error) {
+	return json.Marshal(contentBlockJSON{
+		Type:      c.Type,
+		Text:      c.Text,
+		ID:        c.ID,
+		Name:      c.Name,
+		Input:     marshalSafeRawJSON(c.Input),
+		ToolUseID: c.ToolUseID,
+		IsError:   c.IsError,
+	})
+}
+
 // ToolDef defines a tool that can be used by the LLM.
 type ToolDef struct {
 	Name        string          `json:"name"`
@@ -46,6 +68,20 @@ type ToolUseBlock struct {
 	Input json.RawMessage `json:"input"`
 }
 
+type toolUseBlockJSON struct {
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
+
+func (t ToolUseBlock) MarshalJSON() ([]byte, error) {
+	return json.Marshal(toolUseBlockJSON{
+		ID:    t.ID,
+		Name:  t.Name,
+		Input: marshalSafeRawJSON(t.Input),
+	})
+}
+
 // StreamEvent represents a single event in a streaming response.
 type StreamEvent struct {
 	Type         string
@@ -54,4 +90,19 @@ type StreamEvent struct {
 	Error        error
 	InputTokens  int
 	OutputTokens int
+}
+
+func marshalSafeRawJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	if json.Valid(raw) {
+		return raw
+	}
+
+	fallback, err := json.Marshal(string(raw))
+	if err != nil {
+		return json.RawMessage(`"<invalid-json>"`)
+	}
+	return json.RawMessage(fallback)
 }

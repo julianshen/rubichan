@@ -7,6 +7,8 @@ import "encoding/json"
 type RunResult struct {
 	Prompt           string               `json:"prompt"`
 	Response         string               `json:"response"`
+	Summary          string               `json:"summary,omitempty"`
+	EvidenceSummary  string               `json:"evidence_summary,omitempty"`
 	ToolCalls        []ToolCallLog        `json:"tool_calls,omitempty"`
 	TurnCount        int                  `json:"turn_count"`
 	DurationMs       int64                `json:"duration_ms"`

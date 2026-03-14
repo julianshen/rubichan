@@ -34,6 +34,7 @@ import (
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/security/scanner"
+	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/builtin"
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
@@ -71,10 +72,16 @@ var (
 	commit  = "none"
 	date    = "unknown"
 
-	configPath   string
-	modelFlag    string
-	providerFlag string
-	autoApprove  bool
+	configPath       string
+	modelFlag        string
+	providerFlag     string
+	autoApprove      bool
+	noAltScreen      bool
+	noMouse          bool
+	plainTUI         bool
+	plainInteractive bool
+	approveCwd       bool
+	eventLogPath     string
 
 	headless     bool
 	promptFlag   string
@@ -133,6 +140,13 @@ func interactiveExitError(runCtx context.Context) error {
 	return nil
 }
 
+func appendWorkingDirOption(opts []agent.AgentOption, cwd string) []agent.AgentOption {
+	if cwd == "" {
+		return opts
+	}
+	return append(opts, agent.WithWorkingDir(cwd))
+}
+
 func handleInteractiveProgramError(err error, runCtx context.Context, phase string) error {
 	if exitErr := interactiveExitError(runCtx); exitErr != nil && errors.Is(err, tea.ErrProgramKilled) {
 		return exitErr
@@ -160,6 +174,11 @@ type sessionLogger struct {
 	path       string
 	prevWriter io.Writer
 	prevFlags  int
+}
+
+type eventLogger struct {
+	file *os.File
+	path string
 }
 
 func logFileSuffix(now time.Time) string {
@@ -235,6 +254,27 @@ func (sl *sessionLogger) Close() error {
 	log.SetOutput(sl.prevWriter)
 	log.SetFlags(sl.prevFlags)
 	return sl.file.Close()
+}
+
+func startEventLogger(path string) (*eventLogger, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("creating event log directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("opening event log: %w", err)
+	}
+	return &eventLogger{file: f, path: path}, nil
+}
+
+func (el *eventLogger) Close() error {
+	if el == nil {
+		return nil
+	}
+	return el.file.Close()
 }
 
 func writeDiagnosticDump(cfgDir string, sig os.Signal, sessionLogPath string) (string, error) {
@@ -358,6 +398,12 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "override model name")
 	rootCmd.PersistentFlags().StringVar(&providerFlag, "provider", "", "override provider name")
 	rootCmd.PersistentFlags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all tool calls (dangerous: enables RCE)")
+	rootCmd.PersistentFlags().BoolVar(&noAltScreen, "no-alt-screen", false, "run interactive TUI in the normal terminal buffer")
+	rootCmd.PersistentFlags().BoolVar(&noMouse, "no-mouse", false, "disable mouse tracking in the interactive TUI")
+	rootCmd.PersistentFlags().BoolVar(&plainTUI, "plain-tui", false, "run a reduced interactive TUI optimized for PTY capture and automation")
+	rootCmd.PersistentFlags().BoolVar(&plainInteractive, "plain-interactive", false, "run a non-TUI interactive REPL that shares the interactive agent, skills, and approval flow")
+	rootCmd.PersistentFlags().BoolVar(&approveCwd, "approve-cwd", false, "approve access to the current working directory in headless mode without enabling full auto-approval")
+	rootCmd.PersistentFlags().StringVar(&eventLogPath, "event-log", "", "write structured interactive session events to the given JSONL file")
 	rootCmd.PersistentFlags().BoolVar(&headless, "headless", false, "run in non-interactive headless mode")
 	rootCmd.PersistentFlags().StringVar(&promptFlag, "prompt", "", "prompt text for headless mode")
 	rootCmd.PersistentFlags().StringVar(&fileFlag, "file", "", "read prompt from file for headless mode")
@@ -382,6 +428,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(replayCmd())
 	rootCmd.AddCommand(skillCmd())
 	// wiki is now a built-in skill (generate_wiki tool), not a CLI subcommand.
 	rootCmd.AddCommand(ollamaCmd())
@@ -684,7 +731,14 @@ func ensureFolderAccessApproved(s *store.Store, workingDir string, in io.Reader,
 	return nil
 }
 
-func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string, autoApprove bool) error {
+func ensureFolderAccessApprovedInteractive(s *store.Store, workingDir string, in io.Reader, out io.Writer, autoApprove, approveCwd bool) error {
+	if autoApprove || approveCwd {
+		return ensureFolderAccessApprovedNonInteractive(s, workingDir, autoApprove, approveCwd)
+	}
+	return ensureFolderAccessApproved(s, workingDir, in, out)
+}
+
+func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string, autoApprove, approveCwd bool) error {
 	approved, err := s.IsFolderApproved(workingDir)
 	if err != nil {
 		return fmt.Errorf("checking folder access approval: %w", err)
@@ -693,14 +747,29 @@ func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string,
 		return nil
 	}
 
-	if !autoApprove {
-		return fmt.Errorf("folder access for %q is not approved; rerun interactively to approve or use --auto-approve", workingDir)
+	if !autoApprove && !approveCwd {
+		return fmt.Errorf("folder access for %q is not approved; rerun interactively to approve or use --approve-cwd/--auto-approve", workingDir)
 	}
 
 	if err := s.ApproveFolderAccess(workingDir); err != nil {
 		return fmt.Errorf("saving folder access approval: %w", err)
 	}
 	return nil
+}
+
+const memorySaveTimeout = 5 * time.Second
+
+func saveMemoriesBestEffort(a *agent.Agent, out io.Writer) {
+	if a == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), memorySaveTimeout)
+	defer cancel()
+
+	if err := a.SaveMemories(ctx); err != nil {
+		fmt.Fprintf(out, "warning: failed to save memories: %v\n", err)
+	}
 }
 
 // newDefaultSecurityEngine creates a security engine pre-configured with all
@@ -903,11 +972,18 @@ func runInteractive() error {
 	if err != nil {
 		return err
 	}
+	structuredEventLog, err := startEventLogger(eventLogPath)
+	if err != nil {
+		return err
+	}
 	stopSignals := startInteractiveSignalHandler(cfgDir, sessionLog.path, cancelRun)
 	defer stopSignals()
 	defer func() {
 		if closeErr := sessionLog.Close(); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to close session log: %v\n", closeErr)
+		}
+		if closeErr := structuredEventLog.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close event log: %v\n", closeErr)
 		}
 	}()
 
@@ -1017,9 +1093,7 @@ func runInteractive() error {
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
-	if worktreeFlag != "" {
-		opts = append(opts, agent.WithWorkingDir(cwd))
-	}
+	opts = appendWorkingDirOption(opts, cwd)
 	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
 	}
@@ -1115,7 +1189,7 @@ func runInteractive() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
-	if err := ensureFolderAccessApproved(s, cwd, os.Stdin, os.Stderr); err != nil {
+	if err := ensureFolderAccessApprovedInteractive(s, cwd, os.Stdin, os.Stderr, autoApprove, approveCwd); err != nil {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
@@ -1166,13 +1240,42 @@ func runInteractive() error {
 		rt.SetAgentDefRegistrar(&agentDefRegistrarAdapter{reg: agentDefReg})
 	}
 
+	var plainHost *plainInteractiveHost
+	if plainInteractive {
+		plainHost = newPlainInteractiveHost(os.Stdin, os.Stdout, cfg.Provider.Model, cfg.Agent.MaxTurns, cmdRegistry)
+		if rt != nil {
+			plainHost.SetSkillRuntime(rt)
+		}
+	}
+
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
+	if rt != nil {
+		model.SetSkillSummaryProvider(rt)
+	}
+	if structuredEventLog != nil {
+		sink := session.MultiSink{
+			session.NewLogSink(log.Printf),
+			session.NewJSONLSink(structuredEventLog.file),
+		}
+		model.SetEventSink(sink)
+		if plainHost != nil {
+			plainHost.SetEventSink(sink)
+		}
+	}
+	if plainTUI {
+		noAltScreen = true
+		noMouse = true
+		model.SetPlainMode(true)
+	}
 
 	// Set git branch in status bar if available.
 	if branch, err := detectGitBranch(cwd); err == nil && branch != "" {
 		model.SetGitBranch(branch)
+		if plainHost != nil {
+			plainHost.SetGitBranch(branch)
+		}
 	}
 
 	// Register commands that need model callbacks (these need the model instance).
@@ -1195,12 +1298,26 @@ func runInteractive() error {
 			model.GetAgent().SetModel(name)
 		}
 		model.SwitchModel(name)
+		if plainHost != nil {
+			plainHost.SetModel(name)
+		}
 	})); err != nil {
 		return fmt.Errorf("register built-in command %q: %w", "model", err)
+	}
+	if err := cmdRegistry.Register(commands.NewDebugVerificationSnapshotCommand(func() string {
+		if plainHost != nil {
+			return plainHost.DebugVerificationSnapshot()
+		}
+		return model.DebugVerificationSnapshot()
+	})); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "debug-verification-snapshot", err)
 	}
 	if rt != nil {
 		if err := cmdRegistry.Register(commands.NewSkillCommand(&skillListerAdapter{rt: rt})); err != nil {
 			return fmt.Errorf("register built-in command %q: %w", "skill", err)
+		}
+		if err := cmdRegistry.Register(commands.NewSkillLogCommand(&skillListerAdapter{rt: rt})); err != nil {
+			return fmt.Errorf("register built-in command %q: %w", "skill-log", err)
 		}
 	}
 
@@ -1210,14 +1327,22 @@ func runInteractive() error {
 	opts = append(opts, agent.WithPipeline(pc.Pipeline))
 
 	if !autoApprove {
-		approvalFunc = model.MakeApprovalFunc()
+		if plainHost != nil {
+			approvalFunc = plainHost.MakeApprovalFunc()
+		} else {
+			approvalFunc = model.MakeApprovalFunc()
+		}
 
 		// Build the approval checker: compose session cache, pipeline rule
 		// engine, and config-based trust rules. Session cache (TUI "always"
 		// decisions) is checked first, then the pipeline's rule engine
 		// (category-based allow rules), then config trust rules.
 		var checkers []agent.ApprovalChecker
-		checkers = append(checkers, model) // session cache
+		if plainHost != nil {
+			checkers = append(checkers, plainHost)
+		} else {
+			checkers = append(checkers, model) // session cache
+		}
 		checkers = append(checkers, &ruleEngineChecker{
 			classifier: pc.Classifier,
 			engine:     pc.RuleEngine,
@@ -1257,6 +1382,10 @@ func runInteractive() error {
 
 	// Wire the agent into the TUI model now that both exist.
 	model.SetAgent(a)
+	if plainHost != nil {
+		plainHost.SetAgent(a)
+		return plainHost.Run(runCtx)
+	}
 	model.SetWikiConfig(tui.WikiCommandConfig{
 		WorkDir: cwd,
 		LLM:     llmCompleter,
@@ -1267,7 +1396,16 @@ func runInteractive() error {
 	model.SetFileCompletionSource(fileSrc)
 	go indexProjectFiles(cwd, fileSrc)
 
-	prog := tea.NewProgram(model, tea.WithContext(runCtx), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	programOpts := []tea.ProgramOption{
+		tea.WithContext(runCtx),
+	}
+	if !noMouse {
+		programOpts = append(programOpts, tea.WithMouseCellMotion())
+	}
+	if !noAltScreen {
+		programOpts = append(programOpts, tea.WithAltScreen())
+	}
+	prog := tea.NewProgram(model, programOpts...)
 	if _, err := prog.Run(); err != nil {
 		if err := handleInteractiveProgramError(err, runCtx, "running TUI"); err != nil {
 			return err
@@ -1278,12 +1416,7 @@ func runInteractive() error {
 	}
 
 	// Save memories on graceful shutdown.
-	if err := a.SaveMemories(runCtx); err != nil {
-		if exitErr := interactiveExitError(runCtx); exitErr != nil {
-			return exitErr
-		}
-		fmt.Fprintf(os.Stderr, "warning: failed to save memories: %v\n", err)
-	}
+	saveMemoriesBestEffort(a, os.Stderr)
 	if err := interactiveExitError(runCtx); err != nil {
 		return err
 	}
@@ -1385,9 +1518,7 @@ func runHeadless() error {
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
-	if worktreeFlag != "" {
-		opts = append(opts, agent.WithWorkingDir(cwd))
-	}
+	opts = appendWorkingDirOption(opts, cwd)
 	if err := wireAppleDev(cwd, registry, headlessToolsCfg); err != nil {
 		return err
 	}
@@ -1409,12 +1540,21 @@ func runHeadless() error {
 	if err != nil {
 		return err
 	}
+	structuredEventLog, err := startEventLogger(eventLogPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := structuredEventLog.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close event log: %v\n", closeErr)
+		}
+	}()
 	s, err := openStore(cfgDir)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
-	if err := ensureFolderAccessApprovedNonInteractive(s, cwd, autoApprove); err != nil {
+	if err := ensureFolderAccessApprovedNonInteractive(s, cwd, autoApprove, approveCwd); err != nil {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
@@ -1477,6 +1617,14 @@ func runHeadless() error {
 
 	// Run LLM review and security scan concurrently for code-review mode.
 	hr := runner.NewHeadlessRunner(a.Turn)
+	hr.SetModelName(cfg.Provider.Model)
+	if structuredEventLog != nil {
+		hr.SetEventSink(session.MultiSink{
+			session.NewLogSink(log.Printf),
+			session.NewJSONLSink(structuredEventLog.file),
+		})
+	}
+	promptText = applyHeadlessBootstrapProbePrompt(promptText, headlessToolsCfg.ShouldEnable("shell"))
 	var result *output.RunResult
 	var secReport *security.Report
 
@@ -1582,9 +1730,7 @@ func runHeadless() error {
 	fmt.Print(string(out))
 
 	// Save memories on completion.
-	if err := a.SaveMemories(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to save memories: %v\n", err)
-	}
+	saveMemoriesBestEffort(a, os.Stderr)
 
 	if result.Error != "" {
 		return fmt.Errorf("agent run failed: %s", result.Error)
@@ -1602,6 +1748,19 @@ func runHeadless() error {
 	}
 
 	return nil
+}
+
+func applyHeadlessBootstrapProbePrompt(prompt string, shellEnabled bool) string {
+	if !shellEnabled {
+		return prompt
+	}
+	prefix := strings.TrimSpace(`
+Headless bootstrap requirement:
+- Before any analysis or final response, execute exactly one read-only shell tool call: {"command":"pwd"}.
+- Do not ask for permission and do not skip this step.
+- After this bootstrap probe succeeds, continue with the requested task.
+`)
+	return prefix + "\n\nUser task:\n" + strings.TrimSpace(prompt)
 }
 
 // standardToolProfile lists the standard built-in tools included in the "all" profile.

@@ -35,3 +35,40 @@ func TestResolveAPIKeyUnknownSource(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown api_key_source")
 }
+
+func TestOpenAICompatibleEnvVar(t *testing.T) {
+	assert.Equal(t, "OPENROUTER_API_KEY", OpenAICompatibleEnvVar("openrouter"))
+	assert.Equal(t, "", OpenAICompatibleEnvVar(""))
+}
+
+func TestResolveOpenAICompatibleAPIKey(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "sk-openrouter")
+	key, err := ResolveOpenAICompatibleAPIKey(OpenAICompatibleConfig{
+		Name:         "openrouter",
+		APIKeySource: "env",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sk-openrouter", key)
+}
+
+func TestHasUsableCredentialsForDefaultProvider(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.Default = "openrouter"
+	cfg.Provider.OpenAI = []OpenAICompatibleConfig{
+		{Name: "openrouter", APIKeySource: "env"},
+	}
+
+	assert.False(t, HasUsableCredentialsForDefaultProvider(cfg))
+
+	t.Setenv("OPENROUTER_API_KEY", "sk-openrouter")
+	assert.True(t, HasUsableCredentialsForDefaultProvider(cfg))
+}
+
+func TestHasUsableCredentialsForProviderAnthropicConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.Default = "anthropic"
+	cfg.Provider.Anthropic.APIKeySource = "config"
+	cfg.Provider.Anthropic.APIKey = "sk-ant"
+
+	assert.True(t, HasUsableCredentialsForProvider(cfg, "anthropic"))
+}

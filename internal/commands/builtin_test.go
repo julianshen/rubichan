@@ -208,6 +208,25 @@ func TestHelpCommandArgumentsAndComplete(t *testing.T) {
 	assert.Nil(t, cmd.Complete(context.Background(), nil))
 }
 
+func TestDebugVerificationSnapshotCommand(t *testing.T) {
+	cmd := NewDebugVerificationSnapshotCommand(func() string {
+		return "Verification snapshot:\n- verdict: passed"
+	})
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Verification snapshot")
+	assert.Contains(t, result.Output, "verdict: passed")
+}
+
+func TestDebugVerificationSnapshotCommandUnavailable(t *testing.T) {
+	cmd := NewDebugVerificationSnapshotCommand(func() string { return "" })
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "unavailable")
+}
+
 // --- Interface conformance ---
 
 func TestBuiltinCommandsImplementSlashCommand(t *testing.T) {
@@ -217,6 +236,7 @@ func TestBuiltinCommandsImplementSlashCommand(t *testing.T) {
 	var _ SlashCommand = NewModelCommand(func(string) {})
 	var _ SlashCommand = NewConfigCommand()
 	var _ SlashCommand = NewHelpCommand(NewRegistry())
+	var _ SlashCommand = NewDebugVerificationSnapshotCommand(nil)
 	var _ SlashCommand = NewRalphLoopCommand(nil)
 	var _ SlashCommand = NewCancelRalphCommand(nil)
 }

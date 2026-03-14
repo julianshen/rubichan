@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +17,18 @@ import (
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
+	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 )
+
+type mockSkillSummaryProvider struct {
+	summaries []skills.SkillSummary
+}
+
+func (m *mockSkillSummaryProvider) GetAllSkillSummaries() []skills.SkillSummary {
+	return m.summaries
+}
 
 func TestUIStateConstants(t *testing.T) {
 	states := []UIState{
@@ -179,6 +190,93 @@ func TestModelView(t *testing.T) {
 
 	assert.Contains(t, view, "rubichan")
 	assert.Contains(t, view, "claude-3")
+}
+
+func TestModelViewShowsActiveSkills(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.SetSkillSummaryProvider(&mockSkillSummaryProvider{
+		summaries: []skills.SkillSummary{
+			{Name: "app-generation-workflow", State: skills.SkillStateActive},
+			{Name: "writing-plans", State: skills.SkillStateInactive},
+		},
+	})
+
+	view := m.View()
+	assert.Contains(t, view, "Skills: app-generation-workflow")
+	assert.NotContains(t, view, "writing-plans")
+	assert.Contains(t, view, "Ruby")
+}
+
+func TestModelViewPlainModeOmitsHeaderChrome(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.SetPlainMode(true)
+
+	view := m.View()
+	assert.NotContains(t, view, "rubichan · claude-3")
+	assert.NotContains(t, view, "━━━━━━━━")
+	assert.Contains(t, view, "❯ ")
+}
+
+func TestModelSetPlainModeClearsBannerContent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	require.NotEmpty(t, m.content.String())
+
+	m.SetPlainMode(true)
+
+	assert.Equal(t, "", m.content.String())
+}
+
+func TestModelHandleCommandRefreshesActiveSkills(t *testing.T) {
+	reg := commands.NewRegistry()
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, reg)
+
+	provider := &mockSkillSummaryProvider{
+		summaries: []skills.SkillSummary{
+			{Name: "app-generation-workflow", State: skills.SkillStateInactive},
+		},
+	}
+	m.SetSkillSummaryProvider(provider)
+
+	require.NoError(t, reg.Register(commands.NewClearCommand(func() {
+		provider.summaries[0].State = skills.SkillStateActive
+	})))
+
+	cmd := m.handleCommand("/clear")
+	assert.Nil(t, cmd)
+	assert.Equal(t, []string{"app-generation-workflow"}, m.activeSkills)
+	assert.Contains(t, m.statusBar.View(), "Skills:")
+	assert.Contains(t, m.statusBar.View(), "app-generation-workflow")
+	assert.Contains(t, m.content.String(), `Skill "app-generation-workflow" activated.`)
+}
+
+func TestSummarizeActiveSkills(t *testing.T) {
+	assert.Equal(t, "", summarizeActiveSkills(nil))
+	assert.Equal(t, "alpha", summarizeActiveSkills([]string{"alpha"}))
+	assert.Equal(t, "alpha, beta", summarizeActiveSkills([]string{"alpha", "beta"}))
+	assert.Equal(t, "3 active (alpha, beta, +1)", summarizeActiveSkills([]string{"alpha", "beta", "gamma"}))
+}
+
+func TestDiffActiveSkills(t *testing.T) {
+	activated, deactivated := diffActiveSkills(
+		[]string{"alpha", "beta"},
+		[]string{"beta", "gamma"},
+	)
+	assert.Equal(t, []string{"gamma"}, activated)
+	assert.Equal(t, []string{"alpha"}, deactivated)
+}
+
+func TestLogSlashCommand(t *testing.T) {
+	var buf strings.Builder
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	logSlashCommand("/skill deactivate alpha", "Skill \"alpha\" deactivated.\n", nil, []string{"alpha"})
+
+	out := buf.String()
+	assert.Contains(t, out, "slash command: /skill deactivate alpha")
+	assert.Contains(t, out, `output="Skill \"alpha\" deactivated."`)
+	assert.Contains(t, out, "deactivated=alpha")
 }
 
 func TestModelViewQuitting(t *testing.T) {
@@ -1925,6 +2023,253 @@ func TestModelToolResultEmptyContentLineCount(t *testing.T) {
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
 	assert.Equal(t, 0, um.toolResults[0].LineCount)
+}
+
+func TestBuildVerificationSnapshotPassed(t *testing.T) {
+	summary := buildVerificationSnapshot(
+		"Create a backend-only todo API using Node.js and SQLite",
+		[]CollapsibleToolResult{
+			{Name: "shell", Args: `{"command":"npm install express better-sqlite3"}`, Content: "added 10 packages"},
+			{Name: "file", Args: `{"operation":"write","path":"schema.sql"}`, Content: "CREATE TABLE todos (id integer primary key, title text, completed integer)"},
+			{Name: "process", Args: `{"operation":"exec","command":"node index.js"}`, Content: "Todo API server listening on http://localhost:3000"},
+			{Name: "shell", Args: `{"command":"curl -s -X POST http://localhost:3000/todos && curl -s http://localhost:3000/stats"}`, Content: `{"id":1,"title":"Test Todo","completed":false}
+{"total":1,"completed":0,"pending":1}`},
+		},
+	)
+
+	assert.Contains(t, summary, "verdict: passed")
+	assert.Contains(t, summary, "api round-trip: true")
+}
+
+func TestBuildVerificationSnapshotInvalidatedByLaterEdit(t *testing.T) {
+	summary := buildVerificationSnapshot(
+		"Create a backend-only todo API using Node.js and SQLite",
+		[]CollapsibleToolResult{
+			{Name: "shell", Args: `{"command":"npm install express better-sqlite3"}`, Content: "added 10 packages"},
+			{Name: "file", Args: `{"operation":"write","path":"schema.sql"}`, Content: "CREATE TABLE todos (id integer primary key, title text, completed integer)"},
+			{Name: "process", Args: `{"operation":"exec","command":"node index.js"}`, Content: "Todo API server listening on http://localhost:3000"},
+			{Name: "shell", Args: `{"command":"curl -s -X POST http://localhost:3000/todos && curl -s http://localhost:3000/todos"}`, Content: `{"id":1,"title":"Test Todo","completed":false}
+[{"id":1,"title":"Test Todo","completed":false}]`},
+			{Name: "file", Args: `{"operation":"patch","path":"index.js"}`, Content: "patched index.js"},
+		},
+	)
+
+	assert.Contains(t, summary, "verdict: failed")
+	assert.Contains(t, summary, "invalidated by later edits")
+}
+
+func TestModelRegistersDebugVerificationSnapshotCommand(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	cmd, ok := m.cmdRegistry.Get("debug-verification-snapshot")
+	require.True(t, ok)
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "unavailable")
+}
+
+func TestModelHandleCommandEmitsSessionEvent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	var events []session.Event
+	m.eventSink = session.SinkFunc(func(evt session.Event) {
+		events = append(events, evt)
+	})
+
+	m.handleCommand("/help")
+
+	require.Len(t, events, 1)
+	assert.Equal(t, session.EventTypeCommandResult, events[0].Type)
+	require.NotNil(t, events[0].Command)
+	assert.Equal(t, "/help", events[0].Command.Command)
+	assert.Contains(t, events[0].Command.Output, "Available commands:")
+}
+
+func TestModelDoneEmitsVerificationSnapshotEvent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	var events []session.Event
+	m.eventSink = session.SinkFunc(func(evt session.Event) {
+		events = append(events, evt)
+	})
+	m.sessionState.ResetForPrompt("Create a backend-only todo API using Node.js and SQLite")
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "1", Name: "shell", Input: json.RawMessage(`{"command":"npm install express better-sqlite3"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "1", Name: "shell", Content: "added 10 packages"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "2", Name: "file", Input: json.RawMessage(`{"operation":"write","path":"schema.sql"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "2", Name: "file", Content: "CREATE TABLE todos (id integer primary key, title text, completed integer)"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "3", Name: "process", Input: json.RawMessage(`{"operation":"exec","command":"node index.js"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "3", Name: "process", Content: "Todo API server listening on http://localhost:3000"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "4", Name: "shell", Input: json.RawMessage(`{"command":"curl -s -X POST http://localhost:3000/todos && curl -s http://localhost:3000/todos"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "4", Name: "shell", Content: `{"id":1,"title":"Test Todo","completed":false}
+[{"id":1,"title":"Test Todo","completed":false}]`},
+	})
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{Type: "done"}))
+	m = updated.(*Model)
+
+	require.NotEmpty(t, events)
+	var verification *session.Event
+	for i := range events {
+		if events[i].Type == session.EventTypeVerificationSnapshot {
+			verification = &events[i]
+		}
+	}
+	require.NotNil(t, verification)
+	require.NotNil(t, verification.Verification)
+	assert.Equal(t, "passed", verification.Verification.Verdict)
+	assert.Contains(t, verification.Verification.Snapshot, "api round-trip: true")
+}
+
+func TestModelDoneEmitsGateFailedAndPlanUpdatedWhenVerificationInvalidated(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	var events []session.Event
+	m.eventSink = session.SinkFunc(func(evt session.Event) {
+		events = append(events, evt)
+	})
+	m.sessionState.ResetForPrompt("Create a backend-only todo API using Node.js and SQLite")
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "1", Name: "shell", Input: json.RawMessage(`{"command":"npm install"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "1", Name: "shell", Content: "added 10 packages"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "2", Name: "file", Input: json.RawMessage(`{"operation":"write","path":"schema.sql"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "2", Name: "file", Content: "CREATE TABLE todos (id integer primary key, title text, completed integer)"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "3", Name: "process", Input: json.RawMessage(`{"operation":"exec","command":"node index.js"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "3", Name: "process", Content: "Todo API server listening on http://localhost:3000"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "4", Name: "shell", Input: json.RawMessage(`{"command":"curl -s -X POST http://localhost:3000/todos && curl -s http://localhost:3000/todos"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "4", Name: "shell", Content: `{"id":1,"title":"Test Todo","completed":false}
+[{"id":1,"title":"Test Todo","completed":false}]`},
+	})
+	// Edit after verification success should force re-verify.
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "5", Name: "file", Input: json.RawMessage(`{"operation":"patch","path":"index.js"}`)},
+	})
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{Type: "done"}))
+	m = updated.(*Model)
+
+	var sawPlan, sawGate bool
+	for i := range events {
+		if events[i].Type == session.EventTypePlanUpdated {
+			sawPlan = true
+			require.NotNil(t, events[i].Plan)
+			require.NotEmpty(t, events[i].Plan.Steps)
+			assert.Equal(t, "reverify_required", events[i].Plan.Steps[0].Status)
+		}
+		if events[i].Type == session.EventTypeGateFailed {
+			sawGate = true
+			require.NotNil(t, events[i].Gate)
+			assert.Equal(t, "verification", events[i].Gate.Name)
+			assert.Contains(t, events[i].Gate.Reason, "invalidated")
+		}
+	}
+	assert.True(t, sawPlan)
+	assert.True(t, sawGate)
+}
+
+func TestModelDoneEmitsAssistantFinalEvent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	var events []session.Event
+	m.eventSink = session.SinkFunc(func(evt session.Event) {
+		events = append(events, evt)
+	})
+	m.rawAssistant.WriteString("assistantfinalHello there")
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{Type: "done"}))
+	m = updated.(*Model)
+
+	var assistant *session.Event
+	for i := range events {
+		if events[i].Type == session.EventTypeAssistantFinal {
+			assistant = &events[i]
+		}
+	}
+	require.NotNil(t, assistant)
+	require.NotNil(t, assistant.Assistant)
+	assert.Equal(t, "Hello there", assistant.Assistant.Content)
+}
+
+func TestModelTurnLifecycleEmitsSessionEvents(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	var events []session.Event
+	m.eventSink = session.SinkFunc(func(evt session.Event) {
+		events = append(events, evt)
+	})
+
+	m.input.SetValue("Create a backend-only todo API using Node.js and SQLite")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	require.NotNil(t, cmd)
+	require.NotEmpty(t, events)
+	assert.Equal(t, session.EventTypeTurnStarted, events[0].Type)
+	require.NotNil(t, events[0].Turn)
+	assert.Contains(t, events[0].Turn.Prompt, "backend-only todo API")
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, session.EventTypeCheckpointCreated, events[1].Type)
+
+	m.state = StateStreaming
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, _ = m.Update(TurnEventMsg(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "1", Name: "shell", Input: json.RawMessage(`{"command":"npm install"}`)},
+	}))
+	m = updated.(*Model)
+	assert.Equal(t, session.EventTypeToolCall, events[len(events)-1].Type)
+
+	updated, _ = m.Update(TurnEventMsg(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "1", Name: "shell", Content: "added 10 packages"},
+	}))
+	m = updated.(*Model)
+	assert.Equal(t, session.EventTypeToolResult, events[len(events)-1].Type)
 }
 
 func TestHandleSubagentDoneRendersNotification(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/persona"
+	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // TurnEventMsg wraps an agent.TurnEvent as a Bubble Tea message so streaming
@@ -87,13 +90,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Reserve space for header (1), divider (1), status (1), input (1)
-		viewportHeight := m.height - 4
-		if viewportHeight < 1 {
-			viewportHeight = 1
-		}
-		m.viewport.Width = m.width
-		m.viewport.Height = viewportHeight
+		m.reflowViewport()
 		if m.completion != nil {
 			m.completion.SetWidth(m.width)
 		}
@@ -305,6 +302,12 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.content.WriteString(styleUserPrompt.Render("❯ ") + text + "\n")
 		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()
+		m.lastPrompt = text
+		if m.sessionState != nil {
+			m.sessionState.ResetForPrompt(text)
+		}
+		m.emitSessionEvent(session.NewTurnStartedEvent(text, m.modelName))
+		m.emitSessionEvent(session.NewCheckpointCreatedEvent(fmt.Sprintf("turn-%d", m.turnCount+1), "turn_started"))
 		m.assistantStartIdx = m.content.Len()
 		m.assistantEndIdx = m.assistantStartIdx
 		m.state = StateStreaming
@@ -427,6 +430,10 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.ToolCall != nil {
 			name = msg.ToolCall.Name
 			args = string(msg.ToolCall.Input)
+			if m.sessionState != nil {
+				m.sessionState.ApplyEvent(agentsdk.TurnEvent(msg))
+			}
+			m.emitSessionEvent(session.NewToolCallEvent(msg.ToolCall.ID, msg.ToolCall.Name, msg.ToolCall.Input))
 			// Cache args by tool use ID so tool_result can look them up.
 			if m.toolCallArgs == nil {
 				m.toolCallArgs = make(map[string]string)
@@ -444,6 +451,9 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		resultName := ""
 		isError := false
 		if msg.ToolResult != nil {
+			if m.sessionState != nil {
+				m.sessionState.ApplyEvent(agentsdk.TurnEvent(msg))
+			}
 			// Prefer DisplayContent for user-facing output; fall back to Content.
 			resultContent = msg.ToolResult.DisplayContent
 			if resultContent == "" {
@@ -451,6 +461,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			}
 			resultName = msg.ToolResult.Name
 			isError = msg.ToolResult.IsError
+			m.emitSessionEvent(session.NewToolResultEvent(msg.ToolResult.ID, msg.ToolResult.Name, resultContent, msg.ToolResult.IsError))
 		}
 		lineCount := strings.Count(resultContent, "\n") + 1
 		if resultContent == "" {
@@ -489,8 +500,13 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 
 	case "subagent_done":
 		summary := msg.Text
+		output := ""
 		if summary == "" && msg.SubagentResult != nil {
 			summary = fmt.Sprintf("[Background task completed (agent: %s)]", msg.SubagentResult.Name)
+		}
+		if msg.SubagentResult != nil {
+			output = msg.SubagentResult.Output
+			m.emitSessionEvent(session.NewSubagentDoneEvent(msg.SubagentResult.Name, summary, output))
 		}
 		m.content.WriteString(fmt.Sprintf("\n--- Background Task ---\n%s\n-----------------------\n", summary))
 		m.setContentAndAutoScroll()
@@ -519,11 +535,32 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		visible := SanitizeAssistantOutput(raw)
 		m.renderAssistantMarkdown()
 		m.rawAssistant.Reset()
+		if strings.TrimSpace(visible) != "" {
+			m.emitSessionEvent(session.NewAssistantFinalEvent(visible))
+		}
 		m.diffSummary = msg.DiffSummary
 		m.diffExpanded = false
 		// Collapse all tool results from this turn.
 		for i := range m.toolResults {
 			m.toolResults[i].Collapsed = true
+		}
+		if summary := m.DebugVerificationSnapshot(); summary != "" {
+			gate := session.ParseVerificationGate(summary)
+			verdict, reason := session.ParseVerificationSnapshot(summary)
+			if m.sessionState != nil {
+				if plan := m.sessionState.Plan(); len(plan) > 0 {
+					m.emitSessionEvent(session.NewPlanUpdatedEvent("turn_done", plan))
+				}
+			}
+			if gate == "hard_fail" || (gate == "" && verdict != "" && verdict != "passed") {
+				m.emitSessionEvent(session.NewGateFailedEvent("verification", reason))
+			}
+			m.content.WriteString(summary)
+			if !strings.HasSuffix(summary, "\n") {
+				m.content.WriteString("\n")
+			}
+			m.emitSessionEvent(session.NewVerificationSnapshotEvent(summary))
+			log.Printf("verification snapshot: %s", strings.ReplaceAll(strings.TrimSpace(summary), "\n", " | "))
 		}
 		m.content.WriteString(persona.SuccessMessage())
 		m.content.WriteString("\n")
@@ -540,6 +577,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		cost := EstimateCost(m.modelName, msg.InputTokens, msg.OutputTokens)
 		m.totalCost += cost
 		m.statusBar.SetCost(m.totalCost)
+		m.emitSessionEvent(session.NewTurnCompletedEvent(msg.DiffSummary, msg.InputTokens, msg.OutputTokens))
 
 		m.state = StateInput
 		m.eventCh = nil

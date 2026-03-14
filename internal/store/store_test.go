@@ -558,6 +558,25 @@ func TestAppendMessageMarshalError(t *testing.T) {
 	require.Len(t, msgs, 1)
 }
 
+func TestAppendMessageWithMalformedToolInputStillPersists(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "bad-tool-input", Model: "m"}))
+
+	err = s.AppendMessage("bad-tool-input", "assistant", []provider.ContentBlock{
+		{Type: "tool_use", ID: "tc_1", Name: "file.patch", Input: json.RawMessage(`{"path":"broken"`)},
+	})
+	require.NoError(t, err)
+
+	msgs, err := s.GetMessages("bad-tool-input")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.Len(t, msgs[0].Content, 1)
+	assert.Equal(t, json.RawMessage(`"{\"path\":\"broken\""`), msgs[0].Content[0].Input)
+}
+
 func TestStoreOperationsAfterClose(t *testing.T) {
 	s, err := NewStore(":memory:")
 	require.NoError(t, err)
@@ -848,6 +867,32 @@ func TestSnapshotReplaceExisting(t *testing.T) {
 	require.Len(t, loaded, 2)
 	assert.Equal(t, "second snapshot", loaded[0].Content[0].Text)
 	assert.Equal(t, "extra message", loaded[1].Content[0].Text)
+}
+
+func TestSaveSnapshotWithMalformedToolInputStillPersists(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "snapshot-bad-tool-input", Model: "test", Title: "test"}))
+
+	msgs := []provider.Message{
+		{
+			Role: "assistant",
+			Content: []provider.ContentBlock{
+				{Type: "tool_use", ID: "tc_1", Name: "file.patch", Input: json.RawMessage(`{"path":"broken"`)},
+			},
+		},
+	}
+
+	err = s.SaveSnapshot("snapshot-bad-tool-input", msgs, 100)
+	require.NoError(t, err)
+
+	loaded, err := s.GetSnapshot("snapshot-bad-tool-input")
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+	require.Len(t, loaded[0].Content, 1)
+	assert.Equal(t, json.RawMessage(`"{\"path\":\"broken\""`), loaded[0].Content[0].Input)
 }
 
 func TestApproveFolderAccessAndIsFolderApproved(t *testing.T) {

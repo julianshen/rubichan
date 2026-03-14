@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,9 @@ import (
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
+	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // approvalRequest carries a tool approval request from the agent goroutine
@@ -95,6 +99,16 @@ type Model struct {
 	wikiRunning       bool
 	wikiCfg           WikiCommandConfig
 	wikiCancel        context.CancelFunc
+	skillProvider     skillSummaryProvider
+	activeSkills      []string
+	plainMode         bool
+	lastPrompt        string
+	sessionState      *session.State
+	eventSink         session.EventSink
+}
+
+type skillSummaryProvider interface {
+	GetAllSkillSummaries() []skills.SkillSummary
 }
 
 type ralphLoopState struct {
@@ -132,25 +146,27 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
 	m := &Model{
-		agent:       a,
-		cfg:         cfg,
-		configPath:  configPath,
-		input:       ia,
-		viewport:    vp,
-		spinner:     sp,
-		mdRenderer:  mdRenderer,
-		toolBox:     NewToolBoxRenderer(80),
-		statusBar:   sb,
-		approvalCh:  make(chan approvalRequest),
-		state:       StateInput,
-		appName:     appName,
-		modelName:   modelName,
-		maxTurns:    maxTurns,
-		width:       80,
-		height:      24,
-		cmdRegistry: cmdRegistry,
-		completion:  NewCompletionOverlay(cmdRegistry, 80),
-		history:     NewInputHistory(100),
+		agent:        a,
+		cfg:          cfg,
+		configPath:   configPath,
+		input:        ia,
+		viewport:     vp,
+		spinner:      sp,
+		mdRenderer:   mdRenderer,
+		toolBox:      NewToolBoxRenderer(80),
+		statusBar:    sb,
+		approvalCh:   make(chan approvalRequest),
+		state:        StateInput,
+		appName:      appName,
+		modelName:    modelName,
+		maxTurns:     maxTurns,
+		width:        80,
+		height:       24,
+		cmdRegistry:  cmdRegistry,
+		completion:   NewCompletionOverlay(cmdRegistry, 80),
+		history:      NewInputHistory(100),
+		sessionState: session.NewState(),
+		eventSink:    session.NewLogSink(log.Printf),
 	}
 
 	// When no registry was provided, populate with default built-in commands.
@@ -175,6 +191,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 			m.modelName = name
 			m.statusBar.SetModel(name)
 		}))
+		_ = cmdRegistry.Register(commands.NewDebugVerificationSnapshotCommand(m.DebugVerificationSnapshot))
 		_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 	}
 
@@ -207,6 +224,9 @@ func (m *Model) ClearContent() {
 	m.toolResults = nil
 	m.nextToolResultID = 0
 	m.toolCallArgs = nil
+	if m.sessionState != nil {
+		m.sessionState.ResetForPrompt("")
+	}
 	m.viewport.SetContent("")
 }
 
@@ -237,10 +257,130 @@ func (m *Model) SetGitBranch(branch string) {
 	m.statusBar.SetGitBranch(branch)
 }
 
+// SetPlainMode reduces TUI chrome and redraw-heavy regions for terminal
+// automation and PTY capture.
+func (m *Model) SetPlainMode(enabled bool) {
+	m.plainMode = enabled
+	if enabled {
+		m.content.Reset()
+	}
+	m.reflowViewport()
+	m.viewport.SetContent(m.viewportContent())
+}
+
+func buildVerificationSnapshot(prompt string, results []CollapsibleToolResult) string {
+	state := session.NewState()
+	state.ResetForPrompt(prompt)
+	for i, tr := range results {
+		id := fmt.Sprintf("ui-%d", i)
+		state.ApplyEvent(agentsdk.TurnEvent{
+			Type: "tool_call",
+			ToolCall: &agentsdk.ToolCallEvent{
+				ID:    id,
+				Name:  tr.Name,
+				Input: json.RawMessage(tr.Args),
+			},
+		})
+		state.ApplyEvent(agentsdk.TurnEvent{
+			Type: "tool_result",
+			ToolResult: &agentsdk.ToolResultEvent{
+				ID:      id,
+				Name:    tr.Name,
+				Content: tr.Content,
+				IsError: tr.IsError,
+			},
+		})
+	}
+	return state.BuildVerificationSnapshot()
+}
+
+// BuildVerificationSnapshot exposes the current backend verification snapshot
+// logic to non-TUI hosts that want the same debug surface.
+func BuildVerificationSnapshot(prompt string, results []CollapsibleToolResult) string {
+	return buildVerificationSnapshot(prompt, results)
+}
+
+// DebugVerificationSnapshot returns the current verification snapshot for the
+// active turn state, if the latest prompt looks like a backend verification task.
+func (m *Model) DebugVerificationSnapshot() string {
+	if m.sessionState == nil {
+		return ""
+	}
+	return m.sessionState.BuildVerificationSnapshot()
+}
+
+func (m *Model) emitSessionEvent(evt session.Event) {
+	if m.eventSink != nil {
+		m.eventSink.Emit(evt.WithActor(session.PrimaryActor()))
+	}
+}
+
+// SetEventSink overrides the session event sink used by the TUI model.
+func (m *Model) SetEventSink(sink session.EventSink) {
+	m.eventSink = sink
+}
+
+// SetSkillSummaryProvider wires a skill runtime-backed provider into the TUI
+// so the header can show currently active skills.
+func (m *Model) SetSkillSummaryProvider(provider skillSummaryProvider) {
+	m.skillProvider = provider
+	m.refreshActiveSkills()
+	m.reflowViewport()
+}
+
 // SetWikiConfig sets the wiki command configuration and registers the /wiki command.
 func (m *Model) SetWikiConfig(cfg WikiCommandConfig) {
 	m.wikiCfg = cfg
 	_ = m.cmdRegistry.Register(NewWikiCommand(cfg))
+}
+
+func (m *Model) refreshActiveSkills() {
+	if m.skillProvider == nil {
+		m.activeSkills = nil
+		m.statusBar.SetSkillSummary("")
+		return
+	}
+
+	summaries := m.skillProvider.GetAllSkillSummaries()
+	active := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary.State == skills.SkillStateActive {
+			active = append(active, summary.Name)
+		}
+	}
+	m.activeSkills = active
+	m.statusBar.SetSkillSummary(summarizeActiveSkills(active))
+}
+
+func (m *Model) headerRows() int {
+	if m.plainMode {
+		return 0
+	}
+	rows := 2 // title + divider
+	if len(m.activeSkills) > 0 {
+		rows++
+	}
+	return rows
+}
+
+func (m *Model) footerRows() int {
+	rows := 2 // status + input
+	if m.completion != nil && m.completion.View() != "" {
+		rows++
+	}
+	if m.fileCompletion != nil && m.fileCompletion.View() != "" {
+		rows++
+	}
+	return rows
+}
+
+func (m *Model) reflowViewport() {
+	viewportHeight := m.height - m.headerRows() - m.footerRows()
+	if viewportHeight < 1 {
+		viewportHeight = 1
+	}
+	m.viewport.Width = m.width
+	m.viewport.Height = viewportHeight
 }
 
 // MakeApprovalFunc returns an agent.ApprovalFunc that bridges the agent's
@@ -320,7 +460,7 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	parts, err := commands.ParseLine(line)
 	if err != nil {
 		m.content.WriteString(persona.ErrorMessage(err.Error()))
-		m.viewport.SetContent(m.viewportContent())
+		m.setContentAndAutoScroll()
 		return nil
 	}
 	if len(parts) == 0 {
@@ -337,25 +477,32 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	if !ok {
 		if slashOnly {
 			m.content.WriteString("Type /help to show available commands.\n")
-			m.viewport.SetContent(m.viewportContent())
+			m.setContentAndAutoScroll()
 			return nil
 		}
 		m.content.WriteString(fmt.Sprintf("Unknown command: %s\n", parts[0]))
-		m.viewport.SetContent(m.viewportContent())
+		m.setContentAndAutoScroll()
 		return nil
 	}
 
 	result, err := slashCmd.Execute(context.Background(), parts[1:])
 	if err != nil {
 		m.content.WriteString(persona.ErrorMessage(err.Error()))
-		m.viewport.SetContent(m.viewportContent())
+		m.setContentAndAutoScroll()
 		return nil
 	}
+	prevActive := append([]string(nil), m.activeSkills...)
+	m.refreshActiveSkills()
+	m.reflowViewport()
 
 	if result.Output != "" {
 		m.content.WriteString(result.Output + "\n")
-		m.viewport.SetContent(m.viewportContent())
+		m.setContentAndAutoScroll()
 	}
+	activated, deactivated := diffActiveSkills(prevActive, m.activeSkills)
+	m.appendSkillStateChanges(activated, deactivated)
+	m.emitSessionEvent(session.NewCommandResultEvent(line, result.Output, activated, deactivated))
+	logSlashCommand(line, result.Output, activated, deactivated)
 	if startCmd := m.maybeStartRalphLoop(); startCmd != nil {
 		return tea.Batch(startCmd, m.spinner.Tick)
 	}
@@ -367,7 +514,7 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	case commands.ActionOpenConfig:
 		if m.cfg == nil {
 			m.content.WriteString("No config available\n")
-			m.viewport.SetContent(m.viewportContent())
+			m.setContentAndAutoScroll()
 			return nil
 		}
 		m.configForm = NewConfigForm(m.cfg, m.configPath)
@@ -376,7 +523,7 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	case commands.ActionOpenWiki:
 		if m.wikiRunning {
 			m.content.WriteString("Wiki generation is already running.\n")
-			m.viewport.SetContent(m.content.String())
+			m.setContentAndAutoScroll()
 			return nil
 		}
 		m.wikiForm = NewWikiForm(m.wikiCfg.WorkDir)
@@ -385,6 +532,74 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 	}
 
 	return nil
+}
+
+func summarizeActiveSkills(active []string) string {
+	if len(active) == 0 {
+		return ""
+	}
+	if len(active) <= 2 {
+		return strings.Join(active, ", ")
+	}
+	return fmt.Sprintf("%d active (%s, %s, +%d)", len(active), active[0], active[1], len(active)-2)
+}
+
+func (m *Model) appendSkillStateChanges(activated, deactivated []string) {
+	if len(activated) == 0 && len(deactivated) == 0 {
+		return
+	}
+
+	for _, name := range activated {
+		m.content.WriteString(fmt.Sprintf("Skill %q activated.\n", name))
+	}
+	for _, name := range deactivated {
+		m.content.WriteString(fmt.Sprintf("Skill %q deactivated.\n", name))
+	}
+	m.setContentAndAutoScroll()
+}
+
+func logSlashCommand(line, output string, activated, deactivated []string) {
+	parts := []string{fmt.Sprintf("slash command: %s", strings.TrimSpace(line))}
+	if trimmed := strings.TrimSpace(output); trimmed != "" {
+		parts = append(parts, fmt.Sprintf("output=%q", singleLinePreview(trimmed, 160)))
+	}
+	if len(activated) > 0 {
+		parts = append(parts, fmt.Sprintf("activated=%s", strings.Join(activated, ",")))
+	}
+	if len(deactivated) > 0 {
+		parts = append(parts, fmt.Sprintf("deactivated=%s", strings.Join(deactivated, ",")))
+	}
+	log.Print(strings.Join(parts, " "))
+}
+
+func singleLinePreview(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	if max > 0 && len(s) > max {
+		return s[:max-3] + "..."
+	}
+	return s
+}
+
+func diffActiveSkills(before, after []string) (activated []string, deactivated []string) {
+	beforeSet := make(map[string]struct{}, len(before))
+	afterSet := make(map[string]struct{}, len(after))
+
+	for _, name := range before {
+		beforeSet[name] = struct{}{}
+	}
+	for _, name := range after {
+		afterSet[name] = struct{}{}
+		if _, ok := beforeSet[name]; !ok {
+			activated = append(activated, name)
+		}
+	}
+	for _, name := range before {
+		if _, ok := afterSet[name]; !ok {
+			deactivated = append(deactivated, name)
+		}
+	}
+	return activated, deactivated
 }
 
 func (m *Model) StartRalphLoop(cfg commands.RalphLoopConfig) error {
