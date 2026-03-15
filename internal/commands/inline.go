@@ -39,8 +39,10 @@ func formatCommandDisplay(args []string) string {
 	return strings.Join(rendered, " ")
 }
 
-// RewriteInlineSkillDirective converts skill({...}) or __skill({...}) into an
-// equivalent slash command so existing command handling can execute it.
+// RewriteInlineSkillDirective normalizes inline skill directives into an
+// equivalent slash command so downstream command handling can treat all model
+// variants consistently. Supported forms are __skill({...}), skill({...}),
+// /skill({...}), \skill({...}), and !skill({...}).
 func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool, error) {
 	trimmed := strings.TrimSpace(line)
 	prefix := ""

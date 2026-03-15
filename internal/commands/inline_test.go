@@ -18,38 +18,44 @@ func TestRewriteInlineSkillDirectiveActivate(t *testing.T) {
 	assert.Equal(t, "brainstorming", result.Name)
 }
 
-func TestRewriteInlineSkillDirectiveAcceptsSkillPrefix(t *testing.T) {
-	result, ok, err := RewriteInlineSkillDirective(`skill({"name":"brainstorming"})`)
+func TestRewriteInlineSkillDirectiveAcceptsAliasForms(t *testing.T) {
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "skill prefix with name",
+			input: `skill({"name":"brainstorming"})`,
+		},
+		{
+			name:  "skill prefix with tool alias",
+			input: `skill({"tool":"brainstorming"})`,
+		},
+		{
+			name:  "slash style prefix",
+			input: `/skill({"name":"brainstorming"})`,
+		},
+		{
+			name:  "backslash style prefix",
+			input: `\skill({"name":"brainstorming"})`,
+		},
+		{
+			name:  "bang style prefix",
+			input: `!skill({"name":"brainstorming"})`,
+		},
+	}
 
-	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, `/skill activate brainstorming`, result.Command)
-	assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
-	assert.Equal(t, "activate", result.Action)
-	assert.Equal(t, "brainstorming", result.Name)
-}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, ok, err := RewriteInlineSkillDirective(tc.input)
 
-func TestRewriteInlineSkillDirectiveAcceptsToolAlias(t *testing.T) {
-	result, ok, err := RewriteInlineSkillDirective(`skill({"tool":"brainstorming"})`)
-
-	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, `/skill activate brainstorming`, result.Command)
-	assert.Equal(t, "activate", result.Action)
-	assert.Equal(t, "brainstorming", result.Name)
-	assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
-}
-
-func TestRewriteInlineSkillDirectiveAcceptsSlashStylePrefixes(t *testing.T) {
-	for _, input := range []string{
-		`/skill({"name":"brainstorming"})`,
-		`\skill({"name":"brainstorming"})`,
-		`!skill({"name":"brainstorming"})`,
-	} {
-		result, ok, err := RewriteInlineSkillDirective(input)
-		require.NoError(t, err)
-		assert.True(t, ok)
-		assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
+			require.NoError(t, err)
+			assert.True(t, ok)
+			assert.Equal(t, `/skill activate brainstorming`, result.Command)
+			assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
+			assert.Equal(t, "activate", result.Action)
+			assert.Equal(t, "brainstorming", result.Name)
+		})
 	}
 }
 
