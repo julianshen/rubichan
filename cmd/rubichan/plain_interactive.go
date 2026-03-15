@@ -181,7 +181,7 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 			continue
 		}
 		if strings.HasPrefix(text, "/") {
-			shouldQuit, err := h.handleCommand(text)
+			shouldQuit, err := h.handleCommand(ctx, text)
 			if err != nil {
 				return err
 			}
@@ -196,7 +196,7 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 	}
 }
 
-func (h *plainInteractiveHost) handleCommand(line string) (bool, error) {
+func (h *plainInteractiveHost) handleCommand(ctx context.Context, line string) (bool, error) {
 	parts, err := commands.ParseLine(line)
 	if err != nil {
 		_, _ = fmt.Fprintln(h.out, persona.ErrorMessage(err.Error()))
@@ -215,7 +215,7 @@ func (h *plainInteractiveHost) handleCommand(line string) (bool, error) {
 		return false, nil
 	}
 
-	result, err := cmd.Execute(context.Background(), parts[1:])
+	result, err := cmd.Execute(ctx, parts[1:])
 	if err != nil {
 		_, _ = fmt.Fprintln(h.out, persona.ErrorMessage(err.Error()))
 		return false, nil
@@ -263,6 +263,7 @@ func (h *plainInteractiveHost) runTurn(ctx context.Context, text string) error {
 	}
 
 	wroteText := false
+	hadError := false
 	var assistantText strings.Builder
 	h.sessionState.ResetForPrompt(text)
 	h.emitSessionEvent(session.NewTurnStartedEvent(text, h.modelName))
@@ -306,6 +307,7 @@ func (h *plainInteractiveHost) runTurn(ctx context.Context, text string) error {
 			}
 		case "error":
 			if evt.Error != nil {
+				hadError = true
 				_, _ = fmt.Fprintln(h.out, "\n"+persona.ErrorMessage(evt.Error.Error()))
 			}
 		case "done":
@@ -315,8 +317,6 @@ func (h *plainInteractiveHost) runTurn(ctx context.Context, text string) error {
 			if strings.TrimSpace(assistantText.String()) != "" {
 				h.emitSessionEvent(session.NewAssistantFinalEvent(assistantText.String()))
 			}
-			h.turnCount++
-			h.totalCost += estimatePlainInteractiveCost(h.modelName, evt.InputTokens, evt.OutputTokens)
 			if strings.TrimSpace(evt.DiffSummary) != "" {
 				_, _ = fmt.Fprintln(h.out, evt.DiffSummary)
 			}
@@ -333,9 +333,13 @@ func (h *plainInteractiveHost) runTurn(ctx context.Context, text string) error {
 				h.emitSessionEvent(session.NewVerificationSnapshotEvent(snapshot))
 				log.Printf("verification snapshot: %s", strings.ReplaceAll(strings.TrimSpace(snapshot), "\n", " | "))
 			}
-			_, _ = fmt.Fprintln(h.out, persona.SuccessMessage())
-			_, _ = fmt.Fprintln(h.out, h.statusLine())
-			h.emitSessionEvent(session.NewTurnCompletedEvent(evt.DiffSummary, evt.InputTokens, evt.OutputTokens))
+			if !hadError {
+				h.turnCount++
+				h.totalCost += estimatePlainInteractiveCost(h.modelName, evt.InputTokens, evt.OutputTokens)
+				_, _ = fmt.Fprintln(h.out, persona.SuccessMessage())
+				_, _ = fmt.Fprintln(h.out, h.statusLine())
+				h.emitSessionEvent(session.NewTurnCompletedEvent(evt.DiffSummary, evt.InputTokens, evt.OutputTokens))
+			}
 		}
 	}
 	return nil

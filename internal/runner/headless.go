@@ -233,8 +233,9 @@ func backendVerificationVerdict(toolCalls []output.ToolCallLog) (string, string)
 }
 
 func backendValidationEvidenceLine(toolCalls []output.ToolCallLog) string {
-	for i := len(toolCalls) - 1; i >= 0; i-- {
-		tc := toolCalls[i]
+	filtered := toolCallsAfterLastEdit(toolCalls)
+	for i := len(filtered) - 1; i >= 0; i-- {
+		tc := filtered[i]
 		if !isBackendValidationCommand(tc) {
 			continue
 		}
@@ -246,7 +247,7 @@ func backendValidationEvidenceLine(toolCalls []output.ToolCallLog) string {
 		}
 		return "- Validation: passed"
 	}
-	if hasBackendRuntimeEvidence(toolCalls) && hasBackendAPIRoundTripEvidence(toolCalls) {
+	if hasBackendRuntimeEvidence(filtered) && hasBackendAPIRoundTripEvidence(filtered) {
 		return "- Validation: runtime/API verification only"
 	}
 	return "- Validation: no evidence"
@@ -269,8 +270,11 @@ func backendDependencyEvidenceLine(toolCalls []output.ToolCallLog) string {
 func backendDependencyFailureReason(toolCalls []output.ToolCallLog) string {
 	for i := len(toolCalls) - 1; i >= 0; i-- {
 		tc := toolCalls[i]
-		if !isDependencyResolutionCommand(tc) || !tc.IsError {
+		if !isDependencyResolutionCommand(tc) {
 			continue
+		}
+		if !tc.IsError {
+			return ""
 		}
 		if snippet := extractBuildFailureSnippet(tc.Result); snippet != "" {
 			return snippet
@@ -330,8 +334,9 @@ func frontendVerificationVerdict(toolCalls []output.ToolCallLog) (string, string
 }
 
 func frontendBuildEvidenceLine(toolCalls []output.ToolCallLog) string {
-	for i := len(toolCalls) - 1; i >= 0; i-- {
-		tc := toolCalls[i]
+	filtered := toolCallsAfterLastEdit(toolCalls)
+	for i := len(filtered) - 1; i >= 0; i-- {
+		tc := filtered[i]
 		if !isFrontendBuildCommand(tc) {
 			continue
 		}
@@ -565,6 +570,22 @@ func hasSuccessfulFrontendBuildAfterLastEdit(toolCalls []output.ToolCallLog) boo
 	return lastSuccessfulBuild > lastEdit
 }
 
+func toolCallsAfterLastEdit(toolCalls []output.ToolCallLog) []output.ToolCallLog {
+	lastEdit := -1
+	for i, tc := range toolCalls {
+		if isFileModification(tc) {
+			lastEdit = i
+		}
+	}
+	if lastEdit == -1 {
+		return toolCalls
+	}
+	if lastEdit+1 >= len(toolCalls) {
+		return nil
+	}
+	return toolCalls[lastEdit+1:]
+}
+
 func isFileModification(tc output.ToolCallLog) bool {
 	switch tc.Name {
 	case "file":
@@ -689,8 +710,11 @@ func buildHeadlessSummary(response string, toolCalls []output.ToolCallLog, lastE
 func findFrontendBuildFailure(toolCalls []output.ToolCallLog) string {
 	for i := len(toolCalls) - 1; i >= 0; i-- {
 		tc := toolCalls[i]
-		if !isFrontendBuildCommand(tc) || !tc.IsError {
+		if !isFrontendBuildCommand(tc) {
 			continue
+		}
+		if !tc.IsError {
+			return ""
 		}
 		if snippet := extractBuildFailureSnippet(tc.Result); snippet != "" {
 			return snippet
@@ -703,8 +727,11 @@ func findFrontendBuildFailure(toolCalls []output.ToolCallLog) string {
 func findBackendValidationFailure(toolCalls []output.ToolCallLog) string {
 	for i := len(toolCalls) - 1; i >= 0; i-- {
 		tc := toolCalls[i]
-		if (!isBackendValidationCommand(tc) && !isDependencyResolutionCommand(tc)) || !tc.IsError {
+		if !isBackendValidationCommand(tc) && !isDependencyResolutionCommand(tc) {
 			continue
+		}
+		if !tc.IsError {
+			return ""
 		}
 		if snippet := extractBuildFailureSnippet(tc.Result); snippet != "" {
 			return snippet

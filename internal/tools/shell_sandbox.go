@@ -113,6 +113,26 @@ func sandboxBackendAvailable(goos, binary, workDir string) bool {
 			return false
 		}
 		return cmd.Run() == nil
+	case "linux":
+		// Defensive branch: current callers pass bwrap, but keep this guard in
+		// case a future caller probes a different wrapper binary.
+		if filepath.Base(binary) != "bwrap" {
+			return true
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "sh", "-c", "pwd")
+		cmd.Dir = workDir
+		sb := &bubblewrapSandbox{
+			binary: binary,
+			policy: DefaultShellSandboxPolicy(workDir),
+		}
+		if err := sb.Wrap(cmd); err != nil {
+			return false
+		}
+		return cmd.Run() == nil
 	default:
 		return true
 	}

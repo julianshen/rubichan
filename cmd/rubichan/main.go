@@ -759,12 +759,15 @@ func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string,
 
 const memorySaveTimeout = 5 * time.Second
 
-func saveMemoriesBestEffort(a *agent.Agent, out io.Writer) {
+func saveMemoriesBestEffort(parentCtx context.Context, a *agent.Agent, out io.Writer) {
 	if a == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), memorySaveTimeout)
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, memorySaveTimeout)
 	defer cancel()
 
 	if err := a.SaveMemories(ctx); err != nil {
@@ -1392,7 +1395,7 @@ func runInteractive() error {
 	if plainHost != nil {
 		plainHost.SetAgent(a)
 		err := plainHost.Run(runCtx)
-		saveMemoriesBestEffort(a, os.Stderr)
+		saveMemoriesBestEffort(runCtx, a, os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -1424,7 +1427,7 @@ func runInteractive() error {
 	}
 
 	// Save memories on graceful shutdown.
-	saveMemoriesBestEffort(a, os.Stderr)
+	saveMemoriesBestEffort(runCtx, a, os.Stderr)
 	if err := interactiveExitError(runCtx); err != nil {
 		return err
 	}
@@ -1473,7 +1476,6 @@ func runHeadless() error {
 			return err
 		}
 	}
-
 	// Create provider
 	p, err := provider.NewProvider(cfg)
 	if err != nil {
@@ -1690,6 +1692,9 @@ func runHeadless() error {
 			return runErr
 		}
 	}
+	if err := validateHeadlessBootstrapProbe(result, headlessToolsCfg.ShouldEnable("shell")); err != nil {
+		return err
+	}
 
 	// Merge security findings into result.
 	if secReport != nil {
@@ -1738,7 +1743,7 @@ func runHeadless() error {
 	fmt.Print(string(out))
 
 	// Save memories on completion.
-	saveMemoriesBestEffort(a, os.Stderr)
+	saveMemoriesBestEffort(ctx, a, os.Stderr)
 
 	if result.Error != "" {
 		return fmt.Errorf("agent run failed: %s", result.Error)
@@ -1769,6 +1774,33 @@ Headless bootstrap requirement:
 - After this bootstrap probe succeeds, continue with the requested task.
 `)
 	return prefix + "\n\nUser task:\n" + strings.TrimSpace(prompt)
+}
+
+func validateHeadlessBootstrapProbe(result *output.RunResult, shellEnabled bool) error {
+	if !shellEnabled {
+		return nil
+	}
+	if result == nil || len(result.ToolCalls) == 0 {
+		return fmt.Errorf("headless bootstrap probe missing: expected first tool call shell {\"command\":\"pwd\"}")
+	}
+	first := result.ToolCalls[0]
+	if first.Name != "shell" {
+		return fmt.Errorf("headless bootstrap probe invalid: first tool call must be shell {\"command\":\"pwd\"}, got %q", first.Name)
+	}
+	if !isShellPwdProbe(first.Input) {
+		return fmt.Errorf("headless bootstrap probe invalid: expected shell {\"command\":\"pwd\"} as first tool call")
+	}
+	return nil
+}
+
+func isShellPwdProbe(input json.RawMessage) bool {
+	var payload struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return false
+	}
+	return strings.TrimSpace(payload.Command) == "pwd"
 }
 
 // standardToolProfile lists the standard built-in tools included in the "all" profile.

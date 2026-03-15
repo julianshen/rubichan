@@ -417,6 +417,46 @@ func TestFrontendVerificationVerdictRequiresBuildAfterLatestEdit(t *testing.T) {
 	assert.Equal(t, "no build evidence", reason)
 }
 
+func TestFindFrontendBuildFailureIgnoresEarlierFailureAfterSuccessfulRetry(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{Name: "shell", Input: json.RawMessage(`{"command":"npm run build"}`), Result: "build failed", IsError: true},
+		{Name: "shell", Input: json.RawMessage(`{"command":"npm run build"}`), Result: "build succeeded", IsError: false},
+	}
+	assert.Equal(t, "", findFrontendBuildFailure(toolCalls))
+}
+
+func TestFindBackendValidationFailureIgnoresEarlierFailureAfterSuccessfulRetry(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{Name: "shell", Input: json.RawMessage(`{"command":"go test ./..."}`), Result: "FAIL", IsError: true},
+		{Name: "shell", Input: json.RawMessage(`{"command":"go test ./..."}`), Result: "ok", IsError: false},
+	}
+	assert.Equal(t, "", findBackendValidationFailure(toolCalls))
+}
+
+func TestBackendDependencyFailureReasonIgnoresEarlierFailureAfterSuccessfulRetry(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{Name: "shell", Input: json.RawMessage(`{"command":"npm install"}`), Result: "ERR", IsError: true},
+		{Name: "shell", Input: json.RawMessage(`{"command":"npm install"}`), Result: "added packages", IsError: false},
+	}
+	assert.Equal(t, "", backendDependencyFailureReason(toolCalls))
+}
+
+func TestBackendValidationEvidenceLineUsesOnlyPostEditCalls(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{Name: "shell", Input: json.RawMessage(`{"command":"go test ./..."}`), Result: "ok", IsError: false},
+		{Name: "file", Input: json.RawMessage(`{"operation":"patch","path":"main.go"}`), Result: "patched", IsError: false},
+	}
+	assert.Equal(t, "- Validation: no evidence", backendValidationEvidenceLine(toolCalls))
+}
+
+func TestFrontendBuildEvidenceLineUsesOnlyPostEditCalls(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{Name: "shell", Input: json.RawMessage(`{"command":"npm run build"}`), Result: "built in 123ms", IsError: false},
+		{Name: "file", Input: json.RawMessage(`{"operation":"patch","path":"src/App.tsx"}`), Result: "patched", IsError: false},
+	}
+	assert.Equal(t, "- Build: no evidence", frontendBuildEvidenceLine(toolCalls))
+}
+
 func TestHeadlessRunnerBackendTaskRequiresAPIRoundTripForToolOnlySuccess(t *testing.T) {
 	turnFn := func(_ context.Context, msg string) (<-chan agent.TurnEvent, error) {
 		return makeEventCh(

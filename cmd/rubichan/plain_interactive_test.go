@@ -69,7 +69,7 @@ func TestPlainInteractiveHandleCommandRefreshesSkillState(t *testing.T) {
 		provider.summaries[0].State = skills.SkillStateActive
 	})))
 
-	quit, err := host.handleCommand("/clear")
+	quit, err := host.handleCommand(context.Background(), "/clear")
 	require.NoError(t, err)
 	assert.False(t, quit)
 	assert.Equal(t, []string{"app-generation-workflow"}, host.activeSkills)
@@ -85,7 +85,7 @@ func TestPlainInteractiveHandleCommandEmitsSessionEvent(t *testing.T) {
 		events = append(events, evt)
 	})
 
-	quit, err := host.handleCommand("/help")
+	quit, err := host.handleCommand(context.Background(), "/help")
 	require.NoError(t, err)
 	assert.False(t, quit)
 	require.Len(t, events, 1)

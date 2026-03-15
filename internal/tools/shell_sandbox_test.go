@@ -154,6 +154,10 @@ func TestShellToolExecuteReturnsSandboxSetupError(t *testing.T) {
 	assert.Contains(t, result.Content, "boom")
 }
 
+func TestSandboxBackendAvailableLinuxProbe(t *testing.T) {
+	assert.False(t, sandboxBackendAvailable("linux", "/nonexistent/bwrap", t.TempDir()))
+}
+
 type recordingSandbox struct {
 	called bool
 	path   string

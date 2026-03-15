@@ -74,6 +74,9 @@ func TestFrontendDesignIncludesAutoTriggers(t *testing.T) {
 	}
 
 	ds := discovered[0]
+	if ds.Manifest.Name != "frontend-design" {
+		t.Fatalf("name = %q, want %q", ds.Manifest.Name, "frontend-design")
+	}
 	if len(ds.Manifest.Triggers.Files) == 0 {
 		t.Fatal("expected file triggers")
 	}

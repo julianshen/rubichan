@@ -81,6 +81,16 @@ func TestStateBuildVerificationSnapshotPassed(t *testing.T) {
 	assert.Contains(t, summary, "api round-trip: true")
 }
 
+func TestLooksLikeBackendVerificationPromptIgnoresFrontendTodoPrompt(t *testing.T) {
+	assert.False(t, looksLikeBackendVerificationPrompt("Create a React Vite todo app with shadcn styling"))
+	assert.True(t, looksLikeBackendVerificationPrompt("Create a backend API server with sqlite"))
+}
+
+func TestToolCallLooksLikeEditIgnoresReadOperation(t *testing.T) {
+	assert.False(t, toolCallLooksLikeEdit(`{"operation":"read","path":"README.md"}`))
+	assert.True(t, toolCallLooksLikeEdit(`{"operation":"append","path":"notes.md"}`))
+}
+
 func TestStateBuildVerificationSnapshotInvalidated(t *testing.T) {
 	s := NewState()
 	s.ResetForPrompt("Create a backend-only todo API using Node.js and SQLite")

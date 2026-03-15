@@ -258,7 +258,22 @@ func (s *State) syncPlan(eval verificationEval) {
 
 func looksLikeBackendVerificationPrompt(prompt string) bool {
 	prompt = strings.ToLower(prompt)
-	for _, needle := range []string{"backend", "sqlite", "api", "todo", "crud", "database"} {
+	for _, needle := range []string{
+		"backend",
+		"server",
+		"endpoint",
+		"route",
+		"handler",
+		"controller",
+		"schema",
+		"migration",
+		"auth",
+		"database",
+		"sqlite",
+		"postgres",
+		"mysql",
+		"api",
+	} {
 		if strings.Contains(prompt, needle) {
 			return true
 		}
@@ -351,7 +366,11 @@ func toolCallLooksLikeEdit(args string) bool {
 		strings.Contains(args, `"operation":"patch"`) ||
 		strings.Contains(args, `"operation":"apply"`) ||
 		strings.Contains(args, `"operation":"modify"`) ||
-		strings.Contains(args, `"operation":`) ||
+		strings.Contains(args, `"operation":"delete"`) ||
+		strings.Contains(args, `"operation":"create"`) ||
+		strings.Contains(args, `"operation":"rename"`) ||
+		strings.Contains(args, `"operation":"move"`) ||
+		strings.Contains(args, `"operation":"append"`) ||
 		strings.Contains(args, "apply_patch") ||
 		strings.Contains(args, "sed -i") ||
 		strings.Contains(args, "perl -pi") ||

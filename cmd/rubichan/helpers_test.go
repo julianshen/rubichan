@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
@@ -158,6 +160,23 @@ func TestApplyHeadlessBootstrapProbePromptDisabled(t *testing.T) {
 	prompt := "Build a backend and verify it"
 	got := applyHeadlessBootstrapProbePrompt(prompt, false)
 	assert.Equal(t, prompt, got)
+}
+
+func TestValidateHeadlessBootstrapProbe(t *testing.T) {
+	ok := &output.RunResult{
+		ToolCalls: []output.ToolCallLog{
+			{Name: "shell", Input: json.RawMessage(`{"command":"pwd"}`)},
+		},
+	}
+	require.NoError(t, validateHeadlessBootstrapProbe(ok, true))
+	require.NoError(t, validateHeadlessBootstrapProbe(ok, false))
+
+	bad := &output.RunResult{
+		ToolCalls: []output.ToolCallLog{
+			{Name: "shell", Input: json.RawMessage(`{"command":"ls"}`)},
+		},
+	}
+	require.Error(t, validateHeadlessBootstrapProbe(bad, true))
 }
 
 func TestIsAppleOnlyTool(t *testing.T) {
