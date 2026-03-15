@@ -49,6 +49,12 @@ func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool,
 		prefix = "__skill("
 	case strings.HasPrefix(trimmed, "skill("):
 		prefix = "skill("
+	case strings.HasPrefix(trimmed, "/skill("):
+		prefix = "/skill("
+	case strings.HasPrefix(trimmed, `\skill(`):
+		prefix = `\skill(`
+	case strings.HasPrefix(trimmed, "!skill("):
+		prefix = "!skill("
 	default:
 		return InlineSkillDirectiveResult{}, false, nil
 	}
@@ -67,8 +73,12 @@ func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool,
 	}
 
 	name := strings.TrimSpace(directive.Name)
+	tool := strings.TrimSpace(directive.Tool)
+	if name != "" && tool != "" && name != tool {
+		return InlineSkillDirectiveResult{}, true, fmt.Errorf("skill directive has conflicting name %q and tool %q", name, tool)
+	}
 	if name == "" {
-		name = strings.TrimSpace(directive.Tool)
+		name = tool
 	}
 	if name == "" {
 		return InlineSkillDirectiveResult{}, true, fmt.Errorf("skill directive name is required")

@@ -23,34 +23,33 @@ This is not negotiable. This is not optional. You cannot rationalize your way ou
 
 **Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.
 
-```dot
-digraph skill_flow {
-    "User message received" [shape=doublecircle];
-    "About to EnterPlanMode?" [shape=doublecircle];
-    "Already brainstormed?" [shape=diamond];
-    "Invoke brainstorming skill" [shape=box];
-    "Might any skill apply?" [shape=diamond];
-    "Activate skill" [shape=box];
-    "Announce: 'Using [skill] to [purpose]'" [shape=box];
-    "Has checklist?" [shape=diamond];
-    "Create TodoWrite todo per item" [shape=box];
-    "Follow skill exactly" [shape=box];
-    "Respond (including clarifications)" [shape=doublecircle];
+```mermaid
+flowchart TD
+    user_msg(["User message received"])
+    enter_plan(["About to EnterPlanMode?"])
+    brainstormed{"Already brainstormed?"}
+    invoke_brainstorm["Invoke brainstorming skill"]
+    skill_apply{"Might any skill apply?"}
+    activate_skill["Activate skill"]
+    announce["Announce: 'Using [skill] to [purpose]'"]
+    has_checklist{"Has checklist?"}
+    create_todo["Create TodoWrite todo per item"]
+    follow_skill["Follow skill exactly"]
+    respond(["Respond (including clarifications)"])
 
-    "About to EnterPlanMode?" -> "Already brainstormed?";
-    "Already brainstormed?" -> "Invoke brainstorming skill" [label="no"];
-    "Already brainstormed?" -> "Might any skill apply?" [label="yes"];
-    "Invoke brainstorming skill" -> "Might any skill apply?";
+    enter_plan --> brainstormed
+    brainstormed -- "no" --> invoke_brainstorm
+    brainstormed -- "yes" --> skill_apply
+    invoke_brainstorm --> skill_apply
 
-    "User message received" -> "Might any skill apply?";
-    "Might any skill apply?" -> "Activate skill" [label="yes, even 1%"];
-    "Might any skill apply?" -> "Respond (including clarifications)" [label="definitely not"];
-    "Activate skill" -> "Announce: 'Using [skill] to [purpose]'";
-    "Announce: 'Using [skill] to [purpose]'" -> "Has checklist?";
-    "Has checklist?" -> "Create TodoWrite todo per item" [label="yes"];
-    "Has checklist?" -> "Follow skill exactly" [label="no"];
-    "Create TodoWrite todo per item" -> "Follow skill exactly";
-}
+    user_msg --> skill_apply
+    skill_apply -- "yes, even 1%" --> activate_skill
+    skill_apply -- "definitely not" --> respond
+    activate_skill --> announce
+    announce --> has_checklist
+    has_checklist -- "yes" --> create_todo
+    has_checklist -- "no" --> follow_skill
+    create_todo --> follow_skill
 ```
 
 ## Red Flags

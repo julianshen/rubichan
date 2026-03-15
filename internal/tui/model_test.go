@@ -355,6 +355,7 @@ func TestModelUpdateEnterSkillDirectiveAliasRunsSkillCommand(t *testing.T) {
 	assert.Equal(t, StateInput, um.state)
 	assert.Equal(t, []string{"activate", "brainstorming"}, cmd.LastArgs)
 	assert.Contains(t, um.content.String(), `Inline skill directive: activate "brainstorming"`)
+	assert.Contains(t, um.content.String(), `Skill "brainstorming" activated.`)
 }
 
 func TestModelUpdateEnterInlineSkillDirectiveShowsParseError(t *testing.T) {

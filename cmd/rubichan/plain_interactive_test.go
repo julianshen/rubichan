@@ -124,6 +124,7 @@ func TestPlainInteractiveRunRewritesSkillDirectiveAlias(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"activate", "brainstorming"}, stub.LastArgs)
 	assert.Contains(t, out.String(), `Inline skill directive: activate "brainstorming"`)
+	assert.Contains(t, out.String(), `Skill "brainstorming" activated.`)
 }
 
 func TestDiffStringSet(t *testing.T) {
