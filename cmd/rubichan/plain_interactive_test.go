@@ -94,6 +94,22 @@ func TestPlainInteractiveHandleCommandEmitsSessionEvent(t *testing.T) {
 	assert.Equal(t, "/help", events[0].Command.Command)
 }
 
+func TestPlainInteractiveRunRewritesInlineSkillDirective(t *testing.T) {
+	reg := commands.NewRegistry()
+	stub := &plainStubSlashCommand{name: "skill", output: "Skill \"brainstorming\" activated."}
+	require.NoError(t, reg.Register(stub))
+
+	out := &bytes.Buffer{}
+	host := newPlainInteractiveHost(bytes.NewBufferString("__skill({\"name\":\"brainstorming\"})\n"), out, "gpt-test", 20, reg)
+
+	err := host.Run(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"activate", "brainstorming"}, stub.lastArgs)
+	assert.Contains(t, out.String(), `Inline skill directive: activate "brainstorming"`)
+	assert.Contains(t, out.String(), `Skill "brainstorming" activated.`)
+}
+
 func TestDiffStringSet(t *testing.T) {
 	activated, deactivated := diffStringSet(
 		[]string{"alpha", "beta"},
@@ -153,4 +169,23 @@ func TestPlainInteractiveReadLineCtxCancelled(t *testing.T) {
 	_, err := host.readLineCtx(ctx)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+type plainStubSlashCommand struct {
+	name     string
+	output   string
+	lastArgs []string
+}
+
+func (s *plainStubSlashCommand) Name() string { return s.name }
+
+func (s *plainStubSlashCommand) Description() string { return "stub" }
+
+func (s *plainStubSlashCommand) Arguments() []commands.ArgumentDef { return nil }
+
+func (s *plainStubSlashCommand) Complete(context.Context, []string) []commands.Candidate { return nil }
+
+func (s *plainStubSlashCommand) Execute(_ context.Context, args []string) (commands.Result, error) {
+	s.lastArgs = append([]string(nil), args...)
+	return commands.Result{Output: s.output}, nil
 }

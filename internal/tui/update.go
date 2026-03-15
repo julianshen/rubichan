@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
@@ -287,6 +288,17 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.input.Reset()
 		m.syncCompletion()
+
+		if directive, ok, err := commands.RewriteInlineSkillDirective(text); ok {
+			if err != nil {
+				m.content.WriteString(persona.ErrorMessage(err.Error()))
+				m.setContentAndAutoScroll()
+				return m, nil
+			}
+			m.content.WriteString(fmt.Sprintf("Inline skill directive: %s %q\n", directive.Action, directive.Name))
+			m.setContentAndAutoScroll()
+			text = directive.Command
+		}
 
 		if strings.HasPrefix(text, "/") {
 			cmd := m.handleCommand(text)

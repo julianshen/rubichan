@@ -30,6 +30,25 @@ func (m *mockSkillSummaryProvider) GetAllSkillSummaries() []skills.SkillSummary 
 	return m.summaries
 }
 
+type stubSlashCommand struct {
+	name     string
+	output   string
+	lastArgs []string
+}
+
+func (s *stubSlashCommand) Name() string { return s.name }
+
+func (s *stubSlashCommand) Description() string { return "stub" }
+
+func (s *stubSlashCommand) Arguments() []commands.ArgumentDef { return nil }
+
+func (s *stubSlashCommand) Complete(context.Context, []string) []commands.Candidate { return nil }
+
+func (s *stubSlashCommand) Execute(_ context.Context, args []string) (commands.Result, error) {
+	s.lastArgs = append([]string(nil), args...)
+	return commands.Result{Output: s.output}, nil
+}
+
 func TestUIStateConstants(t *testing.T) {
 	states := []UIState{
 		StateInput,
@@ -321,6 +340,35 @@ func TestModelUpdateEnterSlashCommand(t *testing.T) {
 
 	um := updated.(*Model)
 	assert.Contains(t, um.content.String(), "/quit")
+}
+
+func TestModelUpdateEnterInlineSkillDirectiveRunsSkillCommand(t *testing.T) {
+	reg := commands.NewRegistry()
+	cmd := &stubSlashCommand{name: "skill", output: "Skill \"brainstorming\" activated."}
+	require.NoError(t, reg.Register(cmd))
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, reg)
+	m.input.SetValue(`__skill({"name":"brainstorming"})`)
+
+	updated, teaCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updated.(*Model)
+	assert.Nil(t, teaCmd)
+	assert.Equal(t, StateInput, um.state)
+	assert.Equal(t, []string{"activate", "brainstorming"}, cmd.lastArgs)
+	assert.Contains(t, um.content.String(), `Inline skill directive: activate "brainstorming"`)
+	assert.Contains(t, um.content.String(), `Skill "brainstorming" activated.`)
+}
+
+func TestModelUpdateEnterInlineSkillDirectiveShowsParseError(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.input.SetValue(`__skill({"action":"activate"})`)
+
+	updated, teaCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updated.(*Model)
+	assert.Nil(t, teaCmd)
+	assert.Equal(t, StateInput, um.state)
+	assert.Contains(t, um.content.String(), "skill directive name is required")
 }
 
 func TestModelAdvanceRalphLoopStopsOnCompletionPromise(t *testing.T) {

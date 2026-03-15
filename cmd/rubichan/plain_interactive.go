@@ -191,6 +191,14 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 		if text == "" {
 			continue
 		}
+		if directive, ok, err := commands.RewriteInlineSkillDirective(text); ok {
+			if err != nil {
+				_, _ = fmt.Fprintln(h.out, persona.ErrorMessage(err.Error()))
+				continue
+			}
+			_, _ = fmt.Fprintf(h.out, "Inline skill directive: %s %q\n", directive.Action, directive.Name)
+			text = directive.Command
+		}
 		if strings.HasPrefix(text, "/") {
 			shouldQuit, err := h.handleCommand(ctx, text)
 			if err != nil {
