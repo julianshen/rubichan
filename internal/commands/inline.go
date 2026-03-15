@@ -45,19 +45,15 @@ func formatCommandDisplay(args []string) string {
 // /skill({...}), \skill({...}), and !skill({...}).
 func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool, error) {
 	trimmed := strings.TrimSpace(line)
+	prefixes := []string{"__skill(", "skill(", "/skill(", `\skill(`, "!skill("}
 	prefix := ""
-	switch {
-	case strings.HasPrefix(trimmed, "__skill("):
-		prefix = "__skill("
-	case strings.HasPrefix(trimmed, "skill("):
-		prefix = "skill("
-	case strings.HasPrefix(trimmed, "/skill("):
-		prefix = "/skill("
-	case strings.HasPrefix(trimmed, `\skill(`):
-		prefix = `\skill(`
-	case strings.HasPrefix(trimmed, "!skill("):
-		prefix = "!skill("
-	default:
+	for _, candidate := range prefixes {
+		if strings.HasPrefix(trimmed, candidate) {
+			prefix = candidate
+			break
+		}
+	}
+	if prefix == "" {
 		return InlineSkillDirectiveResult{}, false, nil
 	}
 	if !strings.HasSuffix(trimmed, ")") {
