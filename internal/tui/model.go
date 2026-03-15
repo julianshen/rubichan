@@ -406,28 +406,15 @@ func (m *Model) reflowViewport() {
 // Tools previously marked "always" are auto-approved without prompting.
 func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 	return func(_ context.Context, tool string, input json.RawMessage) (bool, error) {
-		// Auto-deny if user previously chose "deny always" for this tool.
-		if _, ok := m.alwaysDenied.Load(tool); ok {
-			return false, nil
-		}
-		// Auto-approve if user previously chose "always" for this tool,
-		// but only if the current command is not destructive. Destructive
-		// commands must always be re-validated per invocation to prevent
-		// a benign "shell ls" approval from auto-approving "shell rm -rf /".
-		if _, ok := m.alwaysApproved.Load(tool); ok {
-			opts := OptionsForRisk(tool, string(input))
-			hasAlways := false
-			for _, o := range opts {
-				if o == ApprovalAlways {
-					hasAlways = true
-					break
-				}
-			}
-			if hasAlways {
+		if actionID, handled := m.checkAutoApproval(tool, string(input)); handled {
+			switch actionID {
+			case "allow_always", "allow":
 				return true, nil
+			case "deny_always", "deny":
+				return false, nil
+			default:
+				return false, fmt.Errorf("unsupported cached approval action: %s", actionID)
 			}
-			// Destructive command — fall through to prompt even though
-			// the tool was previously marked "always".
 		}
 
 		respCh := make(chan bool, 1)
@@ -453,21 +440,11 @@ func (m *Model) MakeUIRequestHandler() agent.UIRequestHandler {
 		tool := req.Metadata["tool"]
 		input := req.Metadata["input"]
 		if tool == "" {
+			// Fallback for non-standard adapters that omit tool metadata.
 			tool = req.Title
 		}
-
-		// Respect prior deny-always decisions.
-		if _, ok := m.alwaysDenied.Load(tool); ok {
-			return agent.UIResponse{RequestID: req.ID, ActionID: "deny_always"}, nil
-		}
-		// Respect prior allow-always decisions unless risk options disallow it.
-		if _, ok := m.alwaysApproved.Load(tool); ok {
-			opts := OptionsForRisk(tool, input)
-			for _, o := range opts {
-				if o == ApprovalAlways {
-					return agent.UIResponse{RequestID: req.ID, ActionID: "allow_always"}, nil
-				}
-			}
+		if actionID, handled := m.checkAutoApproval(tool, input); handled {
+			return agent.UIResponse{RequestID: req.ID, ActionID: actionID}, nil
 		}
 
 		respCh := make(chan ApprovalResult, 1)
@@ -561,6 +538,29 @@ func optionsFromUIActions(actions []agent.UIAction) []ApprovalResult {
 		opts = append(opts, mapped)
 	}
 	return opts
+}
+
+func (m *Model) checkAutoApproval(tool, input string) (actionID string, handled bool) {
+	// Auto-deny if user previously chose "deny always" for this tool.
+	if _, ok := m.alwaysDenied.Load(tool); ok {
+		return "deny_always", true
+	}
+
+	// Auto-approve if user previously chose "always" for this tool,
+	// but only if the current command is not destructive. Destructive
+	// commands must always be re-validated per invocation to prevent
+	// a benign "shell ls" approval from auto-approving "shell rm -rf /".
+	if _, ok := m.alwaysApproved.Load(tool); ok {
+		opts := OptionsForRisk(tool, input)
+		for _, o := range opts {
+			if o == ApprovalAlways {
+				return "allow_always", true
+			}
+		}
+		// Destructive command — fall through to interactive prompt.
+	}
+
+	return "", false
 }
 
 // handleCommand processes slash commands entered by the user.

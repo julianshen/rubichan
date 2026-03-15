@@ -126,6 +126,7 @@ func (c *countingApprovalChecker) Calls() int {
 }
 
 type mockUIRequestHandler struct {
+	mu    sync.Mutex
 	calls int
 	last  UIRequest
 	resp  UIResponse
@@ -133,6 +134,8 @@ type mockUIRequestHandler struct {
 }
 
 func (m *mockUIRequestHandler) Request(_ context.Context, req UIRequest) (UIResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls++
 	m.last = req
 	if m.err != nil {

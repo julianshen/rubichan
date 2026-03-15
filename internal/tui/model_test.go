@@ -1438,6 +1438,26 @@ func TestModelMakeUIRequestHandlerUsesAlwaysDenied(t *testing.T) {
 	assert.Equal(t, "deny_always", resp.ActionID)
 }
 
+func TestModelMakeUIRequestHandlerRejectsUnsupportedKinds(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	handler := m.MakeUIRequestHandler()
+
+	tests := []agent.UIRequestKind{
+		agent.UIKindConfirm,
+		agent.UIKindSelect,
+		agent.UIKindForm,
+	}
+
+	for _, kind := range tests {
+		_, err := handler.Request(context.Background(), agent.UIRequest{
+			ID:   "req-unsupported",
+			Kind: kind,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported UI request kind")
+	}
+}
+
 func TestModelIsAutoApproved(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 

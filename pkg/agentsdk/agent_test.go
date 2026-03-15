@@ -16,6 +16,22 @@ type mockProvider struct {
 	callIdx   int
 }
 
+type mockUIHandler struct {
+	resp  UIResponse
+	err   error
+	calls int
+	last  UIRequest
+}
+
+func (m *mockUIHandler) Request(_ context.Context, req UIRequest) (UIResponse, error) {
+	m.calls++
+	m.last = req
+	if m.err != nil {
+		return UIResponse{}, m.err
+	}
+	return m.resp, nil
+}
+
 func (m *mockProvider) Stream(_ context.Context, _ CompletionRequest) (<-chan StreamEvent, error) {
 	if m.callIdx >= len(m.responses) {
 		return nil, fmt.Errorf("no more mock responses")
@@ -349,6 +365,72 @@ func TestAgentApprovalCheckerRequiresApprovalNoFunc(t *testing.T) {
 	require.Len(t, toolResults, 1)
 	assert.True(t, toolResults[0].ToolResult.IsError)
 	assert.Contains(t, toolResults[0].ToolResult.Content, "approval function not configured")
+}
+
+func TestAgentApprovalCheckerUsesUIRequestHandler(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "allow"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	assert.Equal(t, 1, ui.calls)
+	assert.Equal(t, UIKindApproval, ui.last.Kind)
+	assert.Equal(t, "echo", ui.last.Metadata["tool"])
+	assert.Contains(t, eventTypes(events), "ui_request")
+	assert.Contains(t, eventTypes(events), "ui_response")
+}
+
+func TestAgentNoCheckerUsesUIRequestHandler(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "deny"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "denied")
+}
+
+func eventTypes(events []TurnEvent) []string {
+	out := make([]string, 0, len(events))
+	for _, ev := range events {
+		out = append(out, ev.Type)
+	}
+	return out
 }
 
 func TestAgentApprovalFuncError(t *testing.T) {

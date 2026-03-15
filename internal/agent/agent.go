@@ -1335,6 +1335,7 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		ch <- TurnEvent{Type: "ui_response", UIResponse: &resp}
 		switch strings.ToLower(resp.ActionID) {
 		case "allow", "allow_always", "yes":
+			// "allow_always" cache persistence is handled by the UI adapter.
 			return true, false, nil
 		case "deny_always":
 			return false, true, nil

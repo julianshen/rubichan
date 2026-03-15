@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -316,10 +317,10 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 			return a.toolError(tc, "Tool call denied by user (deny-always).")
 		}
 		if result == ApprovalRequired {
-			if a.approve == nil {
+			if a.uiRequestHandler == nil && a.approve == nil {
 				return a.toolError(tc, "approval function not configured")
 			}
-			approved, err := a.approve(ctx, tc.Name, tc.Input)
+			approved, err := a.requestToolApproval(ctx, ch, tc)
 			if err != nil {
 				a.logger.Error("approval failure for tool %s: %v", tc.Name, err)
 				return a.toolError(tc, "approval error")
@@ -328,9 +329,9 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 				return a.toolError(tc, "tool call denied by user")
 			}
 		}
-	} else if a.approve != nil {
+	} else if a.approve != nil || a.uiRequestHandler != nil {
 		// No checker — always ask for approval.
-		approved, err := a.approve(ctx, tc.Name, tc.Input)
+		approved, err := a.requestToolApproval(ctx, ch, tc)
 		if err != nil {
 			a.logger.Error("approval failure for tool %s: %v", tc.Name, err)
 			return a.toolError(tc, "approval error")
@@ -380,6 +381,47 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 		isError: res.IsError,
 		event:   makeResultEvent(tc.ID, tc.Name, res),
 	}
+}
+
+func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc ToolUseBlock) (bool, error) {
+	if a.uiRequestHandler != nil {
+		req := UIRequest{
+			ID:      tc.ID,
+			Kind:    UIKindApproval,
+			Title:   fmt.Sprintf("Approve %s tool call", tc.Name),
+			Message: "Review and choose how to proceed.",
+			Actions: []UIAction{
+				{ID: "allow", Label: "Allow", Default: true},
+				{ID: "deny", Label: "Deny", Style: "danger"},
+				{ID: "allow_always", Label: "Always Allow"},
+				{ID: "deny_always", Label: "Always Deny", Style: "danger"},
+			},
+			Metadata: map[string]string{
+				"tool":  tc.Name,
+				"input": string(tc.Input),
+			},
+		}
+		ch <- TurnEvent{Type: "ui_request", UIRequest: &req}
+		resp, err := a.uiRequestHandler.Request(ctx, req)
+		if err != nil {
+			return false, err
+		}
+		ch <- TurnEvent{Type: "ui_response", UIResponse: &resp}
+
+		switch strings.ToLower(resp.ActionID) {
+		case "allow", "allow_always", "yes":
+			return true, nil
+		case "deny", "deny_always", "no":
+			return false, nil
+		default:
+			return false, fmt.Errorf("unsupported UI approval action %q", resp.ActionID)
+		}
+	}
+
+	if a.approve == nil {
+		return false, fmt.Errorf("approval function not configured")
+	}
+	return a.approve(ctx, tc.Name, tc.Input)
 }
 
 func (a *Agent) toolError(tc ToolUseBlock, msg string) toolResult {
