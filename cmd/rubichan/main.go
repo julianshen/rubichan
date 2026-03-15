@@ -974,6 +974,9 @@ func runInteractive() error {
 	}
 	structuredEventLog, err := startEventLogger(eventLogPath)
 	if err != nil {
+		if closeErr := sessionLog.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close session log: %v\n", closeErr)
+		}
 		return err
 	}
 	stopSignals := startInteractiveSignalHandler(cfgDir, sessionLog.path, cancelRun)
@@ -1382,14 +1385,19 @@ func runInteractive() error {
 
 	// Wire the agent into the TUI model now that both exist.
 	model.SetAgent(a)
-	if plainHost != nil {
-		plainHost.SetAgent(a)
-		return plainHost.Run(runCtx)
-	}
 	model.SetWikiConfig(tui.WikiCommandConfig{
 		WorkDir: cwd,
 		LLM:     llmCompleter,
 	})
+	if plainHost != nil {
+		plainHost.SetAgent(a)
+		err := plainHost.Run(runCtx)
+		saveMemoriesBestEffort(a, os.Stderr)
+		if err != nil {
+			return err
+		}
+		return interactiveExitError(runCtx)
+	}
 
 	// Index project files for @ mention autocomplete (background).
 	fileSrc := tui.NewFileCompletionSource(cwd)

@@ -110,12 +110,12 @@ func TestMarkdownFormatterIncludesSummaryAlongsideError(t *testing.T) {
 func TestMarkdownFormatterIncludesEvidenceSection(t *testing.T) {
 	f := NewMarkdownFormatter()
 	result := &RunResult{
-		Prompt:           "build app",
-		Response:         "Model summary",
-		EvidenceSummary:  "- Verification verdict: passed\n- Reason: latest build evidence is green\n- Build: passed\n- Files changed: src/App.tsx, src/components/TodoList.tsx",
-		TurnCount:        1,
-		DurationMs:       250,
-		Mode:             "generic",
+		Prompt:          "build app",
+		Response:        "Model summary",
+		EvidenceSummary: "- Verification verdict: passed\n- Reason: latest build evidence is green\n- Build: passed\n- Files changed: src/App.tsx, src/components/TodoList.tsx",
+		TurnCount:       1,
+		DurationMs:      250,
+		Mode:            "generic",
 	}
 
 	out, err := f.Format(result)
@@ -126,6 +126,24 @@ func TestMarkdownFormatterIncludesEvidenceSection(t *testing.T) {
 	assert.Contains(t, s, "Verification verdict")
 	assert.Contains(t, s, "- Build: passed")
 	assert.Contains(t, s, "Files changed")
+}
+
+func TestMarkdownFormatterIgnoresWhitespaceOnlySummaryAndEvidence(t *testing.T) {
+	f := NewMarkdownFormatter()
+	result := &RunResult{
+		Prompt:          "test",
+		Summary:         "   \n\t  ",
+		EvidenceSummary: "   ",
+		TurnCount:       1,
+		DurationMs:      100,
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+	s := string(out)
+
+	assert.NotContains(t, s, "## Evidence")
+	assert.True(t, strings.HasPrefix(s, "\n---\n"))
 }
 
 func TestMarkdownFormatterWithSecurityFindings(t *testing.T) {

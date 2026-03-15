@@ -16,6 +16,7 @@ func DecodeJSONLEvents(r io.Reader) ([]Event, error) {
 		return nil, nil
 	}
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 	events := make([]Event, 0)
 	lineNo := 0
 	for scanner.Scan() {

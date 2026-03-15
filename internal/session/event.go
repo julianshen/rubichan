@@ -180,7 +180,9 @@ func NewJSONLSink(w io.Writer) EventSink {
 		if evt.Timestamp.IsZero() {
 			evt.Timestamp = time.Now().UTC()
 		}
-		_ = enc.Encode(evt)
+		if err := enc.Encode(evt); err != nil {
+			log.Printf("session event encode error: type=%s timestamp=%s err=%v", evt.Type, evt.Timestamp.UTC().Format(time.RFC3339Nano), err)
+		}
 	})
 }
 
@@ -200,10 +202,17 @@ func NewCommandResultEvent(command, output string, activated, deactivated []stri
 
 // WithActor annotates an event with the producing actor identity.
 func (e Event) WithActor(actor Actor) Event {
-	e.Actor = &Actor{
-		ID:   strings.TrimSpace(actor.ID),
-		Name: strings.TrimSpace(actor.Name),
-		Kind: strings.TrimSpace(actor.Kind),
+	if e.Actor == nil {
+		e.Actor = &Actor{}
+	}
+	if strings.TrimSpace(e.Actor.ID) == "" {
+		e.Actor.ID = strings.TrimSpace(actor.ID)
+	}
+	if strings.TrimSpace(e.Actor.Name) == "" {
+		e.Actor.Name = strings.TrimSpace(actor.Name)
+	}
+	if strings.TrimSpace(e.Actor.Kind) == "" {
+		e.Actor.Kind = strings.TrimSpace(actor.Kind)
 	}
 	return e
 }

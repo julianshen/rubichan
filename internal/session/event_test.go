@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"strings"
 	"testing"
 
@@ -128,6 +130,35 @@ func TestNewTurnAndToolEvents(t *testing.T) {
 	assert.Equal(t, EventTypeCheckpointRestored, restored.Type)
 	require.NotNil(t, restored.Checkpoint)
 	assert.Equal(t, "manual_restore", restored.Checkpoint.Reason)
+}
+
+func TestWithActorPreservesExistingActorFields(t *testing.T) {
+	evt := NewSubagentDoneEvent("explorer", "done", "found files")
+	out := evt.WithActor(PrimaryActor())
+	require.NotNil(t, out.Actor)
+	assert.Equal(t, "explorer", out.Actor.Name)
+	assert.Equal(t, "subagent", out.Actor.Kind)
+}
+
+func TestNewJSONLSinkLogsEncodeError(t *testing.T) {
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	defer log.SetOutput(oldWriter)
+	defer log.SetFlags(oldFlags)
+
+	sink := NewJSONLSink(errWriter{})
+	sink.Emit(NewTurnStartedEvent("prompt", "model"))
+
+	assert.Contains(t, logs.String(), "session event encode error")
+}
+
+type errWriter struct{}
+
+func (errWriter) Write(_ []byte) (int, error) {
+	return 0, io.ErrClosedPipe
 }
 
 func sprintf(format string, args ...any) string {

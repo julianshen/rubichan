@@ -232,6 +232,30 @@ func TestShellToolFallsBackWhenSandboxUnavailable(t *testing.T) {
 	assert.Equal(t, "hello from fallback\n", result.Content)
 }
 
+func TestShellToolFallbackEmitsSingleBeginEvent(t *testing.T) {
+	dir := t.TempDir()
+	st := NewShellTool(dir, 30*time.Second)
+	st.SetSandbox(&failingSandbox{err: errors.New("sandbox unavailable")})
+
+	input, _ := json.Marshal(map[string]string{
+		"command": "echo hello from fallback",
+	})
+	var events []ToolEvent
+	result, err := st.ExecuteStream(context.Background(), input, func(ev ToolEvent) {
+		events = append(events, ev)
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	beginCount := 0
+	for _, ev := range events {
+		if ev.Stage == EventBegin {
+			beginCount++
+		}
+	}
+	assert.Equal(t, 1, beginCount)
+}
+
 func TestShellToolAllowsDotDirectoryAsProjectRoot(t *testing.T) {
 	dir := t.TempDir()
 	st := newTestShellTool(dir, 30*time.Second)

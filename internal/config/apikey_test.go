@@ -38,6 +38,8 @@ func TestResolveAPIKeyUnknownSource(t *testing.T) {
 
 func TestOpenAICompatibleEnvVar(t *testing.T) {
 	assert.Equal(t, "OPENROUTER_API_KEY", OpenAICompatibleEnvVar("openrouter"))
+	assert.Equal(t, "AZURE_OPENAI_API_KEY", OpenAICompatibleEnvVar("azure-openai"))
+	assert.Equal(t, "MY_PROVIDER_01_API_KEY", OpenAICompatibleEnvVar(" my.provider 01 "))
 	assert.Equal(t, "", OpenAICompatibleEnvVar(""))
 }
 

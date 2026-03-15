@@ -304,31 +304,56 @@ func toolCallLooksLikeRuntimeEvidence(_ string, content string) bool {
 }
 
 func toolCallLooksLikeAPIEvidence(args, content string) bool {
-	if strings.Contains(args, "curl") && (strings.Contains(args, "/todos") || strings.Contains(args, "/stats")) {
-		return hasAPIFields(content) ||
-			strings.Contains(content, "http/1.1 200 ok") ||
-			strings.Contains(content, "http/1.1 201 created")
-	}
-	if strings.Contains(content, "/todos") || strings.Contains(content, "/stats") {
-		return hasAPIFields(content)
-	}
-	return false
+	hasHTTPClient := strings.Contains(args, "curl") ||
+		strings.Contains(args, "http ") ||
+		strings.Contains(args, "wget ") ||
+		strings.Contains(args, "axios") ||
+		strings.Contains(args, "fetch(") ||
+		strings.Contains(args, "requests.")
+	hasEndpoint := strings.Contains(args, "/") && (strings.Contains(args, "localhost") || strings.Contains(args, "127.0.0.1") || strings.Contains(args, "/api/") || strings.Contains(args, "/todos") || strings.Contains(args, "/stats"))
+	hasHTTPStatus := strings.Contains(content, "http/1.1 200") ||
+		strings.Contains(content, "http/1.1 201") ||
+		strings.Contains(content, "http/2 200") ||
+		strings.Contains(content, "status: 200") ||
+		strings.Contains(content, "status code: 200")
+	hasMethod := strings.Contains(args, " get ") ||
+		strings.Contains(args, " post ") ||
+		strings.Contains(args, " put ") ||
+		strings.Contains(args, " delete ") ||
+		strings.Contains(content, "get /") ||
+		strings.Contains(content, "post /") ||
+		strings.Contains(content, "put /") ||
+		strings.Contains(content, "delete /")
+	return (hasHTTPClient && (hasEndpoint || hasMethod) && (hasHTTPStatus || hasAPIFields(content))) ||
+		(hasEndpoint && hasAPIFields(content)) ||
+		(hasMethod && hasAPIFields(content))
 }
 
 func hasAPIFields(content string) bool {
 	return strings.Contains(content, "\"id\"") ||
-		strings.Contains(content, "\"title\"") ||
-		strings.Contains(content, "\"completed\"") ||
-		strings.Contains(content, "\"total\"") ||
+		strings.Contains(content, "id:") ||
 		strings.Contains(content, "'id'") ||
+		strings.Contains(content, "\"title\"") ||
+		strings.Contains(content, "title:") ||
 		strings.Contains(content, "'title'") ||
+		strings.Contains(content, "\"completed\"") ||
+		strings.Contains(content, "completed:") ||
 		strings.Contains(content, "'completed'") ||
-		strings.Contains(content, "'total'")
+		strings.Contains(content, "\"total\"") ||
+		strings.Contains(content, "total:") ||
+		strings.Contains(content, "'total'") ||
+		strings.Contains(content, "\"items\"") ||
+		strings.Contains(content, "\"data\"")
 }
 
 func toolCallLooksLikeEdit(args string) bool {
 	return strings.Contains(args, `"operation":"write"`) ||
 		strings.Contains(args, `"operation":"patch"`) ||
+		strings.Contains(args, `"operation":"apply"`) ||
+		strings.Contains(args, `"operation":"modify"`) ||
+		strings.Contains(args, `"operation":`) ||
 		strings.Contains(args, "apply_patch") ||
-		strings.Contains(args, "sed -i")
+		strings.Contains(args, "sed -i") ||
+		strings.Contains(args, "perl -pi") ||
+		strings.Contains(args, "mv ")
 }

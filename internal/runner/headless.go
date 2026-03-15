@@ -60,6 +60,9 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 	var toolCalls []output.ToolCallLog
 	var lastErr string
 	turns := 0
+	doneDiffSummary := ""
+	doneInputTokens := 0
+	doneOutputTokens := 0
 
 	for evt := range ch {
 		switch evt.Type {
@@ -98,6 +101,9 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 			}
 		case "done":
 			turns++
+			doneDiffSummary = evt.DiffSummary
+			doneInputTokens = evt.InputTokens
+			doneOutputTokens = evt.OutputTokens
 		}
 	}
 
@@ -122,7 +128,7 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 		lastErr = ""
 		summary = fmt.Sprintf("Run completed through tool evidence after %d tool call(s), but the model produced no final textual response.", len(toolCalls))
 	}
-	r.emitEvent(session.NewTurnCompletedEvent(summary, 0, 0))
+	r.emitEvent(session.NewTurnCompletedEvent(doneDiffSummary, doneInputTokens, doneOutputTokens))
 
 	return &output.RunResult{
 		Prompt:          prompt,
@@ -296,22 +302,31 @@ func backendAPIEvidenceLine(toolCalls []output.ToolCallLog) string {
 }
 
 func frontendVerificationVerdict(toolCalls []output.ToolCallLog) (string, string) {
-	for i := len(toolCalls) - 1; i >= 0; i-- {
-		tc := toolCalls[i]
-		if isFrontendBuildCommand(tc) {
-			if tc.IsError {
-				if snippet := extractBuildFailureSnippet(tc.Result); snippet != "" {
-					return "failed", snippet
-				}
-				return "failed", "build command failed"
-			}
-			return "passed", "latest build evidence is green"
-		}
-	}
 	if len(toolCalls) == 0 {
 		return "failed", "no tool evidence"
 	}
-	return "failed", "no build evidence"
+	lastEdit := -1
+	lastBuild := -1
+	for i, tc := range toolCalls {
+		if isFileModification(tc) {
+			lastEdit = i
+		}
+		if isFrontendBuildCommand(tc) {
+			lastBuild = i
+		}
+	}
+	if lastBuild == -1 || lastBuild <= lastEdit {
+		return "failed", "no build evidence"
+	}
+
+	tc := toolCalls[lastBuild]
+	if tc.IsError {
+		if snippet := extractBuildFailureSnippet(tc.Result); snippet != "" {
+			return "failed", snippet
+		}
+		return "failed", "build command failed"
+	}
+	return "passed", "latest build evidence is green"
 }
 
 func frontendBuildEvidenceLine(toolCalls []output.ToolCallLog) string {

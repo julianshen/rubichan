@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -22,6 +23,16 @@ func TestDecodeJSONLEvents(t *testing.T) {
 	assert.Equal(t, "build api", events[0].Turn.Prompt)
 	assert.Equal(t, EventTypeAssistantFinal, events[1].Type)
 	assert.Equal(t, "done", events[1].Assistant.Content)
+}
+
+func TestDecodeJSONLEventsAcceptsLargeLines(t *testing.T) {
+	large := strings.Repeat("x", 70*1024)
+	line := fmt.Sprintf("{\"type\":\"assistant_final\",\"assistant\":{\"content\":\"%s\"}}\n", large)
+	events, err := DecodeJSONLEvents(strings.NewReader(line))
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, EventTypeAssistantFinal, events[0].Type)
+	assert.Equal(t, large, events[0].Assistant.Content)
 }
 
 func TestBuildTranscript(t *testing.T) {

@@ -213,6 +213,16 @@ func TestSkillLogCommandDescription(t *testing.T) {
 	assert.NotEmpty(t, cmd.Description())
 }
 
+func TestSkillLogCommandArguments(t *testing.T) {
+	cmd := NewSkillLogCommand(&mockSkillLister{})
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestSkillLogCommandComplete(t *testing.T) {
+	cmd := NewSkillLogCommand(&mockSkillLister{})
+	assert.Nil(t, cmd.Complete(context.Background(), []string{"any"}))
+}
+
 func TestSkillLogCommandList(t *testing.T) {
 	lister := &mockSkillLister{
 		skills: []SkillInfo{

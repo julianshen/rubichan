@@ -370,6 +370,53 @@ func TestHeadlessRunnerEmitsStructuredSessionEvents(t *testing.T) {
 	assert.True(t, hasTurnDone)
 }
 
+func TestHeadlessRunnerTurnCompletedPreservesDonePayload(t *testing.T) {
+	turnFn := func(_ context.Context, _ string) (<-chan agent.TurnEvent, error) {
+		return makeEventCh(
+			agent.TurnEvent{Type: "done", DiffSummary: "real diff summary", InputTokens: 123, OutputTokens: 45},
+		), nil
+	}
+
+	var events []session.Event
+	r := NewHeadlessRunner(turnFn)
+	r.SetEventSink(session.SinkFunc(func(evt session.Event) {
+		events = append(events, evt)
+	}))
+
+	_, err := r.Run(context.Background(), "verify", "generic")
+	require.NoError(t, err)
+
+	var done *session.Event
+	for i := range events {
+		if events[i].Type == session.EventTypeTurnCompleted {
+			done = &events[i]
+			break
+		}
+	}
+	require.NotNil(t, done)
+	require.NotNil(t, done.Turn)
+	assert.Equal(t, "real diff summary", done.Turn.DiffSummary)
+	assert.Equal(t, 123, done.Turn.InputTokens)
+	assert.Equal(t, 45, done.Turn.OutputTokens)
+}
+
+func TestFrontendVerificationVerdictRequiresBuildAfterLatestEdit(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{
+			Name:  "shell",
+			Input: json.RawMessage(`{"command":"npm run build"}`),
+		},
+		{
+			Name:  "file",
+			Input: json.RawMessage(`{"operation":"patch","path":"src/App.tsx","old_string":"a","new_string":"b"}`),
+		},
+	}
+
+	verdict, reason := frontendVerificationVerdict(toolCalls)
+	assert.Equal(t, "failed", verdict)
+	assert.Equal(t, "no build evidence", reason)
+}
+
 func TestHeadlessRunnerBackendTaskRequiresAPIRoundTripForToolOnlySuccess(t *testing.T) {
 	turnFn := func(_ context.Context, msg string) (<-chan agent.TurnEvent, error) {
 		return makeEventCh(

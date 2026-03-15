@@ -278,11 +278,6 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	emitToolEvent(emit, ToolEvent{Stage: EventBegin, Content: in.Command})
-	if len(interception.warnings) > 0 {
-		emitToolEvent(emit, ToolEvent{Stage: EventDelta, Content: formatInterceptionWarnings(interception.warnings)})
-	}
-
 	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", in.Command)
 	cmd.Dir = workDir
 	if s.sandbox != nil {
@@ -298,6 +293,10 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
 			return res, nil
 		}
+	}
+	emitToolEvent(emit, ToolEvent{Stage: EventBegin, Content: in.Command})
+	if len(interception.warnings) > 0 {
+		emitToolEvent(emit, ToolEvent{Stage: EventDelta, Content: formatInterceptionWarnings(interception.warnings)})
 	}
 
 	stdout, err := cmd.StdoutPipe()
@@ -407,6 +406,10 @@ func isSandboxUnavailableError(err error) bool {
 		return false
 	}
 
+	// These strings indicate sandbox runtime/setup failures (for example
+	// macOS seatbelt permission errors) where fallback to unsandboxed execution
+	// is expected. Policy-deny failures (for example bubblewrap policy blocks)
+	// are intentionally not matched and should remain hard failures.
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "sandbox unavailable") ||
 		strings.Contains(msg, "sandbox_apply: operation not permitted") ||

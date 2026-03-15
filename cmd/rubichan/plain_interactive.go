@@ -97,13 +97,14 @@ func (h *plainInteractiveHost) refreshActiveSkills() {
 }
 
 func (h *plainInteractiveHost) MakeApprovalFunc() agent.ApprovalFunc {
-	return func(_ context.Context, tool string, input json.RawMessage) (bool, error) {
+	return func(ctx context.Context, tool string, input json.RawMessage) (bool, error) {
+		destructive := isDestructiveToolCall(tool, input)
 		h.mu.RLock()
 		if h.alwaysDenied[tool] {
 			h.mu.RUnlock()
 			return false, nil
 		}
-		if h.alwaysApproved[tool] {
+		if !destructive && h.alwaysApproved[tool] {
 			h.mu.RUnlock()
 			return true, nil
 		}
@@ -114,16 +115,18 @@ func (h *plainInteractiveHost) MakeApprovalFunc() agent.ApprovalFunc {
 			fmt.Fprintf(h.out, "Input: %s\n", trimmed)
 		}
 		fmt.Fprint(h.out, "[y]es / [n]o / [a]lways / [d]eny always: ")
-		line, err := h.readLine()
+		line, err := h.readLineCtx(ctx)
 		if err != nil {
 			return false, err
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "a", "always":
-			h.mu.Lock()
-			h.alwaysApproved[tool] = true
-			delete(h.alwaysDenied, tool)
-			h.mu.Unlock()
+			if !destructive {
+				h.mu.Lock()
+				h.alwaysApproved[tool] = true
+				delete(h.alwaysDenied, tool)
+				h.mu.Unlock()
+			}
 			return true, nil
 		case "d", "deny", "deny-always":
 			h.mu.Lock()
@@ -139,7 +142,10 @@ func (h *plainInteractiveHost) MakeApprovalFunc() agent.ApprovalFunc {
 	}
 }
 
-func (h *plainInteractiveHost) CheckApproval(tool string, _ json.RawMessage) agent.ApprovalResult {
+func (h *plainInteractiveHost) CheckApproval(tool string, input json.RawMessage) agent.ApprovalResult {
+	if isDestructiveToolCall(tool, input) {
+		return agent.ApprovalRequired
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	if h.alwaysDenied[tool] {
@@ -163,7 +169,7 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 		if _, err := fmt.Fprint(h.out, "❯ "); err != nil {
 			return err
 		}
-		line, err := h.readLine()
+		line, err := h.readLineCtx(ctx)
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -386,6 +392,44 @@ func (h *plainInteractiveHost) readLine() (string, error) {
 		return "", io.EOF
 	}
 	return strings.TrimRight(line, "\r\n"), nil
+}
+
+func (h *plainInteractiveHost) readLineCtx(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return h.readLine()
+	}
+	type readResult struct {
+		line string
+		err  error
+	}
+	ch := make(chan readResult, 1)
+	go func() {
+		line, err := h.readLine()
+		ch <- readResult{line: line, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", context.Cause(ctx)
+	case res := <-ch:
+		return res.line, res.err
+	}
+}
+
+func isDestructiveToolCall(tool string, input json.RawMessage) bool {
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	switch tool {
+	case "shell", "process":
+		return true
+	case "file":
+		var payload map[string]any
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return false
+		}
+		op := strings.ToLower(strings.TrimSpace(fmt.Sprint(payload["operation"])))
+		return op == "write" || op == "patch" || op == "delete" || op == "move" || op == "rename" || op == "create"
+	default:
+		return false
+	}
 }
 
 func diffStringSet(before, after []string) (activated []string, deactivated []string) {

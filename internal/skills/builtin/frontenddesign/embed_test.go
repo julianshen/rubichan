@@ -48,6 +48,9 @@ func TestFrontendDesignRegisterDesignCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
+	if len(discovered) == 0 {
+		t.Fatalf("Discover returned no skills")
+	}
 
 	cmds := discovered[0].Manifest.Commands
 	if len(cmds) != 1 {
@@ -65,6 +68,9 @@ func TestFrontendDesignIncludesAutoTriggers(t *testing.T) {
 	discovered, _, err := loader.Discover(nil)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
+	}
+	if len(discovered) == 0 {
+		t.Fatalf("Discover returned no skills")
 	}
 
 	ds := discovered[0]

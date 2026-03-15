@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode"
 )
 
 // ResolveAPIKey resolves an API key based on the given source.
@@ -33,7 +34,24 @@ func OpenAICompatibleEnvVar(name string) string {
 	if name == "" {
 		return ""
 	}
-	return strings.ToUpper(name) + "_API_KEY"
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToUpper(r))
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	normalized := strings.Trim(b.String(), "_")
+	if normalized == "" {
+		return ""
+	}
+	return normalized + "_API_KEY"
 }
 
 // ResolveOpenAICompatibleAPIKey resolves credentials for an OpenAI-compatible

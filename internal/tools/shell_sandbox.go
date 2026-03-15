@@ -94,6 +94,8 @@ func selectShellSandbox(goos, workDir string, lookPath lookPathFunc, probe sandb
 func sandboxBackendAvailable(goos, binary, workDir string) bool {
 	switch goos {
 	case "darwin":
+		// Defensive branch: current callers pass sandbox-exec, but keep this
+		// guard in case a future caller probes a different wrapper binary.
 		if filepath.Base(binary) != "sandbox-exec" {
 			return true
 		}

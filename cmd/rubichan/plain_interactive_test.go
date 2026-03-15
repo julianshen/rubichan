@@ -32,16 +32,28 @@ func TestPlainInteractiveStatusLineIncludesSkills(t *testing.T) {
 	assert.Contains(t, line, "Skills: 3 active (alpha, beta, +1)")
 }
 
-func TestPlainInteractiveApprovalCachesAlwaysApprove(t *testing.T) {
+func TestPlainInteractiveApprovalCachesAlwaysApproveForNonDestructiveTools(t *testing.T) {
 	in := bytes.NewBufferString("a\n")
 	out := &bytes.Buffer{}
 	host := newPlainInteractiveHost(in, out, "gpt-test", 20, commands.NewRegistry())
 
 	fn := host.MakeApprovalFunc()
-	approved, err := fn(context.Background(), "shell", json.RawMessage(`{"command":"ls"}`))
+	approved, err := fn(context.Background(), "file", json.RawMessage(`{"operation":"read","path":"README.md"}`))
 	require.NoError(t, err)
 	assert.True(t, approved)
-	assert.Equal(t, agent.AutoApproved, host.CheckApproval("shell", nil))
+	assert.Equal(t, agent.AutoApproved, host.CheckApproval("file", json.RawMessage(`{"operation":"read","path":"README.md"}`)))
+}
+
+func TestPlainInteractiveApprovalDoesNotCacheAlwaysForDestructiveTools(t *testing.T) {
+	in := bytes.NewBufferString("a\n")
+	out := &bytes.Buffer{}
+	host := newPlainInteractiveHost(in, out, "gpt-test", 20, commands.NewRegistry())
+
+	fn := host.MakeApprovalFunc()
+	approved, err := fn(context.Background(), "shell", json.RawMessage(`{"command":"rm -rf dist"}`))
+	require.NoError(t, err)
+	assert.True(t, approved)
+	assert.Equal(t, agent.ApprovalRequired, host.CheckApproval("shell", json.RawMessage(`{"command":"rm -rf dist"}`)))
 }
 
 func TestPlainInteractiveHandleCommandRefreshesSkillState(t *testing.T) {
@@ -132,4 +144,13 @@ func TestPlainInteractiveDebugVerificationSnapshot(t *testing.T) {
 	snapshot := host.DebugVerificationSnapshot()
 	assert.Contains(t, snapshot, "verdict: passed")
 	assert.Contains(t, snapshot, "api round-trip: true")
+}
+
+func TestPlainInteractiveReadLineCtxCancelled(t *testing.T) {
+	host := newPlainInteractiveHost(bytes.NewBufferString(""), &bytes.Buffer{}, "gpt-test", 20, commands.NewRegistry())
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(context.Canceled)
+	_, err := host.readLineCtx(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
 }
