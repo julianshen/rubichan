@@ -10,6 +10,7 @@ import (
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,6 +93,22 @@ func TestPlainInteractiveHandleCommandEmitsSessionEvent(t *testing.T) {
 	assert.Equal(t, session.EventTypeCommandResult, events[0].Type)
 	require.NotNil(t, events[0].Command)
 	assert.Equal(t, "/help", events[0].Command.Command)
+}
+
+func TestPlainInteractiveRunRewritesInlineSkillDirective(t *testing.T) {
+	reg := commands.NewRegistry()
+	stub := &testutil.StubSlashCommand{CommandName: "skill", Output: "Skill \"brainstorming\" activated."}
+	require.NoError(t, reg.Register(stub))
+
+	out := &bytes.Buffer{}
+	host := newPlainInteractiveHost(bytes.NewBufferString("__skill({\"name\":\"brainstorming\"})\n"), out, "gpt-test", 20, reg)
+
+	err := host.Run(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"activate", "brainstorming"}, stub.LastArgs)
+	assert.Contains(t, out.String(), `Inline skill directive: activate "brainstorming"`)
+	assert.Contains(t, out.String(), `Skill "brainstorming" activated.`)
 }
 
 func TestDiffStringSet(t *testing.T) {

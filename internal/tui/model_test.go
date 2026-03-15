@@ -19,6 +19,7 @@ import (
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
@@ -321,6 +322,35 @@ func TestModelUpdateEnterSlashCommand(t *testing.T) {
 
 	um := updated.(*Model)
 	assert.Contains(t, um.content.String(), "/quit")
+}
+
+func TestModelUpdateEnterInlineSkillDirectiveRunsSkillCommand(t *testing.T) {
+	reg := commands.NewRegistry()
+	cmd := &testutil.StubSlashCommand{CommandName: "skill", Output: "Skill \"brainstorming\" activated."}
+	require.NoError(t, reg.Register(cmd))
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, reg)
+	m.input.SetValue(`__skill({"name":"brainstorming"})`)
+
+	updated, teaCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updated.(*Model)
+	assert.Nil(t, teaCmd)
+	assert.Equal(t, StateInput, um.state)
+	assert.Equal(t, []string{"activate", "brainstorming"}, cmd.LastArgs)
+	assert.Contains(t, um.content.String(), `Inline skill directive: activate "brainstorming"`)
+	assert.Contains(t, um.content.String(), `Skill "brainstorming" activated.`)
+}
+
+func TestModelUpdateEnterInlineSkillDirectiveShowsParseError(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.input.SetValue(`__skill({"action":"activate"})`)
+
+	updated, teaCmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	um := updated.(*Model)
+	assert.Nil(t, teaCmd)
+	assert.Equal(t, StateInput, um.state)
+	assert.Contains(t, um.content.String(), "skill directive name is required")
 }
 
 func TestModelAdvanceRalphLoopStopsOnCompletionPromise(t *testing.T) {

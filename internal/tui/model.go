@@ -479,6 +479,10 @@ func (m *Model) handleCommand(line string) tea.Cmd {
 		m.setContentAndAutoScroll()
 		return nil
 	}
+	return m.handleCommandParts(line, parts)
+}
+
+func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 	if len(parts) == 0 {
 		return nil
 	}
