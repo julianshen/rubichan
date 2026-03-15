@@ -457,6 +457,27 @@ func TestFrontendBuildEvidenceLineUsesOnlyPostEditCalls(t *testing.T) {
 	assert.Equal(t, "- Build: no evidence", frontendBuildEvidenceLine(toolCalls))
 }
 
+func TestLooksLikeBackendFullstackTaskDoesNotClassifyGenericCrudFrontendPrompt(t *testing.T) {
+	assert.False(t, looksLikeBackendFullstackTask("Create a React Vite CRUD app"))
+	assert.True(t, looksLikeBackendFullstackTask("Create a backend CRUD API with sqlite"))
+}
+
+func TestIsFileModificationRecognizesExtendedFileOperations(t *testing.T) {
+	for _, op := range []string{"delete", "create", "rename", "move", "append"} {
+		tc := output.ToolCallLog{Name: "file", Input: json.RawMessage(`{"operation":"` + op + `"}`)}
+		assert.True(t, isFileModification(tc), "operation %s should be considered edit", op)
+	}
+}
+
+func TestBackendAPIEvidenceAcceptsSingleQuotedPythonTranscript(t *testing.T) {
+	tc := output.ToolCallLog{
+		Name:   "shell",
+		Input:  json.RawMessage(`{"command":"python3 - << 'PY' ... PY"}`),
+		Result: "POST /todos 201 {'id':1,'title':'demo'}\nFinal /stats 200 {'total':0}\nGET /todos 200",
+	}
+	assert.True(t, backendAPIEvidenceInToolCall(tc))
+}
+
 func TestHeadlessRunnerBackendTaskRequiresAPIRoundTripForToolOnlySuccess(t *testing.T) {
 	turnFn := func(_ context.Context, msg string) (<-chan agent.TurnEvent, error) {
 		return makeEventCh(

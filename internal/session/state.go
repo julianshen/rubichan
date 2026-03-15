@@ -372,7 +372,14 @@ func toolCallLooksLikeEdit(args string) bool {
 		strings.Contains(args, `"operation":"move"`) ||
 		strings.Contains(args, `"operation":"append"`) ||
 		strings.Contains(args, "apply_patch") ||
+		strings.Contains(args, "applypatch") ||
 		strings.Contains(args, "sed -i") ||
+		strings.Contains(args, " tee ") ||
+		strings.Contains(args, "| tee") ||
+		strings.Contains(args, ">>") ||
+		strings.Contains(args, " > ") ||
+		strings.Contains(args, "2>") ||
 		strings.Contains(args, "perl -pi") ||
-		strings.Contains(args, "mv ")
+		strings.Contains(args, "mv ") ||
+		strings.Contains(args, "cp ")
 }

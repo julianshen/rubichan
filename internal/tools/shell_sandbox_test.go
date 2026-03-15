@@ -47,6 +47,17 @@ func TestSelectShellSandboxFallsBackWhenBackendMissing(t *testing.T) {
 	assert.Nil(t, sb)
 }
 
+func TestSelectShellSandboxReturnsNilWhenProbeRejects(t *testing.T) {
+	sb := selectShellSandbox("linux", t.TempDir(), func(file string) (string, error) {
+		if file == "bwrap" {
+			return "/usr/bin/bwrap", nil
+		}
+		return "", errors.New("unexpected lookup")
+	}, func(_, _, _ string) bool { return false })
+
+	assert.Nil(t, sb)
+}
+
 func TestSeatbeltSandboxWrapsCommand(t *testing.T) {
 	expectedShell, err := exec.LookPath("sh")
 	require.NoError(t, err)

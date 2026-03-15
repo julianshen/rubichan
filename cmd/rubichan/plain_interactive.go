@@ -117,6 +117,9 @@ func (h *plainInteractiveHost) MakeApprovalFunc() agent.ApprovalFunc {
 		fmt.Fprint(h.out, "[y]es / [n]o / [a]lways / [d]eny always: ")
 		line, err := h.readLineCtx(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return false, interactiveExitError(ctx)
+			}
 			return false, err
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
@@ -173,6 +176,9 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 		if err != nil {
 			if err == io.EOF {
 				return nil
+			}
+			if ctx.Err() != nil {
+				return interactiveExitError(ctx)
 			}
 			return err
 		}

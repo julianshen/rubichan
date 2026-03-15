@@ -91,6 +91,12 @@ func TestToolCallLooksLikeEditIgnoresReadOperation(t *testing.T) {
 	assert.True(t, toolCallLooksLikeEdit(`{"operation":"append","path":"notes.md"}`))
 }
 
+func TestToolCallLooksLikeEditRecognizesShellMutationPatterns(t *testing.T) {
+	assert.True(t, toolCallLooksLikeEdit(`{"command":"cp a b"}`))
+	assert.True(t, toolCallLooksLikeEdit(`{"command":"echo hi >> file.txt"}`))
+	assert.True(t, toolCallLooksLikeEdit(`{"command":"cat x | tee y"}`))
+}
+
 func TestStateBuildVerificationSnapshotInvalidated(t *testing.T) {
 	s := NewState()
 	s.ResetForPrompt("Create a backend-only todo API using Node.js and SQLite")

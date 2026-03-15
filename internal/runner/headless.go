@@ -435,7 +435,6 @@ func looksLikeBackendFullstackTask(prompt string) bool {
 		"sqlite",
 		"database",
 		"api",
-		"crud",
 		"node.js",
 		"nodejs",
 		"python backend",
@@ -595,7 +594,12 @@ func isFileModification(tc output.ToolCallLog) bool {
 		if err := json.Unmarshal(tc.Input, &in); err != nil {
 			return false
 		}
-		return in.Operation == "write" || in.Operation == "patch"
+		switch strings.ToLower(strings.TrimSpace(in.Operation)) {
+		case "write", "patch", "delete", "create", "rename", "move", "append":
+			return true
+		default:
+			return false
+		}
 	case "shell":
 		var in struct {
 			Command string `json:"command"`
@@ -606,13 +610,20 @@ func isFileModification(tc output.ToolCallLog) bool {
 		cmd := strings.ToLower(in.Command)
 		for _, needle := range []string{
 			"apply_patch",
+			"applypatch",
 			"sed -i",
 			"perl -pi",
+			"| tee",
+			" tee ",
 			"> ",
 			">>",
+			"2>",
 			"mv ",
 			"cp ",
 			"mkdir ",
+			"touch ",
+			"install -m",
+			"cat >",
 		} {
 			if strings.Contains(cmd, needle) {
 				return true
@@ -903,14 +914,25 @@ func backendAPIEvidenceInToolCall(tc output.ToolCallLog) bool {
 		(strings.Contains(command, "localhost") || strings.Contains(command, "127.0.0.1")) &&
 		(strings.Contains(command, "post ") || strings.Contains(command, "patch ") || strings.Contains(command, "put ") || strings.Contains(command, "get ") || strings.Contains(command, "/todos"))
 	if !targetedRequest && !strings.Contains(result, "/api/") && !strings.Contains(result, "/todos") {
-		if !(strings.Contains(result, "\"id\"") && strings.Contains(result, "\"title\"")) {
+		if !(hasDoubleQuoteAPIFields(result) || hasSingleQuoteAPIFields(result)) {
 			return false
 		}
 	}
 	return strings.Contains(result, "http/1.1 200 ok") ||
 		strings.Contains(result, "http/1.1 201 created") ||
-		(strings.Contains(result, "\"id\"") && strings.Contains(result, "\"title\"")) ||
+		(strings.Contains(result, "post /") && strings.Contains(result, "201")) ||
+		(strings.Contains(result, "get /") && strings.Contains(result, "200")) ||
+		hasDoubleQuoteAPIFields(result) ||
+		hasSingleQuoteAPIFields(result) ||
 		(strings.Contains(result, "|") && strings.Contains(result, "todo"))
+}
+
+func hasDoubleQuoteAPIFields(result string) bool {
+	return strings.Contains(result, "\"id\"") && strings.Contains(result, "\"title\"")
+}
+
+func hasSingleQuoteAPIFields(result string) bool {
+	return strings.Contains(result, "'id'") && strings.Contains(result, "'title'")
 }
 
 func extractBuildFailureSnippet(result string) string {

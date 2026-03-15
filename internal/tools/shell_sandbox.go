@@ -103,16 +103,11 @@ func sandboxBackendAvailable(goos, binary, workDir string) bool {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, "sh", "-c", "pwd")
-		cmd.Dir = workDir
 		sb := &seatbeltSandbox{
 			binary: binary,
 			policy: DefaultShellSandboxPolicy(workDir),
 		}
-		if err := sb.Wrap(cmd); err != nil {
-			return false
-		}
-		return cmd.Run() == nil
+		return runSandboxProbe(ctx, workDir, sb.Wrap)
 	case "linux":
 		// Defensive branch: current callers pass bwrap, but keep this guard in
 		// case a future caller probes a different wrapper binary.
@@ -123,19 +118,23 @@ func sandboxBackendAvailable(goos, binary, workDir string) bool {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, "sh", "-c", "pwd")
-		cmd.Dir = workDir
 		sb := &bubblewrapSandbox{
 			binary: binary,
 			policy: DefaultShellSandboxPolicy(workDir),
 		}
-		if err := sb.Wrap(cmd); err != nil {
-			return false
-		}
-		return cmd.Run() == nil
+		return runSandboxProbe(ctx, workDir, sb.Wrap)
 	default:
 		return true
 	}
+}
+
+func runSandboxProbe(ctx context.Context, workDir string, wrap func(*exec.Cmd) error) bool {
+	cmd := exec.CommandContext(ctx, "sh", "-c", "pwd")
+	cmd.Dir = workDir
+	if err := wrap(cmd); err != nil {
+		return false
+	}
+	return cmd.Run() == nil
 }
 
 type seatbeltSandbox struct {
