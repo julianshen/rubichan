@@ -80,6 +80,7 @@ var (
 	noMouse          bool
 	plainTUI         bool
 	plainInteractive bool
+	debugMode        bool
 	approveCwd       bool
 	eventLogPath     string
 
@@ -221,7 +222,7 @@ func writeStackDump(cfgDir, fileName, header string) (string, error) {
 	return path, nil
 }
 
-func startSessionLogger(cfgDir string) (*sessionLogger, error) {
+func startSessionLogger(cfgDir string, mirrorToStderr bool) (*sessionLogger, error) {
 	logDir := filepath.Join(cfgDir, "logs")
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return nil, fmt.Errorf("creating log directory: %w", err)
@@ -240,7 +241,11 @@ func startSessionLogger(cfgDir string) (*sessionLogger, error) {
 		prevFlags:  log.Flags(),
 	}
 	setActiveSessionLogPath(path)
-	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	logWriter := io.Writer(f)
+	if mirrorToStderr {
+		logWriter = io.MultiWriter(os.Stderr, f)
+	}
+	log.SetOutput(logWriter)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.LUTC)
 	log.Printf("rubichan session log started: %s", path)
 	return sl, nil
@@ -275,6 +280,21 @@ func (el *eventLogger) Close() error {
 		return nil
 	}
 	return el.file.Close()
+}
+
+// buildEventSink centralizes interactive/headless session event wiring.
+// Human-readable log mirroring is intentionally debug-only; when callers
+// request only --event-log, events are written to JSONL without also being
+// mirrored through the standard logger.
+func buildEventSink(structuredEventLog *eventLogger, debug bool) session.MultiSink {
+	var sink session.MultiSink
+	if debug {
+		sink = append(sink, session.NewLogSink(log.Printf))
+	}
+	if structuredEventLog != nil {
+		sink = append(sink, session.NewJSONLSink(structuredEventLog.file))
+	}
+	return sink
 }
 
 func writeDiagnosticDump(cfgDir string, sig os.Signal, sessionLogPath string) (string, error) {
@@ -402,6 +422,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&noMouse, "no-mouse", false, "disable mouse tracking in the interactive TUI")
 	rootCmd.PersistentFlags().BoolVar(&plainTUI, "plain-tui", false, "run a reduced interactive TUI optimized for PTY capture and automation")
 	rootCmd.PersistentFlags().BoolVar(&plainInteractive, "plain-interactive", false, "run a non-TUI interactive REPL that shares the interactive agent, skills, and approval flow")
+	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "enable interactive debug surfaces and mirror logs to stderr")
 	rootCmd.PersistentFlags().BoolVar(&approveCwd, "approve-cwd", false, "approve access to the current working directory in headless mode without enabling full auto-approval")
 	rootCmd.PersistentFlags().StringVar(&eventLogPath, "event-log", "", "write structured interactive session events to the given JSONL file")
 	rootCmd.PersistentFlags().BoolVar(&headless, "headless", false, "run in non-interactive headless mode")
@@ -971,7 +992,7 @@ func runInteractive() error {
 	}
 	runCtx, cancelRun := context.WithCancelCause(context.Background())
 	defer cancelRun(nil)
-	sessionLog, err := startSessionLogger(cfgDir)
+	sessionLog, err := startSessionLogger(cfgDir, debugMode)
 	if err != nil {
 		return err
 	}
@@ -1249,6 +1270,7 @@ func runInteractive() error {
 	var plainHost *plainInteractiveHost
 	if plainInteractive {
 		plainHost = newPlainInteractiveHost(os.Stdin, os.Stdout, cfg.Provider.Model, cfg.Agent.MaxTurns, cmdRegistry)
+		plainHost.SetDebug(debugMode)
 		if rt != nil {
 			plainHost.SetSkillRuntime(rt)
 		}
@@ -1257,18 +1279,14 @@ func runInteractive() error {
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
+	model.SetDebug(debugMode)
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
 	}
-	if structuredEventLog != nil {
-		sink := session.MultiSink{
-			session.NewLogSink(log.Printf),
-			session.NewJSONLSink(structuredEventLog.file),
-		}
-		model.SetEventSink(sink)
-		if plainHost != nil {
-			plainHost.SetEventSink(sink)
-		}
+	sink := buildEventSink(structuredEventLog, debugMode)
+	model.SetEventSink(sink)
+	if plainHost != nil {
+		plainHost.SetEventSink(sink)
 	}
 	if plainTUI {
 		noAltScreen = true
@@ -1628,11 +1646,8 @@ func runHeadless() error {
 	// Run LLM review and security scan concurrently for code-review mode.
 	hr := runner.NewHeadlessRunner(a.Turn)
 	hr.SetModelName(cfg.Provider.Model)
-	if structuredEventLog != nil {
-		hr.SetEventSink(session.MultiSink{
-			session.NewLogSink(log.Printf),
-			session.NewJSONLSink(structuredEventLog.file),
-		})
+	if sink := buildEventSink(structuredEventLog, debugMode); len(sink) > 0 {
+		hr.SetEventSink(sink)
 	}
 	promptText = applyHeadlessBootstrapProbePrompt(promptText, headlessToolsCfg.ShouldEnable("shell"))
 	var result *output.RunResult

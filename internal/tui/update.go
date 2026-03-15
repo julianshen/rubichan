@@ -90,6 +90,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.refreshRenderers()
 		m.reflowViewport()
 		if m.completion != nil {
 			m.completion.SetWidth(m.width)
@@ -555,12 +556,16 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			if gate == "hard_fail" || (gate == "" && verdict != "" && verdict != "passed") {
 				m.emitSessionEvent(session.NewGateFailedEvent("verification", reason))
 			}
-			m.content.WriteString(summary)
-			if !strings.HasSuffix(summary, "\n") {
-				m.content.WriteString("\n")
+			if m.debug {
+				m.content.WriteString(summary)
+				if !strings.HasSuffix(summary, "\n") {
+					m.content.WriteString("\n")
+				}
 			}
 			m.emitSessionEvent(session.NewVerificationSnapshotEvent(summary))
-			log.Printf("verification snapshot: %s", strings.ReplaceAll(strings.TrimSpace(summary), "\n", " | "))
+			if m.debug {
+				log.Printf("verification snapshot: %s", strings.ReplaceAll(strings.TrimSpace(summary), "\n", " | "))
+			}
 		}
 		m.content.WriteString(persona.SuccessMessage())
 		m.content.WriteString("\n")

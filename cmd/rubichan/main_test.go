@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
@@ -87,7 +89,7 @@ func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
 	defer log.SetOutput(origWriter)
 	defer log.SetFlags(origFlags)
 
-	logger, err := startSessionLogger(t.TempDir())
+	logger, err := startSessionLogger(t.TempDir(), false)
 	require.NoError(t, err)
 	require.FileExists(t, logger.path)
 
@@ -107,9 +109,35 @@ func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
 	dirInfo, err := os.Stat(filepath.Dir(logger.path))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
+	assert.NotContains(t, sentinel.String(), "captured line")
 	log.Print("restored line")
 	assert.Contains(t, sentinel.String(), "restored line")
 	assert.Equal(t, 123, log.Flags())
+}
+
+func TestStartSessionLoggerMirrorsToStderrInDebugMode(t *testing.T) {
+	origWriter := log.Writer()
+	origFlags := log.Flags()
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	defer func() { _ = r.Close() }()
+	os.Stderr = w
+	log.SetFlags(123)
+	defer log.SetOutput(origWriter)
+	defer log.SetFlags(origFlags)
+	defer func() { os.Stderr = origStderr }()
+
+	logger, err := startSessionLogger(t.TempDir(), true)
+	require.NoError(t, err)
+
+	log.Printf("debug line")
+
+	require.NoError(t, logger.Close())
+	require.NoError(t, w.Close())
+	data, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "debug line")
 }
 
 func TestStartEventLoggerWritesJSONLFile(t *testing.T) {
@@ -129,6 +157,24 @@ func TestStartEventLoggerWritesJSONLFile(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestBuildEventSinkWithoutDebugAndEventLogIsNoOp(t *testing.T) {
+	sink := buildEventSink(nil, false)
+	require.Len(t, sink, 0)
+	assert.NotPanics(t, func() {
+		sink.Emit(session.NewTurnStartedEvent("prompt", "model"))
+	})
+}
+
+func TestBuildEventSinkIncludesJSONLWithoutDebug(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events", "session.jsonl")
+	logger, err := startEventLogger(path)
+	require.NoError(t, err)
+	require.NoError(t, logger.Close())
+
+	sink := buildEventSink(logger, false)
+	require.Len(t, sink, 1)
 }
 
 func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
