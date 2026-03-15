@@ -8,6 +8,7 @@ import (
 
 type inlineSkillDirective struct {
 	Name   string `json:"name"`
+	Tool   string `json:"tool"`
 	Action string `json:"action"`
 }
 
@@ -38,15 +39,28 @@ func formatCommandDisplay(args []string) string {
 	return strings.Join(rendered, " ")
 }
 
-// RewriteInlineSkillDirective converts __skill({...}) into an equivalent
-// slash command so existing command handling can execute it.
+// RewriteInlineSkillDirective normalizes inline skill directives into an
+// equivalent slash command so downstream command handling can treat all model
+// variants consistently. Supported forms are __skill({...}), skill({...}),
+// /skill({...}), \skill({...}), and !skill({...}).
 func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool, error) {
 	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "__skill(") || !strings.HasSuffix(trimmed, ")") {
+	prefixes := []string{"__skill(", "skill(", "/skill(", `\skill(`, "!skill("}
+	prefix := ""
+	for _, candidate := range prefixes {
+		if strings.HasPrefix(trimmed, candidate) {
+			prefix = candidate
+			break
+		}
+	}
+	if prefix == "" {
+		return InlineSkillDirectiveResult{}, false, nil
+	}
+	if !strings.HasSuffix(trimmed, ")") {
 		return InlineSkillDirectiveResult{}, false, nil
 	}
 
-	payload := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "__skill("), ")"))
+	payload := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, prefix), ")"))
 	if payload == "" {
 		return InlineSkillDirectiveResult{}, true, fmt.Errorf("skill directive payload is required")
 	}
@@ -57,6 +71,13 @@ func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool,
 	}
 
 	name := strings.TrimSpace(directive.Name)
+	tool := strings.TrimSpace(directive.Tool)
+	if name != "" && tool != "" && name != tool {
+		return InlineSkillDirectiveResult{}, true, fmt.Errorf("skill directive has conflicting name %q and tool %q", name, tool)
+	}
+	if name == "" {
+		name = tool
+	}
 	if name == "" {
 		return InlineSkillDirectiveResult{}, true, fmt.Errorf("skill directive name is required")
 	}

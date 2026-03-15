@@ -18,6 +18,47 @@ func TestRewriteInlineSkillDirectiveActivate(t *testing.T) {
 	assert.Equal(t, "brainstorming", result.Name)
 }
 
+func TestRewriteInlineSkillDirectiveAcceptsAliasForms(t *testing.T) {
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "skill prefix with name",
+			input: `skill({"name":"brainstorming"})`,
+		},
+		{
+			name:  "skill prefix with tool alias",
+			input: `skill({"tool":"brainstorming"})`,
+		},
+		{
+			name:  "slash style prefix",
+			input: `/skill({"name":"brainstorming"})`,
+		},
+		{
+			name:  "backslash style prefix",
+			input: `\skill({"name":"brainstorming"})`,
+		},
+		{
+			name:  "bang style prefix",
+			input: `!skill({"name":"brainstorming"})`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, ok, err := RewriteInlineSkillDirective(tc.input)
+
+			require.NoError(t, err)
+			assert.True(t, ok)
+			assert.Equal(t, `/skill activate brainstorming`, result.Command)
+			assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
+			assert.Equal(t, "activate", result.Action)
+			assert.Equal(t, "brainstorming", result.Name)
+		})
+	}
+}
+
 func TestRewriteInlineSkillDirectiveDeactivate(t *testing.T) {
 	result, ok, err := RewriteInlineSkillDirective(`__skill({"name":"brainstorming","action":"deactivate"})`)
 
@@ -67,6 +108,14 @@ func TestRewriteInlineSkillDirectiveRejectsUnsupportedAction(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, ok)
 	assert.Contains(t, err.Error(), "unsupported skill directive action")
+}
+
+func TestRewriteInlineSkillDirectiveRejectsConflictingNameAndTool(t *testing.T) {
+	_, ok, err := RewriteInlineSkillDirective(`__skill({"name":"brainstorming","tool":"other"})`)
+
+	require.Error(t, err)
+	assert.True(t, ok)
+	assert.Contains(t, err.Error(), "conflicting name")
 }
 
 func TestRewriteInlineSkillDirectiveNormalizesActionCase(t *testing.T) {
