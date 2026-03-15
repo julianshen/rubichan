@@ -197,7 +197,14 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 				continue
 			}
 			_, _ = fmt.Fprintf(h.out, "Inline skill directive: %s %q\n", directive.Action, directive.Name)
-			text = directive.Command
+			shouldQuit, err := h.handleCommandParts(ctx, directive.Command, directive.Args)
+			if err != nil {
+				return err
+			}
+			if shouldQuit {
+				return nil
+			}
+			continue
 		}
 		if strings.HasPrefix(text, "/") {
 			shouldQuit, err := h.handleCommand(ctx, text)
@@ -221,6 +228,10 @@ func (h *plainInteractiveHost) handleCommand(ctx context.Context, line string) (
 		_, _ = fmt.Fprintln(h.out, persona.ErrorMessage(err.Error()))
 		return false, nil
 	}
+	return h.handleCommandParts(ctx, line, parts)
+}
+
+func (h *plainInteractiveHost) handleCommandParts(ctx context.Context, line string, parts []string) (bool, error) {
 	if len(parts) == 0 {
 		return false, nil
 	}
@@ -424,6 +435,9 @@ func (h *plainInteractiveHost) readLine() (string, error) {
 func (h *plainInteractiveHost) readLineCtx(ctx context.Context) (string, error) {
 	if ctx == nil {
 		return h.readLine()
+	}
+	if err := context.Cause(ctx); err != nil {
+		return "", err
 	}
 	type readResult struct {
 		line string

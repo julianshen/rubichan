@@ -13,6 +13,7 @@ type inlineSkillDirective struct {
 
 type InlineSkillDirectiveResult struct {
 	Command string
+	Args    []string
 	Name    string
 	Action  string
 }
@@ -52,6 +53,7 @@ func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool,
 
 	return InlineSkillDirectiveResult{
 		Command: fmt.Sprintf("/skill %s %q", action, name),
+		Args:    []string{"/skill", action, name},
 		Name:    name,
 		Action:  action,
 	}, true, nil

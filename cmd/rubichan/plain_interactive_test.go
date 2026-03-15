@@ -10,6 +10,7 @@ import (
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -96,7 +97,7 @@ func TestPlainInteractiveHandleCommandEmitsSessionEvent(t *testing.T) {
 
 func TestPlainInteractiveRunRewritesInlineSkillDirective(t *testing.T) {
 	reg := commands.NewRegistry()
-	stub := &plainStubSlashCommand{name: "skill", output: "Skill \"brainstorming\" activated."}
+	stub := &testutil.StubSlashCommand{CommandName: "skill", Output: "Skill \"brainstorming\" activated."}
 	require.NoError(t, reg.Register(stub))
 
 	out := &bytes.Buffer{}
@@ -105,7 +106,7 @@ func TestPlainInteractiveRunRewritesInlineSkillDirective(t *testing.T) {
 	err := host.Run(context.Background())
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"activate", "brainstorming"}, stub.lastArgs)
+	assert.Equal(t, []string{"activate", "brainstorming"}, stub.LastArgs)
 	assert.Contains(t, out.String(), `Inline skill directive: activate "brainstorming"`)
 	assert.Contains(t, out.String(), `Skill "brainstorming" activated.`)
 }
@@ -169,23 +170,4 @@ func TestPlainInteractiveReadLineCtxCancelled(t *testing.T) {
 	_, err := host.readLineCtx(ctx)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
-}
-
-type plainStubSlashCommand struct {
-	name     string
-	output   string
-	lastArgs []string
-}
-
-func (s *plainStubSlashCommand) Name() string { return s.name }
-
-func (s *plainStubSlashCommand) Description() string { return "stub" }
-
-func (s *plainStubSlashCommand) Arguments() []commands.ArgumentDef { return nil }
-
-func (s *plainStubSlashCommand) Complete(context.Context, []string) []commands.Candidate { return nil }
-
-func (s *plainStubSlashCommand) Execute(_ context.Context, args []string) (commands.Result, error) {
-	s.lastArgs = append([]string(nil), args...)
-	return commands.Result{Output: s.output}, nil
 }

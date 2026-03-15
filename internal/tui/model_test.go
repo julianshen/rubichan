@@ -19,6 +19,7 @@ import (
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools"
 )
 
@@ -28,25 +29,6 @@ type mockSkillSummaryProvider struct {
 
 func (m *mockSkillSummaryProvider) GetAllSkillSummaries() []skills.SkillSummary {
 	return m.summaries
-}
-
-type stubSlashCommand struct {
-	name     string
-	output   string
-	lastArgs []string
-}
-
-func (s *stubSlashCommand) Name() string { return s.name }
-
-func (s *stubSlashCommand) Description() string { return "stub" }
-
-func (s *stubSlashCommand) Arguments() []commands.ArgumentDef { return nil }
-
-func (s *stubSlashCommand) Complete(context.Context, []string) []commands.Candidate { return nil }
-
-func (s *stubSlashCommand) Execute(_ context.Context, args []string) (commands.Result, error) {
-	s.lastArgs = append([]string(nil), args...)
-	return commands.Result{Output: s.output}, nil
 }
 
 func TestUIStateConstants(t *testing.T) {
@@ -344,7 +326,7 @@ func TestModelUpdateEnterSlashCommand(t *testing.T) {
 
 func TestModelUpdateEnterInlineSkillDirectiveRunsSkillCommand(t *testing.T) {
 	reg := commands.NewRegistry()
-	cmd := &stubSlashCommand{name: "skill", output: "Skill \"brainstorming\" activated."}
+	cmd := &testutil.StubSlashCommand{CommandName: "skill", Output: "Skill \"brainstorming\" activated."}
 	require.NoError(t, reg.Register(cmd))
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, reg)
 	m.input.SetValue(`__skill({"name":"brainstorming"})`)
@@ -354,7 +336,7 @@ func TestModelUpdateEnterInlineSkillDirectiveRunsSkillCommand(t *testing.T) {
 	um := updated.(*Model)
 	assert.Nil(t, teaCmd)
 	assert.Equal(t, StateInput, um.state)
-	assert.Equal(t, []string{"activate", "brainstorming"}, cmd.lastArgs)
+	assert.Equal(t, []string{"activate", "brainstorming"}, cmd.LastArgs)
 	assert.Contains(t, um.content.String(), `Inline skill directive: activate "brainstorming"`)
 	assert.Contains(t, um.content.String(), `Skill "brainstorming" activated.`)
 }

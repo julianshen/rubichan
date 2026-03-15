@@ -297,7 +297,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.content.WriteString(fmt.Sprintf("Inline skill directive: %s %q\n", directive.Action, directive.Name))
 			m.setContentAndAutoScroll()
-			text = directive.Command
+			cmd := m.handleCommandParts(directive.Command, directive.Args)
+			return m, cmd
 		}
 
 		if strings.HasPrefix(text, "/") {
