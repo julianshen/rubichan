@@ -8,6 +8,7 @@ import (
 
 type inlineSkillDirective struct {
 	Name   string `json:"name"`
+	Tool   string `json:"tool"`
 	Action string `json:"action"`
 }
 
@@ -38,15 +39,24 @@ func formatCommandDisplay(args []string) string {
 	return strings.Join(rendered, " ")
 }
 
-// RewriteInlineSkillDirective converts __skill({...}) into an equivalent
-// slash command so existing command handling can execute it.
+// RewriteInlineSkillDirective converts skill({...}) or __skill({...}) into an
+// equivalent slash command so existing command handling can execute it.
 func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool, error) {
 	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "__skill(") || !strings.HasSuffix(trimmed, ")") {
+	prefix := ""
+	switch {
+	case strings.HasPrefix(trimmed, "__skill("):
+		prefix = "__skill("
+	case strings.HasPrefix(trimmed, "skill("):
+		prefix = "skill("
+	default:
+		return InlineSkillDirectiveResult{}, false, nil
+	}
+	if !strings.HasSuffix(trimmed, ")") {
 		return InlineSkillDirectiveResult{}, false, nil
 	}
 
-	payload := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "__skill("), ")"))
+	payload := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, prefix), ")"))
 	if payload == "" {
 		return InlineSkillDirectiveResult{}, true, fmt.Errorf("skill directive payload is required")
 	}
@@ -57,6 +67,9 @@ func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool,
 	}
 
 	name := strings.TrimSpace(directive.Name)
+	if name == "" {
+		name = strings.TrimSpace(directive.Tool)
+	}
 	if name == "" {
 		return InlineSkillDirectiveResult{}, true, fmt.Errorf("skill directive name is required")
 	}

@@ -13,7 +13,7 @@ This is not negotiable. This is not optional. You cannot rationalize your way ou
 
 ## How to Access Skills
 
-**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you—follow it directly. Never use the Read tool on skill files.
+**In Rubichan:** Activate skills with `/skill activate <name>` or the inline forms `__skill({"name":"..."})` and `skill({"name":"..."})`. Do not invent a separate `skill` tool call unless the runtime explicitly exposes one.
 
 **In other environments:** Check your platform's documentation for how skills are loaded.
 
@@ -30,7 +30,7 @@ digraph skill_flow {
     "Already brainstormed?" [shape=diamond];
     "Invoke brainstorming skill" [shape=box];
     "Might any skill apply?" [shape=diamond];
-    "Invoke Skill tool" [shape=box];
+    "Activate skill" [shape=box];
     "Announce: 'Using [skill] to [purpose]'" [shape=box];
     "Has checklist?" [shape=diamond];
     "Create TodoWrite todo per item" [shape=box];
@@ -43,9 +43,9 @@ digraph skill_flow {
     "Invoke brainstorming skill" -> "Might any skill apply?";
 
     "User message received" -> "Might any skill apply?";
-    "Might any skill apply?" -> "Invoke Skill tool" [label="yes, even 1%"];
+    "Might any skill apply?" -> "Activate skill" [label="yes, even 1%"];
     "Might any skill apply?" -> "Respond (including clarifications)" [label="definitely not"];
-    "Invoke Skill tool" -> "Announce: 'Using [skill] to [purpose]'";
+    "Activate skill" -> "Announce: 'Using [skill] to [purpose]'";
     "Announce: 'Using [skill] to [purpose]'" -> "Has checklist?";
     "Has checklist?" -> "Create TodoWrite todo per item" [label="yes"];
     "Has checklist?" -> "Follow skill exactly" [label="no"];

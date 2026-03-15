@@ -18,6 +18,24 @@ func TestRewriteInlineSkillDirectiveActivate(t *testing.T) {
 	assert.Equal(t, "brainstorming", result.Name)
 }
 
+func TestRewriteInlineSkillDirectiveAcceptsSkillPrefix(t *testing.T) {
+	result, ok, err := RewriteInlineSkillDirective(`skill({"name":"brainstorming"})`)
+
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, `/skill activate brainstorming`, result.Command)
+	assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
+}
+
+func TestRewriteInlineSkillDirectiveAcceptsToolAlias(t *testing.T) {
+	result, ok, err := RewriteInlineSkillDirective(`skill({"tool":"brainstorming"})`)
+
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "brainstorming", result.Name)
+	assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
+}
+
 func TestRewriteInlineSkillDirectiveDeactivate(t *testing.T) {
 	result, ok, err := RewriteInlineSkillDirective(`__skill({"name":"brainstorming","action":"deactivate"})`)
 
