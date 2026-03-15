@@ -72,6 +72,80 @@ func TestMarkdownFormatterWithError(t *testing.T) {
 	assert.Contains(t, s, "timeout exceeded")
 }
 
+func TestMarkdownFormatterUsesSummaryWhenResponseEmpty(t *testing.T) {
+	f := NewMarkdownFormatter()
+	result := &RunResult{
+		Prompt:     "inspect",
+		Summary:    "Run completed without a textual response after 1 tool call; 0 returned errors.",
+		TurnCount:  1,
+		DurationMs: 1000,
+		Mode:       "generic",
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	s := string(out)
+	assert.Contains(t, s, "Run completed without a textual response")
+}
+
+func TestMarkdownFormatterIncludesSummaryAlongsideError(t *testing.T) {
+	f := NewMarkdownFormatter()
+	result := &RunResult{
+		Summary:    "Run failed after 2 tool call(s); 1 returned errors.",
+		Error:      "max turns exceeded",
+		TurnCount:  2,
+		DurationMs: 1000,
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	s := string(out)
+	assert.Contains(t, s, "Error")
+	assert.Contains(t, s, "max turns exceeded")
+	assert.Contains(t, s, "Run failed after 2 tool call")
+}
+
+func TestMarkdownFormatterIncludesEvidenceSection(t *testing.T) {
+	f := NewMarkdownFormatter()
+	result := &RunResult{
+		Prompt:          "build app",
+		Response:        "Model summary",
+		EvidenceSummary: "- Verification verdict: passed\n- Reason: latest build evidence is green\n- Build: passed\n- Files changed: src/App.tsx, src/components/TodoList.tsx",
+		TurnCount:       1,
+		DurationMs:      250,
+		Mode:            "generic",
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+
+	s := string(out)
+	assert.Contains(t, s, "## Evidence")
+	assert.Contains(t, s, "Verification verdict")
+	assert.Contains(t, s, "- Build: passed")
+	assert.Contains(t, s, "Files changed")
+}
+
+func TestMarkdownFormatterIgnoresWhitespaceOnlySummaryAndEvidence(t *testing.T) {
+	f := NewMarkdownFormatter()
+	result := &RunResult{
+		Prompt:          "test",
+		Summary:         "   \n\t  ",
+		EvidenceSummary: "   ",
+		TurnCount:       1,
+		DurationMs:      100,
+	}
+
+	out, err := f.Format(result)
+	require.NoError(t, err)
+	s := string(out)
+
+	assert.NotContains(t, s, "## Evidence")
+	assert.True(t, strings.HasPrefix(s, "\n---\n"))
+}
+
 func TestMarkdownFormatterWithSecurityFindings(t *testing.T) {
 	f := NewMarkdownFormatter()
 	result := &RunResult{

@@ -21,7 +21,7 @@ func TestSelectShellSandboxDarwinUsesSeatbeltWhenAvailable(t *testing.T) {
 			return "/usr/bin/sandbox-exec", nil
 		}
 		return "", errors.New("unexpected lookup")
-	})
+	}, func(_, _, _ string) bool { return true })
 
 	require.NotNil(t, sb)
 	assert.Equal(t, "seatbelt", sb.Name())
@@ -33,7 +33,7 @@ func TestSelectShellSandboxLinuxUsesBubblewrapWhenAvailable(t *testing.T) {
 			return "/usr/bin/bwrap", nil
 		}
 		return "", errors.New("unexpected lookup")
-	})
+	}, func(_, _, _ string) bool { return true })
 
 	require.NotNil(t, sb)
 	assert.Equal(t, "bubblewrap", sb.Name())
@@ -42,7 +42,18 @@ func TestSelectShellSandboxLinuxUsesBubblewrapWhenAvailable(t *testing.T) {
 func TestSelectShellSandboxFallsBackWhenBackendMissing(t *testing.T) {
 	sb := selectShellSandbox("linux", t.TempDir(), func(string) (string, error) {
 		return "", errors.New("missing")
-	})
+	}, func(_, _, _ string) bool { return true })
+
+	assert.Nil(t, sb)
+}
+
+func TestSelectShellSandboxReturnsNilWhenProbeRejects(t *testing.T) {
+	sb := selectShellSandbox("linux", t.TempDir(), func(file string) (string, error) {
+		if file == "bwrap" {
+			return "/usr/bin/bwrap", nil
+		}
+		return "", errors.New("unexpected lookup")
+	}, func(_, _, _ string) bool { return false })
 
 	assert.Nil(t, sb)
 }
@@ -152,6 +163,10 @@ func TestShellToolExecuteReturnsSandboxSetupError(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "sandbox setup failed")
 	assert.Contains(t, result.Content, "boom")
+}
+
+func TestSandboxBackendAvailableLinuxProbe(t *testing.T) {
+	assert.False(t, sandboxBackendAvailable("linux", "/nonexistent/bwrap", t.TempDir()))
 }
 
 type recordingSandbox struct {

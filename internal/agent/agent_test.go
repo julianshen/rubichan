@@ -54,6 +54,17 @@ func (d *dynamicMockProvider) Stream(_ context.Context, _ provider.CompletionReq
 	return ch, nil
 }
 
+type testTool struct {
+	name string
+}
+
+func (t *testTool) Name() string                 { return t.name }
+func (t *testTool) Description() string          { return "test tool" }
+func (t *testTool) InputSchema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *testTool) Execute(_ context.Context, _ json.RawMessage) (agentsdk.ToolResult, error) {
+	return agentsdk.ToolResult{Content: "ok"}, nil
+}
+
 // errorProvider always returns an error from Stream.
 type errorProvider struct {
 	err error
@@ -436,6 +447,52 @@ func TestTurnMaxTurnsExceeded(t *testing.T) {
 		}
 	}
 	assert.True(t, hasError, "should emit error event for max turns exceeded")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestTurnDetectsRepeatedToolOnlyNoProgress(t *testing.T) {
+	mp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "tool_1", Name: "search"}},
+				{Type: "text_delta", Text: `{"pattern":"todo"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "tool_2", Name: "search"}},
+				{Type: "text_delta", Text: `{"pattern":"todo"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "tool_3", Name: "search"}},
+				{Type: "text_delta", Text: `{"pattern":"todo"}`},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&testTool{name: "search"}))
+
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 10
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "loop")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var gotNoProgress bool
+	for _, ev := range events {
+		if ev.Type == "error" && ev.Error != nil && strings.Contains(ev.Error.Error(), "no progress") {
+			gotNoProgress = true
+		}
+	}
+	assert.True(t, gotNoProgress, "should emit no-progress error")
 	assert.Equal(t, "done", events[len(events)-1].Type)
 }
 

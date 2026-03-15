@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/runner"
@@ -111,6 +112,25 @@ func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
 	assert.Equal(t, 123, log.Flags())
 }
 
+func TestStartEventLoggerWritesJSONLFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events", "session.jsonl")
+	logger, err := startEventLogger(path)
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+	require.Equal(t, path, logger.path)
+
+	_, err = logger.file.WriteString("{\"type\":\"command_result\"}\n")
+	require.NoError(t, err)
+	require.NoError(t, logger.Close())
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"type":"command_result"`)
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
 func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
 	cfgDir := t.TempDir()
 	dumpPath, err := writePanicDump(cfgDir, "boom", "/tmp/session.log")
@@ -166,6 +186,43 @@ func TestOpenStore_CreatesMissingDirs(t *testing.T) {
 	dbPath := filepath.Join(dir, "rubichan.db")
 	_, err = os.Stat(dbPath)
 	assert.NoError(t, err, "database file should exist in nested directory")
+}
+
+func TestEnsureFolderAccessApprovedNonInteractiveRequiresExplicitApproval(t *testing.T) {
+	dir := t.TempDir()
+	s, err := openStore(dir)
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = ensureFolderAccessApprovedNonInteractive(s, filepath.Join(dir, "repo"), false, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--approve-cwd/--auto-approve")
+}
+
+func TestEnsureFolderAccessApprovedNonInteractiveApproveCwd(t *testing.T) {
+	dir := t.TempDir()
+	s, err := openStore(dir)
+	require.NoError(t, err)
+	defer s.Close()
+
+	repoDir := filepath.Join(dir, "repo")
+	err = ensureFolderAccessApprovedNonInteractive(s, repoDir, false, true)
+	require.NoError(t, err)
+
+	approved, err := s.IsFolderApproved(repoDir)
+	require.NoError(t, err)
+	assert.True(t, approved)
+}
+
+func TestAppendWorkingDirOptionAlwaysAppliesCWD(t *testing.T) {
+	opts := appendWorkingDirOption(nil, "/tmp/project")
+
+	a := &agent.Agent{}
+	for _, opt := range opts {
+		opt(a)
+	}
+
+	assert.Equal(t, "/tmp/project", a.WorkingDir())
 }
 
 func TestResumeFlagDefaults(t *testing.T) {
@@ -372,7 +429,7 @@ func TestEnsureFolderAccessApprovedNonInteractive_DeniedWithoutAutoApprove(t *te
 	s := mustOpenStore(t)
 	defer s.Close()
 
-	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", false)
+	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not approved")
 }
@@ -381,8 +438,36 @@ func TestEnsureFolderAccessApprovedNonInteractive_AutoApproves(t *testing.T) {
 	s := mustOpenStore(t)
 	defer s.Close()
 
-	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", true)
+	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", true, false)
 	require.NoError(t, err)
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
+}
+
+func TestEnsureFolderAccessApprovedInteractive_UsesAutoApprove(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApprovedInteractive(s, "/tmp/project", strings.NewReader(""), &out, true, false)
+	require.NoError(t, err)
+	assert.Empty(t, out.String())
+
+	approved, err := s.IsFolderApproved("/tmp/project")
+	require.NoError(t, err)
+	assert.True(t, approved)
+}
+
+func TestEnsureFolderAccessApprovedInteractive_UsesApproveCwd(t *testing.T) {
+	s := mustOpenStore(t)
+	defer s.Close()
+
+	var out bytes.Buffer
+	err := ensureFolderAccessApprovedInteractive(s, "/tmp/project", strings.NewReader(""), &out, false, true)
+	require.NoError(t, err)
+	assert.Empty(t, out.String())
 
 	approved, err := s.IsFolderApproved("/tmp/project")
 	require.NoError(t, err)

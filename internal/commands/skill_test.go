@@ -202,3 +202,53 @@ func TestSkillCommandCompleteDeactivateShowsActiveOnly(t *testing.T) {
 func TestSkillCommandImplementsSlashCommand(t *testing.T) {
 	var _ SlashCommand = NewSkillCommand(&mockSkillLister{})
 }
+
+func TestSkillLogCommandName(t *testing.T) {
+	cmd := NewSkillLogCommand(&mockSkillLister{})
+	assert.Equal(t, "skill-log", cmd.Name())
+}
+
+func TestSkillLogCommandDescription(t *testing.T) {
+	cmd := NewSkillLogCommand(&mockSkillLister{})
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestSkillLogCommandArguments(t *testing.T) {
+	cmd := NewSkillLogCommand(&mockSkillLister{})
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestSkillLogCommandComplete(t *testing.T) {
+	cmd := NewSkillLogCommand(&mockSkillLister{})
+	assert.Nil(t, cmd.Complete(context.Background(), []string{"any"}))
+}
+
+func TestSkillLogCommandList(t *testing.T) {
+	lister := &mockSkillLister{
+		skills: []SkillInfo{
+			{Name: "alpha", Description: "Alpha skill", Source: "builtin", State: "Active"},
+			{Name: "beta", Description: "Beta skill", Source: "project", State: "Inactive"},
+		},
+	}
+	cmd := NewSkillLogCommand(lister)
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Skill log:")
+	assert.Contains(t, result.Output, "alpha")
+	assert.Contains(t, result.Output, "beta")
+	assert.Contains(t, result.Output, "Active")
+	assert.Contains(t, result.Output, "Inactive")
+}
+
+func TestSkillLogCommandListEmpty(t *testing.T) {
+	cmd := NewSkillLogCommand(&mockSkillLister{})
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "No skills discovered.")
+}
+
+func TestSkillLogCommandImplementsSlashCommand(t *testing.T) {
+	var _ SlashCommand = NewSkillLogCommand(&mockSkillLister{})
+}

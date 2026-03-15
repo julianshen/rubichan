@@ -48,6 +48,9 @@ func TestFrontendDesignRegisterDesignCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
+	if len(discovered) == 0 {
+		t.Fatalf("Discover returned no skills")
+	}
 
 	cmds := discovered[0].Manifest.Commands
 	if len(cmds) != 1 {
@@ -55,5 +58,35 @@ func TestFrontendDesignRegisterDesignCommand(t *testing.T) {
 	}
 	if cmds[0].Name != "design" {
 		t.Errorf("command name = %q, want %q", cmds[0].Name, "design")
+	}
+}
+
+func TestFrontendDesignIncludesAutoTriggers(t *testing.T) {
+	loader := skills.NewLoader("", "")
+	Register(loader)
+
+	discovered, _, err := loader.Discover(nil)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(discovered) == 0 {
+		t.Fatalf("Discover returned no skills")
+	}
+
+	ds := discovered[0]
+	if ds.Manifest.Name != "frontend-design" {
+		t.Fatalf("name = %q, want %q", ds.Manifest.Name, "frontend-design")
+	}
+	if len(ds.Manifest.Triggers.Files) == 0 {
+		t.Fatal("expected file triggers")
+	}
+	if len(ds.Manifest.Triggers.Languages) == 0 {
+		t.Fatal("expected language triggers")
+	}
+	if len(ds.Manifest.Triggers.Modes) == 0 {
+		t.Fatal("expected mode triggers")
+	}
+	if len(ds.Manifest.Triggers.Keywords) == 0 {
+		t.Fatal("expected keyword triggers")
 	}
 }

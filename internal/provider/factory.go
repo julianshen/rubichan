@@ -2,7 +2,6 @@ package provider
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/julianshen/rubichan/internal/config"
 )
@@ -91,8 +90,7 @@ func newOpenAIProvider(cfg *config.Config) (LLMProvider, error) {
 
 	for _, oc := range cfg.Provider.OpenAI {
 		if oc.Name == name {
-			envVar := strings.ToUpper(name) + "_API_KEY"
-			apiKey, err := config.ResolveAPIKey(oc.APIKeySource, oc.APIKey, envVar)
+			apiKey, err := config.ResolveOpenAICompatibleAPIKey(oc)
 			if err != nil {
 				return nil, fmt.Errorf("resolving %s API key: %w", name, err)
 			}

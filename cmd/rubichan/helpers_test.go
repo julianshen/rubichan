@@ -3,13 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseToolsFlagEmpty(t *testing.T) {
@@ -142,6 +147,38 @@ func TestParseToolsFlagAllProfile(t *testing.T) {
 	assert.True(t, result["notes"])
 }
 
+func TestApplyHeadlessBootstrapProbePromptEnabled(t *testing.T) {
+	prompt := "Build a backend and verify it"
+	got := applyHeadlessBootstrapProbePrompt(prompt, true)
+	assert.Contains(t, got, "Headless bootstrap requirement:")
+	assert.Contains(t, got, `{"command":"pwd"}`)
+	assert.Contains(t, got, "User task:")
+	assert.True(t, strings.HasSuffix(got, prompt))
+}
+
+func TestApplyHeadlessBootstrapProbePromptDisabled(t *testing.T) {
+	prompt := "Build a backend and verify it"
+	got := applyHeadlessBootstrapProbePrompt(prompt, false)
+	assert.Equal(t, prompt, got)
+}
+
+func TestValidateHeadlessBootstrapProbe(t *testing.T) {
+	ok := &output.RunResult{
+		ToolCalls: []output.ToolCallLog{
+			{Name: "shell", Input: json.RawMessage(`{"command":"pwd"}`)},
+		},
+	}
+	require.NoError(t, validateHeadlessBootstrapProbe(ok, true))
+	require.NoError(t, validateHeadlessBootstrapProbe(ok, false))
+
+	bad := &output.RunResult{
+		ToolCalls: []output.ToolCallLog{
+			{Name: "shell", Input: json.RawMessage(`{"command":"ls"}`)},
+		},
+	}
+	require.Error(t, validateHeadlessBootstrapProbe(bad, true))
+}
+
 func TestIsAppleOnlyTool(t *testing.T) {
 	assert.True(t, isAppleOnlyTool("xcode_build"))
 	assert.True(t, isAppleOnlyTool("swift_test"))
@@ -206,6 +243,41 @@ func TestCreateSkillRuntimeNilConfig(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, rt)
 	assert.Nil(t, closer)
+}
+
+func TestCreateSkillRuntimeInteractiveActivatesFrontendDesignForFrontendApp(t *testing.T) {
+	oldFlag := skillsFlag
+	skillsFlag = ""
+	defer func() { skillsFlag = oldFlag }()
+
+	oldHome := os.Getenv("HOME")
+	tempHome := t.TempDir()
+	require.NoError(t, os.Setenv("HOME", tempHome))
+	defer func() {
+		_ = os.Setenv("HOME", oldHome)
+	}()
+
+	registry := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	workDir := filepath.Join("..", "..", "examples", "app-generation-smoke")
+
+	rt, closer, err := createSkillRuntime(context.Background(), registry, nil, cfg, "interactive", workDir)
+	require.NoError(t, err)
+	require.NotNil(t, rt)
+	if closer != nil {
+		defer closer.Close()
+	}
+
+	summaries := rt.GetAllSkillSummaries()
+	var found bool
+	for _, summary := range summaries {
+		if summary.Name == "frontend-design" {
+			found = true
+			assert.Equal(t, "Active", summary.State.String())
+			break
+		}
+	}
+	assert.True(t, found, "expected frontend-design to be discovered")
 }
 
 func TestEmitSkillDiscoveryWarnings(t *testing.T) {

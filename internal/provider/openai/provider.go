@@ -235,7 +235,7 @@ func (p *Provider) convertAssistantMessage(msg provider.Message) apiMessage {
 	apiMsg := apiMessage{
 		Role: "assistant",
 	}
-	if text != "" {
+	if text != "" || len(toolCalls) > 0 {
 		apiMsg.Content = text
 	}
 	if len(toolCalls) > 0 {

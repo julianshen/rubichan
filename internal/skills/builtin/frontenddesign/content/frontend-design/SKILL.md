@@ -2,6 +2,29 @@
 name: frontend-design
 description: Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, or applications. Generates creative, polished code that avoids generic AI aesthetics.
 license: Complete terms in LICENSE.txt
+triggers:
+  files:
+    - package.json
+    - vite.config.*
+    - next.config.*
+    - tailwind.config.*
+    - components.json
+    - src
+  languages:
+    - javascript
+    - typescript
+  modes:
+    - interactive
+    - headless
+  keywords:
+    - frontend
+    - react
+    - vite
+    - next.js
+    - shadcn
+    - ui
+    - dashboard
+    - landing page
 commands:
   - name: design
     description: Create a distinctive frontend interface
@@ -42,4 +65,4 @@ Interpret creatively and make unexpected choices that feel genuinely designed fo
 
 **IMPORTANT**: Match implementation complexity to the aesthetic vision. Maximalist designs need elaborate code with extensive animations and effects. Minimalist or refined designs need restraint, precision, and careful attention to spacing, typography, and subtle details. Elegance comes from executing the vision well.
 
-Remember: Claude is capable of extraordinary creative work. Don't hold back, show what can truly be created when thinking outside the box and committing fully to a distinctive vision.
+Remember: Claude is capable of extraordinary creative work. Don't hold back; push beyond default patterns and commit fully to a distinctive vision.

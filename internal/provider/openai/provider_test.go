@@ -356,6 +356,7 @@ func TestMessageConversion(t *testing.T) {
 	// Third should be assistant message with tool_calls
 	assistantMsg := msgs[2].(map[string]any)
 	assert.Equal(t, "assistant", assistantMsg["role"])
+	assert.Equal(t, "Let me read that file.", assistantMsg["content"])
 	toolCalls, ok := assistantMsg["tool_calls"].([]any)
 	require.True(t, ok)
 	require.Len(t, toolCalls, 1)
@@ -379,6 +380,64 @@ func TestMessageConversion(t *testing.T) {
 	fn := tool["function"].(map[string]any)
 	assert.Equal(t, "read_file", fn["name"])
 	assert.Equal(t, "Reads a file", fn["description"])
+}
+
+func TestMessageConversionToolOnlyAssistantIncludesEmptyContent(t *testing.T) {
+	var capturedBody []byte
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		capturedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key", nil)
+
+	req := provider.CompletionRequest{
+		Model: "gpt-4",
+		Messages: []provider.Message{
+			provider.NewUserMessage("Search the app"),
+			{
+				Role: "assistant",
+				Content: []provider.ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "call_1",
+						Name:  "search",
+						Input: json.RawMessage(`{"pattern":"todo","file_pattern":"*.tsx"}`),
+					},
+				},
+			},
+		},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	var apiReq map[string]any
+	err = json.Unmarshal(capturedBody, &apiReq)
+	require.NoError(t, err)
+
+	msgs, ok := apiReq["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, msgs, 2)
+
+	assistantMsg := msgs[1].(map[string]any)
+	assert.Equal(t, "assistant", assistantMsg["role"])
+	assert.Equal(t, "", assistantMsg["content"])
+	toolCalls, ok := assistantMsg["tool_calls"].([]any)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 1)
 }
 
 func TestStreamContextCancellation(t *testing.T) {

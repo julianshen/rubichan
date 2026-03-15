@@ -836,7 +836,8 @@ func (a *Agent) makeDoneEvent(inputTokens, outputTokens int) TurnEvent {
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
-
+	var lastPendingToolSignature string
+	repeatedPendingToolRounds := 0
 	if a.skillRuntime != nil {
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
@@ -845,7 +846,6 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 	}
-
 	for ; turnCount < a.maxTurns; turnCount++ {
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
@@ -978,6 +978,19 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 
+		signature := pendingToolSignature(pendingTools)
+		if !hasTextContent(blocks) && signature == lastPendingToolSignature {
+			repeatedPendingToolRounds++
+		} else {
+			lastPendingToolSignature = signature
+			repeatedPendingToolRounds = 1
+		}
+		if repeatedPendingToolRounds >= maxRepeatedPendingToolRounds {
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			return
+		}
+
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
@@ -994,6 +1007,28 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
 	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+}
+
+const maxRepeatedPendingToolRounds = 3
+
+func hasTextContent(blocks []provider.ContentBlock) bool {
+	for _, block := range blocks {
+		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {
+	var b strings.Builder
+	for _, tc := range pendingTools {
+		b.WriteString(tc.Name)
+		b.WriteByte(':')
+		b.Write(tc.Input)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func (a *Agent) buildSkillTriggerContext(lastUserMessage string) skills.TriggerContext {

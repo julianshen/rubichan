@@ -180,3 +180,40 @@ func (c *helpCommand) Execute(_ context.Context, _ []string) (Result, error) {
 	}
 	return Result{Output: b.String()}, nil
 }
+
+// --- debug-verification-snapshot ---
+
+type debugVerificationSnapshotCommand struct {
+	getSnapshot func() string
+}
+
+// NewDebugVerificationSnapshotCommand creates a debug command that dumps the
+// host's current verification snapshot without waiting for turn completion.
+func NewDebugVerificationSnapshotCommand(getSnapshot func() string) SlashCommand {
+	return &debugVerificationSnapshotCommand{getSnapshot: getSnapshot}
+}
+
+func (c *debugVerificationSnapshotCommand) Name() string {
+	return "debug-verification-snapshot"
+}
+
+func (c *debugVerificationSnapshotCommand) Description() string {
+	return "Dump the current backend verification snapshot for debugging"
+}
+
+func (c *debugVerificationSnapshotCommand) Arguments() []ArgumentDef { return nil }
+
+func (c *debugVerificationSnapshotCommand) Complete(_ context.Context, _ []string) []Candidate {
+	return nil
+}
+
+func (c *debugVerificationSnapshotCommand) Execute(_ context.Context, _ []string) (Result, error) {
+	if c.getSnapshot == nil {
+		return Result{Output: "Verification snapshot unavailable."}, nil
+	}
+	snapshot := strings.TrimSpace(c.getSnapshot())
+	if snapshot == "" {
+		return Result{Output: "Verification snapshot unavailable."}, nil
+	}
+	return Result{Output: snapshot}, nil
+}

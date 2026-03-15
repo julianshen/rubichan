@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"os"
-
 	"github.com/charmbracelet/huh"
 	"github.com/julianshen/rubichan/internal/config"
 )
@@ -14,24 +12,7 @@ func NeedsBootstrap(configPath string) bool {
 	if err != nil {
 		return true
 	}
-	// Ollama doesn't need API key.
-	if cfg.Provider.Default == "ollama" {
-		return false
-	}
-	// Check Anthropic key.
-	if cfg.Provider.Anthropic.APIKey != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
-		return false
-	}
-	// Check any OpenAI-compatible provider.
-	for _, oc := range cfg.Provider.OpenAI {
-		if oc.APIKey != "" {
-			return false
-		}
-		if oc.APIKeySource != "" && os.Getenv(oc.APIKeySource) != "" {
-			return false
-		}
-	}
-	return true
+	return !config.HasUsableCredentialsForDefaultProvider(cfg)
 }
 
 // BootstrapForm is a first-run setup wizard using Huh multi-step form.
@@ -112,6 +93,9 @@ func (b *BootstrapForm) Config() *config.Config { return b.cfg }
 // Save persists the config. It copies the OpenAI key into the correct config
 // entry if the user selected the OpenAI provider.
 func (b *BootstrapForm) Save() error {
+	if b.cfg.Provider.Default == "anthropic" && b.cfg.Provider.Anthropic.APIKey != "" {
+		b.cfg.Provider.Anthropic.APIKeySource = "config"
+	}
 	if b.cfg.Provider.Default == "openai" && b.openaiKey != "" {
 		baseURL := b.openaiBaseURL
 		if baseURL == "" {

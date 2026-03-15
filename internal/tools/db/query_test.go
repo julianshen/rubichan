@@ -13,6 +13,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestQueryToolInputSchemaIncludesArrayItems(t *testing.T) {
+	t.Parallel()
+
+	tool := NewQueryTool(t.TempDir())
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(tool.InputSchema(), &schema))
+
+	properties, ok := schema["properties"].(map[string]any)
+	require.True(t, ok)
+
+	params, ok := properties["params"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "array", params["type"])
+	assert.Contains(t, params, "items")
+}
+
 func TestSQLiteQuery(t *testing.T) {
 	t.Parallel()
 	workDir := t.TempDir()
