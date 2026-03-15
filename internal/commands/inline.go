@@ -12,10 +12,30 @@ type inlineSkillDirective struct {
 }
 
 type InlineSkillDirectiveResult struct {
+	// Command is a display-friendly rendering of Args.
 	Command string
 	Args    []string
 	Name    string
 	Action  string
+}
+
+func formatCommandDisplay(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+
+	rendered := make([]string, len(args))
+	for i, arg := range args {
+		if arg != "" && !strings.ContainsAny(arg, " \t\n\"\\") {
+			rendered[i] = arg
+			continue
+		}
+
+		escaped := strings.ReplaceAll(arg, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+		rendered[i] = `"` + escaped + `"`
+	}
+	return strings.Join(rendered, " ")
 }
 
 // RewriteInlineSkillDirective converts __skill({...}) into an equivalent
@@ -51,9 +71,10 @@ func RewriteInlineSkillDirective(line string) (InlineSkillDirectiveResult, bool,
 		return InlineSkillDirectiveResult{}, true, fmt.Errorf("unsupported skill directive action %q", directive.Action)
 	}
 
+	args := []string{"/skill", action, name}
 	return InlineSkillDirectiveResult{
-		Command: fmt.Sprintf("/skill %s %q", action, name),
-		Args:    []string{"/skill", action, name},
+		Command: formatCommandDisplay(args),
+		Args:    args,
 		Name:    name,
 		Action:  action,
 	}, true, nil

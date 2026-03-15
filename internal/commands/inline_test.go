@@ -12,7 +12,7 @@ func TestRewriteInlineSkillDirectiveActivate(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, `/skill activate "brainstorming"`, result.Command)
+	assert.Equal(t, `/skill activate brainstorming`, result.Command)
 	assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
 	assert.Equal(t, "activate", result.Action)
 	assert.Equal(t, "brainstorming", result.Name)
@@ -23,7 +23,7 @@ func TestRewriteInlineSkillDirectiveDeactivate(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, `/skill deactivate "brainstorming"`, result.Command)
+	assert.Equal(t, `/skill deactivate brainstorming`, result.Command)
 	assert.Equal(t, []string{"/skill", "deactivate", "brainstorming"}, result.Args)
 	assert.Equal(t, "deactivate", result.Action)
 	assert.Equal(t, "brainstorming", result.Name)
@@ -76,4 +76,13 @@ func TestRewriteInlineSkillDirectiveNormalizesActionCase(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "activate", result.Action)
 	assert.Equal(t, []string{"/skill", "activate", "brainstorming"}, result.Args)
+}
+
+func TestRewriteInlineSkillDirectiveCommandMatchesArgsEscaping(t *testing.T) {
+	result, ok, err := RewriteInlineSkillDirective(`__skill({"name":"brain\"storm\\ing"})`)
+
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, []string{"/skill", "activate", `brain"storm\ing`}, result.Args)
+	assert.Equal(t, `/skill activate "brain\"storm\\ing"`, result.Command)
 }
