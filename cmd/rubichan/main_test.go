@@ -20,6 +20,7 @@ import (
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
@@ -156,6 +157,24 @@ func TestStartEventLoggerWritesJSONLFile(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestBuildEventSinkWithoutDebugAndEventLogIsNoOp(t *testing.T) {
+	sink := buildEventSink(nil, false)
+	require.Len(t, sink, 0)
+	assert.NotPanics(t, func() {
+		sink.Emit(session.NewTurnStartedEvent("prompt", "model"))
+	})
+}
+
+func TestBuildEventSinkIncludesJSONLWithoutDebug(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events", "session.jsonl")
+	logger, err := startEventLogger(path)
+	require.NoError(t, err)
+	require.NoError(t, logger.Close())
+
+	sink := buildEventSink(logger, false)
+	require.Len(t, sink, 1)
 }
 
 func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {

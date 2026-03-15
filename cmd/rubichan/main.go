@@ -282,6 +282,10 @@ func (el *eventLogger) Close() error {
 	return el.file.Close()
 }
 
+// buildEventSink centralizes interactive/headless session event wiring.
+// Human-readable log mirroring is intentionally debug-only; when callers
+// request only --event-log, events are written to JSONL without also being
+// mirrored through the standard logger.
 func buildEventSink(structuredEventLog *eventLogger, debug bool) session.MultiSink {
 	var sink session.MultiSink
 	if debug {
@@ -1279,11 +1283,10 @@ func runInteractive() error {
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
 	}
-	if sink := buildEventSink(structuredEventLog, debugMode); len(sink) > 0 {
-		model.SetEventSink(sink)
-		if plainHost != nil {
-			plainHost.SetEventSink(sink)
-		}
+	sink := buildEventSink(structuredEventLog, debugMode)
+	model.SetEventSink(sink)
+	if plainHost != nil {
+		plainHost.SetEventSink(sink)
 	}
 	if plainTUI {
 		noAltScreen = true
