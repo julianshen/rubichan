@@ -120,6 +120,7 @@ func TestStartSessionLoggerMirrorsToStderrInDebugMode(t *testing.T) {
 	origStderr := os.Stderr
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
+	defer func() { _ = r.Close() }()
 	os.Stderr = w
 	log.SetFlags(123)
 	defer log.SetOutput(origWriter)

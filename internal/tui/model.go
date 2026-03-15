@@ -278,6 +278,8 @@ func (m *Model) refreshRenderers() {
 	mdRenderer, err := NewMarkdownRenderer(m.width)
 	if err == nil {
 		m.mdRenderer = mdRenderer
+	} else if m.debug {
+		log.Printf("refresh markdown renderer: %v", err)
 	}
 	m.toolBox = NewToolBoxRenderer(m.width)
 }
@@ -370,7 +372,11 @@ func (m *Model) headerRows() int {
 	if m.plainMode {
 		return 0
 	}
-	return 2 // title + divider
+	rows := 2 // title + divider
+	if len(m.activeSkills) > 0 {
+		rows++
+	}
+	return rows
 }
 
 func (m *Model) footerRows() int {

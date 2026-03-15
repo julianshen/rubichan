@@ -282,6 +282,17 @@ func (el *eventLogger) Close() error {
 	return el.file.Close()
 }
 
+func buildEventSink(structuredEventLog *eventLogger, debug bool) session.MultiSink {
+	var sink session.MultiSink
+	if debug {
+		sink = append(sink, session.NewLogSink(log.Printf))
+	}
+	if structuredEventLog != nil {
+		sink = append(sink, session.NewJSONLSink(structuredEventLog.file))
+	}
+	return sink
+}
+
 func writeDiagnosticDump(cfgDir string, sig os.Signal, sessionLogPath string) (string, error) {
 	now := time.Now()
 	header := fmt.Sprintf(
@@ -1268,14 +1279,7 @@ func runInteractive() error {
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
 	}
-	if structuredEventLog != nil || debugMode {
-		var sink session.MultiSink
-		if debugMode {
-			sink = append(sink, session.NewLogSink(log.Printf))
-		}
-		if structuredEventLog != nil {
-			sink = append(sink, session.NewJSONLSink(structuredEventLog.file))
-		}
+	if sink := buildEventSink(structuredEventLog, debugMode); len(sink) > 0 {
 		model.SetEventSink(sink)
 		if plainHost != nil {
 			plainHost.SetEventSink(sink)
@@ -1639,14 +1643,7 @@ func runHeadless() error {
 	// Run LLM review and security scan concurrently for code-review mode.
 	hr := runner.NewHeadlessRunner(a.Turn)
 	hr.SetModelName(cfg.Provider.Model)
-	if structuredEventLog != nil || debugMode {
-		var sink session.MultiSink
-		if debugMode {
-			sink = append(sink, session.NewLogSink(log.Printf))
-		}
-		if structuredEventLog != nil {
-			sink = append(sink, session.NewJSONLSink(structuredEventLog.file))
-		}
+	if sink := buildEventSink(structuredEventLog, debugMode); len(sink) > 0 {
 		hr.SetEventSink(sink)
 	}
 	promptText = applyHeadlessBootstrapProbePrompt(promptText, headlessToolsCfg.ShouldEnable("shell"))

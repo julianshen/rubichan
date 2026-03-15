@@ -59,6 +59,10 @@ func (m *Model) View() string {
 	header := headerStyle.Render(fmt.Sprintf("%s · %s", m.appName, m.modelName))
 	b.WriteString(header)
 	b.WriteString("\n")
+	if line := m.activeSkillsLine(); line != "" {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
 
 	// Divider
 	dividerWidth := m.width
@@ -112,4 +116,20 @@ func (m *Model) View() string {
 	b.WriteString(m.input.View())
 
 	return b.String()
+}
+
+func (m *Model) activeSkillsLine() string {
+	if len(m.activeSkills) == 0 {
+		return ""
+	}
+
+	line := "Skills: " + strings.Join(m.activeSkills, ", ")
+	if m.width > 0 && len(line) > m.width {
+		if m.width <= 3 {
+			line = line[:m.width]
+		} else {
+			line = line[:m.width-3] + "..."
+		}
+	}
+	return styleTextDim.Render(line)
 }
