@@ -21,6 +21,35 @@ type ToolResultEvent = agentsdk.ToolResultEvent
 // ToolProgressEvent contains a streaming progress chunk from a tool execution.
 type ToolProgressEvent = agentsdk.ToolProgressEvent
 
+// UIRequestKind identifies generalized UI interaction categories.
+type UIRequestKind = agentsdk.UIRequestKind
+
+// Re-export UI request kind constants.
+const (
+	UIKindApproval = agentsdk.UIKindApproval
+	UIKindConfirm  = agentsdk.UIKindConfirm
+	UIKindSelect   = agentsdk.UIKindSelect
+	UIKindForm     = agentsdk.UIKindForm
+)
+
+// UIAction defines one selectable action in a UI request.
+type UIAction = agentsdk.UIAction
+
+// UIRequest describes a generalized interaction emitted by the runtime.
+type UIRequest = agentsdk.UIRequest
+
+// UIUpdate carries an incremental update for a prior UI request.
+type UIUpdate = agentsdk.UIUpdate
+
+// UIResponse captures the user response for a UI request.
+type UIResponse = agentsdk.UIResponse
+
+// UIRequestHandler resolves runtime UI requests through an adapter.
+type UIRequestHandler = agentsdk.UIRequestHandler
+
+// UIRequestFunc adapts a function to UIRequestHandler.
+type UIRequestFunc = agentsdk.UIRequestFunc
+
 // --- Approval ---
 
 // ApprovalFunc is called before executing a tool to get user approval.

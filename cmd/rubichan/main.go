@@ -1355,6 +1355,7 @@ func runInteractive() error {
 			approvalFunc = plainHost.MakeApprovalFunc()
 		} else {
 			approvalFunc = model.MakeApprovalFunc()
+			opts = append(opts, agent.WithUIRequestHandler(model.MakeUIRequestHandler()))
 		}
 
 		// Build the approval checker: compose session cache, pipeline rule

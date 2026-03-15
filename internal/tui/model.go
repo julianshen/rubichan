@@ -25,9 +25,11 @@ import (
 // approvalRequest carries a tool approval request from the agent goroutine
 // to the TUI. The agent blocks on the response channel until the user decides.
 type approvalRequest struct {
-	tool     string
-	input    string
-	response chan bool
+	tool          string
+	input         string
+	options       []ApprovalResult
+	response      chan bool
+	responseValue chan ApprovalResult
 }
 
 // approvalRequestMsg is the Bubble Tea message type for approval requests.
@@ -432,10 +434,60 @@ func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 		m.approvalCh <- approvalRequest{
 			tool:     tool,
 			input:    string(input),
+			options:  nil,
 			response: respCh,
 		}
 		return <-respCh, nil
 	}
+}
+
+// MakeUIRequestHandler returns a generalized UI interaction handler for the
+// current model. Approval requests are rendered with the existing inline
+// approval prompt and translated into structured action IDs.
+func (m *Model) MakeUIRequestHandler() agent.UIRequestHandler {
+	return agent.UIRequestFunc(func(ctx context.Context, req agent.UIRequest) (agent.UIResponse, error) {
+		if req.Kind != agent.UIKindApproval {
+			return agent.UIResponse{}, fmt.Errorf("unsupported UI request kind: %s", req.Kind)
+		}
+
+		tool := req.Metadata["tool"]
+		input := req.Metadata["input"]
+		if tool == "" {
+			tool = req.Title
+		}
+
+		// Respect prior deny-always decisions.
+		if _, ok := m.alwaysDenied.Load(tool); ok {
+			return agent.UIResponse{RequestID: req.ID, ActionID: "deny_always"}, nil
+		}
+		// Respect prior allow-always decisions unless risk options disallow it.
+		if _, ok := m.alwaysApproved.Load(tool); ok {
+			opts := OptionsForRisk(tool, input)
+			for _, o := range opts {
+				if o == ApprovalAlways {
+					return agent.UIResponse{RequestID: req.ID, ActionID: "allow_always"}, nil
+				}
+			}
+		}
+
+		respCh := make(chan ApprovalResult, 1)
+		m.approvalCh <- approvalRequest{
+			tool:          tool,
+			input:         input,
+			options:       optionsFromUIActions(req.Actions),
+			responseValue: respCh,
+		}
+
+		select {
+		case <-ctx.Done():
+			return agent.UIResponse{}, ctx.Err()
+		case result := <-respCh:
+			return agent.UIResponse{
+				RequestID: req.ID,
+				ActionID:  actionIDFromApprovalResult(result),
+			}, nil
+		}
+	})
 }
 
 // IsAutoApproved checks if a tool was previously marked "always approve"
@@ -467,6 +519,48 @@ func (m *Model) waitForApproval() tea.Cmd {
 		req := <-ch
 		return approvalRequestMsg(req)
 	}
+}
+
+func actionIDFromApprovalResult(result ApprovalResult) string {
+	switch result {
+	case ApprovalAlways:
+		return "allow_always"
+	case ApprovalDenyAlways:
+		return "deny_always"
+	case ApprovalYes:
+		return "allow"
+	default:
+		return "deny"
+	}
+}
+
+func optionsFromUIActions(actions []agent.UIAction) []ApprovalResult {
+	if len(actions) == 0 {
+		return nil
+	}
+	seen := map[ApprovalResult]bool{}
+	opts := make([]ApprovalResult, 0, len(actions))
+	for _, action := range actions {
+		var mapped ApprovalResult
+		switch strings.ToLower(action.ID) {
+		case "allow", "yes":
+			mapped = ApprovalYes
+		case "deny", "no":
+			mapped = ApprovalNo
+		case "allow_always", "always":
+			mapped = ApprovalAlways
+		case "deny_always":
+			mapped = ApprovalDenyAlways
+		default:
+			continue
+		}
+		if seen[mapped] {
+			continue
+		}
+		seen[mapped] = true
+		opts = append(opts, mapped)
+	}
+	return opts
 }
 
 // handleCommand processes slash commands entered by the user.

@@ -31,6 +31,13 @@ func WithApprovalChecker(checker ApprovalChecker) Option {
 	return func(a *Agent) { a.approvalChecker = checker }
 }
 
+// WithUIRequestHandler attaches a generalized UI interaction handler.
+// This is an extension point for adapters that support rich interactions
+// (menus/forms/approval flows) beyond fixed yes/no prompts.
+func WithUIRequestHandler(handler UIRequestHandler) Option {
+	return func(a *Agent) { a.uiRequestHandler = handler }
+}
+
 // WithSystemPrompt sets the system prompt.
 func WithSystemPrompt(prompt string) Option {
 	return func(a *Agent) { a.config.SystemPrompt = prompt }
@@ -48,14 +55,15 @@ func WithConfig(cfg AgentConfig) Option {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider        LLMProvider
-	tools           *Registry
-	config          AgentConfig
-	conversation    *Conversation
-	approve         ApprovalFunc
-	approvalChecker ApprovalChecker
-	logger          Logger
-	turnMu          sync.Mutex
+	provider         LLMProvider
+	tools            *Registry
+	config           AgentConfig
+	conversation     *Conversation
+	approve          ApprovalFunc
+	approvalChecker  ApprovalChecker
+	uiRequestHandler UIRequestHandler
+	logger           Logger
+	turnMu           sync.Mutex
 }
 
 // NewAgent creates a new Agent with the given LLM provider and options.

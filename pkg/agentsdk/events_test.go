@@ -81,3 +81,48 @@ func TestTurnEventSubagentDone(t *testing.T) {
 	}
 	assert.Equal(t, "explorer", ev.SubagentResult.Name)
 }
+
+func TestTurnEventUIRequest(t *testing.T) {
+	ev := TurnEvent{
+		Type: "ui_request",
+		UIRequest: &UIRequest{
+			ID:      "req_1",
+			Kind:    UIKindApproval,
+			Title:   "Approve shell command",
+			Message: "Run go test?",
+			Actions: []UIAction{
+				{ID: "allow", Label: "Allow", Default: true},
+				{ID: "deny", Label: "Deny", Style: "danger"},
+			},
+		},
+	}
+	assert.Equal(t, "req_1", ev.UIRequest.ID)
+	assert.Equal(t, UIKindApproval, ev.UIRequest.Kind)
+	assert.Len(t, ev.UIRequest.Actions, 2)
+}
+
+func TestTurnEventUIUpdate(t *testing.T) {
+	ev := TurnEvent{
+		Type: "ui_update",
+		UIUpdate: &UIUpdate{
+			RequestID: "req_1",
+			Status:    "waiting",
+			Message:   "Still waiting for response",
+		},
+	}
+	assert.Equal(t, "req_1", ev.UIUpdate.RequestID)
+	assert.Equal(t, "waiting", ev.UIUpdate.Status)
+}
+
+func TestTurnEventUIResponse(t *testing.T) {
+	ev := TurnEvent{
+		Type: "ui_response",
+		UIResponse: &UIResponse{
+			RequestID: "req_1",
+			ActionID:  "allow",
+			Values:    json.RawMessage(`{"scope":"this_call"}`),
+		},
+	}
+	assert.Equal(t, "allow", ev.UIResponse.ActionID)
+	assert.JSONEq(t, `{"scope":"this_call"}`, string(ev.UIResponse.Values))
+}

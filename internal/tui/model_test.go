@@ -1369,6 +1369,75 @@ func TestModelMakeApprovalFunc(t *testing.T) {
 	assert.NotNil(t, fn)
 }
 
+func TestModelMakeUIRequestHandlerApprovalAlways(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	handler := m.MakeUIRequestHandler()
+
+	resultCh := make(chan agent.UIResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := handler.Request(context.Background(), agent.UIRequest{
+			ID:   "req-1",
+			Kind: agent.UIKindApproval,
+			Actions: []agent.UIAction{
+				{ID: "allow", Label: "Allow"},
+				{ID: "deny", Label: "Deny"},
+				{ID: "allow_always", Label: "Always Allow"},
+			},
+			Metadata: map[string]string{
+				"tool":  "shell",
+				"input": `{"command":"ls"}`,
+			},
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- resp
+	}()
+
+	approvalMsg := m.waitForApproval()()
+	updated, _ := m.Update(approvalMsg)
+	m = updated.(*Model)
+
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(*Model)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("unexpected UI handler error: %v", err)
+	case resp := <-resultCh:
+		assert.Equal(t, "req-1", resp.RequestID)
+		assert.Equal(t, "allow_always", resp.ActionID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for UI response")
+	}
+
+	_, ok := m.alwaysApproved.Load("shell")
+	assert.True(t, ok, "always-approved cache should be set after 'a'")
+}
+
+func TestModelMakeUIRequestHandlerUsesAlwaysDenied(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.alwaysDenied.Store("shell", true)
+	handler := m.MakeUIRequestHandler()
+
+	resp, err := handler.Request(context.Background(), agent.UIRequest{
+		ID:   "req-2",
+		Kind: agent.UIKindApproval,
+		Metadata: map[string]string{
+			"tool": "shell",
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "req-2", resp.RequestID)
+	assert.Equal(t, "deny_always", resp.ActionID)
+}
+
 func TestModelIsAutoApproved(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 
