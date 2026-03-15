@@ -34,6 +34,7 @@ type plainInteractiveHost struct {
 	alwaysDenied   map[string]bool
 	sessionState   *session.State
 	eventSink      session.EventSink
+	debug          bool
 	mu             sync.RWMutex
 }
 
@@ -79,6 +80,10 @@ func (h *plainInteractiveHost) SetGitBranch(branch string) {
 func (h *plainInteractiveHost) SetSkillRuntime(rt plainSkillSummaryProvider) {
 	h.skillProvider = rt
 	h.refreshActiveSkills()
+}
+
+func (h *plainInteractiveHost) SetDebug(enabled bool) {
+	h.debug = enabled
 }
 
 func (h *plainInteractiveHost) refreshActiveSkills() {
@@ -335,9 +340,13 @@ func (h *plainInteractiveHost) runTurn(ctx context.Context, text string) error {
 				if gate == "hard_fail" || (gate == "" && verdict != "" && verdict != "passed") {
 					h.emitSessionEvent(session.NewGateFailedEvent("verification", reason))
 				}
-				_, _ = fmt.Fprintln(h.out, snapshot)
+				if h.debug {
+					_, _ = fmt.Fprintln(h.out, snapshot)
+				}
 				h.emitSessionEvent(session.NewVerificationSnapshotEvent(snapshot))
-				log.Printf("verification snapshot: %s", strings.ReplaceAll(strings.TrimSpace(snapshot), "\n", " | "))
+				if h.debug {
+					log.Printf("verification snapshot: %s", strings.ReplaceAll(strings.TrimSpace(snapshot), "\n", " | "))
+				}
 			}
 			if !hadError {
 				h.turnCount++

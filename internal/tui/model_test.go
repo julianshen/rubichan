@@ -302,11 +302,15 @@ func TestModelUpdateCtrlC(t *testing.T) {
 
 func TestModelUpdateWindowSize(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	oldRenderer := m.mdRenderer
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	um := updated.(*Model)
 	assert.Equal(t, 120, um.width)
 	assert.Equal(t, 40, um.height)
+	assert.NotNil(t, um.mdRenderer)
+	assert.NotSame(t, oldRenderer, um.mdRenderer)
+	assert.Equal(t, 120, um.toolBox.width)
 }
 
 func TestModelUpdateEnterSlashCommand(t *testing.T) {
@@ -2140,6 +2144,42 @@ func TestModelDoneEmitsVerificationSnapshotEvent(t *testing.T) {
 	require.NotNil(t, verification.Verification)
 	assert.Equal(t, "passed", verification.Verification.Verdict)
 	assert.Contains(t, verification.Verification.Snapshot, "api round-trip: true")
+	assert.NotContains(t, m.content.String(), "Verification snapshot:")
+}
+
+func TestModelDoneShowsVerificationSnapshotInDebugMode(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.SetDebug(true)
+	m.state = StateStreaming
+	m.sessionState.ResetForPrompt("Create a backend-only todo API using Node.js and SQLite")
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "1", Name: "shell", Input: json.RawMessage(`{"command":"npm install express better-sqlite3"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "1", Name: "shell", Content: "added 10 packages"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "2", Name: "process", Input: json.RawMessage(`{"operation":"exec","command":"node index.js"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "2", Name: "process", Content: "Todo API server listening on http://localhost:3000"},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:     "tool_call",
+		ToolCall: &agent.ToolCallEvent{ID: "3", Name: "shell", Input: json.RawMessage(`{"command":"curl -s http://localhost:3000/todos"}`)},
+	})
+	m.sessionState.ApplyEvent(agent.TurnEvent{
+		Type:       "tool_result",
+		ToolResult: &agent.ToolResultEvent{ID: "3", Name: "shell", Content: `[{"id":1,"title":"Test Todo","completed":false}]`},
+	})
+
+	updated, _ := m.Update(TurnEventMsg(agent.TurnEvent{Type: "done"}))
+
+	assert.Contains(t, updated.(*Model).content.String(), "Verification snapshot:")
 }
 
 func TestModelDoneEmitsGateFailedAndPlanUpdatedWhenVerificationInvalidated(t *testing.T) {

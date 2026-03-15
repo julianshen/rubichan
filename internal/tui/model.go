@@ -102,6 +102,7 @@ type Model struct {
 	skillProvider     skillSummaryProvider
 	activeSkills      []string
 	plainMode         bool
+	debug             bool
 	lastPrompt        string
 	sessionState      *session.State
 	eventSink         session.EventSink
@@ -257,6 +258,11 @@ func (m *Model) SetGitBranch(branch string) {
 	m.statusBar.SetGitBranch(branch)
 }
 
+// SetDebug enables or disables debug-only UI surfaces.
+func (m *Model) SetDebug(enabled bool) {
+	m.debug = enabled
+}
+
 // SetPlainMode reduces TUI chrome and redraw-heavy regions for terminal
 // automation and PTY capture.
 func (m *Model) SetPlainMode(enabled bool) {
@@ -266,6 +272,14 @@ func (m *Model) SetPlainMode(enabled bool) {
 	}
 	m.reflowViewport()
 	m.viewport.SetContent(m.viewportContent())
+}
+
+func (m *Model) refreshRenderers() {
+	mdRenderer, err := NewMarkdownRenderer(m.width)
+	if err == nil {
+		m.mdRenderer = mdRenderer
+	}
+	m.toolBox = NewToolBoxRenderer(m.width)
 }
 
 func buildVerificationSnapshot(prompt string, results []CollapsibleToolResult) string {
@@ -356,11 +370,7 @@ func (m *Model) headerRows() int {
 	if m.plainMode {
 		return 0
 	}
-	rows := 2 // title + divider
-	if len(m.activeSkills) > 0 {
-		rows++
-	}
-	return rows
+	return 2 // title + divider
 }
 
 func (m *Model) footerRows() int {
