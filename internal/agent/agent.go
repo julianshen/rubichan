@@ -683,6 +683,18 @@ func (a *Agent) DiffTracker() *tools.DiffTracker {
 	return a.diffTracker
 }
 
+// ContextBudget returns the current context usage breakdown.
+func (a *Agent) ContextBudget() agentsdk.ContextBudget {
+	return a.context.Budget()
+}
+
+// ForceCompact triggers manual compaction and returns before/after metrics.
+// The error return is always nil currently — reserved for future strategy errors.
+func (a *Agent) ForceCompact(ctx context.Context) (agentsdk.CompactResult, error) {
+	result := a.context.ForceCompact(ctx, a.conversation)
+	return result, nil
+}
+
 // buildSystemPromptWithFragments returns the assembled system prompt,
 // cache breakpoint offsets, and the final skill prompt fragment text used
 // for telemetry. Cacheable (static) sections are placed first for optimal
@@ -880,12 +892,14 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context) (string, []i
 }
 
 // makeDoneEvent constructs a "done" TurnEvent, attaching the cumulative diff
-// summary from the DiffTracker if one is attached.
+// summary from the DiffTracker if one is attached, and the context budget.
 func (a *Agent) makeDoneEvent(inputTokens, outputTokens int) TurnEvent {
+	budget := a.context.Budget()
 	event := TurnEvent{
-		Type:         "done",
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
+		Type:          "done",
+		InputTokens:   inputTokens,
+		OutputTokens:  outputTokens,
+		ContextBudget: &budget,
 	}
 	if a.diffTracker != nil {
 		event.DiffSummary = a.diffTracker.Summarize()
