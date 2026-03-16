@@ -205,6 +205,43 @@ func (m *Manager) restore(cp Checkpoint) error {
 	return os.WriteFile(cp.FilePath, data, mode)
 }
 
+// RewindToTurn reverts all checkpoints with turn > the given turn number,
+// in reverse order (newest first). Each checkpoint is restored individually;
+// intermediate checkpoints for the same file are applied in sequence, not skipped.
+func (m *Manager) RewindToTurn(ctx context.Context, turn int) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Find cutoff: last index where Turn <= turn
+	cutoff := -1
+	for i, cp := range m.stack {
+		if cp.Turn <= turn {
+			cutoff = i
+		}
+	}
+
+	// Pop everything after cutoff in reverse
+	var paths []string
+	seen := make(map[string]bool)
+
+	for i := len(m.stack) - 1; i > cutoff; i-- {
+		cp := m.stack[i]
+		if err := m.restore(cp); err != nil {
+			return paths, fmt.Errorf("rewind restore %s: %w", cp.FilePath, err)
+		}
+		if !seen[cp.FilePath] {
+			paths = append(paths, cp.FilePath)
+			seen[cp.FilePath] = true
+		}
+		if !cp.Spilled {
+			m.memUsed -= cp.Size
+		}
+	}
+
+	m.stack = m.stack[:cutoff+1]
+	return paths, nil
+}
+
 // Cleanup removes the spill directory and all checkpoint data.
 func (m *Manager) Cleanup() error {
 	m.mu.Lock()
