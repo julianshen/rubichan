@@ -415,6 +415,9 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		if err != nil {
 			return false, err
 		}
+		if resp.RequestID != req.ID {
+			return false, fmt.Errorf("unexpected UI response id %q for request %q", resp.RequestID, req.ID)
+		}
 		ch <- TurnEvent{Type: "ui_response", UIResponse: &resp}
 
 		switch strings.ToLower(resp.ActionID) {

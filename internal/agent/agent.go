@@ -1334,6 +1334,9 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		if reqErr != nil {
 			return false, false, reqErr
 		}
+		if resp.RequestID != req.ID {
+			return false, false, fmt.Errorf("unexpected UI response id %q for request %q", resp.RequestID, req.ID)
+		}
 		ch <- TurnEvent{Type: "ui_response", UIResponse: &resp}
 		switch strings.ToLower(resp.ActionID) {
 		case "allow", "allow_always", "yes":

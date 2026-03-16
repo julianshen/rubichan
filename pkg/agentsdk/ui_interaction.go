@@ -3,6 +3,7 @@ package agentsdk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // UIRequestKind identifies the category of UI interaction a runtime wants to
@@ -68,5 +69,8 @@ type UIRequestFunc func(ctx context.Context, req UIRequest) (UIResponse, error)
 
 // Request implements UIRequestHandler.
 func (f UIRequestFunc) Request(ctx context.Context, req UIRequest) (UIResponse, error) {
+	if f == nil {
+		return UIResponse{}, errors.New("agentsdk: nil UIRequestFunc")
+	}
 	return f(ctx, req)
 }

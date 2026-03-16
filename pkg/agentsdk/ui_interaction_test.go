@@ -29,3 +29,10 @@ func TestUIRequestFuncAdapter(t *testing.T) {
 	assert.Equal(t, "pick", resp.ActionID)
 	assert.JSONEq(t, `{"option":"A"}`, string(resp.Values))
 }
+
+func TestUIRequestFuncNilGuard(t *testing.T) {
+	var handler UIRequestFunc
+	_, err := handler.Request(context.Background(), UIRequest{ID: "req_nil"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil UIRequestFunc")
+}

@@ -37,6 +37,12 @@ func (m *mockUIHandler) Request(_ context.Context, req UIRequest) (UIResponse, e
 	return m.resp, nil
 }
 
+func (m *mockUIHandler) Calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
 func (m *mockProvider) Stream(_ context.Context, _ CompletionRequest) (<-chan StreamEvent, error) {
 	if m.callIdx >= len(m.responses) {
 		return nil, fmt.Errorf("no more mock responses")
@@ -396,7 +402,7 @@ func TestAgentApprovalCheckerUsesUIRequestHandler(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	assert.Equal(t, 1, ui.calls)
+	assert.Equal(t, 1, ui.Calls())
 	assert.Equal(t, UIKindApproval, ui.last.Kind)
 	assert.Equal(t, "echo", ui.last.Metadata["tool"])
 	assert.Contains(t, eventTypes(events), "ui_request")
@@ -484,6 +490,36 @@ func TestAgentUIRequestMetadataInputTruncated(t *testing.T) {
 	require.NotEmpty(t, ui.last.Metadata["input"])
 	assert.LessOrEqual(t, len(ui.last.Metadata["input"]), maxUIRequestInputBytes+len("...(truncated)"))
 	assert.True(t, strings.HasSuffix(ui.last.Metadata["input"], "...(truncated)"))
+}
+
+func TestAgentUIRequestHandlerIDMismatch(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "wrong-id", ActionID: "allow"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "approval error")
 }
 
 func eventTypes(events []TurnEvent) []string {

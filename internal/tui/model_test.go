@@ -1438,6 +1438,55 @@ func TestModelMakeUIRequestHandlerUsesAlwaysDenied(t *testing.T) {
 	assert.Equal(t, "deny_always", resp.ActionID)
 }
 
+func TestModelMakeUIRequestHandlerReturnsOfferedActionID(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	handler := m.MakeUIRequestHandler()
+
+	resultCh := make(chan agent.UIResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := handler.Request(context.Background(), agent.UIRequest{
+			ID:   "req-3",
+			Kind: agent.UIKindApproval,
+			Actions: []agent.UIAction{
+				{ID: "yes", Label: "Yes"},
+				{ID: "no", Label: "No"},
+				{ID: "always", Label: "Always"},
+			},
+			Metadata: map[string]string{
+				"tool":  "shell",
+				"input": `{"command":"ls"}`,
+			},
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- resp
+	}()
+
+	approvalMsg := m.waitForApproval()()
+	updated, _ := m.Update(approvalMsg)
+	m = updated.(*Model)
+
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(*Model)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("unexpected UI handler error: %v", err)
+	case resp := <-resultCh:
+		assert.Equal(t, "req-3", resp.RequestID)
+		assert.Equal(t, "always", resp.ActionID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for UI response")
+	}
+}
+
 func TestModelMakeUIRequestHandlerRejectsUnsupportedKinds(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	handler := m.MakeUIRequestHandler()

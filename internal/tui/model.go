@@ -461,7 +461,7 @@ func (m *Model) MakeUIRequestHandler() agent.UIRequestHandler {
 		case result := <-respCh:
 			return agent.UIResponse{
 				RequestID: req.ID,
-				ActionID:  actionIDFromApprovalResult(result),
+				ActionID:  actionIDFromApprovalResult(result, req.Actions),
 			}, nil
 		}
 	})
@@ -498,7 +498,16 @@ func (m *Model) waitForApproval() tea.Cmd {
 	}
 }
 
-func actionIDFromApprovalResult(result ApprovalResult) string {
+func actionIDFromApprovalResult(result ApprovalResult, actions []agent.UIAction) string {
+	// Prefer returning an ID that was actually offered in req.Actions.
+	// This avoids emitting canonical IDs that the caller did not provide.
+	for _, action := range actions {
+		if mapped, ok := approvalResultFromActionID(action.ID); ok && mapped == result {
+			return action.ID
+		}
+	}
+
+	// Fallback to canonical IDs when actions are missing or unknown.
 	switch result {
 	case ApprovalAlways:
 		return "allow_always"
@@ -511,6 +520,21 @@ func actionIDFromApprovalResult(result ApprovalResult) string {
 	}
 }
 
+func approvalResultFromActionID(actionID string) (ApprovalResult, bool) {
+	switch strings.ToLower(actionID) {
+	case "allow", "yes":
+		return ApprovalYes, true
+	case "deny", "no":
+		return ApprovalNo, true
+	case "allow_always", "always":
+		return ApprovalAlways, true
+	case "deny_always":
+		return ApprovalDenyAlways, true
+	default:
+		return ApprovalPending, false
+	}
+}
+
 func optionsFromUIActions(actions []agent.UIAction) []ApprovalResult {
 	if len(actions) == 0 {
 		return nil
@@ -518,17 +542,8 @@ func optionsFromUIActions(actions []agent.UIAction) []ApprovalResult {
 	seen := map[ApprovalResult]bool{}
 	opts := make([]ApprovalResult, 0, len(actions))
 	for _, action := range actions {
-		var mapped ApprovalResult
-		switch strings.ToLower(action.ID) {
-		case "allow", "yes":
-			mapped = ApprovalYes
-		case "deny", "no":
-			mapped = ApprovalNo
-		case "allow_always", "always":
-			mapped = ApprovalAlways
-		case "deny_always":
-			mapped = ApprovalDenyAlways
-		default:
+		mapped, ok := approvalResultFromActionID(action.ID)
+		if !ok {
 			continue
 		}
 		if seen[mapped] {
