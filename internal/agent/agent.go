@@ -8,12 +8,14 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/sourcegraph/conc/pool"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
+	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/provider"
@@ -35,6 +37,14 @@ type AgentOption func(*Agent)
 func WithSkillRuntime(rt *skills.Runtime) AgentOption {
 	return func(a *Agent) {
 		a.skillRuntime = rt
+	}
+}
+
+// WithCheckpointManager attaches a checkpoint manager to the agent, enabling
+// undo/rewind support and automatic file-state capture via the pipeline.
+func WithCheckpointManager(mgr *checkpoint.Manager) AgentOption {
+	return func(a *Agent) {
+		a.checkpointMgr = mgr
 	}
 }
 
@@ -151,6 +161,33 @@ func (a *Agent) WorkingDir() string {
 	return a.workingDir
 }
 
+// Undo reverts the most recent file modification captured by the checkpoint
+// manager. Returns the restored file path or an error.
+func (a *Agent) Undo(ctx context.Context) (string, error) {
+	if a.checkpointMgr == nil {
+		return "", fmt.Errorf("checkpoint manager not configured")
+	}
+	return a.checkpointMgr.Undo(ctx)
+}
+
+// RewindToTurn restores all files modified since the given turn number.
+// Returns the list of restored file paths or an error.
+func (a *Agent) RewindToTurn(ctx context.Context, turn int) ([]string, error) {
+	if a.checkpointMgr == nil {
+		return nil, fmt.Errorf("checkpoint manager not configured")
+	}
+	return a.checkpointMgr.RewindToTurn(ctx, turn)
+}
+
+// Checkpoints returns the current checkpoint stack. Returns nil if no
+// checkpoint manager is configured.
+func (a *Agent) Checkpoints() []checkpoint.Checkpoint {
+	if a.checkpointMgr == nil {
+		return nil
+	}
+	return a.checkpointMgr.List()
+}
+
 // WithPipeline attaches a tool execution pipeline to the agent.
 func WithPipeline(p *toolexec.Pipeline) AgentOption {
 	return func(a *Agent) {
@@ -238,6 +275,8 @@ type Agent struct {
 	parallelPolicy   ToolParallelPolicy
 	logger           Logger
 	mode             string
+	checkpointMgr    *checkpoint.Manager
+	turnNumber       atomic.Int32
 }
 
 const maxUIRequestInputBytes = 2048
@@ -371,6 +410,13 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		// Hook middleware for before-tool-call dispatch.
 		hookAdapter := &toolexec.SkillHookAdapter{Runtime: a.skillRuntime}
 		middlewares = append(middlewares, toolexec.HookMiddleware(hookAdapter))
+
+		// Checkpoint middleware captures file state before write/patch operations.
+		if a.checkpointMgr != nil {
+			middlewares = append(middlewares, toolexec.CheckpointMiddleware(a.checkpointMgr, func() int {
+				return int(a.turnNumber.Load())
+			}))
+		}
 
 		// Post-hook middleware for after-tool-result dispatch.
 		middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
@@ -859,6 +905,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 	}
 	for ; turnCount < a.maxTurns; turnCount++ {
+		// Track turn number for checkpoint middleware.
+		a.turnNumber.Store(int32(turnCount))
+
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)

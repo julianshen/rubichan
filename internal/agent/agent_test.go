@@ -12,6 +12,7 @@ import (
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
+	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/store"
@@ -2939,4 +2940,46 @@ type channelProvider struct {
 
 func (p *channelProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
 	return p.events(), nil
+}
+
+func TestAgentCheckpointMethods(t *testing.T) {
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "ok"},
+		{Type: "stop"},
+	}}
+
+	t.Run("no manager returns errors", func(t *testing.T) {
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+
+		_, err := a.Undo(context.Background())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "checkpoint manager not configured")
+
+		_, err = a.RewindToTurn(context.Background(), 0)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "checkpoint manager not configured")
+
+		assert.Nil(t, a.Checkpoints())
+	})
+
+	t.Run("with manager", func(t *testing.T) {
+		rootDir := t.TempDir()
+		mgr, err := checkpoint.New(rootDir, "test-session", 0)
+		require.NoError(t, err)
+
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithCheckpointManager(mgr))
+		assert.NotNil(t, a.checkpointMgr)
+
+		// Empty stack returns no checkpoints.
+		cps := a.Checkpoints()
+		assert.Empty(t, cps)
+
+		// Undo on empty stack returns ErrNoCheckpoints.
+		_, err = a.Undo(context.Background())
+		assert.ErrorIs(t, err, checkpoint.ErrNoCheckpoints)
+	})
 }
