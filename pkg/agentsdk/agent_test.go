@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ type mockProvider struct {
 }
 
 type mockUIHandler struct {
+	mu    sync.Mutex
 	resp  UIResponse
 	err   error
 	calls int
@@ -24,6 +26,8 @@ type mockUIHandler struct {
 }
 
 func (m *mockUIHandler) Request(_ context.Context, req UIRequest) (UIResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls++
 	m.last = req
 	if m.err != nil {
