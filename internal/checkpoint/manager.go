@@ -159,10 +159,17 @@ func (m *Manager) Capture(ctx context.Context, filePath string, turn int, operat
 // resolution and path traversal check.
 func (m *Manager) resolvePath(relPath string) (string, error) {
 	if filepath.IsAbs(relPath) {
-		if !strings.HasPrefix(relPath, m.rootDir+string(filepath.Separator)) && relPath != m.rootDir {
+		evalPath, err := filepath.EvalSymlinks(relPath)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return "", err
+			}
+			evalPath = relPath // file doesn't exist yet, check prefix on raw path
+		}
+		if !strings.HasPrefix(evalPath, m.rootDir+string(filepath.Separator)) && evalPath != m.rootDir {
 			return "", fmt.Errorf("path traversal denied: %s escapes root", relPath)
 		}
-		return relPath, nil
+		return evalPath, nil
 	}
 
 	joined := filepath.Join(m.rootDir, relPath)
@@ -209,7 +216,9 @@ func (m *Manager) Undo(ctx context.Context) (string, error) {
 	m.stack = m.stack[:len(m.stack)-1]
 
 	if err := m.restore(cp); err != nil {
-		return cp.FilePath, fmt.Errorf("undo restore: %w", err)
+		// Re-push so the user can retry — don't lose the checkpoint on failure.
+		m.stack = append(m.stack, cp)
+		return "", fmt.Errorf("undo restore: %w", err)
 	}
 
 	if !cp.spilled {
@@ -266,6 +275,9 @@ func (m *Manager) RewindToTurn(ctx context.Context, turn int) ([]string, error) 
 	for i := len(m.stack) - 1; i > cutoff; i-- {
 		cp := m.stack[i]
 		if err := m.restore(cp); err != nil {
+			// Truncate stack to match filesystem reality: everything we already
+			// restored is gone, keep unrestored checkpoints (including this one).
+			m.stack = m.stack[:i+1]
 			return paths, fmt.Errorf("rewind restore %s: %w", cp.FilePath, err)
 		}
 		if !seen[cp.FilePath] {

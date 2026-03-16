@@ -94,8 +94,9 @@ func TestRecoverSessionMissingSpillFile(t *testing.T) {
 	os.WriteFile(filepath.Join(sessionDir, "manifest.json"), []byte(manifest), 0644)
 
 	restored, err := checkpoint.RecoverSession(tmpDir, "missing-spill")
-	// Missing spill file is skipped — no error returned, just no restored entries
-	require.NoError(t, err)
+	// Missing spill file reports partial recovery error
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "partial recovery")
 	assert.Empty(t, restored)
 
 	// Original file should be untouched

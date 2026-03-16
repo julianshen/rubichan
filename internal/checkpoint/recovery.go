@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -109,16 +110,32 @@ func RecoverSession(baseDir, sessionID string) ([]string, error) {
 	}
 
 	var restored []string
+	var restoreErrors []string
 	for _, entry := range m.Checkpoints {
+		// Validate file path is under the manifest's root dir to prevent
+		// arbitrary file writes from a tampered manifest.
+		if m.RootDir != "" {
+			if !strings.HasPrefix(entry.FilePath, m.RootDir+string(filepath.Separator)) && entry.FilePath != m.RootDir {
+				restoreErrors = append(restoreErrors, fmt.Sprintf("path %s escapes root %s", entry.FilePath, m.RootDir))
+				continue
+			}
+		}
+
 		spillPath := filepath.Join(baseDir, sessionID, entry.ID+".bak")
 		content, err := os.ReadFile(spillPath)
 		if err != nil {
+			restoreErrors = append(restoreErrors, fmt.Sprintf("read spill for %s: %v", entry.FilePath, err))
 			continue
 		}
 		if err := os.WriteFile(entry.FilePath, content, 0644); err != nil {
+			restoreErrors = append(restoreErrors, fmt.Sprintf("restore %s: %v", entry.FilePath, err))
 			continue
 		}
 		restored = append(restored, entry.FilePath)
+	}
+	if len(restoreErrors) > 0 {
+		return restored, fmt.Errorf("partial recovery (%d/%d failed): %s",
+			len(restoreErrors), len(m.Checkpoints), strings.Join(restoreErrors, "; "))
 	}
 	return restored, nil
 }
