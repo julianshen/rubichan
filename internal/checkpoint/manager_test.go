@@ -101,3 +101,62 @@ func TestCaptureEmptyExistingFile(t *testing.T) {
 	assert.NotNil(t, cps[0].OriginalData, "empty existing file should have non-nil []byte{}")
 	assert.Len(t, cps[0].OriginalData, 0)
 }
+
+func TestUndoRestoresModifiedFile(t *testing.T) {
+	rootDir := t.TempDir()
+	testFile := filepath.Join(rootDir, "main.go")
+	os.WriteFile(testFile, []byte("original"), 0644)
+
+	mgr, err := checkpoint.New(rootDir, "undo-modify", 0)
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	_, err = mgr.Capture(context.Background(), "main.go", 1, "write")
+	require.NoError(t, err)
+
+	// Simulate the agent writing to the file
+	os.WriteFile(testFile, []byte("modified"), 0644)
+
+	path, err := mgr.Undo(context.Background())
+	require.NoError(t, err)
+	// Use EvalSymlinks for macOS /var -> /private/var
+	expected, _ := filepath.EvalSymlinks(testFile)
+	assert.Equal(t, expected, path)
+
+	data, _ := os.ReadFile(testFile)
+	assert.Equal(t, "original", string(data))
+	assert.Empty(t, mgr.List(), "stack should be empty after undo")
+}
+
+func TestUndoDeletesCreatedFile(t *testing.T) {
+	rootDir := t.TempDir()
+
+	mgr, err := checkpoint.New(rootDir, "undo-create", 0)
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	// Capture before the file exists
+	_, err = mgr.Capture(context.Background(), "new.go", 1, "write")
+	require.NoError(t, err)
+
+	// Simulate the agent creating the file
+	newFile := filepath.Join(rootDir, "new.go")
+	os.WriteFile(newFile, []byte("package new"), 0644)
+
+	path, err := mgr.Undo(context.Background())
+	require.NoError(t, err)
+	assert.NotEmpty(t, path)
+
+	_, err = os.Stat(newFile)
+	assert.True(t, os.IsNotExist(err), "file should be deleted after undo of creation")
+}
+
+func TestUndoEmptyStackReturnsError(t *testing.T) {
+	rootDir := t.TempDir()
+	mgr, err := checkpoint.New(rootDir, "undo-empty", 0)
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	_, err = mgr.Undo(context.Background())
+	assert.ErrorIs(t, err, checkpoint.ErrNoCheckpoints)
+}

@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrNoCheckpoints is returned when Undo is called on an empty checkpoint stack.
+var ErrNoCheckpoints = errors.New("no checkpoints to undo")
 
 const defaultMemBudget = 100 * 1024 * 1024 // 100MB
 
@@ -150,6 +154,55 @@ func (m *Manager) resolvePath(relPath string) (string, error) {
 	}
 
 	return evalPath, nil
+}
+
+// Undo pops the most recent checkpoint and restores the file to its captured state.
+// If the checkpoint was a creation (OriginalData == nil), the file is deleted.
+// Returns the absolute path of the restored file.
+func (m *Manager) Undo(ctx context.Context) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.stack) == 0 {
+		return "", ErrNoCheckpoints
+	}
+
+	cp := m.stack[len(m.stack)-1]
+	m.stack = m.stack[:len(m.stack)-1]
+
+	if err := m.restore(cp); err != nil {
+		return cp.FilePath, fmt.Errorf("undo restore: %w", err)
+	}
+
+	if !cp.Spilled {
+		m.memUsed -= cp.Size
+	}
+
+	return cp.FilePath, nil
+}
+
+// restore writes the checkpoint's original data back to disk (or deletes the file
+// if OriginalData is nil, indicating the file was created after the checkpoint).
+func (m *Manager) restore(cp Checkpoint) error {
+	if cp.OriginalData == nil {
+		return os.Remove(cp.FilePath)
+	}
+
+	data := cp.OriginalData
+	if cp.Spilled {
+		var err error
+		data, err = os.ReadFile(cp.SpillPath)
+		if err != nil {
+			return fmt.Errorf("read spill file: %w", err)
+		}
+		os.Remove(cp.SpillPath)
+	}
+
+	mode := cp.FileMode
+	if mode == 0 {
+		mode = 0644
+	}
+	return os.WriteFile(cp.FilePath, data, mode)
 }
 
 // Cleanup removes the spill directory and all checkpoint data.
