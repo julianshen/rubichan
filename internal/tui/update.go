@@ -108,7 +108,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tool:          msg.tool,
 			input:         msg.input,
 			options:       msg.options,
-			response:      msg.response,
 			responseValue: msg.responseValue,
 		}
 		return m, m.waitForApproval()
@@ -154,12 +153,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		// Unblock the agent goroutine if it's waiting for approval.
 		if m.pendingApproval != nil {
-			if m.pendingApproval.response != nil {
-				m.pendingApproval.response <- false
-			}
-			if m.pendingApproval.responseValue != nil {
-				m.pendingApproval.responseValue <- ApprovalNo
-			}
+			m.pendingApproval.responseValue <- ApprovalNo
 			m.pendingApproval = nil
 		}
 		// Cancel any running wiki generation goroutine.
@@ -173,7 +167,6 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.state == StateAwaitingApproval && m.approvalPrompt != nil {
 		if m.approvalPrompt.HandleKey(msg) {
 			result := m.approvalPrompt.Result()
-			approved := result == ApprovalYes || result == ApprovalAlways
 			if result == ApprovalAlways {
 				m.alwaysDenied.Delete(m.pendingApproval.tool)
 				m.alwaysApproved.Store(m.pendingApproval.tool, true)
@@ -182,12 +175,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.alwaysApproved.Delete(m.pendingApproval.tool)
 				m.alwaysDenied.Store(m.pendingApproval.tool, true)
 			}
-			if m.pendingApproval.response != nil {
-				m.pendingApproval.response <- approved
-			}
-			if m.pendingApproval.responseValue != nil {
-				m.pendingApproval.responseValue <- result
-			}
+			m.pendingApproval.responseValue <- result
 			m.approvalPrompt = nil
 			m.pendingApproval = nil
 			m.state = StateStreaming

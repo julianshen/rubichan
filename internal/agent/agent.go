@@ -240,6 +240,8 @@ type Agent struct {
 	mode             string
 }
 
+const maxUIRequestInputBytes = 2048
+
 // New creates a new Agent with the given provider, tool registry, approval
 // function, and configuration. Optional AgentOption values can be provided
 // to attach a skill runtime.
@@ -1324,7 +1326,7 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 			},
 			Metadata: map[string]string{
 				"tool":  tc.Name,
-				"input": string(tc.Input),
+				"input": truncateUIInput(tc.Input),
 			},
 		}
 		ch <- TurnEvent{Type: "ui_request", UIRequest: &req}
@@ -1355,6 +1357,14 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		return false, false, approvalErr
 	}
 	return approved, false, nil
+}
+
+func truncateUIInput(input json.RawMessage) string {
+	s := string(input)
+	if len(s) <= maxUIRequestInputBytes {
+		return s
+	}
+	return s[:maxUIRequestInputBytes] + "...(truncated)"
 }
 
 // executeSingleTool delegates tool execution to the pipeline.

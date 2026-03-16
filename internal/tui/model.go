@@ -28,7 +28,6 @@ type approvalRequest struct {
 	tool          string
 	input         string
 	options       []ApprovalResult
-	response      chan bool
 	responseValue chan ApprovalResult
 }
 
@@ -417,14 +416,15 @@ func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 			}
 		}
 
-		respCh := make(chan bool, 1)
+		respCh := make(chan ApprovalResult, 1)
 		m.approvalCh <- approvalRequest{
-			tool:     tool,
-			input:    string(input),
-			options:  nil,
-			response: respCh,
+			tool:          tool,
+			input:         string(input),
+			options:       nil,
+			responseValue: respCh,
 		}
-		return <-respCh, nil
+		result := <-respCh
+		return result == ApprovalYes || result == ApprovalAlways, nil
 	}
 }
 

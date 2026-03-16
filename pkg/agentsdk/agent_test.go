@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -427,6 +428,62 @@ func TestAgentNoCheckerUsesUIRequestHandler(t *testing.T) {
 	require.Len(t, toolResults, 1)
 	assert.True(t, toolResults[0].ToolResult.IsError)
 	assert.Contains(t, toolResults[0].ToolResult.Content, "denied")
+}
+
+func TestAgentUIRequestHandlerDenyAlwaysMessage(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "deny_always"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Equal(t, "Tool call denied by user (deny-always).", toolResults[0].ToolResult.Content)
+}
+
+func TestAgentUIRequestMetadataInputTruncated(t *testing.T) {
+	largeInput := `{"data":"` + strings.Repeat("x", maxUIRequestInputBytes+200) + `"}`
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", largeInput),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "allow"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.NotEmpty(t, ui.last.Metadata["input"])
+	assert.LessOrEqual(t, len(ui.last.Metadata["input"]), maxUIRequestInputBytes+len("...(truncated)"))
+	assert.True(t, strings.HasSuffix(ui.last.Metadata["input"], "...(truncated)"))
 }
 
 func eventTypes(events []TurnEvent) []string {

@@ -67,6 +67,8 @@ type Agent struct {
 	turnMu           sync.Mutex
 }
 
+const maxUIRequestInputBytes = 2048
+
 // NewAgent creates a new Agent with the given LLM provider and options.
 // Panics if provider is nil.
 func NewAgent(provider LLMProvider, opts ...Option) *Agent {
@@ -90,6 +92,7 @@ func NewAgent(provider LLMProvider, opts ...Option) *Agent {
 
 // ErrEmptyMessage is returned by Turn when the user message is empty.
 var ErrEmptyMessage = errors.New("agentsdk: empty user message")
+var errUIDenyAlways = errors.New("agentsdk: ui deny-always")
 
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
@@ -322,6 +325,9 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 			}
 			approved, err := a.requestToolApproval(ctx, ch, tc)
 			if err != nil {
+				if errors.Is(err, errUIDenyAlways) {
+					return a.toolError(tc, "Tool call denied by user (deny-always).")
+				}
 				a.logger.Error("approval failure for tool %s: %v", tc.Name, err)
 				return a.toolError(tc, "approval error")
 			}
@@ -333,6 +339,9 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 		// No checker — always ask for approval.
 		approved, err := a.requestToolApproval(ctx, ch, tc)
 		if err != nil {
+			if errors.Is(err, errUIDenyAlways) {
+				return a.toolError(tc, "Tool call denied by user (deny-always).")
+			}
 			a.logger.Error("approval failure for tool %s: %v", tc.Name, err)
 			return a.toolError(tc, "approval error")
 		}
@@ -398,7 +407,7 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 			},
 			Metadata: map[string]string{
 				"tool":  tc.Name,
-				"input": string(tc.Input),
+				"input": truncateUIInput(tc.Input),
 			},
 		}
 		ch <- TurnEvent{Type: "ui_request", UIRequest: &req}
@@ -411,7 +420,9 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		switch strings.ToLower(resp.ActionID) {
 		case "allow", "allow_always", "yes":
 			return true, nil
-		case "deny", "deny_always", "no":
+		case "deny_always":
+			return false, errUIDenyAlways
+		case "deny", "no":
 			return false, nil
 		default:
 			return false, fmt.Errorf("unsupported UI approval action %q", resp.ActionID)
@@ -422,6 +433,14 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		return false, fmt.Errorf("approval function not configured")
 	}
 	return a.approve(ctx, tc.Name, tc.Input)
+}
+
+func truncateUIInput(input json.RawMessage) string {
+	s := string(input)
+	if len(s) <= maxUIRequestInputBytes {
+		return s
+	}
+	return s[:maxUIRequestInputBytes] + "...(truncated)"
 }
 
 func (a *Agent) toolError(tc ToolUseBlock, msg string) toolResult {
