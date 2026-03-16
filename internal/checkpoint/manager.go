@@ -67,11 +67,13 @@ func New(rootDir, sessionID string, memBudget int64) (*Manager, error) {
 		return nil, err
 	}
 
-	return &Manager{
+	mgr := &Manager{
 		rootDir:   evalRoot,
 		memBudget: memBudget,
 		spillDir:  spillDir,
-	}, nil
+	}
+	mgr.WriteLock() // best-effort PID lock; ignore error
+	return mgr, nil
 }
 
 // List returns a copy of all checkpoints in the stack (oldest first).
@@ -117,27 +119,36 @@ func (m *Manager) Capture(ctx context.Context, filePath string, turn int, operat
 		Size:         size,
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	needsManifest := false
 
+	m.mu.Lock()
 	// Spill large files directly to disk
 	if size > spillThreshold {
 		spillPath := filepath.Join(m.spillDir, id+".bak")
 		if err := os.WriteFile(spillPath, data, 0644); err != nil {
+			m.mu.Unlock()
 			return "", fmt.Errorf("checkpoint spill: %w", err)
 		}
 		cp.Spilled = true
 		cp.SpillPath = spillPath
 		cp.OriginalData = nil // don't hold in memory
+		needsManifest = true
 	} else {
 		// Check budget and evict if needed
 		for m.memUsed+size > m.memBudget && len(m.stack) > 0 {
 			m.evictOldest()
+			needsManifest = true
 		}
 		m.memUsed += size
 	}
 
 	m.stack = append(m.stack, cp)
+	m.mu.Unlock()
+
+	if needsManifest {
+		m.WriteManifest() // best-effort manifest update; ignore error
+	}
+
 	return id, nil
 }
 
