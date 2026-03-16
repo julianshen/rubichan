@@ -17,20 +17,25 @@ import (
 var ErrNoCheckpoints = errors.New("no checkpoints to undo")
 
 const defaultMemBudget = 100 * 1024 * 1024 // 100MB
+const spillThreshold = 1024 * 1024         // 1MB
 
 // Checkpoint represents a snapshot of a file before modification.
 type Checkpoint struct {
 	ID           string
-	FilePath     string      // absolute path
+	FilePath     string // absolute path
 	Turn         int
 	Timestamp    time.Time
 	Operation    string      // "write" or "patch"
 	OriginalData []byte      // nil if file did not exist (creation checkpoint)
 	FileMode     os.FileMode // original file permissions (0 if file did not exist)
-	Size      int64
-	Spilled   bool
-	SpillPath string
+	Size         int64
+	Spilled      bool
+	SpillPath    string
 }
+
+// IsSpilled reports whether the checkpoint's data has been written to disk
+// rather than held in memory.
+func (c Checkpoint) IsSpilled() bool { return c.Spilled }
 
 // Manager manages a stack of file checkpoints with memory budget and disk spillover.
 type Manager struct {
@@ -114,9 +119,25 @@ func (m *Manager) Capture(ctx context.Context, filePath string, turn int, operat
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.stack = append(m.stack, cp)
-	m.memUsed += size
 
+	// Spill large files directly to disk
+	if size > spillThreshold {
+		spillPath := filepath.Join(m.spillDir, id+".bak")
+		if err := os.WriteFile(spillPath, data, 0644); err != nil {
+			return "", fmt.Errorf("checkpoint spill: %w", err)
+		}
+		cp.Spilled = true
+		cp.SpillPath = spillPath
+		cp.OriginalData = nil // don't hold in memory
+	} else {
+		// Check budget and evict if needed
+		for m.memUsed+size > m.memBudget && len(m.stack) > 0 {
+			m.evictOldest()
+		}
+		m.memUsed += size
+	}
+
+	m.stack = append(m.stack, cp)
 	return id, nil
 }
 
@@ -182,13 +203,9 @@ func (m *Manager) Undo(ctx context.Context) (string, error) {
 }
 
 // restore writes the checkpoint's original data back to disk (or deletes the file
-// if OriginalData is nil, indicating the file was created after the checkpoint).
+// if OriginalData is nil and not spilled, indicating the file was created after the checkpoint).
 func (m *Manager) restore(cp Checkpoint) error {
-	if cp.OriginalData == nil {
-		return os.Remove(cp.FilePath)
-	}
-
-	data := cp.OriginalData
+	var data []byte
 	if cp.Spilled {
 		var err error
 		data, err = os.ReadFile(cp.SpillPath)
@@ -196,6 +213,11 @@ func (m *Manager) restore(cp Checkpoint) error {
 			return fmt.Errorf("read spill file: %w", err)
 		}
 		os.Remove(cp.SpillPath)
+	} else {
+		if cp.OriginalData == nil {
+			return os.Remove(cp.FilePath)
+		}
+		data = cp.OriginalData
 	}
 
 	mode := cp.FileMode
@@ -249,4 +271,22 @@ func (m *Manager) Cleanup() error {
 	m.stack = nil
 	m.memUsed = 0
 	return os.RemoveAll(m.spillDir)
+}
+
+// evictOldest finds the oldest in-memory checkpoint and spills it to disk.
+// The caller must hold m.mu.
+func (m *Manager) evictOldest() {
+	for i, cp := range m.stack {
+		if !cp.Spilled && cp.OriginalData != nil {
+			spillPath := filepath.Join(m.spillDir, cp.ID+".bak")
+			if err := os.WriteFile(spillPath, cp.OriginalData, 0644); err != nil {
+				continue
+			}
+			m.stack[i].Spilled = true
+			m.stack[i].SpillPath = spillPath
+			m.stack[i].OriginalData = nil
+			m.memUsed -= cp.Size
+			return
+		}
+	}
 }

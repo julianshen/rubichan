@@ -41,7 +41,7 @@ func TestNewManagerDefaultBudget(t *testing.T) {
 func TestCaptureExistingFile(t *testing.T) {
 	rootDir := t.TempDir()
 	testFile := filepath.Join(rootDir, "hello.go")
-	os.WriteFile(testFile, []byte("package main"), 0644)
+	require.NoError(t, os.WriteFile(testFile, []byte("package main"), 0644))
 	// Resolve symlinks so the comparison works on platforms where TempDir
 	// returns a symlinked path (e.g., macOS /var → /private/var).
 	resolvedTestFile, err := filepath.EvalSymlinks(testFile)
@@ -87,7 +87,7 @@ func TestCaptureNewFile(t *testing.T) {
 func TestCaptureEmptyExistingFile(t *testing.T) {
 	rootDir := t.TempDir()
 	testFile := filepath.Join(rootDir, "empty.go")
-	os.WriteFile(testFile, []byte{}, 0644)
+	require.NoError(t, os.WriteFile(testFile, []byte{}, 0644))
 
 	mgr, err := checkpoint.New(rootDir, "cap-empty", 0)
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestCaptureEmptyExistingFile(t *testing.T) {
 func TestUndoRestoresModifiedFile(t *testing.T) {
 	rootDir := t.TempDir()
 	testFile := filepath.Join(rootDir, "main.go")
-	os.WriteFile(testFile, []byte("original"), 0644)
+	require.NoError(t, os.WriteFile(testFile, []byte("original"), 0644))
 
 	mgr, err := checkpoint.New(rootDir, "undo-modify", 0)
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestUndoRestoresModifiedFile(t *testing.T) {
 	require.NoError(t, err)
 
 	// Simulate the agent writing to the file
-	os.WriteFile(testFile, []byte("modified"), 0644)
+	require.NoError(t, os.WriteFile(testFile, []byte("modified"), 0644))
 
 	path, err := mgr.Undo(context.Background())
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestUndoDeletesCreatedFile(t *testing.T) {
 
 	// Simulate the agent creating the file
 	newFile := filepath.Join(rootDir, "new.go")
-	os.WriteFile(newFile, []byte("package new"), 0644)
+	require.NoError(t, os.WriteFile(newFile, []byte("package new"), 0644))
 
 	path, err := mgr.Undo(context.Background())
 	require.NoError(t, err)
@@ -161,28 +161,101 @@ func TestUndoEmptyStackReturnsError(t *testing.T) {
 	assert.ErrorIs(t, err, checkpoint.ErrNoCheckpoints)
 }
 
+func TestCaptureSpillsLargeFile(t *testing.T) {
+	rootDir := t.TempDir()
+	bigFile := filepath.Join(rootDir, "big.bin")
+	data := make([]byte, 2*1024*1024) // 2MB
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	require.NoError(t, os.WriteFile(bigFile, data, 0644))
+
+	mgr, err := checkpoint.New(rootDir, "spill-large", 0)
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	_, err = mgr.Capture(context.Background(), "big.bin", 1, "write")
+	require.NoError(t, err)
+
+	cps := mgr.List()
+	require.Len(t, cps, 1)
+	assert.True(t, cps[0].IsSpilled(), "file >1MB should be spilled to disk")
+	assert.Nil(t, cps[0].OriginalData, "spilled checkpoint should not hold data in memory")
+}
+
+func TestCaptureBudgetEviction(t *testing.T) {
+	rootDir := t.TempDir()
+	data := make([]byte, 600*1024) // 600KB each
+	require.NoError(t, os.WriteFile(filepath.Join(rootDir, "a.bin"), data, 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(rootDir, "b.bin"), data, 0644))
+
+	mgr, err := checkpoint.New(rootDir, "spill-budget", 1024*1024) // 1MB budget
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	_, err = mgr.Capture(context.Background(), "a.bin", 1, "write")
+	require.NoError(t, err)
+
+	_, err = mgr.Capture(context.Background(), "b.bin", 2, "write")
+	require.NoError(t, err)
+
+	cps := mgr.List()
+	require.Len(t, cps, 2)
+	assert.True(t, cps[0].IsSpilled(), "oldest checkpoint should be evicted when budget exceeded")
+}
+
+func TestUndoSpilledCheckpoint(t *testing.T) {
+	rootDir := t.TempDir()
+	bigFile := filepath.Join(rootDir, "big.bin")
+	data := make([]byte, 2*1024*1024) // 2MB
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	require.NoError(t, os.WriteFile(bigFile, data, 0644))
+
+	mgr, err := checkpoint.New(rootDir, "undo-spill", 0)
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	_, err = mgr.Capture(context.Background(), "big.bin", 1, "write")
+	require.NoError(t, err)
+
+	// Overwrite the file
+	require.NoError(t, os.WriteFile(bigFile, []byte("small"), 0644))
+
+	path, err := mgr.Undo(context.Background())
+	require.NoError(t, err)
+	assert.NotEmpty(t, path)
+
+	restored, _ := os.ReadFile(bigFile)
+	assert.Equal(t, data, restored, "spilled checkpoint should restore correctly")
+}
+
 func TestRewindToTurn(t *testing.T) {
 	rootDir := t.TempDir()
 	file1 := filepath.Join(rootDir, "a.go")
 	file2 := filepath.Join(rootDir, "b.go")
-	os.WriteFile(file1, []byte("a-original"), 0644)
-	os.WriteFile(file2, []byte("b-original"), 0644)
+	require.NoError(t, os.WriteFile(file1, []byte("a-original"), 0644))
+	require.NoError(t, os.WriteFile(file2, []byte("b-original"), 0644))
 
 	mgr, err := checkpoint.New(rootDir, "rewind", 0)
 	require.NoError(t, err)
 	defer func() { _ = mgr.Cleanup() }()
 
 	// Turn 1: modify a.go
-	mgr.Capture(context.Background(), "a.go", 1, "write")
-	os.WriteFile(file1, []byte("a-turn1"), 0644)
+	_, err = mgr.Capture(context.Background(), "a.go", 1, "write")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(file1, []byte("a-turn1"), 0644))
 
 	// Turn 2: modify b.go
-	mgr.Capture(context.Background(), "b.go", 2, "write")
-	os.WriteFile(file2, []byte("b-turn2"), 0644)
+	_, err = mgr.Capture(context.Background(), "b.go", 2, "write")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(file2, []byte("b-turn2"), 0644))
 
 	// Turn 3: modify a.go again
-	mgr.Capture(context.Background(), "a.go", 3, "patch")
-	os.WriteFile(file1, []byte("a-turn3"), 0644)
+	_, err = mgr.Capture(context.Background(), "a.go", 3, "patch")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(file1, []byte("a-turn3"), 0644))
 
 	// Rewind to turn 1 — should undo turns 2 and 3
 	paths, err := mgr.RewindToTurn(context.Background(), 1)
