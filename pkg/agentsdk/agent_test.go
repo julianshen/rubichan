@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +16,31 @@ import (
 type mockProvider struct {
 	responses [][]StreamEvent // one response per call
 	callIdx   int
+}
+
+type mockUIHandler struct {
+	mu    sync.Mutex
+	resp  UIResponse
+	err   error
+	calls int
+	last  UIRequest
+}
+
+func (m *mockUIHandler) Request(_ context.Context, req UIRequest) (UIResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	m.last = req
+	if m.err != nil {
+		return UIResponse{}, m.err
+	}
+	return m.resp, nil
+}
+
+func (m *mockUIHandler) Calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
 }
 
 func (m *mockProvider) Stream(_ context.Context, _ CompletionRequest) (<-chan StreamEvent, error) {
@@ -349,6 +376,158 @@ func TestAgentApprovalCheckerRequiresApprovalNoFunc(t *testing.T) {
 	require.Len(t, toolResults, 1)
 	assert.True(t, toolResults[0].ToolResult.IsError)
 	assert.Contains(t, toolResults[0].ToolResult.Content, "approval function not configured")
+}
+
+func TestAgentApprovalCheckerUsesUIRequestHandler(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "allow"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	assert.Equal(t, 1, ui.Calls())
+	assert.Equal(t, UIKindApproval, ui.last.Kind)
+	assert.Equal(t, "echo", ui.last.Metadata["tool"])
+	assert.Contains(t, eventTypes(events), "ui_request")
+	assert.Contains(t, eventTypes(events), "ui_response")
+}
+
+func TestAgentNoCheckerUsesUIRequestHandler(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "deny"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "denied")
+}
+
+func TestAgentUIRequestHandlerDenyAlwaysMessage(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "deny_always"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Equal(t, "Tool call denied by user (deny-always).", toolResults[0].ToolResult.Content)
+}
+
+func TestAgentUIRequestMetadataInputTruncated(t *testing.T) {
+	largeInput := `{"data":"` + strings.Repeat("x", maxUIRequestInputBytes+200) + `"}`
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", largeInput),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "tc_1", ActionID: "allow"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.NotEmpty(t, ui.last.Metadata["input"])
+	assert.LessOrEqual(t, len(ui.last.Metadata["input"]), maxUIRequestInputBytes+len("...(truncated)"))
+	assert.True(t, strings.HasSuffix(ui.last.Metadata["input"], "...(truncated)"))
+}
+
+func TestAgentUIRequestHandlerIDMismatch(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "echo", `{}`),
+		textResponse("ok"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	checker := &agentMockChecker{results: map[string]ApprovalResult{
+		"echo": ApprovalRequired,
+	}}
+	ui := &mockUIHandler{
+		resp: UIResponse{RequestID: "wrong-id", ActionID: "allow"},
+	}
+
+	a := NewAgent(p, WithTools(r), WithApprovalChecker(checker), WithUIRequestHandler(ui))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	assert.True(t, toolResults[0].ToolResult.IsError)
+	assert.Contains(t, toolResults[0].ToolResult.Content, "approval error")
+}
+
+func eventTypes(events []TurnEvent) []string {
+	out := make([]string, 0, len(events))
+	for _, ev := range events {
+		out = append(out, ev.Type)
+	}
+	return out
 }
 
 func TestAgentApprovalFuncError(t *testing.T) {

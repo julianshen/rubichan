@@ -103,11 +103,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalRequestMsg:
 		m.state = StateAwaitingApproval
-		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, m.width, nil)
+		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, m.width, msg.options)
 		m.pendingApproval = &approvalRequest{
-			tool:     msg.tool,
-			input:    msg.input,
-			response: msg.response,
+			tool:          msg.tool,
+			input:         msg.input,
+			options:       msg.options,
+			responseValue: msg.responseValue,
 		}
 		return m, m.waitForApproval()
 
@@ -152,7 +153,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		// Unblock the agent goroutine if it's waiting for approval.
 		if m.pendingApproval != nil {
-			m.pendingApproval.response <- false
+			m.pendingApproval.responseValue <- ApprovalNo
 			m.pendingApproval = nil
 		}
 		// Cancel any running wiki generation goroutine.
@@ -166,7 +167,6 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.state == StateAwaitingApproval && m.approvalPrompt != nil {
 		if m.approvalPrompt.HandleKey(msg) {
 			result := m.approvalPrompt.Result()
-			approved := result == ApprovalYes || result == ApprovalAlways
 			if result == ApprovalAlways {
 				m.alwaysDenied.Delete(m.pendingApproval.tool)
 				m.alwaysApproved.Store(m.pendingApproval.tool, true)
@@ -175,7 +175,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.alwaysApproved.Delete(m.pendingApproval.tool)
 				m.alwaysDenied.Store(m.pendingApproval.tool, true)
 			}
-			m.pendingApproval.response <- approved
+			m.pendingApproval.responseValue <- result
 			m.approvalPrompt = nil
 			m.pendingApproval = nil
 			m.state = StateStreaming
@@ -508,6 +508,29 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 				msg.ToolProgress.Content,
 				msg.ToolProgress.IsError,
 			))
+			m.setContentAndAutoScroll()
+		}
+		return m, m.waitForEvent()
+
+	case "ui_request":
+		if msg.UIRequest != nil && m.debug {
+			m.content.WriteString(fmt.Sprintf("[ui_request] kind=%s id=%s\n", msg.UIRequest.Kind, msg.UIRequest.ID))
+			m.setContentAndAutoScroll()
+		}
+		return m, m.waitForEvent()
+
+	case "ui_response":
+		if msg.UIResponse != nil && m.debug {
+			m.content.WriteString(fmt.Sprintf("[ui_response] id=%s action=%s\n", msg.UIResponse.RequestID, msg.UIResponse.ActionID))
+			m.setContentAndAutoScroll()
+		}
+		return m, m.waitForEvent()
+
+	case "ui_update":
+		// TODO: consume ui_update payloads for long-running interactive flows
+		// once the runtime starts emitting incremental UI progress updates.
+		if msg.UIUpdate != nil && m.debug {
+			m.content.WriteString(fmt.Sprintf("[ui_update] id=%s status=%s\n", msg.UIUpdate.RequestID, msg.UIUpdate.Status))
 			m.setContentAndAutoScroll()
 		}
 		return m, m.waitForEvent()

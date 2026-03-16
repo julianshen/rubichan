@@ -25,9 +25,10 @@ import (
 // approvalRequest carries a tool approval request from the agent goroutine
 // to the TUI. The agent blocks on the response channel until the user decides.
 type approvalRequest struct {
-	tool     string
-	input    string
-	response chan bool
+	tool          string
+	input         string
+	options       []ApprovalResult
+	responseValue chan ApprovalResult
 }
 
 // approvalRequestMsg is the Bubble Tea message type for approval requests.
@@ -404,38 +405,66 @@ func (m *Model) reflowViewport() {
 // Tools previously marked "always" are auto-approved without prompting.
 func (m *Model) MakeApprovalFunc() agent.ApprovalFunc {
 	return func(_ context.Context, tool string, input json.RawMessage) (bool, error) {
-		// Auto-deny if user previously chose "deny always" for this tool.
-		if _, ok := m.alwaysDenied.Load(tool); ok {
-			return false, nil
-		}
-		// Auto-approve if user previously chose "always" for this tool,
-		// but only if the current command is not destructive. Destructive
-		// commands must always be re-validated per invocation to prevent
-		// a benign "shell ls" approval from auto-approving "shell rm -rf /".
-		if _, ok := m.alwaysApproved.Load(tool); ok {
-			opts := OptionsForRisk(tool, string(input))
-			hasAlways := false
-			for _, o := range opts {
-				if o == ApprovalAlways {
-					hasAlways = true
-					break
-				}
-			}
-			if hasAlways {
+		if actionID, handled := m.checkAutoApproval(tool, string(input)); handled {
+			switch actionID {
+			case "allow_always", "allow":
 				return true, nil
+			case "deny_always", "deny":
+				return false, nil
+			default:
+				return false, fmt.Errorf("unsupported cached approval action: %s", actionID)
 			}
-			// Destructive command — fall through to prompt even though
-			// the tool was previously marked "always".
 		}
 
-		respCh := make(chan bool, 1)
+		respCh := make(chan ApprovalResult, 1)
 		m.approvalCh <- approvalRequest{
-			tool:     tool,
-			input:    string(input),
-			response: respCh,
+			tool:          tool,
+			input:         string(input),
+			options:       nil,
+			responseValue: respCh,
 		}
-		return <-respCh, nil
+		result := <-respCh
+		return result == ApprovalYes || result == ApprovalAlways, nil
 	}
+}
+
+// MakeUIRequestHandler returns a generalized UI interaction handler for the
+// current model. Approval requests are rendered with the existing inline
+// approval prompt and translated into structured action IDs.
+func (m *Model) MakeUIRequestHandler() agent.UIRequestHandler {
+	return agent.UIRequestFunc(func(ctx context.Context, req agent.UIRequest) (agent.UIResponse, error) {
+		if req.Kind != agent.UIKindApproval {
+			return agent.UIResponse{}, fmt.Errorf("unsupported UI request kind: %s", req.Kind)
+		}
+
+		tool := req.Metadata["tool"]
+		input := req.Metadata["input"]
+		if tool == "" {
+			// Fallback for non-standard adapters that omit tool metadata.
+			tool = req.Title
+		}
+		if actionID, handled := m.checkAutoApproval(tool, input); handled {
+			return agent.UIResponse{RequestID: req.ID, ActionID: actionID}, nil
+		}
+
+		respCh := make(chan ApprovalResult, 1)
+		m.approvalCh <- approvalRequest{
+			tool:          tool,
+			input:         input,
+			options:       optionsFromUIActions(req.Actions),
+			responseValue: respCh,
+		}
+
+		select {
+		case <-ctx.Done():
+			return agent.UIResponse{}, ctx.Err()
+		case result := <-respCh:
+			return agent.UIResponse{
+				RequestID: req.ID,
+				ActionID:  actionIDFromApprovalResult(result, req.Actions),
+			}, nil
+		}
+	})
 }
 
 // IsAutoApproved checks if a tool was previously marked "always approve"
@@ -467,6 +496,86 @@ func (m *Model) waitForApproval() tea.Cmd {
 		req := <-ch
 		return approvalRequestMsg(req)
 	}
+}
+
+func actionIDFromApprovalResult(result ApprovalResult, actions []agent.UIAction) string {
+	// Prefer returning an ID that was actually offered in req.Actions.
+	// This avoids emitting canonical IDs that the caller did not provide.
+	for _, action := range actions {
+		if mapped, ok := approvalResultFromActionID(action.ID); ok && mapped == result {
+			return action.ID
+		}
+	}
+
+	// Fallback to canonical IDs when actions are missing or unknown.
+	switch result {
+	case ApprovalAlways:
+		return "allow_always"
+	case ApprovalDenyAlways:
+		return "deny_always"
+	case ApprovalYes:
+		return "allow"
+	default:
+		return "deny"
+	}
+}
+
+func approvalResultFromActionID(actionID string) (ApprovalResult, bool) {
+	switch strings.ToLower(actionID) {
+	case "allow", "yes":
+		return ApprovalYes, true
+	case "deny", "no":
+		return ApprovalNo, true
+	case "allow_always", "always":
+		return ApprovalAlways, true
+	case "deny_always":
+		return ApprovalDenyAlways, true
+	default:
+		return ApprovalPending, false
+	}
+}
+
+func optionsFromUIActions(actions []agent.UIAction) []ApprovalResult {
+	if len(actions) == 0 {
+		return nil
+	}
+	seen := map[ApprovalResult]bool{}
+	opts := make([]ApprovalResult, 0, len(actions))
+	for _, action := range actions {
+		mapped, ok := approvalResultFromActionID(action.ID)
+		if !ok {
+			continue
+		}
+		if seen[mapped] {
+			continue
+		}
+		seen[mapped] = true
+		opts = append(opts, mapped)
+	}
+	return opts
+}
+
+func (m *Model) checkAutoApproval(tool, input string) (actionID string, handled bool) {
+	// Auto-deny if user previously chose "deny always" for this tool.
+	if _, ok := m.alwaysDenied.Load(tool); ok {
+		return "deny_always", true
+	}
+
+	// Auto-approve if user previously chose "always" for this tool,
+	// but only if the current command is not destructive. Destructive
+	// commands must always be re-validated per invocation to prevent
+	// a benign "shell ls" approval from auto-approving "shell rm -rf /".
+	if _, ok := m.alwaysApproved.Load(tool); ok {
+		opts := OptionsForRisk(tool, input)
+		for _, o := range opts {
+			if o == ApprovalAlways {
+				return "allow_always", true
+			}
+		}
+		// Destructive command — fall through to interactive prompt.
+	}
+
+	return "", false
 }
 
 // handleCommand processes slash commands entered by the user.

@@ -1354,7 +1354,10 @@ func runInteractive() error {
 		if plainHost != nil {
 			approvalFunc = plainHost.MakeApprovalFunc()
 		} else {
+			// UIRequestHandler takes priority in agent.requestToolApproval.
+			// Keep approvalFunc wired as a fallback for non-UI handler paths.
 			approvalFunc = model.MakeApprovalFunc()
+			opts = append(opts, agent.WithUIRequestHandler(model.MakeUIRequestHandler()))
 		}
 
 		// Build the approval checker: compose session cache, pipeline rule

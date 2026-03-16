@@ -125,6 +125,31 @@ func (c *countingApprovalChecker) Calls() int {
 	return c.calls
 }
 
+type mockUIRequestHandler struct {
+	mu    sync.Mutex
+	calls int
+	last  UIRequest
+	resp  UIResponse
+	err   error
+}
+
+func (m *mockUIRequestHandler) Request(_ context.Context, req UIRequest) (UIResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	m.last = req
+	if m.err != nil {
+		return UIResponse{}, m.err
+	}
+	return m.resp, nil
+}
+
+func (m *mockUIRequestHandler) Calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
 func TestApprovalToolErrorResult(t *testing.T) {
 	a := &Agent{logger: agentsdk.DefaultLogger()}
 	tc := provider.ToolUseBlock{ID: "tool-1", Name: "file"}
@@ -782,6 +807,165 @@ func TestTurnWithApprovalError(t *testing.T) {
 		}
 	}
 	assert.True(t, hasToolResult, "should have tool_result event with approval error")
+}
+
+func TestTurnWithUIRequestApproval(t *testing.T) {
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_ui_ok",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"x.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "OK"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "x.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("hello"), 0o600))
+	require.NoError(t, reg.Register(tools.NewFileTool(tmpDir)))
+
+	ui := &mockUIRequestHandler{
+		resp: UIResponse{
+			RequestID: "tool_ui_ok",
+			ActionID:  "allow",
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, nil, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: ApprovalRequired}),
+		WithUIRequestHandler(ui),
+	)
+
+	ch, err := a.Turn(context.Background(), "read file")
+	require.NoError(t, err)
+
+	var gotReq, gotResp, gotToolResult bool
+	for ev := range ch {
+		switch ev.Type {
+		case "ui_request":
+			gotReq = true
+			require.NotNil(t, ev.UIRequest)
+			assert.Equal(t, UIKindApproval, ev.UIRequest.Kind)
+			assert.Equal(t, "file", ev.UIRequest.Metadata["tool"])
+		case "ui_response":
+			gotResp = true
+			require.NotNil(t, ev.UIResponse)
+			assert.Equal(t, "allow", ev.UIResponse.ActionID)
+		case "tool_result":
+			gotToolResult = true
+			assert.False(t, ev.ToolResult.IsError)
+		}
+	}
+
+	assert.True(t, gotReq, "expected ui_request event")
+	assert.True(t, gotResp, "expected ui_response event")
+	assert.True(t, gotToolResult, "expected successful tool_result event")
+	assert.Equal(t, 1, ui.Calls(), "expected one UI request")
+}
+
+func TestTurnWithUIRequestApprovalError(t *testing.T) {
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_ui_err",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"x.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "OK"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	require.NoError(t, reg.Register(tools.NewFileTool(tmpDir)))
+
+	ui := &mockUIRequestHandler{
+		err: fmt.Errorf("ui unavailable"),
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, nil, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: ApprovalRequired}),
+		WithUIRequestHandler(ui),
+	)
+
+	ch, err := a.Turn(context.Background(), "read file")
+	require.NoError(t, err)
+
+	var gotToolResult bool
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			gotToolResult = true
+			assert.True(t, ev.ToolResult.IsError)
+			assert.Contains(t, ev.ToolResult.Content, "approval error")
+		}
+	}
+	assert.True(t, gotToolResult, "expected failed tool_result event")
+}
+
+func TestTurnWithUIRequestIDMismatch(t *testing.T) {
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tool_ui_mismatch",
+					Name: "file",
+				}},
+				{Type: "text_delta", Text: `{"operation":"read","path":"x.txt"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "OK"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	tmpDir := t.TempDir()
+	require.NoError(t, reg.Register(tools.NewFileTool(tmpDir)))
+
+	ui := &mockUIRequestHandler{
+		resp: UIResponse{
+			RequestID: "different-id",
+			ActionID:  "allow",
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, nil, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: ApprovalRequired}),
+		WithUIRequestHandler(ui),
+	)
+
+	ch, err := a.Turn(context.Background(), "read file")
+	require.NoError(t, err)
+
+	var gotToolResult bool
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			gotToolResult = true
+			assert.True(t, ev.ToolResult.IsError)
+			assert.Contains(t, ev.ToolResult.Content, "approval error")
+		}
+	}
+	assert.True(t, gotToolResult, "expected failed tool_result event")
 }
 
 func TestTurnWithToolExecutionError(t *testing.T) {

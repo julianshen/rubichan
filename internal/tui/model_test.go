@@ -1229,11 +1229,11 @@ func TestModelApprovalRequestMsg(t *testing.T) {
 	m.state = StateStreaming
 
 	// Simulate an approval request arriving
-	respCh := make(chan bool, 1)
+	respCh := make(chan ApprovalResult, 1)
 	msg := approvalRequestMsg{
-		tool:     "shell",
-		input:    `{"command":"ls"}`,
-		response: respCh,
+		tool:          "shell",
+		input:         `{"command":"ls"}`,
+		responseValue: respCh,
 	}
 
 	updated, cmd := m.Update(msg)
@@ -1248,12 +1248,12 @@ func TestModelApprovalKeyYes(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
 
-	respCh := make(chan bool, 1)
+	respCh := make(chan ApprovalResult, 1)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
-		tool:     "shell",
-		input:    `{"command":"ls"}`,
-		response: respCh,
+		tool:          "shell",
+		input:         `{"command":"ls"}`,
+		responseValue: respCh,
 	}
 
 	// Provide event channel so waitForEvent works
@@ -1270,8 +1270,8 @@ func TestModelApprovalKeyYes(t *testing.T) {
 
 	// Check that response was sent
 	select {
-	case approved := <-respCh:
-		assert.True(t, approved)
+	case result := <-respCh:
+		assert.Equal(t, ApprovalYes, result)
 	default:
 		t.Fatal("expected response on channel")
 	}
@@ -1281,12 +1281,12 @@ func TestModelApprovalKeyNo(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
 
-	respCh := make(chan bool, 1)
+	respCh := make(chan ApprovalResult, 1)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
-		tool:     "shell",
-		input:    `{"command":"rm -rf /"}`,
-		response: respCh,
+		tool:          "shell",
+		input:         `{"command":"rm -rf /"}`,
+		responseValue: respCh,
 	}
 
 	ch := make(chan agent.TurnEvent, 1)
@@ -1301,8 +1301,8 @@ func TestModelApprovalKeyNo(t *testing.T) {
 	assert.NotNil(t, cmd)
 
 	select {
-	case approved := <-respCh:
-		assert.False(t, approved)
+	case result := <-respCh:
+		assert.Equal(t, ApprovalNo, result)
 	default:
 		t.Fatal("expected response on channel")
 	}
@@ -1312,12 +1312,12 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
 
-	respCh := make(chan bool, 1)
+	respCh := make(chan ApprovalResult, 1)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
-		tool:     "shell",
-		input:    `{"command":"ls"}`,
-		response: respCh,
+		tool:          "shell",
+		input:         `{"command":"ls"}`,
+		responseValue: respCh,
 	}
 
 	ch := make(chan agent.TurnEvent, 1)
@@ -1333,8 +1333,8 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	assert.NotNil(t, cmd)
 
 	select {
-	case approved := <-respCh:
-		assert.True(t, approved)
+	case result := <-respCh:
+		assert.Equal(t, ApprovalAlways, result)
 	default:
 		t.Fatal("expected response on channel")
 	}
@@ -1344,12 +1344,12 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
 
-	respCh := make(chan bool, 1)
+	respCh := make(chan ApprovalResult, 1)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
-		tool:     "shell",
-		input:    `{"command":"ls"}`,
-		response: respCh,
+		tool:          "shell",
+		input:         `{"command":"ls"}`,
+		responseValue: respCh,
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -1384,6 +1384,144 @@ func TestModelMakeApprovalFunc(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	fn := m.MakeApprovalFunc()
 	assert.NotNil(t, fn)
+}
+
+func TestModelMakeUIRequestHandlerApprovalAlways(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	handler := m.MakeUIRequestHandler()
+
+	resultCh := make(chan agent.UIResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := handler.Request(context.Background(), agent.UIRequest{
+			ID:   "req-1",
+			Kind: agent.UIKindApproval,
+			Actions: []agent.UIAction{
+				{ID: "allow", Label: "Allow"},
+				{ID: "deny", Label: "Deny"},
+				{ID: "allow_always", Label: "Always Allow"},
+			},
+			Metadata: map[string]string{
+				"tool":  "shell",
+				"input": `{"command":"ls"}`,
+			},
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- resp
+	}()
+
+	approvalMsg := m.waitForApproval()()
+	updated, _ := m.Update(approvalMsg)
+	m = updated.(*Model)
+
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(*Model)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("unexpected UI handler error: %v", err)
+	case resp := <-resultCh:
+		assert.Equal(t, "req-1", resp.RequestID)
+		assert.Equal(t, "allow_always", resp.ActionID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for UI response")
+	}
+
+	_, ok := m.alwaysApproved.Load("shell")
+	assert.True(t, ok, "always-approved cache should be set after 'a'")
+}
+
+func TestModelMakeUIRequestHandlerUsesAlwaysDenied(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.alwaysDenied.Store("shell", true)
+	handler := m.MakeUIRequestHandler()
+
+	resp, err := handler.Request(context.Background(), agent.UIRequest{
+		ID:   "req-2",
+		Kind: agent.UIKindApproval,
+		Metadata: map[string]string{
+			"tool": "shell",
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "req-2", resp.RequestID)
+	assert.Equal(t, "deny_always", resp.ActionID)
+}
+
+func TestModelMakeUIRequestHandlerReturnsOfferedActionID(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	handler := m.MakeUIRequestHandler()
+
+	resultCh := make(chan agent.UIResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := handler.Request(context.Background(), agent.UIRequest{
+			ID:   "req-3",
+			Kind: agent.UIKindApproval,
+			Actions: []agent.UIAction{
+				{ID: "yes", Label: "Yes"},
+				{ID: "no", Label: "No"},
+				{ID: "always", Label: "Always"},
+			},
+			Metadata: map[string]string{
+				"tool":  "shell",
+				"input": `{"command":"ls"}`,
+			},
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- resp
+	}()
+
+	approvalMsg := m.waitForApproval()()
+	updated, _ := m.Update(approvalMsg)
+	m = updated.(*Model)
+
+	ch := make(chan agent.TurnEvent, 1)
+	ch <- agent.TurnEvent{Type: "done"}
+	m.eventCh = ch
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(*Model)
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("unexpected UI handler error: %v", err)
+	case resp := <-resultCh:
+		assert.Equal(t, "req-3", resp.RequestID)
+		assert.Equal(t, "always", resp.ActionID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for UI response")
+	}
+}
+
+func TestModelMakeUIRequestHandlerRejectsUnsupportedKinds(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	handler := m.MakeUIRequestHandler()
+
+	tests := []agent.UIRequestKind{
+		agent.UIKindConfirm,
+		agent.UIKindSelect,
+		agent.UIKindForm,
+	}
+
+	for _, kind := range tests {
+		_, err := handler.Request(context.Background(), agent.UIRequest{
+			ID:   "req-unsupported",
+			Kind: kind,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported UI request kind")
+	}
 }
 
 func TestModelIsAutoApproved(t *testing.T) {
@@ -1602,12 +1740,12 @@ func TestModelCtrlCDuringApproval(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
 
-	respCh := make(chan bool, 1)
+	respCh := make(chan ApprovalResult, 1)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
 	m.pendingApproval = &approvalRequest{
-		tool:     "shell",
-		input:    `{"command":"ls"}`,
-		response: respCh,
+		tool:          "shell",
+		input:         `{"command":"ls"}`,
+		responseValue: respCh,
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -1621,8 +1759,8 @@ func TestModelCtrlCDuringApproval(t *testing.T) {
 
 	// Verify the agent goroutine was unblocked with a denial.
 	select {
-	case approved := <-respCh:
-		assert.False(t, approved, "Ctrl+C should deny the pending approval")
+	case result := <-respCh:
+		assert.Equal(t, ApprovalNo, result, "Ctrl+C should deny the pending approval")
 	default:
 		t.Fatal("expected denial response on channel when Ctrl+C pressed during approval")
 	}
