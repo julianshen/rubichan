@@ -462,26 +462,46 @@ description = "Prevent editing generated files"
 
 User hooks fire **before** skill hooks for `pre_*` events and **after** skill hooks for `post_*` events. If a user hook blocks, skill hooks are not invoked. This gives users ultimate control over their environment.
 
-#### New Interface: ShellHookRunner
+**Unified hook dispatch (reconciling with Section 4.6):**
+
+The existing `SkillRuntime.FireHook()` (Section 4.6) and the new `UserHookRunner.Fire()` are composed through a single `HookDispatcher` in the Agent Core. The dispatcher is the only hook entry point called from the agent loop — it orchestrates both systems:
+
+```go
+type HookDispatcher interface {
+    // Dispatch fires hooks for the given phase, coordinating user hooks and skill hooks.
+    // For pre_* events: user hooks first → if not blocked → skill hooks.
+    // For post_* events: skill hooks first → then user hooks.
+    Dispatch(ctx context.Context, phase HookPhase, event HookEvent) (*HookResult, error)
+}
+```
+
+The dispatcher maps between the two event type systems internally:
+- User hook events (`UserHookEvent`) are a simplified view for shell commands — flat fields, string-based event types.
+- Skill hook events (`HookEvent` from Section 4.6) are richer — typed phases, access to conversation and tool call objects.
+- The dispatcher constructs both from the same agent loop context.
+
+This means step 4 of the Agent Core loop (Section 3.3) changes from "fire `on_before_tool_call` hooks" to "dispatch through `HookDispatcher`", which internally fires user hooks then skill hooks.
+
+#### New Interface: UserHookRunner
 
 Add to Section 6:
 
-> **Note:** Types are prefixed with `Shell` to distinguish from the existing skill lifecycle hook types (`HookEvent`, `HookResult`) defined in Section 4.6.
+> **Note:** Types are prefixed with `User` to distinguish from the existing skill lifecycle hook types (`HookEvent`, `HookResult`) defined in Section 4.6. The name "User" reflects that these are user-configured hooks (as opposed to skill-provided hooks), even though they execute as shell commands.
 
 ```go
-type ShellHookRunner interface {
+type UserHookRunner interface {
     // Fire executes all user hooks registered for the given event.
-    // Returns a ShellHookResult indicating whether to proceed, block, or modify.
-    Fire(ctx context.Context, event ShellHookEvent) (*ShellHookResult, error)
+    // Returns a UserHookResult indicating whether to proceed, block, or modify.
+    Fire(ctx context.Context, event UserHookEvent) (*UserHookResult, error)
 
     // Register adds a hook from configuration.
-    Register(hook ShellHookConfig) error
+    Register(hook UserHookConfig) error
 
     // List returns all registered hooks.
-    List() []ShellHookConfig
+    List() []UserHookConfig
 }
 
-type ShellHookConfig struct {
+type UserHookConfig struct {
     Event       string   // "pre_tool", "post_edit", etc.
     Pattern     string   // file glob pattern (optional)
     Command     string   // shell command to execute
@@ -490,8 +510,8 @@ type ShellHookConfig struct {
     Source      string   // "config", "agent.md", "cli"
 }
 
-type ShellHookEvent struct {
-    Type    string            // matches ShellHookConfig.Event
+type UserHookEvent struct {
+    Type    string            // matches UserHookConfig.Event
     File    string            // affected file path (if applicable)
     Tool    string            // tool name (if applicable)
     Command string            // shell command (if pre_shell)
@@ -499,18 +519,18 @@ type ShellHookEvent struct {
     Data    map[string]string // additional context
 }
 
-type ShellHookResult struct {
-    Action   ShellHookAction   // proceed, block, modify
-    Message  string            // reason for block, or modification description
-    Modified []byte            // modified content (for pre_edit modify action)
+type UserHookResult struct {
+    Action   UserHookAction   // proceed, block, modify
+    Message  string           // reason for block, or modification description
+    Modified []byte           // modified content (for pre_edit modify action)
 }
 
-type ShellHookAction int
+type UserHookAction int
 
 const (
-    ShellHookProceed ShellHookAction = iota
-    ShellHookBlock
-    ShellHookModify
+    UserHookProceed UserHookAction = iota
+    UserHookBlock
+    UserHookModify
 )
 ```
 
@@ -518,7 +538,7 @@ const (
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-7.12 | User-configurable shell hooks fire on agent events (pre/post tool, edit, shell, response) | P2 |
+| FR-7.12 | User-configurable hooks fire on agent events (pre/post tool, edit, shell, response) | P2 |
 | FR-7.13 | Pre-event hooks can block tool execution via exit code | P2 |
 | FR-7.14 | Hooks configured in config.toml and/or AGENT.md frontmatter | P2 |
 | FR-7.15 | Hook template variables provide context ({file}, {tool}, {command}) | P2 |
@@ -547,7 +567,7 @@ hooks:
 Hooks defined in `AGENT.md` are project-level and committed to git. Since a malicious repository could define hooks that execute arbitrary commands on any developer who clones the repo, project-level hooks are **not trusted by default**. The first time the agent encounters `AGENT.md` hooks in a project, it presents them to the user for approval:
 
 ```
-This project defines shell hooks in AGENT.md:
+This project defines user hooks in AGENT.md:
   1. post_edit *.go → gofmt -w {file}
   2. post_edit *.go → go vet ./...
 
@@ -916,6 +936,8 @@ This means org deny always wins, project allow doesn't bypass skill approval, an
 
 Cross-cutting capabilities that strengthen the agent platform: subagent parallelism, file safety, session management, workflow automation, context visibility, and permission governance. These requirements apply across all execution modes unless otherwise noted.
 
+> **Note:** FR-7 numbering is tentative. If another spec update claims FR-7 before these amendments are integrated into spec.md, renumber accordingly.
+
 | ID | Requirement | Priority | Amendment |
 |----|-------------|----------|-----------|
 | FR-7.1 | Subagent spawning with isolated context windows | P1 | 1 |
@@ -929,7 +951,7 @@ Cross-cutting capabilities that strengthen the agent platform: subagent parallel
 | FR-7.9 | Session forking with copied conversation history | P2 | 3 |
 | FR-7.10 | Fork metadata tracks parent session ID | P2 | 3 |
 | FR-7.11 | Sessions scoped to working directory | P2 | 3 |
-| FR-7.12 | User-configurable shell hooks on agent events | P2 | 4 |
+| FR-7.12 | User-configurable hooks on agent events | P2 | 4 |
 | FR-7.13 | Pre-event hooks can block via exit code | P2 | 4 |
 | FR-7.14 | Hooks configured in config.toml and AGENT.md | P2 | 4 |
 | FR-7.15 | Hook template variables for context | P2 | 4 |
@@ -960,7 +982,9 @@ Additional FR-1 additions (Interactive Mode):
 
 These amendments are scoped as a new milestone:
 
-### Milestone 5.5: Agent Platform Enhancements (Weeks TBD)
+### Milestone 6: Agent Platform Enhancements (Weeks TBD)
+
+> **Note:** Numbered as Milestone 6, following Milestone 5 (Ollama Support) which is currently in progress.
 
 | Phase | Features | Effort Estimate | Dependencies |
 |-------|----------|-----------------|--------------|
@@ -999,7 +1023,8 @@ When integrating these amendments into `spec.md`, use this mapping to locate exa
 | 3 (Session Fork) | Appendix A CLI Command Reference, Interactive Mode (line ~2348) | Add `--continue`, `--resume`, `--fork`, `session` subcommands |
 | 4 (User Hooks) | After new §3.3.2 | Insert new §3.3.3 User Hooks |
 | 4 (User Hooks) | §3.9 Config & Storage (line ~423) | Add AGENT.md hook configuration with trust gate |
-| 4 (User Hooks) | §6 Key Interface Definitions | Add `ShellHookRunner` interface |
+| 4 (User Hooks) | §6 Key Interface Definitions | Add `UserHookRunner` and `HookDispatcher` interfaces |
+| 4 (User Hooks) | §3.3 Agent Core, step 4 of agent loop (line ~302) | Replace direct `FireHook` call with `HookDispatcher.Dispatch` |
 | 5 (Context Inspector) | §3.3 Agent Core, Context Window Manager bullet (line ~316) | Extend with budget breakdown, compaction strategy |
 | 5 (Context Inspector) | §6 Key Interface Definitions | Extend `ContextWindowManager` interface |
 | 5 (Context Inspector) | Appendix B Configuration Reference (line ~2427) | Add compaction config options |
