@@ -412,6 +412,8 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		middlewares = append(middlewares, toolexec.HookMiddleware(hookAdapter))
 
 		// Checkpoint middleware captures file state before write/patch operations.
+		// TODO: Reposition after ShellSafety when Classifier/RuleEngine/ShellSafety
+		// middlewares are wired in (spec: Hook→...→ShellSafety→Checkpoint→PostHook).
 		if a.checkpointMgr != nil {
 			middlewares = append(middlewares, toolexec.CheckpointMiddleware(a.checkpointMgr, func() int {
 				return int(a.turnNumber.Load())

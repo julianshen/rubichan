@@ -274,16 +274,33 @@ func TestCaptureSymlinkTraversalDenied(t *testing.T) {
 
 func TestCaptureAbsolutePath(t *testing.T) {
 	rootDir := t.TempDir()
-	testFile := filepath.Join(rootDir, "abs.go")
+	// Resolve symlinks so the absolute path matches the resolved rootDir
+	// (macOS: /var → /private/var)
+	resolvedRoot, err := filepath.EvalSymlinks(rootDir)
+	require.NoError(t, err)
+
+	testFile := filepath.Join(resolvedRoot, "abs.go")
 	require.NoError(t, os.WriteFile(testFile, []byte("content"), 0644))
 
 	mgr, err := checkpoint.New(rootDir, "abs-test", 0)
 	require.NoError(t, err)
 	defer func() { _ = mgr.Cleanup() }()
 
-	// Absolute paths should work (resolved directly)
+	// Absolute paths under rootDir should work
 	_, err = mgr.Capture(context.Background(), testFile, 1, "write")
 	assert.NoError(t, err)
+}
+
+func TestCaptureAbsolutePathOutsideRoot(t *testing.T) {
+	rootDir := t.TempDir()
+	mgr, err := checkpoint.New(rootDir, "abs-outside", 0)
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	// Absolute path outside rootDir should be denied
+	_, err = mgr.Capture(context.Background(), "/etc/passwd", 1, "write")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "traversal")
 }
 
 func TestUndoSpilledFileWithModeZero(t *testing.T) {

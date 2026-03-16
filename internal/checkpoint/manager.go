@@ -29,13 +29,13 @@ type Checkpoint struct {
 	OriginalData []byte      // nil if file did not exist (creation checkpoint)
 	FileMode     os.FileMode // original file permissions (0 if file did not exist)
 	Size         int64
-	Spilled      bool
-	SpillPath    string
+	spilled   bool
+	spillPath string
 }
 
 // IsSpilled reports whether the checkpoint's data has been written to disk
 // rather than held in memory.
-func (c Checkpoint) IsSpilled() bool { return c.Spilled }
+func (c Checkpoint) IsSpilled() bool { return c.spilled }
 
 // Manager manages a stack of file checkpoints with memory budget and disk spillover.
 type Manager struct {
@@ -72,7 +72,7 @@ func New(rootDir, sessionID string, memBudget int64) (*Manager, error) {
 		memBudget: memBudget,
 		spillDir:  spillDir,
 	}
-	mgr.WriteLock() // best-effort PID lock; ignore error
+	mgr.writeLock() // best-effort PID lock; ignore error
 	return mgr, nil
 }
 
@@ -129,8 +129,8 @@ func (m *Manager) Capture(ctx context.Context, filePath string, turn int, operat
 			m.mu.Unlock()
 			return "", fmt.Errorf("checkpoint spill: %w", err)
 		}
-		cp.Spilled = true
-		cp.SpillPath = spillPath
+		cp.spilled = true
+		cp.spillPath = spillPath
 		cp.OriginalData = nil // don't hold in memory
 		needsManifest = true
 	} else {
@@ -146,7 +146,7 @@ func (m *Manager) Capture(ctx context.Context, filePath string, turn int, operat
 	m.mu.Unlock()
 
 	if needsManifest {
-		m.WriteManifest() // best-effort manifest update; ignore error
+		m.writeManifest() // best-effort manifest update; ignore error
 	}
 
 	return id, nil
@@ -156,6 +156,9 @@ func (m *Manager) Capture(ctx context.Context, filePath string, turn int, operat
 // resolution and path traversal check.
 func (m *Manager) resolvePath(relPath string) (string, error) {
 	if filepath.IsAbs(relPath) {
+		if !strings.HasPrefix(relPath, m.rootDir+string(filepath.Separator)) && relPath != m.rootDir {
+			return "", fmt.Errorf("path traversal denied: %s escapes root", relPath)
+		}
 		return relPath, nil
 	}
 
@@ -206,7 +209,7 @@ func (m *Manager) Undo(ctx context.Context) (string, error) {
 		return cp.FilePath, fmt.Errorf("undo restore: %w", err)
 	}
 
-	if !cp.Spilled {
+	if !cp.spilled {
 		m.memUsed -= cp.Size
 	}
 
@@ -217,13 +220,13 @@ func (m *Manager) Undo(ctx context.Context) (string, error) {
 // if OriginalData is nil and not spilled, indicating the file was created after the checkpoint).
 func (m *Manager) restore(cp Checkpoint) error {
 	var data []byte
-	if cp.Spilled {
+	if cp.spilled {
 		var err error
-		data, err = os.ReadFile(cp.SpillPath)
+		data, err = os.ReadFile(cp.spillPath)
 		if err != nil {
 			return fmt.Errorf("read spill file: %w", err)
 		}
-		os.Remove(cp.SpillPath)
+		os.Remove(cp.spillPath)
 	} else {
 		if cp.OriginalData == nil {
 			return os.Remove(cp.FilePath)
@@ -266,7 +269,7 @@ func (m *Manager) RewindToTurn(ctx context.Context, turn int) ([]string, error) 
 			paths = append(paths, cp.FilePath)
 			seen[cp.FilePath] = true
 		}
-		if !cp.Spilled {
+		if !cp.spilled {
 			m.memUsed -= cp.Size
 		}
 	}
@@ -288,13 +291,13 @@ func (m *Manager) Cleanup() error {
 // The caller must hold m.mu.
 func (m *Manager) evictOldest() {
 	for i, cp := range m.stack {
-		if !cp.Spilled && cp.OriginalData != nil {
+		if !cp.spilled && cp.OriginalData != nil {
 			spillPath := filepath.Join(m.spillDir, cp.ID+".bak")
 			if err := os.WriteFile(spillPath, cp.OriginalData, 0644); err != nil {
 				continue
 			}
-			m.stack[i].Spilled = true
-			m.stack[i].SpillPath = spillPath
+			m.stack[i].spilled = true
+			m.stack[i].spillPath = spillPath
 			m.stack[i].OriginalData = nil
 			m.memUsed -= cp.Size
 			return

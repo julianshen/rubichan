@@ -24,19 +24,19 @@ type manifestEntry struct {
 	Spilled   bool   `json:"spilled"`
 }
 
-// WriteLock creates a PID lock file in the spill directory.
-func (m *Manager) WriteLock() error {
+// writeLock creates a PID lock file in the spill directory.
+func (m *Manager) writeLock() error {
 	lockPath := filepath.Join(m.spillDir, "session.lock")
 	return os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())), 0644)
 }
 
-// WriteManifest writes the current checkpoint metadata to manifest.json.
+// writeManifest writes the current checkpoint metadata to manifest.json.
 // Only spilled checkpoints are included (in-memory ones don't need disk persistence).
-func (m *Manager) WriteManifest() error {
+func (m *Manager) writeManifest() error {
 	m.mu.Lock()
 	entries := make([]manifestEntry, 0)
 	for _, cp := range m.stack {
-		if cp.Spilled {
+		if cp.spilled {
 			entries = append(entries, manifestEntry{
 				ID: cp.ID, FilePath: cp.FilePath, Turn: cp.Turn,
 				Operation: cp.Operation, Size: cp.Size, Spilled: true,
