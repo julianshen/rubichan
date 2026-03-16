@@ -90,6 +90,12 @@ func DetectOrphaned(baseDir string) ([]string, error) {
 
 // RecoverSession reads the manifest for the given sessionID and restores all spilled checkpoints.
 // Returns the list of file paths that were successfully restored.
+//
+// Note: entries are applied in forward (oldest-first) order. If a file has multiple
+// spilled checkpoints, the last entry's content wins. This means multi-edit files
+// restore to a post-first-edit state rather than the true original. This is a known
+// limitation of best-effort crash recovery; normal undo/rewind uses the stack-based
+// reverse application which is always correct.
 func RecoverSession(baseDir, sessionID string) ([]string, error) {
 	manifestPath := filepath.Join(baseDir, sessionID, "manifest.json")
 	data, err := os.ReadFile(manifestPath)
