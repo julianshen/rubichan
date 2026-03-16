@@ -136,6 +136,8 @@ func CleanupOrphaned(baseDir string) error {
 }
 
 // isProcessAlive returns true if the given PID corresponds to a running process.
+// TODO: This uses Unix signal(0) which doesn't work on Windows.
+// For Windows support, use os.FindProcess + tasklist or process snapshot API.
 func isProcessAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {

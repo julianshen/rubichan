@@ -134,9 +134,12 @@ func (m *Manager) Capture(ctx context.Context, filePath string, turn int, operat
 		cp.OriginalData = nil // don't hold in memory
 		needsManifest = true
 	} else {
-		// Check budget and evict if needed
+		// Check budget and evict if needed. Break if eviction fails
+		// (e.g., disk full) to avoid an infinite loop.
 		for m.memUsed+size > m.memBudget && len(m.stack) > 0 {
-			m.evictOldest()
+			if !m.evictOldest() {
+				break // can't evict — accept over-budget rather than loop forever
+			}
 			needsManifest = true
 		}
 		m.memUsed += size
@@ -288,8 +291,9 @@ func (m *Manager) Cleanup() error {
 }
 
 // evictOldest finds the oldest in-memory checkpoint and spills it to disk.
-// The caller must hold m.mu.
-func (m *Manager) evictOldest() {
+// Returns true if a checkpoint was evicted, false if none could be evicted
+// (e.g., all already spilled or all writes failed). The caller must hold m.mu.
+func (m *Manager) evictOldest() bool {
 	for i, cp := range m.stack {
 		if !cp.spilled && cp.OriginalData != nil {
 			spillPath := filepath.Join(m.spillDir, cp.ID+".bak")
@@ -300,7 +304,8 @@ func (m *Manager) evictOldest() {
 			m.stack[i].spillPath = spillPath
 			m.stack[i].OriginalData = nil
 			m.memUsed -= cp.Size
-			return
+			return true
 		}
 	}
+	return false
 }

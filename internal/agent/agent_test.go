@@ -2970,6 +2970,7 @@ func TestAgentCheckpointMethods(t *testing.T) {
 		rootDir := t.TempDir()
 		mgr, err := checkpoint.New(rootDir, "test-session", 0)
 		require.NoError(t, err)
+		defer func() { _ = mgr.Cleanup() }()
 
 		a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithCheckpointManager(mgr))
 		assert.NotNil(t, a.checkpointMgr)
