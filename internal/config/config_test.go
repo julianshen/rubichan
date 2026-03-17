@@ -517,3 +517,34 @@ auto_cleanup = false
 	assert.Equal(t, "develop", cfg.Worktree.BaseBranch)
 	assert.False(t, cfg.Worktree.AutoCleanup)
 }
+
+func TestConfigHooksSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[provider]
+default = "anthropic"
+
+[hooks]
+trust_project_hooks = true
+
+[[hooks.rules]]
+event = "post_edit"
+pattern = "*.go"
+command = "gofmt -w {file}"
+timeout = "60s"
+
+[[hooks.rules]]
+event = "pre_shell"
+command = "echo {command}"
+`), 0644)
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.True(t, cfg.Hooks.TrustProjectHooks)
+	require.Len(t, cfg.Hooks.Rules, 2)
+	assert.Equal(t, "post_edit", cfg.Hooks.Rules[0].Event)
+	assert.Equal(t, "*.go", cfg.Hooks.Rules[0].Pattern)
+	assert.Equal(t, "gofmt -w {file}", cfg.Hooks.Rules[0].Command)
+	assert.Equal(t, "60s", cfg.Hooks.Rules[0].Timeout)
+}

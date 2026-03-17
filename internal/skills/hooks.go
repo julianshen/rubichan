@@ -10,6 +10,9 @@ import (
 const (
 	// PriorityBuiltin is the priority for built-in skills (highest).
 	PriorityBuiltin = 0
+	// PriorityUserHook is the priority for user-configured shell hooks,
+	// between built-in skills and user skills.
+	PriorityUserHook = 5
 	// PriorityUser is the priority for user-level skills.
 	PriorityUser = 10
 	// PriorityProject is the priority for project-level skills.
