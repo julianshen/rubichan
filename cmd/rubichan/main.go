@@ -1098,6 +1098,7 @@ func runInteractive() error {
 	if toolsCfg.ShouldEnable("shell") {
 		shellTool := tools.NewShellTool(cwd, 120*time.Second)
 		shellTool.SetDiffTracker(diffTracker)
+		shellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
 		if err := registry.Register(shellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
@@ -1368,35 +1369,8 @@ func runInteractive() error {
 		var checkers []agent.ApprovalChecker
 
 		// Hierarchical permission policies (org → project → user).
-		{
-			configDir, _ := os.UserConfigDir()
-			orgPath := filepath.Join(configDir, "aiagent", "org-policy.toml")
-			projectPath := filepath.Join(cwd, ".agent", "permissions.toml")
-
-			// Convert user config permissions to a permissions.Policy
-			var userPolicy *permissions.Policy
-			cp := cfg.Permissions
-			if len(cp.Tools.Allow) > 0 || len(cp.Tools.Deny) > 0 || len(cp.Tools.Prompt) > 0 ||
-				len(cp.Shell.AllowCommands) > 0 || len(cp.Shell.DenyCommands) > 0 ||
-				len(cp.Files.AllowPatterns) > 0 || len(cp.Files.DenyPatterns) > 0 ||
-				len(cp.Skills.AutoApprove) > 0 || len(cp.Skills.Deny) > 0 {
-				userPolicy = &permissions.Policy{
-					Level:  "user",
-					Source: cfgPath,
-					Tools:  permissions.ToolPolicy{Allow: cp.Tools.Allow, Deny: cp.Tools.Deny, Prompt: cp.Tools.Prompt},
-					Shell:  permissions.ShellPolicy{AllowCommands: cp.Shell.AllowCommands, DenyCommands: cp.Shell.DenyCommands, PromptPatterns: cp.Shell.PromptPatterns},
-					Files:  permissions.FilePolicy{AllowPatterns: cp.Files.AllowPatterns, DenyPatterns: cp.Files.DenyPatterns, PromptPatterns: cp.Files.PromptPatterns},
-					Skills: permissions.SkillPolicy{AutoApprove: cp.Skills.AutoApprove, Deny: cp.Skills.Deny},
-				}
-			}
-
-			policies, err := permissions.LoadPolicies(orgPath, projectPath, userPolicy)
-			if err != nil {
-				log.Printf("warning: failed to load permission policies: %v", err)
-			}
-			if len(policies) > 0 {
-				checkers = append(checkers, permissions.NewHierarchicalChecker(policies))
-			}
+		if hc := buildHierarchicalChecker(cfg, cfgPath, cwd); hc != nil {
+			checkers = append(checkers, hc)
 		}
 
 		if plainHost != nil {
@@ -1419,8 +1393,15 @@ func runInteractive() error {
 		opts = append(opts, agent.WithApprovalChecker(composite))
 		spawner.ApprovalChecker = composite
 	} else {
-		opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
-		spawner.ApprovalChecker = agent.AlwaysAutoApprove{}
+		// Auto-approve mode: still respect hierarchical deny policies.
+		var autoCheckers []agent.ApprovalChecker
+		if hc := buildHierarchicalChecker(cfg, cfgPath, cwd); hc != nil {
+			autoCheckers = append(autoCheckers, hc)
+		}
+		autoCheckers = append(autoCheckers, agent.AlwaysAutoApprove{})
+		composite := agent.NewCompositeApprovalChecker(autoCheckers...)
+		opts = append(opts, agent.WithApprovalChecker(composite))
+		spawner.ApprovalChecker = composite
 	}
 
 	// Attach the wake manager for background subagent notifications.
@@ -1560,6 +1541,7 @@ func runHeadless() error {
 	if headlessToolsCfg.ShouldEnable("shell") {
 		headlessShellTool := tools.NewShellTool(cwd, timeoutFlag)
 		headlessShellTool.SetDiffTracker(headlessDiffTracker)
+		headlessShellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
 		if err := registry.Register(headlessShellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
@@ -1655,10 +1637,17 @@ func runHeadless() error {
 	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
-	// Headless auto-approves all tools (restricted via --tools allowlist).
-	// Parallelization is governed by a separate policy so the two concerns
-	// are independent — a tool can be auto-approved but not parallelizable.
-	opts = append(opts, agent.WithApprovalChecker(agent.AlwaysAutoApprove{}))
+	// Headless auto-approves all tools (restricted via --tools allowlist),
+	// but still respects hierarchical deny policies so org-level restrictions
+	// apply in CI/CD.
+	{
+		var headlessCheckers []agent.ApprovalChecker
+		if hc := buildHierarchicalChecker(cfg, configPath, cwd); hc != nil {
+			headlessCheckers = append(headlessCheckers, hc)
+		}
+		headlessCheckers = append(headlessCheckers, agent.AlwaysAutoApprove{})
+		opts = append(opts, agent.WithApprovalChecker(agent.NewCompositeApprovalChecker(headlessCheckers...)))
+	}
 	opts = append(opts, agent.WithParallelPolicy(agent.AllowAllParallel{}))
 
 	// Build tool execution pipeline.
@@ -2227,6 +2216,47 @@ func (a *storeMemoryAdapter) LoadMemories(workingDir string) ([]agent.MemoryEntr
 		entries[i] = agent.MemoryEntry{Tag: m.Tag, Content: m.Content}
 	}
 	return entries, nil
+}
+
+// buildHierarchicalChecker loads permission policies from org, project, and user
+// config and returns a HierarchicalChecker, or nil if no policies are configured.
+func buildHierarchicalChecker(cfg *config.Config, cfgPathOverride, cwd string) agent.ApprovalChecker {
+	// Determine config path for user policy source attribution.
+	cfgPath := cfgPathOverride
+	if cfgPath == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			cfgPath = filepath.Join(home, ".config", "rubichan", "config.toml")
+		}
+	}
+	configDir, _ := os.UserConfigDir()
+	orgPath := filepath.Join(configDir, "aiagent", "org-policy.toml")
+	projectPath := filepath.Join(cwd, ".agent", "permissions.toml")
+
+	var userPolicy *permissions.Policy
+	cp := cfg.Permissions
+	if len(cp.Tools.Allow) > 0 || len(cp.Tools.Deny) > 0 || len(cp.Tools.Prompt) > 0 ||
+		len(cp.Shell.AllowCommands) > 0 || len(cp.Shell.DenyCommands) > 0 || len(cp.Shell.PromptPatterns) > 0 ||
+		len(cp.Files.AllowPatterns) > 0 || len(cp.Files.DenyPatterns) > 0 || len(cp.Files.PromptPatterns) > 0 ||
+		len(cp.Skills.AutoApprove) > 0 || len(cp.Skills.Deny) > 0 {
+		userPolicy = &permissions.Policy{
+			Level:  "user",
+			Source: cfgPath,
+			Tools:  permissions.ToolPolicy{Allow: cp.Tools.Allow, Deny: cp.Tools.Deny, Prompt: cp.Tools.Prompt},
+			Shell:  permissions.ShellPolicy{AllowCommands: cp.Shell.AllowCommands, DenyCommands: cp.Shell.DenyCommands, PromptPatterns: cp.Shell.PromptPatterns},
+			Files:  permissions.FilePolicy{AllowPatterns: cp.Files.AllowPatterns, DenyPatterns: cp.Files.DenyPatterns, PromptPatterns: cp.Files.PromptPatterns},
+			Skills: permissions.SkillPolicy{AutoApprove: cp.Skills.AutoApprove, Deny: cp.Skills.Deny},
+		}
+	}
+
+	policies, err := permissions.LoadPolicies(orgPath, projectPath, userPolicy)
+	if err != nil {
+		log.Printf("warning: failed to load permission policies: %v", err)
+		return nil
+	}
+	if len(policies) == 0 {
+		return nil
+	}
+	return permissions.NewHierarchicalChecker(policies)
 }
 
 // splitTrustRules separates config trust rules into regex and glob rule slices.

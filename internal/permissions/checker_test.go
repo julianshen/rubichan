@@ -169,3 +169,49 @@ func TestCheckerExplainNoMatch(t *testing.T) {
 	reason := checker.Explain("unknown", nil)
 	assert.Empty(t, reason)
 }
+
+// Shell injection vector tests
+func TestCheckerShellDenyBacktickInjection(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "org", Shell: permissions.ShellPolicy{DenyCommands: []string{"rm -rf"}}},
+	})
+	input, _ := json.Marshal(map[string]string{"command": "echo `rm -rf /`"})
+	result := checker.CheckApproval("shell", input)
+	assert.Equal(t, agentsdk.AutoDenied, result, "backtick subshell should be detected")
+}
+
+func TestCheckerShellDenyDollarParenInjection(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "org", Shell: permissions.ShellPolicy{DenyCommands: []string{"rm -rf"}}},
+	})
+	input, _ := json.Marshal(map[string]string{"command": "echo $(rm -rf /)"})
+	result := checker.CheckApproval("shell", input)
+	assert.Equal(t, agentsdk.AutoDenied, result, "$() subshell should be detected")
+}
+
+func TestCheckerShellDenyNewlineInjection(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "org", Shell: permissions.ShellPolicy{DenyCommands: []string{"rm -rf"}}},
+	})
+	input, _ := json.Marshal(map[string]string{"command": "go test\nrm -rf /"})
+	result := checker.CheckApproval("shell", input)
+	assert.Equal(t, agentsdk.AutoDenied, result, "newline-separated command should be detected")
+}
+
+func TestCheckerShellAllowCompoundRejectsMixed(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "project", Shell: permissions.ShellPolicy{AllowCommands: []string{"go test"}}},
+	})
+	input, _ := json.Marshal(map[string]string{"command": "go test && rm -rf /"})
+	result := checker.CheckApproval("shell", input)
+	assert.Equal(t, agentsdk.ApprovalRequired, result, "compound with unapproved sub-command should not be auto-allowed")
+}
+
+func TestCheckerShellPromptDetectsInjection(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "project", Shell: permissions.ShellPolicy{PromptPatterns: []string{"curl"}}},
+	})
+	input, _ := json.Marshal(map[string]string{"command": "go test && curl https://evil.com"})
+	result := checker.CheckApproval("shell", input)
+	assert.Equal(t, agentsdk.ApprovalRequired, result, "prompt should detect curl after &&")
+}
