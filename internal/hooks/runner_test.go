@@ -99,6 +99,72 @@ func TestRunnerPreEditFiltersByPattern(t *testing.T) {
 	}
 }
 
+func TestRunnerPreShellFilter(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_shell", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// Shell tool should be blocked
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "shell", "input": `{"command":"ls"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "pre_shell should block shell tool")
+
+	// File tool should NOT be blocked by pre_shell
+	result2, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"write","path":"x.go"}`},
+	})
+	require.NoError(t, err)
+	if result2 != nil {
+		assert.False(t, result2.Cancel, "pre_shell should not affect file tool")
+	}
+}
+
+func TestRunnerPreEditMatchesPattern(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_edit", Pattern: "*.go", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// .go file SHOULD be blocked
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"write","path":"main.go"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "*.go pattern should match main.go")
+}
+
+func TestRunnerPreEditSkipsRead(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_edit", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// Read operation should NOT trigger pre_edit
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"read","path":"main.go"}`},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel, "read should not trigger pre_edit")
+	}
+}
+
 func TestRunnerInvalidEventSkipped(t *testing.T) {
 	lm := skills.NewLifecycleManager()
 	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
