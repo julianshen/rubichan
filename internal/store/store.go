@@ -66,6 +66,7 @@ type Session struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	TokenCount   int
+	ForkedFrom   string
 }
 
 // StoredMessage represents a persisted message within a session.
@@ -198,6 +199,16 @@ func createTables(db *sql.DB) error {
 			return fmt.Errorf("exec %q: %w", stmt[:40], err)
 		}
 	}
+
+	// Schema migration: add forked_from column if missing.
+	var count int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='forked_from'`).Scan(&count)
+	if count == 0 {
+		if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN forked_from TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("migrate forked_from: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -389,9 +400,9 @@ func (s *Store) CacheRegistryEntry(entry RegistryEntry) error {
 // CreateSession inserts a new session. The ID must be unique.
 func (s *Store) CreateSession(sess Session) error {
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-		sess.ID, sess.Title, sess.Model, sess.WorkingDir, sess.SystemPrompt, sess.TokenCount,
+		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, forked_from, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		sess.ID, sess.Title, sess.Model, sess.WorkingDir, sess.SystemPrompt, sess.TokenCount, sess.ForkedFrom,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -404,10 +415,10 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	var sess Session
 	var createdStr, updatedStr string
 	err := s.db.QueryRow(
-		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count, forked_from
 		 FROM sessions WHERE id = ?`, id,
 	).Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir, &sess.SystemPrompt,
-		&createdStr, &updatedStr, &sess.TokenCount)
+		&createdStr, &updatedStr, &sess.TokenCount, &sess.ForkedFrom)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -451,10 +462,76 @@ func (s *Store) DeleteSession(id string) error {
 	return nil
 }
 
+// ForkSession creates a new session by deep-copying all data from the source.
+func (s *Store) ForkSession(sourceID, newID string) error {
+	src, err := s.GetSession(sourceID)
+	if err != nil {
+		return fmt.Errorf("fork: get source: %w", err)
+	}
+	if src == nil {
+		return fmt.Errorf("fork: source session %q not found", sourceID)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("fork: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// 1. Create new session
+	_, err = tx.Exec(
+		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, forked_from, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		newID, src.Title, src.Model, src.WorkingDir, src.SystemPrompt, src.TokenCount, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: create session: %w", err)
+	}
+
+	// 2. Bulk copy messages
+	_, err = tx.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at)
+		 SELECT ?, seq, role, content, created_at FROM messages WHERE session_id = ? ORDER BY seq`,
+		newID, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: copy messages: %w", err)
+	}
+
+	// 3. Copy snapshot if exists
+	_, err = tx.Exec(
+		`INSERT OR IGNORE INTO session_snapshots (session_id, messages, token_count, created_at)
+		 SELECT ?, messages, token_count, created_at FROM session_snapshots WHERE session_id = ?`,
+		newID, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: copy snapshot: %w", err)
+	}
+
+	// 4. Blobs: message content references blobs by their primary key (id).
+	// Since blob id is a global PRIMARY KEY, we cannot duplicate the row with
+	// a different session_id. Instead, the forked session shares blob access
+	// via the original blob id (GetBlob queries by id only, not session_id).
+	// INSERT OR IGNORE is a no-op here (blob already exists) — this is intentional.
+	// Known limitation: if the source session is deleted, its blobs are CASCADE-
+	// deleted and the fork's blob references become dangling. Document this for
+	// users: do not delete a session that has active forks.
+	_, err = tx.Exec(
+		`INSERT OR IGNORE INTO tool_result_blobs (id, session_id, tool_name, content, byte_size, created_at)
+		 SELECT id, ?, tool_name, content, byte_size, created_at FROM tool_result_blobs WHERE session_id = ?`,
+		newID, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: copy blobs: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // ListSessions returns the most recently updated sessions, limited to n.
 func (s *Store) ListSessions(limit int) ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count, forked_from
 		 FROM sessions ORDER BY updated_at DESC LIMIT ?`, limit,
 	)
 	if err != nil {
@@ -467,7 +544,7 @@ func (s *Store) ListSessions(limit int) ([]Session, error) {
 		var sess Session
 		var createdStr, updatedStr string
 		if err := rows.Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir,
-			&sess.SystemPrompt, &createdStr, &updatedStr, &sess.TokenCount); err != nil {
+			&sess.SystemPrompt, &createdStr, &updatedStr, &sess.TokenCount, &sess.ForkedFrom); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		sess.CreatedAt, _ = parseSQLiteDatetime(createdStr)

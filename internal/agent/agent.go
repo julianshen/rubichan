@@ -604,6 +604,49 @@ func (a *Agent) SetModel(model string) {
 	a.model = model
 }
 
+// SessionID returns the current session ID.
+func (a *Agent) SessionID() string {
+	return a.sessionID
+}
+
+// ForkSession creates a fork of the current session and switches to it.
+// Serialized with Turn() via turnMu to prevent session ID mutation during
+// an active turn's message persistence.
+// Returns the new session ID.
+func (a *Agent) ForkSession(ctx context.Context) (string, error) {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+
+	if a.store == nil {
+		return "", fmt.Errorf("fork session: store not configured")
+	}
+	newID := uuid.New().String()
+	if err := a.store.ForkSession(a.sessionID, newID); err != nil {
+		return "", fmt.Errorf("fork session: %w", err)
+	}
+	a.sessionID = newID
+	return newID, nil
+}
+
+// ListSessions returns recent sessions from the store filtered by working directory.
+func (a *Agent) ListSessions(limit int) ([]store.Session, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("list sessions: store not configured")
+	}
+	sessions, err := a.store.ListSessions(limit)
+	if err != nil {
+		return nil, err
+	}
+	// Filter by working directory
+	var filtered []store.Session
+	for _, s := range sessions {
+		if s.WorkingDir == a.workingDir {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered, nil
+}
+
 // persistToolResult saves a tool result message to the store.
 func (a *Agent) persistToolResult(toolUseID, content string, isError bool) {
 	a.persistMessage("user", []provider.ContentBlock{

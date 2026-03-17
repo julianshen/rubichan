@@ -2985,6 +2985,39 @@ func TestAgentCheckpointMethods(t *testing.T) {
 	})
 }
 
+func TestAgentForkSession(t *testing.T) {
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "ok"}, {Type: "stop"},
+	}}
+
+	t.Run("no store returns error", func(t *testing.T) {
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+		_, err := a.ForkSession(context.Background())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "store not configured")
+	})
+
+	t.Run("with store forks session and returns new id", func(t *testing.T) {
+		s, err := store.NewStore(":memory:")
+		require.NoError(t, err)
+		defer s.Close()
+
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+		origID := a.SessionID()
+		require.NotEmpty(t, origID)
+
+		newID, err := a.ForkSession(context.Background())
+		require.NoError(t, err)
+		assert.NotEmpty(t, newID)
+		assert.NotEqual(t, origID, newID)
+		assert.Equal(t, newID, a.SessionID())
+	})
+}
+
 func TestAgentContextBudget(t *testing.T) {
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{Model: "test-model"},
