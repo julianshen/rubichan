@@ -462,6 +462,65 @@ func (s *Store) DeleteSession(id string) error {
 	return nil
 }
 
+// ForkSession creates a new session by deep-copying all data from the source.
+func (s *Store) ForkSession(sourceID, newID string) error {
+	src, err := s.GetSession(sourceID)
+	if err != nil {
+		return fmt.Errorf("fork: get source: %w", err)
+	}
+	if src == nil {
+		return fmt.Errorf("fork: source session %q not found", sourceID)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("fork: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// 1. Create new session
+	_, err = tx.Exec(
+		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, forked_from, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		newID, src.Title, src.Model, src.WorkingDir, src.SystemPrompt, src.TokenCount, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: create session: %w", err)
+	}
+
+	// 2. Bulk copy messages
+	_, err = tx.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at)
+		 SELECT ?, seq, role, content, created_at FROM messages WHERE session_id = ? ORDER BY seq`,
+		newID, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: copy messages: %w", err)
+	}
+
+	// 3. Copy snapshot if exists
+	_, err = tx.Exec(
+		`INSERT OR IGNORE INTO session_snapshots (session_id, messages, token_count, created_at)
+		 SELECT ?, messages, token_count, created_at FROM session_snapshots WHERE session_id = ?`,
+		newID, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: copy snapshot: %w", err)
+	}
+
+	// 4. Copy blobs (preserve original blob ID so message references stay valid)
+	_, err = tx.Exec(
+		`INSERT OR IGNORE INTO tool_result_blobs (id, session_id, tool_name, content, byte_size, created_at)
+		 SELECT id, ?, tool_name, content, byte_size, created_at FROM tool_result_blobs WHERE session_id = ?`,
+		newID, sourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("fork: copy blobs: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // ListSessions returns the most recently updated sessions, limited to n.
 func (s *Store) ListSessions(limit int) ([]Session, error) {
 	rows, err := s.db.Query(

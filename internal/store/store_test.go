@@ -951,6 +951,60 @@ func TestListSessionsIncludesForkedFrom(t *testing.T) {
 	assert.Equal(t, "s1", forked.ForkedFrom)
 }
 
+func TestForkSession(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "source", Model: "claude", WorkingDir: "/proj", SystemPrompt: "prompt"}))
+	require.NoError(t, s.AppendMessage("source", "user", []provider.ContentBlock{{Type: "text", Text: "hello"}}))
+	require.NoError(t, s.AppendMessage("source", "assistant", []provider.ContentBlock{{Type: "text", Text: "world"}}))
+
+	err = s.ForkSession("source", "fork-1")
+	require.NoError(t, err)
+
+	fork, err := s.GetSession("fork-1")
+	require.NoError(t, err)
+	assert.Equal(t, "claude", fork.Model)
+	assert.Equal(t, "/proj", fork.WorkingDir)
+	assert.Equal(t, "source", fork.ForkedFrom)
+
+	msgs, err := s.GetMessages("fork-1")
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "user", msgs[0].Role)
+
+	srcMsgs, _ := s.GetMessages("source")
+	assert.Len(t, srcMsgs, 2)
+}
+
+func TestForkSessionCopiesSnapshot(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "src", Model: "test"}))
+	require.NoError(t, s.SaveSnapshot("src", []provider.Message{{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "snap"}}}}, 100))
+
+	err = s.ForkSession("src", "fork-snap")
+	require.NoError(t, err)
+
+	snap, err := s.GetSnapshot("fork-snap")
+	require.NoError(t, err)
+	require.NotNil(t, snap)
+	require.Len(t, snap, 1)
+	assert.Equal(t, "user", snap[0].Role)
+}
+
+func TestForkSessionNotFound(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.ForkSession("nonexistent", "fork-x")
+	assert.Error(t, err)
+}
+
 func TestFolderApprovalPathNormalization(t *testing.T) {
 	s, err := NewStore(":memory:")
 	require.NoError(t, err)
