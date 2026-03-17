@@ -29,11 +29,11 @@ type HooksConfig struct {
 
 // HookRuleConfig describes a single shell hook rule triggered by an event.
 type HookRuleConfig struct {
-	Event       string `toml:"event"`
-	Pattern     string `toml:"pattern"`
-	Command     string `toml:"command"`
-	Description string `toml:"description"`
-	Timeout     string `toml:"timeout"`
+	Event       string `toml:"event" yaml:"event"`
+	Pattern     string `toml:"pattern" yaml:"pattern"`
+	Command     string `toml:"command" yaml:"command"`
+	Description string `toml:"description" yaml:"description"`
+	Timeout     string `toml:"timeout" yaml:"timeout"`
 }
 
 // PermissionsConfig holds hierarchical permission policy settings.
