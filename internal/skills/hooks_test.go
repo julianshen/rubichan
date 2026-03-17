@@ -65,6 +65,28 @@ func TestDispatchHookMultipleSkills(t *testing.T) {
 	assert.Equal(t, []string{"A", "C", "B"}, callOrder)
 }
 
+func TestUserHookPriorityBetweenBuiltinAndUser(t *testing.T) {
+	lm := NewLifecycleManager()
+	var order []string
+
+	lm.Register(HookOnConversationStart, "skill-hook", PriorityUser, func(e HookEvent) (HookResult, error) {
+		order = append(order, "skill")
+		return HookResult{}, nil
+	})
+	lm.Register(HookOnConversationStart, "user-hook", PriorityUserHook, func(e HookEvent) (HookResult, error) {
+		order = append(order, "user-hook")
+		return HookResult{}, nil
+	})
+	lm.Register(HookOnConversationStart, "builtin-hook", PriorityBuiltin, func(e HookEvent) (HookResult, error) {
+		order = append(order, "builtin")
+		return HookResult{}, nil
+	})
+
+	_, err := lm.Dispatch(HookEvent{Phase: HookOnConversationStart})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"builtin", "user-hook", "skill"}, order)
+}
+
 func TestDispatchHookNoHandlers(t *testing.T) {
 	lm := NewLifecycleManager()
 

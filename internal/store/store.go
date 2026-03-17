@@ -193,6 +193,12 @@ func createTables(db *sql.DB) error {
 			working_dir TEXT PRIMARY KEY,
 			approved_at DATETIME NOT NULL DEFAULT (datetime('now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS hook_approvals (
+			project_path TEXT NOT NULL,
+			hook_hash    TEXT NOT NULL,
+			approved_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (project_path, hook_hash)
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -714,6 +720,33 @@ func (s *Store) SaveSnapshot(sessionID string, msgs []provider.Message, tokenCou
 	)
 	if err != nil {
 		return fmt.Errorf("save snapshot: %w", err)
+	}
+	return nil
+}
+
+// CheckHookApproval returns true if the given hook hash has been approved
+// for the project path.
+func (s *Store) CheckHookApproval(projectPath, hookHash string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM hook_approvals WHERE project_path = ? AND hook_hash = ?`,
+		projectPath, hookHash,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check hook approval: %w", err)
+	}
+	return count > 0, nil
+}
+
+// ApproveHook records an approval for a hook configuration hash under the
+// given project path.
+func (s *Store) ApproveHook(projectPath, hookHash string) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO hook_approvals (project_path, hook_hash) VALUES (?, ?)`,
+		projectPath, hookHash,
+	)
+	if err != nil {
+		return fmt.Errorf("approve hook: %w", err)
 	}
 	return nil
 }

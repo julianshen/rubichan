@@ -27,6 +27,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/permissions"
@@ -722,6 +723,24 @@ func appendPersonaOptions(opts []agent.AgentOption, cwd string) []agent.AgentOpt
 	return opts
 }
 
+// convertHookRules converts config hook rules into UserHookConfig entries.
+func convertHookRules(rules []config.HookRuleConfig, source string) []hooks.UserHookConfig {
+	var out []hooks.UserHookConfig
+	for _, rule := range rules {
+		timeout := 30 * time.Second
+		if rule.Timeout != "" {
+			if parsed, err := time.ParseDuration(rule.Timeout); err == nil {
+				timeout = parsed
+			}
+		}
+		out = append(out, hooks.UserHookConfig{
+			Event: rule.Event, Pattern: rule.Pattern, Command: rule.Command,
+			Description: rule.Description, Timeout: timeout, Source: source,
+		})
+	}
+	return out
+}
+
 func promptFolderAccess(workingDir string, in io.Reader, out io.Writer) (bool, error) {
 	if _, err := fmt.Fprintf(out, "Allow rubichan to access this folder?\n  %s\nType 'yes' to continue: ", workingDir); err != nil {
 		return false, fmt.Errorf("writing folder access prompt: %w", err)
@@ -1257,6 +1276,23 @@ func runInteractive() error {
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
+	// Build user hooks from config and AGENT.md.
+	userHookConfigs := convertHookRules(cfg.Hooks.Rules, "config")
+	_, agentMDHooks, _ := config.LoadAgentMDWithHooks(cwd)
+	if len(agentMDHooks) > 0 {
+		projectHooks := convertHookRules(agentMDHooks, "agent.md")
+		if cfg.Hooks.TrustProjectHooks {
+			userHookConfigs = append(userHookConfigs, projectHooks...)
+		} else if trusted, _ := hooks.CheckTrust(s, cwd, projectHooks); trusted {
+			userHookConfigs = append(userHookConfigs, projectHooks...)
+		} else if len(projectHooks) > 0 {
+			log.Printf("Project hooks in AGENT.md not trusted — skipping.")
+		}
+	}
+	if len(userHookConfigs) > 0 {
+		opts = append(opts, agent.WithUserHooks(hooks.NewUserHookRunner(userHookConfigs, cwd)))
+	}
+
 	// Wire cross-session memory and summarizer.
 	summarizer := agent.NewLLMSummarizer(p, cfg.Provider.Model)
 	opts = append(opts, agent.WithSummarizer(summarizer))
@@ -1656,6 +1692,23 @@ func runHeadless() error {
 		// that is used for built-in tools, ensuring a unified policy path.
 		rt.SetToolAdmissionFunc(headlessToolsCfg.ShouldEnable)
 		opts = append(opts, agent.WithSkillRuntime(rt))
+	}
+
+	// Build user hooks from config and AGENT.md.
+	headlessHookConfigs := convertHookRules(cfg.Hooks.Rules, "config")
+	_, headlessAgentMDHooks, _ := config.LoadAgentMDWithHooks(cwd)
+	if len(headlessAgentMDHooks) > 0 {
+		projectHooks := convertHookRules(headlessAgentMDHooks, "agent.md")
+		if cfg.Hooks.TrustProjectHooks {
+			headlessHookConfigs = append(headlessHookConfigs, projectHooks...)
+		} else if trusted, _ := hooks.CheckTrust(s, cwd, projectHooks); trusted {
+			headlessHookConfigs = append(headlessHookConfigs, projectHooks...)
+		} else if len(projectHooks) > 0 {
+			log.Printf("Project hooks in AGENT.md not trusted — skipping.")
+		}
+	}
+	if len(headlessHookConfigs) > 0 {
+		opts = append(opts, agent.WithUserHooks(hooks.NewUserHookRunner(headlessHookConfigs, cwd)))
 	}
 
 	// Wire cross-session memory and summarizer.

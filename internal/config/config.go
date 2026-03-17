@@ -18,6 +18,22 @@ type Config struct {
 	Security    SecurityConfig    `toml:"security"`
 	Worktree    WorktreeConfig    `toml:"worktree"`
 	Permissions PermissionsConfig `toml:"permissions"`
+	Hooks       HooksConfig       `toml:"hooks"`
+}
+
+// HooksConfig holds settings for user-configured shell hooks.
+type HooksConfig struct {
+	TrustProjectHooks bool             `toml:"trust_project_hooks"`
+	Rules             []HookRuleConfig `toml:"rules"`
+}
+
+// HookRuleConfig describes a single shell hook rule triggered by an event.
+type HookRuleConfig struct {
+	Event       string `toml:"event" yaml:"event"`
+	Pattern     string `toml:"pattern" yaml:"pattern"`
+	Command     string `toml:"command" yaml:"command"`
+	Description string `toml:"description" yaml:"description"`
+	Timeout     string `toml:"timeout" yaml:"timeout"`
 }
 
 // PermissionsConfig holds hierarchical permission policy settings.

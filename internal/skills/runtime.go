@@ -541,6 +541,11 @@ func (rt *Runtime) DispatchHook(event HookEvent) (*HookResult, error) {
 	return rt.lifecycle.Dispatch(event)
 }
 
+// RegisterHook adds a hook handler to the lifecycle manager at the given priority.
+func (rt *Runtime) RegisterHook(phase HookPhase, name string, priority int, handler HookHandler) {
+	rt.lifecycle.Register(phase, name, priority, handler)
+}
+
 // GetScanners returns the registered security scanners from all active
 // security-rule skills.
 func (rt *Runtime) GetScanners() []RegisteredScanner {
