@@ -206,6 +206,12 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 			}
 			return agentsdk.CompactResult{}, nil
 		}))
+		_ = cmdRegistry.Register(commands.NewForkCommand(func(ctx context.Context) (string, error) {
+			if m.agent != nil {
+				return m.agent.ForkSession(ctx)
+			}
+			return "", fmt.Errorf("no agent")
+		}))
 		_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 	}
 

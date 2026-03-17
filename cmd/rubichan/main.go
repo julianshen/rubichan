@@ -19,6 +19,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/sourcegraph/conc"
@@ -99,6 +100,7 @@ var (
 	approveSkillsFlag bool
 
 	resumeFlag   string
+	forkFlag     bool
 	failOnFlag   string
 	worktreeFlag string
 
@@ -438,6 +440,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&skillsFlag, "skills", "", "comma-separated list of skill names to activate")
 	rootCmd.PersistentFlags().BoolVar(&approveSkillsFlag, "approve-skills", false, "auto-approve skill permissions")
 	rootCmd.PersistentFlags().StringVar(&resumeFlag, "resume", "", "resume a previous session by ID")
+	rootCmd.PersistentFlags().BoolVar(&forkFlag, "fork", false, "fork the resumed session instead of continuing it")
 	rootCmd.PersistentFlags().StringVar(&failOnFlag, "fail-on", "", "exit non-zero if findings at/above severity (critical, high, medium, low)")
 	rootCmd.PersistentFlags().StringVar(&worktreeFlag, "worktree", "", "run in an isolated git worktree with the given name")
 
@@ -455,6 +458,7 @@ func main() {
 	// wiki is now a built-in skill (generate_wiki tool), not a CLI subcommand.
 	rootCmd.AddCommand(ollamaCmd())
 	rootCmd.AddCommand(worktreeCmd())
+	rootCmd.AddCommand(sessionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *runner.ExitError
@@ -1222,6 +1226,14 @@ func runInteractive() error {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
+	if forkFlag && resumeFlag != "" {
+		newID := uuid.New().String()
+		if err := s.ForkSession(resumeFlag, newID); err != nil {
+			return fmt.Errorf("fork session: %w", err)
+		}
+		log.Printf("Forked session %s → %s", resumeFlag, newID)
+		resumeFlag = newID
+	}
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
 	}
@@ -1605,6 +1617,14 @@ func runHeadless() error {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
+	if forkFlag && resumeFlag != "" {
+		newID := uuid.New().String()
+		if err := s.ForkSession(resumeFlag, newID); err != nil {
+			return fmt.Errorf("fork session: %w", err)
+		}
+		log.Printf("Forked session %s → %s", resumeFlag, newID)
+		resumeFlag = newID
+	}
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
 	}
