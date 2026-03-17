@@ -28,6 +28,7 @@ import (
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
+	"github.com/julianshen/rubichan/internal/permissions"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/pipeline"
 	"github.com/julianshen/rubichan/internal/provider"
@@ -1365,6 +1366,39 @@ func runInteractive() error {
 		// decisions) is checked first, then the pipeline's rule engine
 		// (category-based allow rules), then config trust rules.
 		var checkers []agent.ApprovalChecker
+
+		// Hierarchical permission policies (org → project → user).
+		{
+			configDir, _ := os.UserConfigDir()
+			orgPath := filepath.Join(configDir, "aiagent", "org-policy.toml")
+			projectPath := filepath.Join(cwd, ".agent", "permissions.toml")
+
+			// Convert user config permissions to a permissions.Policy
+			var userPolicy *permissions.Policy
+			cp := cfg.Permissions
+			if len(cp.Tools.Allow) > 0 || len(cp.Tools.Deny) > 0 || len(cp.Tools.Prompt) > 0 ||
+				len(cp.Shell.AllowCommands) > 0 || len(cp.Shell.DenyCommands) > 0 ||
+				len(cp.Files.AllowPatterns) > 0 || len(cp.Files.DenyPatterns) > 0 ||
+				len(cp.Skills.AutoApprove) > 0 || len(cp.Skills.Deny) > 0 {
+				userPolicy = &permissions.Policy{
+					Level:  "user",
+					Source: cfgPath,
+					Tools:  permissions.ToolPolicy{Allow: cp.Tools.Allow, Deny: cp.Tools.Deny, Prompt: cp.Tools.Prompt},
+					Shell:  permissions.ShellPolicy{AllowCommands: cp.Shell.AllowCommands, DenyCommands: cp.Shell.DenyCommands, PromptPatterns: cp.Shell.PromptPatterns},
+					Files:  permissions.FilePolicy{AllowPatterns: cp.Files.AllowPatterns, DenyPatterns: cp.Files.DenyPatterns, PromptPatterns: cp.Files.PromptPatterns},
+					Skills: permissions.SkillPolicy{AutoApprove: cp.Skills.AutoApprove, Deny: cp.Skills.Deny},
+				}
+			}
+
+			policies, err := permissions.LoadPolicies(orgPath, projectPath, userPolicy)
+			if err != nil {
+				log.Printf("warning: failed to load permission policies: %v", err)
+			}
+			if len(policies) > 0 {
+				checkers = append(checkers, permissions.NewHierarchicalChecker(policies))
+			}
+		}
+
 		if plainHost != nil {
 			checkers = append(checkers, plainHost)
 		} else {
