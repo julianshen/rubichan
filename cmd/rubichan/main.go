@@ -1226,7 +1226,10 @@ func runInteractive() error {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
-	if forkFlag && resumeFlag != "" {
+	if forkFlag {
+		if resumeFlag == "" {
+			return fmt.Errorf("--fork requires --resume <session-id>")
+		}
 		newID := uuid.New().String()
 		if err := s.ForkSession(resumeFlag, newID); err != nil {
 			return fmt.Errorf("fork session: %w", err)
@@ -1617,7 +1620,10 @@ func runHeadless() error {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
-	if forkFlag && resumeFlag != "" {
+	if forkFlag {
+		if resumeFlag == "" {
+			return fmt.Errorf("--fork requires --resume <session-id>")
+		}
 		newID := uuid.New().String()
 		if err := s.ForkSession(resumeFlag, newID); err != nil {
 			return fmt.Errorf("fork session: %w", err)

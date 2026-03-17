@@ -19,6 +19,7 @@ import (
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
@@ -205,6 +206,12 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 				return m.agent.ForceCompact(ctx)
 			}
 			return agentsdk.CompactResult{}, nil
+		}))
+		_ = cmdRegistry.Register(commands.NewSessionsCommand(func() ([]store.Session, error) {
+			if m.agent != nil {
+				return m.agent.ListSessions(20)
+			}
+			return nil, nil
 		}))
 		_ = cmdRegistry.Register(commands.NewForkCommand(func(ctx context.Context) (string, error) {
 			if m.agent != nil {

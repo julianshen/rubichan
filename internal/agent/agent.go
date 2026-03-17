@@ -623,6 +623,25 @@ func (a *Agent) ForkSession(ctx context.Context) (string, error) {
 	return newID, nil
 }
 
+// ListSessions returns recent sessions from the store filtered by working directory.
+func (a *Agent) ListSessions(limit int) ([]store.Session, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("list sessions: store not configured")
+	}
+	sessions, err := a.store.ListSessions(limit)
+	if err != nil {
+		return nil, err
+	}
+	// Filter by working directory
+	var filtered []store.Session
+	for _, s := range sessions {
+		if s.WorkingDir == a.workingDir {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered, nil
+}
+
 // persistToolResult saves a tool result message to the store.
 func (a *Agent) persistToolResult(toolUseID, content string, isError bool) {
 	a.persistMessage("user", []provider.ContentBlock{

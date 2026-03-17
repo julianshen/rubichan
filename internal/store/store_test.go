@@ -1005,6 +1005,22 @@ func TestForkSessionNotFound(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestForkSessionBlobAccessible(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "src", Model: "test"}))
+	require.NoError(t, s.SaveBlob("blob-001", "src", "shell", "large output content", 21))
+
+	require.NoError(t, s.ForkSession("src", "fork-blob"))
+
+	// Blob should be accessible via original ID (GetBlob queries by id, not session_id)
+	content, err := s.GetBlob("blob-001")
+	require.NoError(t, err)
+	assert.Equal(t, "large output content", content)
+}
+
 func TestFolderApprovalPathNormalization(t *testing.T) {
 	s, err := NewStore(":memory:")
 	require.NoError(t, err)

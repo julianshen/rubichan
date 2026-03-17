@@ -508,7 +508,14 @@ func (s *Store) ForkSession(sourceID, newID string) error {
 		return fmt.Errorf("fork: copy snapshot: %w", err)
 	}
 
-	// 4. Copy blobs (preserve original blob ID so message references stay valid)
+	// 4. Blobs: message content references blobs by their primary key (id).
+	// Since blob id is a global PRIMARY KEY, we cannot duplicate the row with
+	// a different session_id. Instead, the forked session shares blob access
+	// via the original blob id (GetBlob queries by id only, not session_id).
+	// INSERT OR IGNORE is a no-op here (blob already exists) — this is intentional.
+	// Known limitation: if the source session is deleted, its blobs are CASCADE-
+	// deleted and the fork's blob references become dangling. Document this for
+	// users: do not delete a session that has active forks.
 	_, err = tx.Exec(
 		`INSERT OR IGNORE INTO tool_result_blobs (id, session_id, tool_name, content, byte_size, created_at)
 		 SELECT id, ?, tool_name, content, byte_size, created_at FROM tool_result_blobs WHERE session_id = ?`,
