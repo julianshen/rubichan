@@ -35,16 +35,22 @@ func sessionListCmd() *cobra.Command {
 			}
 			defer s.Close()
 
-			sessions, err := s.ListSessions(20)
+			// Fetch more than we display so working-dir filter doesn't hide results
+			sessions, err := s.ListSessions(200)
 			if err != nil {
 				return err
 			}
 
 			cwd, _ := os.Getwd()
+			shown := 0
 			for _, sess := range sessions {
 				if !all && sess.WorkingDir != cwd {
 					continue
 				}
+				if shown >= 20 {
+					break
+				}
+				shown++
 				title := sess.Title
 				if title == "" {
 					title = "(untitled)"
@@ -111,7 +117,7 @@ func openSessionStore() (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(home, ".config", "rubichan", "store.db")
+	dbPath := filepath.Join(home, ".config", "rubichan", "rubichan.db")
 	return store.NewStore(dbPath)
 }
 

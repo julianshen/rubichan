@@ -610,8 +610,13 @@ func (a *Agent) SessionID() string {
 }
 
 // ForkSession creates a fork of the current session and switches to it.
+// Serialized with Turn() via turnMu to prevent session ID mutation during
+// an active turn's message persistence.
 // Returns the new session ID.
 func (a *Agent) ForkSession(ctx context.Context) (string, error) {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+
 	if a.store == nil {
 		return "", fmt.Errorf("fork session: store not configured")
 	}
