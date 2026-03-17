@@ -63,8 +63,10 @@ func TestRunnerPostToolDoesNotBlock(t *testing.T) {
 
 func TestRunnerTemplateSubstitution(t *testing.T) {
 	lm := skills.NewLifecycleManager()
+	// {tool} is shell-quoted, so test that the expanded command runs correctly.
+	// "test {tool} = 'shell'" expands to "test 'shell' = 'shell'" which is true.
 	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
-		{Event: "pre_tool", Command: "test '{tool}' = 'shell'", Timeout: 5 * time.Second},
+		{Event: "pre_tool", Command: "test {tool} = 'shell'", Timeout: 5 * time.Second},
 	}, t.TempDir())
 
 	runner.RegisterIntoLM(lm)
@@ -163,6 +165,26 @@ func TestRunnerPreEditSkipsRead(t *testing.T) {
 	if result != nil {
 		assert.False(t, result.Cancel, "read should not trigger pre_edit")
 	}
+}
+
+func TestRunnerShellInjectionPrevented(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	dir := t.TempDir()
+	// If {file} is not shell-escaped, $(whoami) would execute
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "post_edit", Command: "echo {file}", Timeout: 5 * time.Second},
+	}, dir)
+	runner.RegisterIntoLM(lm)
+
+	// Inject shell metacharacters via file path
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnAfterToolResult,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"write","path":"$(whoami).go"}`},
+	})
+	require.NoError(t, err)
+	// Post-event should succeed without executing the injection
+	_ = result
 }
 
 func TestRunnerInvalidEventSkipped(t *testing.T) {

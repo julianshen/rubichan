@@ -85,7 +85,11 @@ func (r *UserHookRunner) registerInto(reg hookRegistrar) {
 
 			cmd := expandTemplateVars(hookCfg.Command, event)
 
-			ctx, cancel := context.WithTimeout(event.Ctx, timeout)
+			eventCtx := event.Ctx
+			if eventCtx == nil {
+				eventCtx = context.Background()
+			}
+			ctx, cancel := context.WithTimeout(eventCtx, timeout)
 			defer cancel()
 
 			c := exec.CommandContext(ctx, "sh", "-c", cmd)
@@ -172,9 +176,21 @@ func expandTemplateVars(cmd string, event skills.HookEvent) string {
 		}
 	}
 
+	// Shell-escape all substituted values to prevent injection.
+	// Template variables come from LLM-generated tool inputs which
+	// the user does not fully control (prompt injection risk).
 	return strings.NewReplacer(
-		"{tool}", toolName,
-		"{file}", filePath,
-		"{command}", shellCmd,
+		"{tool}", shellQuote(toolName),
+		"{file}", shellQuote(filePath),
+		"{command}", shellQuote(shellCmd),
 	).Replace(cmd)
+}
+
+// shellQuote wraps a string in single quotes for safe shell interpolation.
+// Embedded single quotes are escaped as '\''.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
