@@ -472,6 +472,34 @@ ollama_keep_alive = "15m"
 	assert.Equal(t, "15m", cfg.Agent.Cache.OllamaKeepAlive)
 }
 
+func TestConfigPermissionsSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[provider]
+default = "anthropic"
+
+[permissions.tools]
+allow = ["file", "code_search"]
+deny = ["dangerous"]
+
+[permissions.shell]
+allow_commands = ["go test"]
+deny_commands = ["rm -rf /"]
+
+[permissions.files]
+allow_patterns = ["*.go"]
+deny_patterns = [".env"]
+`), 0644)
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"file", "code_search"}, cfg.Permissions.Tools.Allow)
+	assert.Equal(t, []string{"dangerous"}, cfg.Permissions.Tools.Deny)
+	assert.Equal(t, []string{"go test"}, cfg.Permissions.Shell.AllowCommands)
+	assert.Equal(t, []string{".env"}, cfg.Permissions.Files.DenyPatterns)
+}
+
 func TestWorktreeConfigFromTOML(t *testing.T) {
 	tomlData := `
 [worktree]

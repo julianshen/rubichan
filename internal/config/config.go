@@ -10,13 +10,49 @@ import (
 
 // Config represents the top-level application configuration.
 type Config struct {
-	Provider ProviderConfig `toml:"provider"`
-	Agent    AgentConfig    `toml:"agent"`
-	Skills   SkillsConfig   `toml:"skills"`
-	MCP      MCPConfig      `toml:"mcp"`
-	Browser  BrowserConfig  `toml:"browser"`
-	Security SecurityConfig `toml:"security"`
-	Worktree WorktreeConfig `toml:"worktree"`
+	Provider    ProviderConfig    `toml:"provider"`
+	Agent       AgentConfig       `toml:"agent"`
+	Skills      SkillsConfig      `toml:"skills"`
+	MCP         MCPConfig         `toml:"mcp"`
+	Browser     BrowserConfig     `toml:"browser"`
+	Security    SecurityConfig    `toml:"security"`
+	Worktree    WorktreeConfig    `toml:"worktree"`
+	Permissions PermissionsConfig `toml:"permissions"`
+}
+
+// PermissionsConfig holds hierarchical permission policy settings.
+type PermissionsConfig struct {
+	Tools  PermToolPolicy  `toml:"tools"`
+	Shell  PermShellPolicy `toml:"shell"`
+	Files  PermFilePolicy  `toml:"files"`
+	Skills PermSkillPolicy `toml:"skills"`
+}
+
+// PermToolPolicy controls which tools are allowed, denied, or prompt for approval.
+type PermToolPolicy struct {
+	Allow  []string `toml:"allow"`
+	Deny   []string `toml:"deny"`
+	Prompt []string `toml:"prompt"`
+}
+
+// PermShellPolicy controls which shell commands are allowed, denied, or prompt.
+type PermShellPolicy struct {
+	AllowCommands  []string `toml:"allow_commands"`
+	DenyCommands   []string `toml:"deny_commands"`
+	PromptPatterns []string `toml:"prompt_patterns"`
+}
+
+// PermFilePolicy controls which file patterns are allowed, denied, or prompt.
+type PermFilePolicy struct {
+	AllowPatterns  []string `toml:"allow_patterns"`
+	DenyPatterns   []string `toml:"deny_patterns"`
+	PromptPatterns []string `toml:"prompt_patterns"`
+}
+
+// PermSkillPolicy controls which skills are auto-approved or denied.
+type PermSkillPolicy struct {
+	AutoApprove []string `toml:"auto_approve"`
+	Deny        []string `toml:"deny"`
 }
 
 // WorktreeConfig holds settings for git worktree management.
