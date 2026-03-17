@@ -66,6 +66,7 @@ type Session struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	TokenCount   int
+	ForkedFrom   string
 }
 
 // StoredMessage represents a persisted message within a session.
@@ -198,6 +199,16 @@ func createTables(db *sql.DB) error {
 			return fmt.Errorf("exec %q: %w", stmt[:40], err)
 		}
 	}
+
+	// Schema migration: add forked_from column if missing.
+	var count int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='forked_from'`).Scan(&count)
+	if count == 0 {
+		if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN forked_from TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("migrate forked_from: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -389,9 +400,9 @@ func (s *Store) CacheRegistryEntry(entry RegistryEntry) error {
 // CreateSession inserts a new session. The ID must be unique.
 func (s *Store) CreateSession(sess Session) error {
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-		sess.ID, sess.Title, sess.Model, sess.WorkingDir, sess.SystemPrompt, sess.TokenCount,
+		`INSERT INTO sessions (id, title, model, working_dir, system_prompt, token_count, forked_from, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		sess.ID, sess.Title, sess.Model, sess.WorkingDir, sess.SystemPrompt, sess.TokenCount, sess.ForkedFrom,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -404,10 +415,10 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	var sess Session
 	var createdStr, updatedStr string
 	err := s.db.QueryRow(
-		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count, forked_from
 		 FROM sessions WHERE id = ?`, id,
 	).Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir, &sess.SystemPrompt,
-		&createdStr, &updatedStr, &sess.TokenCount)
+		&createdStr, &updatedStr, &sess.TokenCount, &sess.ForkedFrom)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -454,7 +465,7 @@ func (s *Store) DeleteSession(id string) error {
 // ListSessions returns the most recently updated sessions, limited to n.
 func (s *Store) ListSessions(limit int) ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count
+		`SELECT id, title, model, working_dir, system_prompt, created_at, updated_at, token_count, forked_from
 		 FROM sessions ORDER BY updated_at DESC LIMIT ?`, limit,
 	)
 	if err != nil {
@@ -467,7 +478,7 @@ func (s *Store) ListSessions(limit int) ([]Session, error) {
 		var sess Session
 		var createdStr, updatedStr string
 		if err := rows.Scan(&sess.ID, &sess.Title, &sess.Model, &sess.WorkingDir,
-			&sess.SystemPrompt, &createdStr, &updatedStr, &sess.TokenCount); err != nil {
+			&sess.SystemPrompt, &createdStr, &updatedStr, &sess.TokenCount, &sess.ForkedFrom); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		sess.CreatedAt, _ = parseSQLiteDatetime(createdStr)

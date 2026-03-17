@@ -914,6 +914,43 @@ func TestApproveFolderAccessAndIsFolderApproved(t *testing.T) {
 	assert.False(t, otherApproved)
 }
 
+func TestSessionForkedFromField(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	err = s.CreateSession(Session{
+		ID: "child-1", Model: "test", ForkedFrom: "parent-1",
+	})
+	require.NoError(t, err)
+
+	sess, err := s.GetSession("child-1")
+	require.NoError(t, err)
+	assert.Equal(t, "parent-1", sess.ForkedFrom)
+}
+
+func TestListSessionsIncludesForkedFrom(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "s1", Model: "test"}))
+	require.NoError(t, s.CreateSession(Session{ID: "s2", Model: "test", ForkedFrom: "s1"}))
+
+	sessions, err := s.ListSessions(10)
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+
+	var forked *Session
+	for i := range sessions {
+		if sessions[i].ID == "s2" {
+			forked = &sessions[i]
+		}
+	}
+	require.NotNil(t, forked)
+	assert.Equal(t, "s1", forked.ForkedFrom)
+}
+
 func TestFolderApprovalPathNormalization(t *testing.T) {
 	s, err := NewStore(":memory:")
 	require.NoError(t, err)
