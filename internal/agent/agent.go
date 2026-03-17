@@ -17,6 +17,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
@@ -202,6 +203,15 @@ func WithAgentMD(content string) AgentOption {
 	}
 }
 
+// WithUserHooks attaches a user hook runner to the agent. On construction
+// the runner's hooks are registered into the skill runtime so they fire
+// alongside skill-contributed hooks.
+func WithUserHooks(runner *hooks.UserHookRunner) AgentOption {
+	return func(a *Agent) {
+		a.userHookRunner = runner
+	}
+}
+
 // WithIdentityMD injects project-level IDENTITY.md content into the system prompt.
 func WithIdentityMD(content string) AgentOption {
 	return func(a *Agent) {
@@ -276,6 +286,7 @@ type Agent struct {
 	logger           Logger
 	mode             string
 	checkpointMgr    *checkpoint.Manager
+	userHookRunner   *hooks.UserHookRunner
 	turnNumber       atomic.Int32
 }
 
@@ -430,6 +441,11 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		}
 
 		a.pipeline = toolexec.NewPipeline(toolexec.RegistryExecutor(t), middlewares...)
+	}
+
+	// Register user-defined hooks (from config and AGENT.md) into the skill runtime.
+	if a.userHookRunner != nil && a.skillRuntime != nil {
+		a.userHookRunner.RegisterInto(a.skillRuntime)
 	}
 
 	// Initialize tool deferral manager.
