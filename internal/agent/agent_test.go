@@ -2984,3 +2984,27 @@ func TestAgentCheckpointMethods(t *testing.T) {
 		assert.ErrorIs(t, err, checkpoint.ErrNoCheckpoints)
 	})
 }
+
+func TestAgentContextBudget(t *testing.T) {
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "ok"},
+		{Type: "stop"},
+	}}
+
+	t.Run("returns budget", func(t *testing.T) {
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+		budget := a.ContextBudget()
+		assert.Equal(t, 100000, budget.Total)
+	})
+
+	t.Run("force compact returns result", func(t *testing.T) {
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+		result, err := a.ForceCompact(context.Background())
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, result.BeforeTokens, 0)
+	})
+}

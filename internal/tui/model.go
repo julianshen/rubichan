@@ -194,6 +194,18 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 			m.statusBar.SetModel(name)
 		}))
 		_ = cmdRegistry.Register(commands.NewDebugVerificationSnapshotCommand(m.DebugVerificationSnapshot))
+		_ = cmdRegistry.Register(commands.NewContextCommand(func() agentsdk.ContextBudget {
+			if m.agent != nil {
+				return m.agent.ContextBudget()
+			}
+			return agentsdk.ContextBudget{}
+		}))
+		_ = cmdRegistry.Register(commands.NewCompactCommand(func(ctx context.Context) (agentsdk.CompactResult, error) {
+			if m.agent != nil {
+				return m.agent.ForceCompact(ctx)
+			}
+			return agentsdk.CompactResult{}, nil
+		}))
 		_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 	}
 
