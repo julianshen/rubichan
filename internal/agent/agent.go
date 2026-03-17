@@ -604,6 +604,25 @@ func (a *Agent) SetModel(model string) {
 	a.model = model
 }
 
+// SessionID returns the current session ID.
+func (a *Agent) SessionID() string {
+	return a.sessionID
+}
+
+// ForkSession creates a fork of the current session and switches to it.
+// Returns the new session ID.
+func (a *Agent) ForkSession(ctx context.Context) (string, error) {
+	if a.store == nil {
+		return "", fmt.Errorf("fork session: store not configured")
+	}
+	newID := uuid.New().String()
+	if err := a.store.ForkSession(a.sessionID, newID); err != nil {
+		return "", fmt.Errorf("fork session: %w", err)
+	}
+	a.sessionID = newID
+	return newID, nil
+}
+
 // persistToolResult saves a tool result message to the store.
 func (a *Agent) persistToolResult(toolUseID, content string, isError bool) {
 	a.persistMessage("user", []provider.ContentBlock{
