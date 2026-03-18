@@ -119,6 +119,9 @@ type SubagentConfig = agentsdk.SubagentConfig
 // SubagentResult is returned when a child agent completes.
 type SubagentResult = agentsdk.SubagentResult
 
+// SubagentRequest pairs a config with a prompt for parallel spawning.
+type SubagentRequest = agentsdk.SubagentRequest
+
 // SubagentSpawner creates and runs child agents.
 type SubagentSpawner = agentsdk.SubagentSpawner
 

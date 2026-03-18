@@ -1458,6 +1458,15 @@ func runInteractive() error {
 	// Attach the wake manager for background subagent notifications.
 	opts = append(opts, agent.WithWakeManager(wakeManager))
 
+	// Create shared rate limiter for throttling LLM API requests.
+	var rateLimiter *agent.SharedRateLimiter
+	if cfg.Agent.MaxRequestsPerMinute > 0 {
+		rateLimiter = agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)
+	}
+	if rateLimiter != nil {
+		opts = append(opts, agent.WithRateLimiter(rateLimiter))
+	}
+
 	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
@@ -1465,6 +1474,7 @@ func runInteractive() error {
 	spawner.Provider = p
 	spawner.ParentTools = registry
 	spawner.ParentSkillRuntime = rt
+	spawner.RateLimiter = rateLimiter
 
 	// Register notes tool backed by agent's scratchpad.
 	if toolsCfg.ShouldEnable("notes") {
@@ -1732,6 +1742,14 @@ func runHeadless() error {
 	// Build tool execution pipeline.
 	hpc := buildPipeline(registry, cfg, cwd, rt)
 	opts = append(opts, agent.WithPipeline(hpc.Pipeline))
+
+	// Create shared rate limiter for throttling LLM API requests.
+	// Note: headless mode does not create a DefaultSubagentSpawner, so no
+	// spawner.RateLimiter wiring is needed here. If headless gains subagent
+	// support, propagate the limiter to the spawner at that time.
+	if cfg.Agent.MaxRequestsPerMinute > 0 {
+		opts = append(opts, agent.WithRateLimiter(agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)))
+	}
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 

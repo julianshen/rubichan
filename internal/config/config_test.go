@@ -548,3 +548,21 @@ command = "echo {command}"
 	assert.Equal(t, "gofmt -w {file}", cfg.Hooks.Rules[0].Command)
 	assert.Equal(t, "60s", cfg.Hooks.Rules[0].Timeout)
 }
+
+func TestConfigSubagentSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[provider]
+default = "anthropic"
+
+[agent]
+max_subagents = 5
+max_requests_per_minute = 120
+`), 0644)
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.Agent.MaxSubagents)
+	assert.Equal(t, 120, cfg.Agent.MaxRequestsPerMinute)
+}

@@ -249,6 +249,14 @@ func WithExtraSystemPrompt(name, content string) AgentOption {
 	}
 }
 
+// WithRateLimiter sets a shared rate limiter that throttles LLM API requests.
+// A nil limiter disables rate limiting.
+func WithRateLimiter(rl *SharedRateLimiter) AgentOption {
+	return func(a *Agent) {
+		a.rateLimiter = rl
+	}
+}
+
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
 	provider         provider.LLMProvider
@@ -288,6 +296,7 @@ type Agent struct {
 	checkpointMgr    *checkpoint.Manager
 	userHookRunner   *hooks.UserHookRunner
 	turnNumber       atomic.Int32
+	rateLimiter      *SharedRateLimiter
 }
 
 const maxUIRequestInputBytes = 2048
@@ -1015,6 +1024,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			Tools:            activeTools,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,
+		}
+
+		if a.rateLimiter != nil {
+			if err := a.rateLimiter.Wait(ctx); err != nil {
+				ch <- TurnEvent{Type: "error", Error: fmt.Errorf("rate limiter: %w", err)}
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				return
+			}
 		}
 
 		stream, err := a.provider.Stream(ctx, req)
