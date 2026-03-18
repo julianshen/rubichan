@@ -11,6 +11,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/sourcegraph/conc/pool"
 )
 
 // SubagentConfig, SubagentResult, and SubagentSpawner are defined in
@@ -46,7 +47,8 @@ type DefaultSubagentSpawner struct {
 	Config             *config.Config
 	ApprovalChecker    ApprovalChecker
 	AgentDefs          *AgentDefRegistry
-	WorktreeProvider   WorktreeProvider // Optional; required for isolation: "worktree"
+	WorktreeProvider   WorktreeProvider   // Optional; required for isolation: "worktree"
+	RateLimiter        *SharedRateLimiter // Optional; shared rate limiter propagated to children
 }
 
 // Spawn creates and runs a child agent with the given configuration and
@@ -108,6 +110,9 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	if cfg.Model != "" {
 		childCfg.Provider.Model = cfg.Model
 	}
+	if cfg.ContextBudget > 0 {
+		childCfg.Agent.ContextBudget = cfg.ContextBudget
+	}
 
 	// Build options.
 	var opts []AgentOption
@@ -116,6 +121,9 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	}
 	if s.ApprovalChecker != nil {
 		opts = append(opts, WithApprovalChecker(s.ApprovalChecker))
+	}
+	if s.RateLimiter != nil {
+		opts = append(opts, WithRateLimiter(s.RateLimiter))
 	}
 	if cfg.SystemPrompt != "" {
 		opts = append(opts, WithExtraSystemPrompt("Subagent Instructions", cfg.SystemPrompt))
@@ -186,6 +194,43 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	result.ToolsUsed = toolsUsed
 
 	return result, nil
+}
+
+// SpawnParallel runs multiple subagent requests concurrently, returning one
+// result per request in the same order. Individual spawn failures are captured
+// in SubagentResult.Error rather than aborting the batch.
+func (s *DefaultSubagentSpawner) SpawnParallel(
+	ctx context.Context,
+	requests []SubagentRequest,
+	maxConcurrent int,
+) ([]SubagentResult, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+	if maxConcurrent <= 0 {
+		maxConcurrent = 3
+	}
+
+	results := make([]SubagentResult, len(requests))
+	p := pool.New().WithMaxGoroutines(maxConcurrent)
+
+	for i, req := range requests {
+		i, req := i, req
+		p.Go(func() {
+			result, err := s.Spawn(ctx, req.Config, req.Prompt)
+			if err != nil {
+				results[i] = SubagentResult{
+					Name:  req.Config.Name,
+					Error: err,
+				}
+				return
+			}
+			results[i] = *result
+		})
+	}
+
+	p.Wait()
+	return results, nil
 }
 
 func defaultInheritSkills(inherit *bool) bool {

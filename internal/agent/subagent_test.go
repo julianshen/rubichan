@@ -148,6 +148,36 @@ func (p *recordingProvider) Stream(_ context.Context, req provider.CompletionReq
 	return ch, nil
 }
 
+func TestSpawnParallelEmptyRequests(t *testing.T) {
+	spawner := &DefaultSubagentSpawner{
+		Config: &config.Config{},
+	}
+	results, err := spawner.SpawnParallel(context.Background(), nil, 3)
+	assert.NoError(t, err)
+	assert.Empty(t, results)
+}
+
+func TestSpawnParallelErrorPropagation(t *testing.T) {
+	spawner := &DefaultSubagentSpawner{
+		Config: &config.Config{
+			Provider: config.ProviderConfig{Model: "test"},
+			Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+		},
+	}
+
+	requests := []SubagentRequest{
+		{Config: SubagentConfig{Name: "a"}, Prompt: "task a"},
+		{Config: SubagentConfig{Name: "b"}, Prompt: "task b"},
+	}
+
+	// Without a provider, Spawn will fail — SpawnParallel should collect errors
+	results, err := spawner.SpawnParallel(context.Background(), requests, 2)
+	assert.NoError(t, err) // top-level error is nil
+	assert.Len(t, results, 2)
+	assert.Error(t, results[0].Error)
+	assert.Error(t, results[1].Error)
+}
+
 func TestDefaultSubagentSpawnerSkillSnapshotFiltering(t *testing.T) {
 	s, err := store.NewStore(":memory:")
 	require.NoError(t, err)

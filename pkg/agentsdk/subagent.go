@@ -9,6 +9,7 @@ type SubagentConfig struct {
 	Tools         []string // Whitelist of tool names (nil = all parent tools)
 	MaxTurns      int      // Turn limit (0 = default 10)
 	MaxTokens     int      // Output token budget (0 = inherit)
+	ContextBudget int      // Context window override (0 = inherit parent)
 	Model         string   // Override model (empty = inherit parent)
 	Depth         int      // Current nesting level (0 = top-level)
 	MaxDepth      int      // Maximum nesting (0 = default 3)
@@ -29,7 +30,14 @@ type SubagentResult struct {
 	Error        error    // Non-nil if the child failed
 }
 
+// SubagentRequest pairs a config with a prompt for parallel spawning.
+type SubagentRequest struct {
+	Config SubagentConfig
+	Prompt string
+}
+
 // SubagentSpawner creates and runs child agents.
 type SubagentSpawner interface {
 	Spawn(ctx context.Context, cfg SubagentConfig, prompt string) (*SubagentResult, error)
+	SpawnParallel(ctx context.Context, requests []SubagentRequest, maxConcurrent int) ([]SubagentResult, error)
 }
