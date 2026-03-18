@@ -21,7 +21,7 @@ func newTestManager(t *testing.T) (*Manager, *mockTransport) {
 	t.Helper()
 
 	reg := NewRegistry()
-	m := NewManager(reg, "/test/workspace")
+	m := NewManager(reg, "/test/workspace", false)
 
 	mt := newMockTransport()
 	client := NewClient(mt.client, func(method string, params json.RawMessage) {
@@ -54,7 +54,7 @@ func newTestManager(t *testing.T) (*Manager, *mockTransport) {
 
 func TestManagerDiagnosticsForReturnsCopy(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	uri := pathToURI("/test/main.go")
 	m.diagMu.Lock()
@@ -77,7 +77,7 @@ func TestManagerDiagnosticsForReturnsCopy(t *testing.T) {
 
 func TestManagerDiagnosticsForErrorsOnly(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	uri := pathToURI("/test/main.go")
 	m.diagMu.Lock()
@@ -97,7 +97,7 @@ func TestManagerDiagnosticsForErrorsOnly(t *testing.T) {
 
 func TestManagerDiagnosticsForEmpty(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	result := m.DiagnosticsFor("file:///nonexistent.go", true)
 	assert.Empty(t, result)
@@ -120,7 +120,7 @@ func TestManagerServerForCachesHandle(t *testing.T) {
 
 func TestManagerServerForUnknownLanguage(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	_, _, err := m.ServerFor(context.Background(), "brainfuck")
 	assert.ErrorIs(t, err, ErrNoConfig)
@@ -131,7 +131,7 @@ func TestManagerServerForNotInstalled(t *testing.T) {
 	reg.lookPath = func(name string) (string, error) {
 		return "", fmt.Errorf("not found: %s", name)
 	}
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	_, _, err := m.ServerFor(context.Background(), "go")
 	assert.ErrorIs(t, err, ErrServerNotInstalled)
@@ -275,7 +275,7 @@ func TestServerForConcurrentInit(t *testing.T) {
 	// only spawn one server. The serverInit barrier serializes them.
 	reg := NewRegistry()
 	reg.lookPath = func(string) (string, error) { return "/usr/bin/gopls", nil }
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	var spawnCount int
 	var spawnMu sync.Mutex
@@ -323,7 +323,7 @@ func TestServerForConcurrentInitFailure(t *testing.T) {
 	// When startServer fails, all waiting goroutines should receive the error.
 	reg := NewRegistry()
 	reg.lookPath = func(string) (string, error) { return "/usr/bin/gopls", nil }
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	m.spawnServer = func(_ ServerConfig) (io.ReadWriteCloser, error) {
 		time.Sleep(50 * time.Millisecond)
@@ -385,7 +385,7 @@ func TestServerForMidFlightShutdownClosesOrphan(t *testing.T) {
 	// the newly-created server should be closed rather than stored in m.servers.
 	reg := NewRegistry()
 	reg.lookPath = func(string) (string, error) { return "/usr/bin/gopls", nil }
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	spawnReady := make(chan struct{}) // signals spawn has started
 	spawnGo := make(chan struct{})    // lets spawn proceed to completion
@@ -446,7 +446,7 @@ func TestServerForMidFlightShutdownClosesOrphan(t *testing.T) {
 
 func TestManagerSetSummarizer(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	s := &Summarizer{MaxReferences: 10}
 	m.SetSummarizer(s)
@@ -498,7 +498,7 @@ func TestManagerStartServerViaSpawnFunc(t *testing.T) {
 		return "", fmt.Errorf("not found")
 	}
 
-	m := NewManager(reg, "/test/workspace")
+	m := NewManager(reg, "/test/workspace", false)
 
 	// Inject a mock spawnServer that returns a pipe transport.
 	mt := newMockTransport()
@@ -554,7 +554,7 @@ func TestManagerStartServerSpawnError(t *testing.T) {
 		return "", fmt.Errorf("not found")
 	}
 
-	m := NewManager(reg, "/test/workspace")
+	m := NewManager(reg, "/test/workspace", false)
 	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
 		return nil, fmt.Errorf("binary crashed")
 	}
@@ -583,7 +583,7 @@ func TestManagerEnsureFileOpenReturnsError(t *testing.T) {
 
 func TestManagerShutdownJoinsErrors(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	// Create two mock servers that will both fail on Close.
 	mt1 := newMockTransport()
@@ -688,7 +688,7 @@ func TestManagerStartServerInitializeError(t *testing.T) {
 		}
 		return "", fmt.Errorf("not found")
 	}
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	mt := newMockTransport()
 	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
@@ -728,7 +728,7 @@ func TestManagerStartServerBadInitResult(t *testing.T) {
 		}
 		return "", fmt.Errorf("not found")
 	}
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	mt := newMockTransport()
 	m.spawnServer = func(cfg ServerConfig) (io.ReadWriteCloser, error) {
@@ -811,7 +811,7 @@ func TestManagerPublishDiagnosticsUnmarshalError(t *testing.T) {
 		}
 		return "", fmt.Errorf("not found")
 	}
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	var capturedErr error
 	var mu sync.Mutex
@@ -879,7 +879,7 @@ func TestManagerNotifyFileChangedPropagatesError(t *testing.T) {
 	reg.lookPath = func(name string) (string, error) {
 		return "", fmt.Errorf("not installed")
 	}
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	// NotifyFileChanged for a Go file should now return the server error.
 	err := m.NotifyFileChanged(context.Background(), "/test/main.go", []byte("package main"))

@@ -164,3 +164,39 @@ func TestRegistryLanguages(t *testing.T) {
 	assert.Contains(t, langs, "python")
 	assert.GreaterOrEqual(t, len(langs), 17)
 }
+
+func TestRegistryDefaultInstallCmds(t *testing.T) {
+	r := NewRegistry()
+
+	tests := []struct {
+		lang      string
+		wantLen   int
+		wantFirst InstallCmd
+	}{
+		{"go", 1, InstallCmd{Method: "go", Command: "go install golang.org/x/tools/gopls@latest"}},
+		{"typescript", 1, InstallCmd{Method: "npm", Command: "npm install -g typescript-language-server typescript"}},
+		{"python", 2, InstallCmd{Method: "pip", Command: "pip install pyright"}},
+		{"rust", 2, InstallCmd{Method: "rustup", Command: "rustup component add rust-analyzer"}},
+		{"swift", 1, InstallCmd{Hint: "Install Xcode Command Line Tools: xcode-select --install"}},
+		{"dart", 1, InstallCmd{Hint: "Install Dart SDK: https://dart.dev/get-dart"}},
+		{"haskell", 2, InstallCmd{Method: "ghcup", Command: "ghcup install hls"}},
+		{"ocaml", 1, InstallCmd{Method: "opam", Command: "opam install ocaml-lsp-server"}},
+	}
+
+	for _, tt := range tests {
+		cfg, err := r.ConfigFor(tt.lang)
+		require.NoError(t, err, "ConfigFor(%s)", tt.lang)
+		assert.Len(t, cfg.InstallCmds, tt.wantLen, "InstallCmds len for %s", tt.lang)
+		assert.Equal(t, tt.wantFirst, cfg.InstallCmds[0], "first InstallCmd for %s", tt.lang)
+	}
+}
+
+func TestRegistryAllDefaultsHaveInstallCmds(t *testing.T) {
+	r := NewRegistry()
+
+	for _, lang := range r.Languages() {
+		cfg, err := r.ConfigFor(lang)
+		require.NoError(t, err)
+		assert.NotEmpty(t, cfg.InstallCmds, "language %s should have install commands", lang)
+	}
+}
