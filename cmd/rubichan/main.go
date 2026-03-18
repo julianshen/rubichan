@@ -56,6 +56,7 @@ import (
 	dbtools "github.com/julianshen/rubichan/internal/tools/db"
 	gittools "github.com/julianshen/rubichan/internal/tools/git"
 	httptool "github.com/julianshen/rubichan/internal/tools/http"
+	"github.com/julianshen/rubichan/internal/tools/lsp"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/internal/wiki"
@@ -2156,6 +2157,19 @@ func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config,
 		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {
 				return fmt.Errorf("registering tool %s: %w", tool.Name(), err)
+			}
+		}
+	}
+
+	// LSP tools — language-aware code navigation and diagnostics.
+	if cfg.LSP.IsEnabled() {
+		lspRegistry := lsp.NewRegistry()
+		lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
+		for _, tool := range lsp.AllTools(lspManager) {
+			if toolsCfg.ShouldEnable(tool.Name()) {
+				if err := registry.Register(tool); err != nil {
+					return fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
+				}
 			}
 		}
 	}
