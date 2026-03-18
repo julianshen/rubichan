@@ -129,8 +129,8 @@ type AgentConfig struct {
 	ToolRules              []ToolRuleConf  `toml:"tool_rules"`
 	Definitions            []AgentDefConf  `toml:"definitions"`
 	Cache                  CacheConfig     `toml:"cache"`
-	MaxSubagents           int             `toml:"max_subagents"`
-	MaxRequestsPerMinute   int             `toml:"max_requests_per_minute"`
+	MaxSubagents           int             `toml:"max_subagents"`           // Max concurrent subagents for SpawnParallel (default 3; consumed by callers of SpawnParallel)
+	MaxRequestsPerMinute   int             `toml:"max_requests_per_minute"` // Shared rate limit across parent + children (0 = unlimited)
 }
 
 // CacheConfig holds caching settings for providers.

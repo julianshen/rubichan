@@ -1744,12 +1744,11 @@ func runHeadless() error {
 	opts = append(opts, agent.WithPipeline(hpc.Pipeline))
 
 	// Create shared rate limiter for throttling LLM API requests.
-	var headlessRateLimiter *agent.SharedRateLimiter
+	// Note: headless mode does not create a DefaultSubagentSpawner, so no
+	// spawner.RateLimiter wiring is needed here. If headless gains subagent
+	// support, propagate the limiter to the spawner at that time.
 	if cfg.Agent.MaxRequestsPerMinute > 0 {
-		headlessRateLimiter = agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)
-	}
-	if headlessRateLimiter != nil {
-		opts = append(opts, agent.WithRateLimiter(headlessRateLimiter))
+		opts = append(opts, agent.WithRateLimiter(agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)))
 	}
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
