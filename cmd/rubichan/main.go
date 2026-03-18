@@ -1458,6 +1458,15 @@ func runInteractive() error {
 	// Attach the wake manager for background subagent notifications.
 	opts = append(opts, agent.WithWakeManager(wakeManager))
 
+	// Create shared rate limiter for throttling LLM API requests.
+	var rateLimiter *agent.SharedRateLimiter
+	if cfg.Agent.MaxRequestsPerMinute > 0 {
+		rateLimiter = agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)
+	}
+	if rateLimiter != nil {
+		opts = append(opts, agent.WithRateLimiter(rateLimiter))
+	}
+
 	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
@@ -1465,6 +1474,7 @@ func runInteractive() error {
 	spawner.Provider = p
 	spawner.ParentTools = registry
 	spawner.ParentSkillRuntime = rt
+	spawner.RateLimiter = rateLimiter
 
 	// Register notes tool backed by agent's scratchpad.
 	if toolsCfg.ShouldEnable("notes") {
@@ -1732,6 +1742,15 @@ func runHeadless() error {
 	// Build tool execution pipeline.
 	hpc := buildPipeline(registry, cfg, cwd, rt)
 	opts = append(opts, agent.WithPipeline(hpc.Pipeline))
+
+	// Create shared rate limiter for throttling LLM API requests.
+	var headlessRateLimiter *agent.SharedRateLimiter
+	if cfg.Agent.MaxRequestsPerMinute > 0 {
+		headlessRateLimiter = agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)
+	}
+	if headlessRateLimiter != nil {
+		opts = append(opts, agent.WithRateLimiter(headlessRateLimiter))
+	}
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
