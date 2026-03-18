@@ -129,6 +129,8 @@ type AgentConfig struct {
 	ToolRules              []ToolRuleConf  `toml:"tool_rules"`
 	Definitions            []AgentDefConf  `toml:"definitions"`
 	Cache                  CacheConfig     `toml:"cache"`
+	MaxSubagents           int             `toml:"max_subagents"`
+	MaxRequestsPerMinute   int             `toml:"max_requests_per_minute"`
 }
 
 // CacheConfig holds caching settings for providers.
