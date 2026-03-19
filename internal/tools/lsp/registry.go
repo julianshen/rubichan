@@ -165,7 +165,7 @@ var defaultConfigs = []ServerConfig{
 	{Language: "c", Command: "clangd", Extensions: []string{".c", ".h", ".cpp", ".hpp", ".cc", ".cxx"},
 		InstallCmds: []InstallCmd{
 			{Method: "brew", Command: "brew install llvm"},
-			{Method: "apt", Command: "sudo apt install -y clangd"},
+			{Method: "apt", Command: "apt install -y clangd", Hint: "May require sudo: sudo apt install clangd"},
 		}},
 	{Language: "ruby", Command: "solargraph", Args: []string{"stdio"}, Extensions: []string{".rb"},
 		InstallCmds: []InstallCmd{{Method: "gem", Command: "gem install solargraph"}}},

@@ -54,6 +54,7 @@ func (m *Manager) TryInstall(ctx context.Context, languageID string) error {
 
 		if err == nil {
 			log.Printf("LSP server for %s installed successfully", languageID)
+			m.installAttempted.Store(languageID, true)
 			return nil
 		}
 		log.Printf("Install failed for %s: %s (output: %s)", languageID, err, strings.TrimSpace(string(output)))
