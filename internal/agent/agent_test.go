@@ -522,6 +522,46 @@ func TestTurnDetectsRepeatedToolOnlyNoProgress(t *testing.T) {
 	assert.Equal(t, "done", events[len(events)-1].Type)
 }
 
+func TestTurnDetectsRepeatedToolCallsWithText(t *testing.T) {
+	// Simulate the scenario where the LLM keeps calling the same tool with
+	// the same input but includes text each time (e.g., "Let me try again...").
+	// The old detection would reset on text, causing an infinite loop.
+	var responses [][]provider.StreamEvent
+	for i := 0; i < 6; i++ {
+		responses = append(responses, []provider.StreamEvent{
+			{Type: "text_delta", Text: "Let me try running this command again."},
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: fmt.Sprintf("tool_%d", i), Name: "search"}},
+			{Type: "text_delta", Text: `{"pattern":"todo"}`},
+			{Type: "stop"},
+		})
+	}
+	mp := &dynamicMockProvider{responses: responses}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(&testTool{name: "search"}))
+
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 10
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "loop")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	var gotNoProgress bool
+	for _, ev := range events {
+		if ev.Type == "error" && ev.Error != nil && strings.Contains(ev.Error.Error(), "repeated identical tool calls") {
+			gotNoProgress = true
+		}
+	}
+	assert.True(t, gotNoProgress, "should emit no-progress error for repeated identical tool calls with text")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
 func TestTurnWithToolCall(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Create a test file for the file tool to read

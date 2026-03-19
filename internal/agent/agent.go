@@ -980,6 +980,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 	var totalInputTokens, totalOutputTokens int
 	var lastPendingToolSignature string
 	repeatedPendingToolRounds := 0
+	repeatedToolSignatureRounds := 0
 	if a.skillRuntime != nil {
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
@@ -1132,14 +1133,23 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		signature := pendingToolSignature(pendingTools)
-		if !hasTextContent(blocks) && signature == lastPendingToolSignature {
-			repeatedPendingToolRounds++
+		if signature == lastPendingToolSignature {
+			repeatedToolSignatureRounds++
+			if !hasTextContent(blocks) {
+				repeatedPendingToolRounds++
+			}
 		} else {
 			lastPendingToolSignature = signature
 			repeatedPendingToolRounds = 1
+			repeatedToolSignatureRounds = 1
 		}
 		if repeatedPendingToolRounds >= maxRepeatedPendingToolRounds {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			return
+		}
+		if repeatedToolSignatureRounds >= maxRepeatedToolSignatureRounds {
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated identical tool calls", repeatedToolSignatureRounds)}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
@@ -1163,6 +1173,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 }
 
 const maxRepeatedPendingToolRounds = 3
+const maxRepeatedToolSignatureRounds = 5
 
 func hasTextContent(blocks []provider.ContentBlock) bool {
 	for _, block := range blocks {
