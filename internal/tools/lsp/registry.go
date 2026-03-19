@@ -17,12 +17,20 @@ var ErrNoConfig = errors.New("no language server configured for this language")
 // ErrManagerShutdown is returned when ServerFor is called after Shutdown.
 var ErrManagerShutdown = errors.New("manager has been shut down")
 
+// InstallCmd describes one way to install a language server.
+type InstallCmd struct {
+	Method  string // prerequisite binary ("go", "npm", "pip", "cargo", "gem", "brew", "apt", "rustup", "composer", "")
+	Command string // shell command (e.g., "go install golang.org/x/tools/gopls@latest")
+	Hint    string // human-readable fallback if command fails
+}
+
 // ServerConfig describes how to launch a language server.
 type ServerConfig struct {
-	Language   string   // language ID (e.g. "go", "typescript")
-	Command    string   // server binary name (e.g. "gopls")
-	Args       []string // command-line arguments
-	Extensions []string // file extensions that map to this language
+	Language    string       // language ID (e.g. "go", "typescript")
+	Command     string       // server binary name (e.g. "gopls")
+	Args        []string     // command-line arguments
+	Extensions  []string     // file extensions that map to this language
+	InstallCmds []InstallCmd // install methods, tried in order
 }
 
 // Registry maps file extensions to language server configurations.
@@ -137,22 +145,51 @@ func (r *Registry) Languages() []string {
 
 // defaultConfigs are the built-in server configurations.
 var defaultConfigs = []ServerConfig{
-	{Language: "go", Command: "gopls", Args: []string{"serve"}, Extensions: []string{".go"}},
-	{Language: "typescript", Command: "typescript-language-server", Args: []string{"--stdio"}, Extensions: []string{".ts", ".tsx", ".js", ".jsx"}},
-	{Language: "python", Command: "pyright-langserver", Args: []string{"--stdio"}, Extensions: []string{".py"}},
-	{Language: "rust", Command: "rust-analyzer", Extensions: []string{".rs"}},
-	{Language: "java", Command: "jdtls", Extensions: []string{".java"}},
+	{Language: "go", Command: "gopls", Args: []string{"serve"}, Extensions: []string{".go"},
+		InstallCmds: []InstallCmd{{Method: "go", Command: "go install golang.org/x/tools/gopls@latest"}}},
+	{Language: "typescript", Command: "typescript-language-server", Args: []string{"--stdio"}, Extensions: []string{".ts", ".tsx", ".js", ".jsx"},
+		InstallCmds: []InstallCmd{{Method: "npm", Command: "npm install -g typescript-language-server typescript"}}},
+	{Language: "python", Command: "pyright-langserver", Args: []string{"--stdio"}, Extensions: []string{".py"},
+		InstallCmds: []InstallCmd{
+			{Method: "pip", Command: "pip install pyright"},
+			{Method: "npm", Command: "npm install -g pyright"},
+		}},
+	{Language: "rust", Command: "rust-analyzer", Extensions: []string{".rs"},
+		InstallCmds: []InstallCmd{
+			{Method: "rustup", Command: "rustup component add rust-analyzer"},
+			{Method: "brew", Command: "brew install rust-analyzer"},
+		}},
+	{Language: "java", Command: "jdtls", Extensions: []string{".java"},
+		InstallCmds: []InstallCmd{{Method: "brew", Command: "brew install jdtls"}}},
 	// "c" covers the C/C++ family; clangd handles both regardless of language ID.
-	{Language: "c", Command: "clangd", Extensions: []string{".c", ".h", ".cpp", ".hpp", ".cc", ".cxx"}},
-	{Language: "ruby", Command: "solargraph", Args: []string{"stdio"}, Extensions: []string{".rb"}},
-	{Language: "php", Command: "phpactor", Args: []string{"language-server"}, Extensions: []string{".php"}},
-	{Language: "swift", Command: "sourcekit-lsp", Extensions: []string{".swift"}},
-	{Language: "kotlin", Command: "kotlin-language-server", Extensions: []string{".kt", ".kts"}},
-	{Language: "zig", Command: "zls", Extensions: []string{".zig"}},
-	{Language: "lua", Command: "lua-language-server", Extensions: []string{".lua"}},
-	{Language: "elixir", Command: "elixir-ls", Extensions: []string{".ex", ".exs"}},
-	{Language: "haskell", Command: "haskell-language-server-wrapper", Args: []string{"--lsp"}, Extensions: []string{".hs"}},
-	{Language: "csharp", Command: "OmniSharp", Args: []string{"--languageserver"}, Extensions: []string{".cs"}},
-	{Language: "dart", Command: "dart", Args: []string{"language-server"}, Extensions: []string{".dart"}},
-	{Language: "ocaml", Command: "ocamllsp", Extensions: []string{".ml", ".mli"}},
+	{Language: "c", Command: "clangd", Extensions: []string{".c", ".h", ".cpp", ".hpp", ".cc", ".cxx"},
+		InstallCmds: []InstallCmd{
+			{Method: "brew", Command: "brew install llvm"},
+			{Method: "apt", Command: "apt install -y clangd", Hint: "May require sudo: sudo apt install clangd"},
+		}},
+	{Language: "ruby", Command: "solargraph", Args: []string{"stdio"}, Extensions: []string{".rb"},
+		InstallCmds: []InstallCmd{{Method: "gem", Command: "gem install solargraph"}}},
+	{Language: "php", Command: "phpactor", Args: []string{"language-server"}, Extensions: []string{".php"},
+		InstallCmds: []InstallCmd{{Method: "composer", Command: "composer global require phpactor/phpactor"}}},
+	{Language: "swift", Command: "sourcekit-lsp", Extensions: []string{".swift"},
+		InstallCmds: []InstallCmd{{Hint: "Install Xcode Command Line Tools: xcode-select --install"}}},
+	{Language: "kotlin", Command: "kotlin-language-server", Extensions: []string{".kt", ".kts"},
+		InstallCmds: []InstallCmd{{Method: "brew", Command: "brew install kotlin-language-server"}}},
+	{Language: "zig", Command: "zls", Extensions: []string{".zig"},
+		InstallCmds: []InstallCmd{{Method: "brew", Command: "brew install zls"}}},
+	{Language: "lua", Command: "lua-language-server", Extensions: []string{".lua"},
+		InstallCmds: []InstallCmd{{Method: "brew", Command: "brew install lua-language-server"}}},
+	{Language: "elixir", Command: "elixir-ls", Extensions: []string{".ex", ".exs"},
+		InstallCmds: []InstallCmd{{Method: "mix", Command: "mix archive.install hex elixir_ls"}}},
+	{Language: "haskell", Command: "haskell-language-server-wrapper", Args: []string{"--lsp"}, Extensions: []string{".hs"},
+		InstallCmds: []InstallCmd{
+			{Method: "ghcup", Command: "ghcup install hls"},
+			{Method: "brew", Command: "brew install haskell-language-server"},
+		}},
+	{Language: "csharp", Command: "OmniSharp", Args: []string{"--languageserver"}, Extensions: []string{".cs"},
+		InstallCmds: []InstallCmd{{Method: "brew", Command: "brew install omnisharp"}}},
+	{Language: "dart", Command: "dart", Args: []string{"language-server"}, Extensions: []string{".dart"},
+		InstallCmds: []InstallCmd{{Hint: "Install Dart SDK: https://dart.dev/get-dart"}}},
+	{Language: "ocaml", Command: "ocamllsp", Extensions: []string{".ml", ".mli"},
+		InstallCmds: []InstallCmd{{Method: "opam", Command: "opam install ocaml-lsp-server"}}},
 }

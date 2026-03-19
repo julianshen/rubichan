@@ -24,6 +24,9 @@ type Manager struct {
 	summarizer  *Summarizer
 	spawnServer SpawnFunc
 	onError     func(error) // optional handler for non-fatal errors
+	autoInstall bool        // attempt to install missing LSP servers
+
+	installAttempted sync.Map // language -> bool; prevents repeated install attempts
 
 	mu       sync.Mutex
 	closed   bool                     // set by Shutdown; prevents new server registration
@@ -52,12 +55,15 @@ type serverInit struct {
 }
 
 // NewManager creates a new manager for the given workspace root.
-func NewManager(registry *Registry, rootDir string) *Manager {
+// When autoInstall is true the manager will attempt to install missing
+// language server binaries before returning ErrServerNotInstalled.
+func NewManager(registry *Registry, rootDir string, autoInstall bool) *Manager {
 	return &Manager{
 		registry:    registry,
 		rootURI:     pathToURI(rootDir),
 		summarizer:  DefaultSummarizer(),
 		spawnServer: spawnServer,
+		autoInstall: autoInstall,
 		servers:     make(map[string]*serverHandle),
 		starting:    make(map[string]*serverInit),
 		docs:        make(map[string]int),
@@ -122,7 +128,26 @@ func (m *Manager) ServerFor(ctx context.Context, languageID string) (*Client, *S
 
 	if !m.registry.IsInstalled(languageID) {
 		m.mu.Unlock()
-		return nil, nil, fmt.Errorf("%w: %s (%s not found on PATH)", ErrServerNotInstalled, languageID, cfg.Command)
+		if !m.autoInstall {
+			return nil, nil, fmt.Errorf("%w: %s (%s not found on PATH)", ErrServerNotInstalled, languageID, cfg.Command)
+		}
+		if err := m.TryInstall(ctx, languageID); err != nil {
+			return nil, nil, fmt.Errorf("%w: %s: %v", ErrServerNotInstalled, languageID, err)
+		}
+		if !m.registry.IsInstalled(languageID) {
+			return nil, nil, fmt.Errorf("%w: %s (install succeeded but binary not on PATH)", ErrServerNotInstalled, languageID)
+		}
+		// Re-acquire lock for server init below.
+		m.mu.Lock()
+		if m.closed {
+			m.mu.Unlock()
+			return nil, nil, ErrManagerShutdown
+		}
+		// Re-check — server may have been started by another goroutine during install.
+		if handle, ok := m.servers[languageID]; ok {
+			m.mu.Unlock()
+			return handle.client, &handle.capabilities, nil
+		}
 	}
 
 	// Claim this language's init and release mu during the blocking spawn.

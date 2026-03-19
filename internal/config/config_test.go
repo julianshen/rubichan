@@ -549,6 +549,38 @@ command = "echo {command}"
 	assert.Equal(t, "60s", cfg.Hooks.Rules[0].Timeout)
 }
 
+func TestConfigLSPSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[provider]
+default = "anthropic"
+
+[lsp]
+enabled = false
+auto_install = false
+`), 0644)
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.False(t, cfg.LSP.IsEnabled())
+	assert.False(t, cfg.LSP.IsAutoInstall())
+}
+
+func TestConfigLSPDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[provider]
+default = "anthropic"
+`), 0644)
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.True(t, cfg.LSP.IsEnabled())
+	assert.True(t, cfg.LSP.IsAutoInstall())
+}
+
 func TestConfigSubagentSettings(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

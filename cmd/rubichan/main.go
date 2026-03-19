@@ -56,6 +56,7 @@ import (
 	dbtools "github.com/julianshen/rubichan/internal/tools/db"
 	gittools "github.com/julianshen/rubichan/internal/tools/git"
 	httptool "github.com/julianshen/rubichan/internal/tools/http"
+	"github.com/julianshen/rubichan/internal/tools/lsp"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/internal/wiki"
@@ -1142,6 +1143,20 @@ func runInteractive() error {
 		return err
 	}
 
+	// LSP tools — language-aware code navigation and diagnostics.
+	if cfg.LSP.IsEnabled() {
+		lspRegistry := lsp.NewRegistry()
+		lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
+		defer lspManager.Shutdown(context.Background())
+		for _, tool := range lsp.AllTools(lspManager) {
+			if toolsCfg.ShouldEnable(tool.Name()) {
+				if err := registry.Register(tool); err != nil {
+					return fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
+				}
+			}
+		}
+	}
+
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
@@ -1621,6 +1636,20 @@ func runHeadless() error {
 	}
 	if err := wireExtendedTools(cwd, registry, cfg, headlessToolsCfg); err != nil {
 		return err
+	}
+
+	// LSP tools — language-aware code navigation and diagnostics.
+	if cfg.LSP.IsEnabled() {
+		lspRegistry := lsp.NewRegistry()
+		lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
+		defer lspManager.Shutdown(context.Background())
+		for _, tool := range lsp.AllTools(lspManager) {
+			if headlessToolsCfg.ShouldEnable(tool.Name()) {
+				if err := registry.Register(tool); err != nil {
+					return fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
+				}
+			}
+		}
 	}
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.

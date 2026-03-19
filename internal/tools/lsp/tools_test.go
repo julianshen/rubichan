@@ -36,14 +36,14 @@ func TestUserPosToLSPInvalid(t *testing.T) {
 
 func TestAllToolsCount(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 	tools := AllTools(m)
 	assert.Len(t, tools, 9)
 }
 
 func TestAllToolsNames(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 	tools := AllTools(m)
 
 	expected := []string{
@@ -61,7 +61,7 @@ func TestAllToolsNames(t *testing.T) {
 
 func TestDiagnosticsToolNoErrors(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	input, _ := json.Marshal(diagnosticsInput{File: "/test/main.go"})
 	result, err := runDiagnostics(context.Background(), m, input)
@@ -72,7 +72,7 @@ func TestDiagnosticsToolNoErrors(t *testing.T) {
 
 func TestDiagnosticsToolWithResults(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	uri := pathToURI("/test/main.go")
 	m.diagMu.Lock()
@@ -89,7 +89,7 @@ func TestDiagnosticsToolWithResults(t *testing.T) {
 
 func TestDiagnosticsToolInvalidInput(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	result, err := runDiagnostics(context.Background(), m, json.RawMessage(`{invalid`))
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestDefinitionToolNoServer(t *testing.T) {
 	reg.lookPath = func(name string) (string, error) {
 		return "", fmt.Errorf("not found")
 	}
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	input, _ := json.Marshal(positionInput{File: "/test/main.go", Line: 1, Column: 1})
 	result, err := runDefinition(context.Background(), m, input)
@@ -395,7 +395,7 @@ func TestSymbolsToolNoServers(t *testing.T) {
 	reg.lookPath = func(name string) (string, error) {
 		return "", fmt.Errorf("not found")
 	}
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	input, _ := json.Marshal(symbolsInput{Query: "Foo"})
 	result, err := runSymbols(context.Background(), m, input)
@@ -919,7 +919,7 @@ func TestCallHierarchyToolNoOutgoingCalls(t *testing.T) {
 
 func TestDiagnosticsToolIncludeWarnings(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 
 	uri := pathToURI("/test/main.go")
 	m.diagMu.Lock()
@@ -953,7 +953,7 @@ func TestURIPercentEncoding(t *testing.T) {
 
 func TestLspToolInterface(t *testing.T) {
 	reg := NewRegistry()
-	m := NewManager(reg, "/test")
+	m := NewManager(reg, "/test", false)
 	tool := NewDiagnosticsTool(m)
 
 	assert.Equal(t, "lsp_diagnostics", tool.Name())

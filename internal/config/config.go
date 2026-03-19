@@ -19,6 +19,29 @@ type Config struct {
 	Worktree    WorktreeConfig    `toml:"worktree"`
 	Permissions PermissionsConfig `toml:"permissions"`
 	Hooks       HooksConfig       `toml:"hooks"`
+	LSP         LSPConfig         `toml:"lsp"`
+}
+
+// LSPConfig holds settings for language server protocol integration.
+type LSPConfig struct {
+	Enabled     *bool `toml:"enabled"`      // nil = default true
+	AutoInstall *bool `toml:"auto_install"` // nil = default true
+}
+
+// IsEnabled returns whether LSP is enabled (default true).
+func (c LSPConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// IsAutoInstall returns whether auto-install is enabled (default true).
+func (c LSPConfig) IsAutoInstall() bool {
+	if c.AutoInstall == nil {
+		return true
+	}
+	return *c.AutoInstall
 }
 
 // HooksConfig holds settings for user-configured shell hooks.
