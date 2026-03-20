@@ -236,8 +236,11 @@ func (m *Manager) restore(cp Checkpoint) error {
 		if err != nil {
 			return fmt.Errorf("read spill file: %w", err)
 		}
-		os.Remove(cp.spillPath)
-		return os.WriteFile(cp.FilePath, data, cp.FileMode)
+		if err := os.WriteFile(cp.FilePath, data, cp.FileMode); err != nil {
+			return fmt.Errorf("write file: %w", err)
+		}
+		os.Remove(cp.spillPath) // best-effort cleanup after successful write
+		return nil
 	}
 
 	// In-memory creation checkpoint: file did not exist, remove it.
