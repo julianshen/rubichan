@@ -1034,3 +1034,32 @@ func TestFolderApprovalPathNormalization(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, approved)
 }
+
+func TestDeleteSessionBlockedByFork(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Create source session and fork it
+	src := Session{ID: "src-sess", Model: "gpt-4"}
+	require.NoError(t, s.CreateSession(src))
+	require.NoError(t, s.ForkSession("src-sess", "fork-sess"))
+
+	// Deleting source should fail because it has an active fork
+	err = s.DeleteSession("src-sess")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "active fork")
+
+	// Source should still exist
+	got, err := s.GetSession("src-sess")
+	require.NoError(t, err)
+	assert.NotNil(t, got)
+
+	// Deleting the fork (no dependents) should succeed
+	err = s.DeleteSession("fork-sess")
+	require.NoError(t, err)
+
+	// Now deleting source should succeed
+	err = s.DeleteSession("src-sess")
+	require.NoError(t, err)
+}
