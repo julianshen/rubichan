@@ -63,6 +63,12 @@ func TestDiagnosticsToolNoErrors(t *testing.T) {
 	reg := NewRegistry()
 	m := NewManager(reg, "/test", false)
 
+	// Mark file as already open so ServerForFile is skipped (no server available).
+	uri := pathToURI("/test/main.go")
+	m.docsMu.Lock()
+	m.docs[uri] = 1
+	m.docsMu.Unlock()
+
 	input, _ := json.Marshal(diagnosticsInput{File: "/test/main.go"})
 	result, err := runDiagnostics(context.Background(), m, input)
 	require.NoError(t, err)
@@ -70,11 +76,26 @@ func TestDiagnosticsToolNoErrors(t *testing.T) {
 	assert.False(t, result.IsError)
 }
 
+func TestDiagnosticsToolUnavailableServer(t *testing.T) {
+	reg := NewRegistry()
+	m := NewManager(reg, "/test", false)
+
+	// File NOT in m.docs, and no server available — should return unavailable error.
+	input, _ := json.Marshal(diagnosticsInput{File: "/test/main.go"})
+	result, err := runDiagnostics(context.Background(), m, input)
+	require.NoError(t, err)
+	assert.Contains(t, result.Content, "LSP not available")
+	assert.True(t, result.IsError)
+}
+
 func TestDiagnosticsToolWithResults(t *testing.T) {
 	reg := NewRegistry()
 	m := NewManager(reg, "/test", false)
 
 	uri := pathToURI("/test/main.go")
+	m.docsMu.Lock()
+	m.docs[uri] = 1
+	m.docsMu.Unlock()
 	m.diagMu.Lock()
 	m.diags[uri] = []Diagnostic{
 		{Range: Range{Start: Position{Line: 5}}, Severity: SeverityError, Message: "undefined: foo"},
@@ -922,6 +943,9 @@ func TestDiagnosticsToolIncludeWarnings(t *testing.T) {
 	m := NewManager(reg, "/test", false)
 
 	uri := pathToURI("/test/main.go")
+	m.docsMu.Lock()
+	m.docs[uri] = 1
+	m.docsMu.Unlock()
 	m.diagMu.Lock()
 	m.diags[uri] = []Diagnostic{
 		{Severity: SeverityWarning, Message: "unused import", Source: "compiler"},
@@ -959,6 +983,12 @@ func TestLspToolInterface(t *testing.T) {
 	assert.Equal(t, "lsp_diagnostics", tool.Name())
 	assert.NotEmpty(t, tool.Description())
 	assert.NotNil(t, tool.InputSchema())
+
+	// Mark file as open so ServerForFile is skipped.
+	uri := pathToURI("/test/main.go")
+	m.docsMu.Lock()
+	m.docs[uri] = 1
+	m.docsMu.Unlock()
 
 	// Execute with valid input.
 	input, _ := json.Marshal(diagnosticsInput{File: "/test/main.go"})

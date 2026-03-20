@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -259,11 +260,13 @@ func (m *Manager) restore(cp Checkpoint) error {
 // in reverse order (newest first). Each checkpoint is restored individually;
 // intermediate checkpoints for the same file are applied in sequence, not skipped.
 func (m *Manager) RewindToTurn(ctx context.Context, turn int) ([]string, error) {
-	paths, err := m.rewindLocked(turn)
-	// Update manifest outside the lock so crash recovery sees correct state.
-	// Do this even on error — the stack was truncated to match filesystem reality.
-	m.writeManifest()
-	return paths, err
+	paths, rewindErr := m.rewindLocked(turn)
+	// Persist manifest after rewind (writeManifest re-acquires m.mu internally).
+	// Do this even on rewind error — the stack was truncated to match filesystem reality.
+	if err := m.writeManifest(); err != nil {
+		log.Printf("checkpoint: manifest write after rewind failed: %v", err)
+	}
+	return paths, rewindErr
 }
 
 // rewindLocked performs the rewind under m.mu. Extracted to guarantee a single

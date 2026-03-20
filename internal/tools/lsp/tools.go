@@ -87,14 +87,19 @@ func runDiagnostics(ctx context.Context, m *Manager, input json.RawMessage) (too
 	}
 
 	// Ensure the server has seen the file so it can publish diagnostics.
-	// Skip if the file is already open (avoids redundant lock + I/O on warm cache).
+	// Skip the heavier ServerForFile + EnsureFileOpen path if the file is
+	// already tracked (the common case after the first call).
 	uri := pathToURI(in.File)
 	m.docsMu.Lock()
 	_, alreadyOpen := m.docs[uri]
 	m.docsMu.Unlock()
 	if !alreadyOpen {
-		if client, _, err := m.ServerForFile(ctx, in.File); err == nil {
-			_ = m.EnsureFileOpen(ctx, client, in.File)
+		client, _, err := m.ServerForFile(ctx, in.File)
+		if err != nil {
+			return lspUnavailableResult(in.File, err), nil
+		}
+		if err := m.EnsureFileOpen(ctx, client, in.File); err != nil {
+			return tools.ToolResult{Content: fmt.Sprintf("failed to open file for diagnostics: %s", err), IsError: true}, nil
 		}
 	}
 

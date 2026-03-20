@@ -155,9 +155,9 @@ func appendWorkingDirOption(opts []agent.AgentOption, cwd string) []agent.AgentO
 
 // wireLSPTools registers LSP tools into the registry if LSP is enabled.
 // Returns a cleanup function that must be deferred, or nil if LSP is disabled.
-// The parentCtx is used as the base for the shutdown timeout so the cleanup
-// respects any outer deadline (e.g., headless mode's top-level timeout).
-func wireLSPTools(parentCtx context.Context, cfg *config.Config, registry *tools.Registry, toolsCfg ToolsConfig, cwd string) (cleanup func(), err error) {
+// The cleanup function uses context.Background() because it runs during defers
+// after the caller's context is already cancelled — it always needs its full timeout.
+func wireLSPTools(cfg *config.Config, registry *tools.Registry, toolsCfg ToolsConfig, cwd string) (cleanup func(), err error) {
 	if !cfg.LSP.IsEnabled() {
 		return nil, nil
 	}
@@ -171,7 +171,7 @@ func wireLSPTools(parentCtx context.Context, cfg *config.Config, registry *tools
 		}
 	}
 	return func() {
-		shutCtx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := lspManager.Shutdown(shutCtx); err != nil {
 			log.Printf("LSP shutdown: %v", err)
@@ -1170,7 +1170,7 @@ func runInteractive() error {
 	}
 
 	// LSP tools — language-aware code navigation and diagnostics.
-	if cleanup, err := wireLSPTools(context.Background(), cfg, registry, toolsCfg, cwd); err != nil {
+	if cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
 		return err
 	} else if cleanup != nil {
 		defer cleanup()
@@ -1658,7 +1658,7 @@ func runHeadless() error {
 	}
 
 	// LSP tools — language-aware code navigation and diagnostics.
-	if cleanup, err := wireLSPTools(ctx, cfg, registry, headlessToolsCfg, cwd); err != nil {
+	if cleanup, err := wireLSPTools(cfg, registry, headlessToolsCfg, cwd); err != nil {
 		return err
 	} else if cleanup != nil {
 		defer cleanup()
