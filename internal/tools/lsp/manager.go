@@ -312,16 +312,28 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.servers = make(map[string]*serverHandle)
 	m.mu.Unlock()
 
-	var errs []error
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
 	for lang, handle := range snapshot {
-		if handle.client != nil {
-			_, _ = handle.client.Call(ctx, "shutdown", nil)
-			_ = handle.client.Notify(ctx, "exit", nil)
-			if err := handle.client.Close(); err != nil {
-				errs = append(errs, fmt.Errorf("close %s: %w", lang, err))
-			}
+		if handle.client == nil {
+			continue
 		}
+		wg.Add(1)
+		go func(lang string, h *serverHandle) {
+			defer wg.Done()
+			_, _ = h.client.Call(ctx, "shutdown", nil)
+			_ = h.client.Notify(ctx, "exit", nil)
+			if err := h.client.Close(); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("close %s: %w", lang, err))
+				mu.Unlock()
+			}
+		}(lang, handle)
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
 

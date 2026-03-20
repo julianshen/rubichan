@@ -25,13 +25,13 @@ func ApproveTrust(s HookApprovalStore, projectPath string, hooks []UserHookConfi
 	return s.ApproveHook(projectPath, hash)
 }
 
-// computeHookHash returns a deterministic SHA-256 hash over the event+command
-// pairs in the hook list. Changing any command or adding/removing hooks
-// invalidates the hash.
+// computeHookHash returns a deterministic SHA-256 hash over all security-relevant
+// fields of the hook list. Changing the event, pattern, or command invalidates
+// the hash and requires re-approval.
 func computeHookHash(hooks []UserHookConfig) string {
 	h := sha256.New()
 	for _, hk := range hooks {
-		fmt.Fprintf(h, "%s:%s\n", hk.Event, hk.Command)
+		fmt.Fprintf(h, "%s:%s:%s\n", hk.Event, hk.Pattern, hk.Command)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }

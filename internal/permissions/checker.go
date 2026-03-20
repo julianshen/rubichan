@@ -69,7 +69,10 @@ func (h *HierarchicalChecker) matchesDeny(p Policy, tool string, input json.RawM
 		return true
 	}
 	if tool == "shell" {
-		cmd := extractShellCommand(input)
+		cmd, err := extractShellCommand(input)
+		if err != nil {
+			return true // fail-closed: malformed input is treated as denied
+		}
 		for _, pattern := range p.Shell.DenyCommands {
 			if containsCommandPattern(cmd, pattern) {
 				return true
@@ -77,8 +80,11 @@ func (h *HierarchicalChecker) matchesDeny(p Policy, tool string, input json.RawM
 		}
 	}
 	if tool == "file" {
-		op, fp := extractFileInfo(input)
-		if op == "write" || op == "patch" {
+		op, fp, err := extractFileInfo(input)
+		if err != nil {
+			return true // fail-closed: malformed input is treated as denied
+		}
+		if isDestructiveFileOp(op) {
 			for _, pattern := range p.Files.DenyPatterns {
 				if matchesFilePattern(fp, pattern) {
 					return true
@@ -94,7 +100,10 @@ func (h *HierarchicalChecker) matchesPrompt(p Policy, tool string, input json.Ra
 		return true
 	}
 	if tool == "shell" {
-		cmd := extractShellCommand(input)
+		cmd, err := extractShellCommand(input)
+		if err != nil {
+			return true // fail-closed: malformed input requires approval
+		}
 		for _, pattern := range p.Shell.PromptPatterns {
 			if containsCommandPattern(cmd, pattern) {
 				return true
@@ -102,8 +111,11 @@ func (h *HierarchicalChecker) matchesPrompt(p Policy, tool string, input json.Ra
 		}
 	}
 	if tool == "file" {
-		op, fp := extractFileInfo(input)
-		if op == "write" || op == "patch" {
+		op, fp, err := extractFileInfo(input)
+		if err != nil {
+			return true // fail-closed: malformed input requires approval
+		}
+		if isDestructiveFileOp(op) {
 			for _, pattern := range p.Files.PromptPatterns {
 				if matchesFilePattern(fp, pattern) {
 					return true
@@ -119,14 +131,20 @@ func (h *HierarchicalChecker) matchesAllow(p Policy, tool string, input json.Raw
 		return true
 	}
 	if tool == "shell" {
-		cmd := extractShellCommand(input)
+		cmd, err := extractShellCommand(input)
+		if err != nil {
+			return false // fail-closed: malformed input is never auto-allowed
+		}
 		if cmd != "" && allSubCommandsAllowed(cmd, p.Shell.AllowCommands) {
 			return true
 		}
 	}
 	if tool == "file" {
-		op, fp := extractFileInfo(input)
-		if op == "write" || op == "patch" {
+		op, fp, err := extractFileInfo(input)
+		if err != nil {
+			return false // fail-closed: malformed input is never auto-allowed
+		}
+		if isDestructiveFileOp(op) {
 			for _, pattern := range p.Files.AllowPatterns {
 				if matchesFilePattern(fp, pattern) {
 					return true
@@ -139,17 +157,17 @@ func (h *HierarchicalChecker) matchesAllow(p Policy, tool string, input json.Raw
 
 // --- Shell helpers ---
 
-func extractShellCommand(input json.RawMessage) string {
+func extractShellCommand(input json.RawMessage) (string, error) {
 	if len(input) == 0 {
-		return ""
+		return "", nil
 	}
 	var parsed struct {
 		Command string `json:"command"`
 	}
 	if err := json.Unmarshal(input, &parsed); err != nil {
-		return ""
+		return "", fmt.Errorf("malformed shell input: %w", err)
 	}
-	return parsed.Command
+	return parsed.Command, nil
 }
 
 // matchesCommandPrefix matches using first-token boundary.
@@ -287,21 +305,28 @@ func splitShellCommands(cmd string) []string {
 
 // --- File helpers ---
 
-func extractFileInfo(input json.RawMessage) (operation, filePath string) {
+// isDestructiveFileOp returns true for file operations that modify or remove
+// files and therefore must be checked against deny/prompt/allow patterns.
+func isDestructiveFileOp(op string) bool {
+	return op == "write" || op == "patch" || op == "delete"
+}
+
+func extractFileInfo(input json.RawMessage) (operation, filePath string, err error) {
 	if len(input) == 0 {
-		return "", ""
+		return "", "", nil
 	}
 	var parsed struct {
 		Operation string `json:"operation"`
 		Path      string `json:"path"`
 	}
 	if err := json.Unmarshal(input, &parsed); err != nil {
-		return "", ""
+		return "", "", fmt.Errorf("malformed file input: %w", err)
 	}
-	return parsed.Operation, parsed.Path
+	return parsed.Operation, parsed.Path, nil
 }
 
 func matchesFilePattern(filePath, pattern string) bool {
+	filePath = path.Clean(filePath)
 	if matched, _ := path.Match(pattern, filePath); matched {
 		return true
 	}

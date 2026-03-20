@@ -80,13 +80,24 @@ func NewDiagnosticsTool(m *Manager) tools.Tool {
 	}
 }
 
-func runDiagnostics(_ context.Context, m *Manager, input json.RawMessage) (tools.ToolResult, error) {
+func runDiagnostics(ctx context.Context, m *Manager, input json.RawMessage) (tools.ToolResult, error) {
 	var in diagnosticsInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
 	}
 
+	// Ensure the server has seen the file so it can publish diagnostics.
+	// Skip if the file is already open (avoids redundant lock + I/O on warm cache).
 	uri := pathToURI(in.File)
+	m.docsMu.Lock()
+	_, alreadyOpen := m.docs[uri]
+	m.docsMu.Unlock()
+	if !alreadyOpen {
+		if client, _, err := m.ServerForFile(ctx, in.File); err == nil {
+			_ = m.EnsureFileOpen(ctx, client, in.File)
+		}
+	}
+
 	diags := m.DiagnosticsFor(uri, in.IncludeWarnings)
 
 	if len(diags) == 0 {
@@ -441,13 +452,20 @@ func runCompletions(ctx context.Context, m *Manager, input json.RawMessage) (too
 		return tools.ToolResult{Content: fmt.Sprintf("LSP error: %s", err), IsError: true}, nil
 	}
 
-	// Result can be CompletionList or []CompletionItem.
+	// Result can be CompletionList (object) or []CompletionItem (array).
+	// Probe the first byte before decoding to avoid CompletionList succeeding
+	// on an array input and yielding nil items.
 	var items []CompletionItem
-	var list CompletionList
-	if err := json.Unmarshal(result, &list); err == nil {
+	if len(result) > 0 && result[0] == '[' {
+		if err := json.Unmarshal(result, &items); err != nil {
+			return tools.ToolResult{Content: fmt.Sprintf("unexpected response from server: %s", err), IsError: true}, nil
+		}
+	} else {
+		var list CompletionList
+		if err := json.Unmarshal(result, &list); err != nil {
+			return tools.ToolResult{Content: fmt.Sprintf("unexpected response from server: %s", err), IsError: true}, nil
+		}
 		items = list.Items
-	} else if err := json.Unmarshal(result, &items); err != nil {
-		return tools.ToolResult{Content: fmt.Sprintf("unexpected response from server: %s", err), IsError: true}, nil
 	}
 
 	if len(items) == 0 {

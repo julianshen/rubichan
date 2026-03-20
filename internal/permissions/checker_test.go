@@ -207,6 +207,88 @@ func TestCheckerShellAllowCompoundRejectsMixed(t *testing.T) {
 	assert.Equal(t, agentsdk.ApprovalRequired, result, "compound with unapproved sub-command should not be auto-allowed")
 }
 
+// Fix #1: Path traversal bypass
+func TestCheckerFilePathTraversal(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "org", Files: permissions.FilePolicy{DenyPatterns: []string{".env"}}},
+	})
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"direct", ".env"},
+		{"traversal", "subdir/../.env"},
+		{"deep traversal", "a/b/../../.env"},
+		{"dot-slash", "./.env"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"operation": "write", "path": tt.path})
+			result := checker.CheckApproval("file", input)
+			assert.Equal(t, agentsdk.AutoDenied, result, "path %q should be denied", tt.path)
+		})
+	}
+}
+
+// Fix #2: Delete operations must be checked against file patterns
+func TestCheckerFileDeleteDenied(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "org", Files: permissions.FilePolicy{DenyPatterns: []string{".env", "*.key"}}},
+	})
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"env file", ".env"},
+		{"key file", "server.key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"operation": "delete", "path": tt.path})
+			result := checker.CheckApproval("file", input)
+			assert.Equal(t, agentsdk.AutoDenied, result, "delete of %q should be denied", tt.path)
+		})
+	}
+}
+
+func TestCheckerFileDeleteAllowed(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "project", Files: permissions.FilePolicy{AllowPatterns: []string{"*.tmp"}}},
+	})
+	input, _ := json.Marshal(map[string]string{"operation": "delete", "path": "build.tmp"})
+	result := checker.CheckApproval("file", input)
+	assert.Equal(t, agentsdk.TrustRuleApproved, result)
+}
+
+// Fix #3: Malformed JSON fails closed
+func TestCheckerMalformedShellInputDenied(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "org", Shell: permissions.ShellPolicy{DenyCommands: []string{"rm"}}},
+	})
+	result := checker.CheckApproval("shell", json.RawMessage(`{invalid json`))
+	assert.Equal(t, agentsdk.AutoDenied, result, "malformed shell input should be denied")
+}
+
+func TestCheckerMalformedFileInputDenied(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "org", Files: permissions.FilePolicy{DenyPatterns: []string{".env"}}},
+	})
+	result := checker.CheckApproval("file", json.RawMessage(`{invalid json`))
+	assert.Equal(t, agentsdk.AutoDenied, result, "malformed file input should be denied")
+}
+
+func TestCheckerMalformedInputNotAllowed(t *testing.T) {
+	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
+		{Level: "project", Shell: permissions.ShellPolicy{AllowCommands: []string{"go test"}}},
+		{Level: "project", Files: permissions.FilePolicy{AllowPatterns: []string{"*.go"}}},
+	})
+	shellResult := checker.CheckApproval("shell", json.RawMessage(`{bad`))
+	assert.Equal(t, agentsdk.AutoDenied, shellResult, "malformed shell should not be allowed")
+
+	fileResult := checker.CheckApproval("file", json.RawMessage(`{bad`))
+	assert.Equal(t, agentsdk.AutoDenied, fileResult, "malformed file should not be allowed")
+}
+
 func TestCheckerShellPromptDetectsInjection(t *testing.T) {
 	checker := permissions.NewHierarchicalChecker([]permissions.Policy{
 		{Level: "project", Shell: permissions.ShellPolicy{PromptPatterns: []string{"curl"}}},

@@ -29,8 +29,8 @@ type Checkpoint struct {
 	OriginalData []byte      // nil if file did not exist (creation checkpoint)
 	FileMode     os.FileMode // original file permissions (0 if file did not exist)
 	Size         int64
-	spilled   bool
-	spillPath string
+	spilled      bool
+	spillPath    string
 }
 
 // IsSpilled reports whether the checkpoint's data has been written to disk
@@ -229,34 +229,43 @@ func (m *Manager) Undo(ctx context.Context) (string, error) {
 }
 
 // restore writes the checkpoint's original data back to disk (or deletes the file
-// if OriginalData is nil and not spilled, indicating the file was created after the checkpoint).
+// if the checkpoint represents a creation — the file did not exist before).
 func (m *Manager) restore(cp Checkpoint) error {
-	var data []byte
 	if cp.spilled {
-		var err error
-		data, err = os.ReadFile(cp.spillPath)
+		data, err := os.ReadFile(cp.spillPath)
 		if err != nil {
 			return fmt.Errorf("read spill file: %w", err)
 		}
 		os.Remove(cp.spillPath)
-	} else {
-		if cp.OriginalData == nil {
-			return os.Remove(cp.FilePath)
-		}
-		data = cp.OriginalData
+		return os.WriteFile(cp.FilePath, data, cp.FileMode)
+	}
+
+	// In-memory creation checkpoint: file did not exist, remove it.
+	if cp.OriginalData == nil {
+		return os.Remove(cp.FilePath)
 	}
 
 	mode := cp.FileMode
 	if mode == 0 {
 		mode = 0644
 	}
-	return os.WriteFile(cp.FilePath, data, mode)
+	return os.WriteFile(cp.FilePath, cp.OriginalData, mode)
 }
 
 // RewindToTurn reverts all checkpoints with turn > the given turn number,
 // in reverse order (newest first). Each checkpoint is restored individually;
 // intermediate checkpoints for the same file are applied in sequence, not skipped.
 func (m *Manager) RewindToTurn(ctx context.Context, turn int) ([]string, error) {
+	paths, err := m.rewindLocked(turn)
+	// Update manifest outside the lock so crash recovery sees correct state.
+	// Do this even on error — the stack was truncated to match filesystem reality.
+	m.writeManifest()
+	return paths, err
+}
+
+// rewindLocked performs the rewind under m.mu. Extracted to guarantee a single
+// unlock point (via defer) and avoid fragile manual unlock in multiple paths.
+func (m *Manager) rewindLocked(turn int) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -307,17 +316,20 @@ func (m *Manager) Cleanup() error {
 // (e.g., all already spilled or all writes failed). The caller must hold m.mu.
 func (m *Manager) evictOldest() bool {
 	for i, cp := range m.stack {
-		if !cp.spilled && cp.OriginalData != nil {
-			spillPath := filepath.Join(m.spillDir, cp.ID+".bak")
-			if err := os.WriteFile(spillPath, cp.OriginalData, 0644); err != nil {
-				continue
-			}
-			m.stack[i].spilled = true
-			m.stack[i].spillPath = spillPath
-			m.stack[i].OriginalData = nil
-			m.memUsed -= cp.Size
-			return true
+		if cp.spilled || cp.OriginalData == nil {
+			// Already spilled, or a creation checkpoint (Size == 0, no memory
+			// to reclaim). Skip to the next candidate.
+			continue
 		}
+		spillPath := filepath.Join(m.spillDir, cp.ID+".bak")
+		if err := os.WriteFile(spillPath, cp.OriginalData, 0644); err != nil {
+			continue
+		}
+		m.stack[i].spilled = true
+		m.stack[i].spillPath = spillPath
+		m.stack[i].OriginalData = nil
+		m.memUsed -= cp.Size
+		return true
 	}
 	return false
 }

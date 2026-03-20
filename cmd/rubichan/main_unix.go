@@ -16,9 +16,10 @@ func startInteractiveSignalHandler(cfgDir, sessionLogPath string, cancel context
 	stopCh := make(chan struct{})
 	var stopOnce sync.Once
 
-	// Intercept the first SIGQUIT to persist a diagnostic dump, then stop
-	// handling the signal so repeated SIGQUITs fall back to the runtime default.
-	signal.Notify(sigCh, syscall.SIGQUIT)
+	// Intercept SIGTERM (kill, Docker stop, systemd) and SIGQUIT (diagnostic dump).
+	// SIGINT is handled by Bubble Tea. On first signal, persist a diagnostic dump
+	// and cancel the run context so defers (LSP shutdown, DB close) run cleanly.
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGQUIT)
 
 	stop := func() {
 		stopOnce.Do(func() {
