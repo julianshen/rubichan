@@ -153,6 +153,32 @@ func appendWorkingDirOption(opts []agent.AgentOption, cwd string) []agent.AgentO
 	return append(opts, agent.WithWorkingDir(cwd))
 }
 
+// wireLSPTools registers LSP tools into the registry if LSP is enabled.
+// Returns a cleanup function that must be deferred, or nil if LSP is disabled.
+// The cleanup function uses context.Background() because it runs during defers
+// after the caller's context is already cancelled — it always needs its full timeout.
+func wireLSPTools(cfg *config.Config, registry *tools.Registry, toolsCfg ToolsConfig, cwd string) (cleanup func(), err error) {
+	if !cfg.LSP.IsEnabled() {
+		return nil, nil
+	}
+	lspRegistry := lsp.NewRegistry()
+	lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
+	for _, tool := range lsp.AllTools(lspManager) {
+		if toolsCfg.ShouldEnable(tool.Name()) {
+			if err := registry.Register(tool); err != nil {
+				return nil, fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
+			}
+		}
+	}
+	return func() {
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := lspManager.Shutdown(shutCtx); err != nil {
+			log.Printf("LSP shutdown: %v", err)
+		}
+	}, nil
+}
+
 func handleInteractiveProgramError(err error, runCtx context.Context, phase string) error {
 	if exitErr := interactiveExitError(runCtx); exitErr != nil && errors.Is(err, tea.ErrProgramKilled) {
 		return exitErr
@@ -1144,17 +1170,10 @@ func runInteractive() error {
 	}
 
 	// LSP tools — language-aware code navigation and diagnostics.
-	if cfg.LSP.IsEnabled() {
-		lspRegistry := lsp.NewRegistry()
-		lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
-		defer lspManager.Shutdown(context.Background())
-		for _, tool := range lsp.AllTools(lspManager) {
-			if toolsCfg.ShouldEnable(tool.Name()) {
-				if err := registry.Register(tool); err != nil {
-					return fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
-				}
-			}
-		}
+	if cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
+		return err
+	} else if cleanup != nil {
+		defer cleanup()
 	}
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.
@@ -1639,17 +1658,10 @@ func runHeadless() error {
 	}
 
 	// LSP tools — language-aware code navigation and diagnostics.
-	if cfg.LSP.IsEnabled() {
-		lspRegistry := lsp.NewRegistry()
-		lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
-		defer lspManager.Shutdown(context.Background())
-		for _, tool := range lsp.AllTools(lspManager) {
-			if headlessToolsCfg.ShouldEnable(tool.Name()) {
-				if err := registry.Register(tool); err != nil {
-					return fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
-				}
-			}
-		}
+	if cleanup, err := wireLSPTools(cfg, registry, headlessToolsCfg, cwd); err != nil {
+		return err
+	} else if cleanup != nil {
+		defer cleanup()
 	}
 
 	// Auto-activate apple-dev Xcode tools if Apple project detected.

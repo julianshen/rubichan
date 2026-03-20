@@ -442,6 +442,79 @@ func TestTurnTextOnly(t *testing.T) {
 	assert.Equal(t, "Hello world!", msgs[1].Content[0].Text)
 }
 
+func TestTurnStreamErrorDiscardsPartialBlocks(t *testing.T) {
+	// Simulate a stream that emits partial text then an error.
+	// The agent should NOT add the partial blocks to conversation.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "partial "},
+			{Type: "error", Error: fmt.Errorf("connection reset")},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var sawError bool
+	for ev := range ch {
+		if ev.Type == "error" {
+			sawError = true
+		}
+	}
+	assert.True(t, sawError, "should have received error event")
+
+	// Conversation should have only the user message — no partial assistant
+	msgs := agent.conversation.Messages()
+	require.Len(t, msgs, 1, "stream error should prevent partial assistant message")
+	assert.Equal(t, "user", msgs[0].Role)
+}
+
+func TestSetModelRaceSafety(t *testing.T) {
+	// Verify SetModel and Turn don't race. Use a gated provider so
+	// SetModel contends with Turn's lock window deterministically.
+	gate := make(chan struct{})
+	mp := &channelProvider{
+		events: func() <-chan provider.StreamEvent {
+			ch := make(chan provider.StreamEvent, 2)
+			go func() {
+				<-gate // block until SetModel is launched
+				ch <- provider.StreamEvent{Type: "text_delta", Text: "hi"}
+				ch <- provider.StreamEvent{Type: "stop"}
+				close(ch)
+			}()
+			return ch
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	// Launch SetModel while Turn holds turnMu (stream is blocked on gate)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		agent.SetModel("gpt-4-turbo")
+	}()
+
+	// Unblock the stream so Turn can proceed
+	close(gate)
+
+	// Drain the channel
+	for range ch {
+	}
+	<-done
+
+	// No race detector failure = test passes
+	assert.Equal(t, "gpt-4-turbo", agent.model)
+}
+
 func TestTurnMaxTurnsExceeded(t *testing.T) {
 	// Create a provider that always returns a tool call to force recursive loops.
 	// But we set maxTurns to 0 so the first runLoop iteration hits the limit.

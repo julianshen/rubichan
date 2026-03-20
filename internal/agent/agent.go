@@ -625,7 +625,10 @@ func (a *Agent) SaveMemories(ctx context.Context) error {
 }
 
 // SetModel changes the model used for LLM completions.
+// It acquires turnMu to prevent races with the Turn goroutine reading a.model.
 func (a *Agent) SetModel(model string) {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
 	a.model = model
 }
 
@@ -1045,6 +1048,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var blocks []provider.ContentBlock
 		var pendingTools []provider.ToolUseBlock
 		var currentTextBuf string
+		var streamErr bool
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
 
@@ -1108,6 +1112,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				}
 
 			case "error":
+				streamErr = true
 				ch <- TurnEvent{Type: "error", Error: event.Error}
 
 			case "stop":
@@ -1118,6 +1123,12 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Finalize any remaining text or tool
 		finalizeText()
 		finalizeTool()
+
+		// On stream error, discard partial blocks to prevent conversation corruption
+		if streamErr {
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			return
+		}
 
 		// Add assistant message with accumulated blocks
 		if len(blocks) > 0 {

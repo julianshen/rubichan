@@ -47,3 +47,18 @@ func TestTrustInvalidatedOnChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, trusted, "trust should be invalidated when hooks change")
 }
+
+func TestTrustInvalidatedOnPatternChange(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	hks := []hooks.UserHookConfig{{Event: "pre_edit", Pattern: "*.go", Command: "gofmt -w {file}"}}
+	hooks.ApproveTrust(s, "/project", hks) //nolint:errcheck
+
+	// Widen the pattern scope — must invalidate approval
+	hks[0].Pattern = "*"
+	trusted, err := hooks.CheckTrust(s, "/project", hks)
+	require.NoError(t, err)
+	assert.False(t, trusted, "trust should be invalidated when pattern changes")
+}

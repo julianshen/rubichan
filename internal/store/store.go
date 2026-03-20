@@ -215,6 +215,11 @@ func createTables(db *sql.DB) error {
 		}
 	}
 
+	// Index must be created after migration ensures the column exists.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_forked_from ON sessions(forked_from)`); err != nil {
+		return fmt.Errorf("create forked_from index: %w", err)
+	}
+
 	return nil
 }
 
@@ -461,11 +466,29 @@ func (s *Store) UpdateSession(sess Session) error {
 
 // DeleteSession removes a session and its messages (via CASCADE).
 func (s *Store) DeleteSession(id string) error {
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("delete session: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Guard: prevent deleting sessions that have active forks, because
+	// forked sessions share blob references via the source session's rows.
+	// CASCADE would delete those blobs, leaving dangling references in the fork.
+	var forkCount int
+	err = tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE forked_from = ?`, id).Scan(&forkCount)
+	if err != nil {
+		return fmt.Errorf("delete session: check forks: %w", err)
+	}
+	if forkCount > 0 {
+		return fmt.Errorf("delete session: cannot delete session %s — it has %d active fork(s)", id, forkCount)
+	}
+
+	_, err = tx.Exec(`DELETE FROM sessions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ForkSession creates a new session by deep-copying all data from the source.

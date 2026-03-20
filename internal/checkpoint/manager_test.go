@@ -2,6 +2,7 @@ package checkpoint_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -379,4 +380,47 @@ func TestRewindToTurn(t *testing.T) {
 	assert.Equal(t, "b-original", string(dataB), "b.go should be at original state")
 
 	assert.Len(t, mgr.List(), 1, "only turn-1 checkpoint should remain")
+}
+
+func TestRewindToTurnUpdatesManifest(t *testing.T) {
+	rootDir := t.TempDir()
+	file1 := filepath.Join(rootDir, "a.go")
+	require.NoError(t, os.WriteFile(file1, []byte("original"), 0644))
+
+	mgr, err := checkpoint.New(rootDir, "rewind-manifest", 0)
+	require.NoError(t, err)
+	defer func() { _ = mgr.Cleanup() }()
+
+	// Create a large checkpoint that gets spilled to disk
+	bigFile := filepath.Join(rootDir, "big.go")
+	bigContent := make([]byte, 2*1024*1024) // 2MB, above spill threshold
+	require.NoError(t, os.WriteFile(bigFile, bigContent, 0644))
+
+	_, err = mgr.Capture(context.Background(), "big.go", 1, "write")
+	require.NoError(t, err)
+
+	_, err = mgr.Capture(context.Background(), "a.go", 2, "write")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(file1, []byte("modified"), 0644))
+
+	// Rewind to turn 0 (before all checkpoints)
+	_, err = mgr.RewindToTurn(context.Background(), 0)
+	require.NoError(t, err)
+
+	assert.Empty(t, mgr.List(), "all checkpoints should be removed after rewind to turn 0")
+
+	// Verify the file was restored
+	data, err := os.ReadFile(file1)
+	require.NoError(t, err)
+	assert.Equal(t, "original", string(data))
+
+	// Verify the manifest on disk reflects the empty stack
+	manifestPath := filepath.Join(os.TempDir(), "aiagent", "checkpoints", "rewind-manifest", "manifest.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	var mf struct {
+		Checkpoints []json.RawMessage `json:"checkpoints"`
+	}
+	require.NoError(t, json.Unmarshal(manifestData, &mf))
+	assert.Empty(t, mf.Checkpoints, "manifest should have zero checkpoints after rewind to turn 0")
 }
