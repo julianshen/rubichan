@@ -2,6 +2,7 @@ package checkpoint_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -409,6 +410,17 @@ func TestRewindToTurnUpdatesManifest(t *testing.T) {
 	assert.Empty(t, mgr.List(), "all checkpoints should be removed after rewind to turn 0")
 
 	// Verify the file was restored
-	data, _ := os.ReadFile(file1)
+	data, err := os.ReadFile(file1)
+	require.NoError(t, err)
 	assert.Equal(t, "original", string(data))
+
+	// Verify the manifest on disk reflects the empty stack
+	manifestPath := filepath.Join(os.TempDir(), "aiagent", "checkpoints", "rewind-manifest", "manifest.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	var mf struct {
+		Checkpoints []json.RawMessage `json:"checkpoints"`
+	}
+	require.NoError(t, json.Unmarshal(manifestData, &mf))
+	assert.Empty(t, mf.Checkpoints, "manifest should have zero checkpoints after rewind to turn 0")
 }

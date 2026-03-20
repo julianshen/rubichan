@@ -474,11 +474,19 @@ func TestTurnStreamErrorDiscardsPartialBlocks(t *testing.T) {
 }
 
 func TestSetModelRaceSafety(t *testing.T) {
-	// Verify SetModel and Turn don't race. Run with -race flag.
-	mp := &mockProvider{
-		events: []provider.StreamEvent{
-			{Type: "text_delta", Text: "hi"},
-			{Type: "stop"},
+	// Verify SetModel and Turn don't race. Use a gated provider so
+	// SetModel contends with Turn's lock window deterministically.
+	gate := make(chan struct{})
+	mp := &channelProvider{
+		events: func() <-chan provider.StreamEvent {
+			ch := make(chan provider.StreamEvent, 2)
+			go func() {
+				<-gate // block until SetModel is launched
+				ch <- provider.StreamEvent{Type: "text_delta", Text: "hi"}
+				ch <- provider.StreamEvent{Type: "stop"}
+				close(ch)
+			}()
+			return ch
 		},
 	}
 	reg := tools.NewRegistry()
@@ -488,12 +496,15 @@ func TestSetModelRaceSafety(t *testing.T) {
 	ch, err := agent.Turn(context.Background(), "hello")
 	require.NoError(t, err)
 
-	// Call SetModel concurrently while Turn is running
+	// Launch SetModel while Turn holds turnMu (stream is blocked on gate)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		agent.SetModel("gpt-4-turbo")
 	}()
+
+	// Unblock the stream so Turn can proceed
+	close(gate)
 
 	// Drain the channel
 	for range ch {
