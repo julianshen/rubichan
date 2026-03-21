@@ -162,7 +162,7 @@ func TestShellToolExecuteReturnsSandboxSetupError(t *testing.T) {
 	result, err := st.Execute(context.Background(), input)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content, "sandbox setup failed")
+	assert.Contains(t, result.Content, "sandbox:")
 	assert.Contains(t, result.Content, "boom")
 }
 
@@ -263,6 +263,72 @@ func TestBuildSandboxPolicyDefaults(t *testing.T) {
 	assert.Contains(t, policy.WritablePaths, filepath.Clean("/project"))
 	assert.Equal(t, 0, policy.ProxyPort)
 	assert.Empty(t, policy.DeniedPaths)
+}
+
+func TestIsExcludedFromSandbox(t *testing.T) {
+	tests := []struct {
+		cmd      string
+		excluded []string
+		want     bool
+	}{
+		{"docker build .", []string{"docker"}, true},
+		{"sudo docker run", []string{"docker"}, true},
+		{"dockerfile-lint .", []string{"docker"}, false},
+		{"echo hello", []string{"docker"}, false},
+		{"docker build . | grep err", []string{"docker"}, true},
+		{"echo hi", nil, false},
+		{"", []string{"docker"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsExcludedFromSandbox(tt.cmd, tt.excluded))
+		})
+	}
+}
+
+func TestShellToolExcludedCommandBypassesSandbox(t *testing.T) {
+	st := NewShellTool(t.TempDir(), 30*time.Second)
+	recorder := &recordingSandbox{}
+	st.SetSandbox(recorder)
+	st.SetSandboxConfig(config.SandboxConfig{
+		ExcludedCommands: []string{"echo"},
+	}, nil)
+
+	input, _ := json.Marshal(shellInput{Command: "echo hello"})
+	result, err := st.ExecuteStream(context.Background(), input, nil)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.False(t, recorder.called, "sandbox should not wrap excluded commands")
+}
+
+func TestShellToolHardLockdownBlocksFallback(t *testing.T) {
+	st := NewShellTool(t.TempDir(), 30*time.Second)
+	st.SetSandbox(&recordingSandbox{err: errors.New("sandbox unavailable")})
+	f := false
+	st.SetSandboxConfig(config.SandboxConfig{
+		AllowUnsandboxedCommands: &f,
+	}, nil)
+
+	input, _ := json.Marshal(shellInput{Command: "echo hello"})
+	result, err := st.ExecuteStream(context.Background(), input, nil)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "unsandboxed execution is disabled")
+}
+
+func TestShellToolExcludedSudoCommand(t *testing.T) {
+	st := NewShellTool(t.TempDir(), 30*time.Second)
+	recorder := &recordingSandbox{}
+	st.SetSandbox(recorder)
+	st.SetSandboxConfig(config.SandboxConfig{
+		ExcludedCommands: []string{"echo"},
+	}, nil)
+
+	input, _ := json.Marshal(shellInput{Command: "sudo echo hello"})
+	result, err := st.ExecuteStream(context.Background(), input, nil)
+	require.NoError(t, err)
+	assert.False(t, recorder.called, "sudo echo should match excluded 'echo'")
+	_ = result
 }
 
 type recordingSandbox struct {
