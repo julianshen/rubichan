@@ -10,15 +10,21 @@ import (
 )
 
 func TestLicenseScannerName(t *testing.T) {
+	t.Parallel()
+
 	s := NewLicenseScanner()
 	assert.Equal(t, "license", s.Name())
 }
 
 func TestLicenseScannerInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ security.StaticScanner = NewLicenseScanner()
 }
 
 func TestLicenseScannerDetectsMIT(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENSE", `MIT License
 
@@ -43,6 +49,8 @@ copies of the Software.
 }
 
 func TestLicenseScannerDetectsGPL(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENSE", `GNU GENERAL PUBLIC LICENSE
 Version 3, 29 June 2007
@@ -71,6 +79,8 @@ license document, but changing it is not allowed.
 }
 
 func TestLicenseScannerMissingLicense(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// No LICENSE file at all.
 
@@ -91,6 +101,8 @@ func TestLicenseScannerMissingLicense(t *testing.T) {
 }
 
 func TestLicenseScannerDetectsHeader(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENSE", `MIT License
 
@@ -120,6 +132,8 @@ func main() {}
 }
 
 func TestLicenseScannerContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENSE", "MIT License\n")
 
@@ -133,6 +147,8 @@ func TestLicenseScannerContextCancellation(t *testing.T) {
 }
 
 func TestLicenseScannerUnknownLicense(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENSE", `This is a custom proprietary license.
 All rights reserved.
@@ -151,6 +167,8 @@ No permission granted.
 }
 
 func TestLicenseScannerNoHeaderInFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENSE", "MIT License\n")
 	writeFile(t, dir, "main.go", `package main
@@ -172,6 +190,8 @@ func main() {
 }
 
 func TestLicenseScannerHeaderContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENSE", "MIT License\n")
 	writeFile(t, dir, "main.go", `// Copyright 2026 Example Corp
@@ -189,11 +209,15 @@ func main() {}
 }
 
 func TestLicenseScannerIdentifyLicenseNilForUnknown(t *testing.T) {
+	t.Parallel()
+
 	lt := identifyLicense("Some custom text without any license keywords")
 	assert.Nil(t, lt)
 }
 
 func TestLicenseScannerDetectsLGPL(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "LICENCE.txt", `GNU LESSER GENERAL PUBLIC LICENSE
 Version 2.1, February 1999
@@ -214,6 +238,8 @@ Version 2.1, February 1999
 }
 
 func TestLicenseScannerDetectsAGPL(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "COPYING", `GNU AFFERO GENERAL PUBLIC LICENSE
 Version 3, 19 November 2007

@@ -45,6 +45,7 @@ data: [DONE]
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	// Verify it satisfies the LLMProvider interface
 	var _ provider.LLMProvider = p
@@ -101,6 +102,7 @@ data: [DONE]
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "gpt-4",
@@ -174,6 +176,7 @@ data: [DONE]
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "gpt-4",
@@ -227,6 +230,7 @@ func TestExtraHeaders(t *testing.T) {
 	}
 
 	p := New(server.URL, "test-api-key", extraHeaders)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "openrouter/auto",
@@ -251,6 +255,7 @@ func TestStreamAPIError(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "gpt-4",
@@ -282,6 +287,7 @@ func TestMessageConversion(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	// Build a conversation with tool use
 	messages := []provider.Message{
@@ -399,6 +405,7 @@ func TestMessageConversionToolOnlyAssistantIncludesEmptyContent(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model: "gpt-4",
@@ -469,6 +476,7 @@ func TestStreamContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 	ctx, cancel := context.WithCancel(context.Background())
 
 	req := provider.CompletionRequest{
@@ -513,6 +521,7 @@ func TestStreamMalformedChunk(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "gpt-4",
@@ -553,6 +562,7 @@ data: [DONE]
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "gpt-4",
@@ -591,6 +601,7 @@ func TestConvertMessageDefaultRole(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 
 	// Use a non-standard role to hit the default case in convertMessage
 	messages := []provider.Message{
@@ -655,6 +666,7 @@ func TestStreamContextCancelledDuringProcessing(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key", nil)
+	p.SetHTTPClient(&http.Client{})
 	ctx, cancel := context.WithCancel(context.Background())
 
 	req := provider.CompletionRequest{

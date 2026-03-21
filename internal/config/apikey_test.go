@@ -15,28 +15,38 @@ func TestResolveAPIKeyFromEnv(t *testing.T) {
 }
 
 func TestResolveAPIKeyFromConfig(t *testing.T) {
+	t.Parallel()
+
 	key, err := ResolveAPIKey("config", "sk-from-config", "")
 	require.NoError(t, err)
 	assert.Equal(t, "sk-from-config", key)
 }
 
 func TestResolveAPIKeyMissingEnvVar(t *testing.T) {
+	t.Parallel()
+
 	_, err := ResolveAPIKey("env", "", "NONEXISTENT_KEY_VAR")
 	assert.Error(t, err)
 }
 
 func TestResolveAPIKeyEmptyConfig(t *testing.T) {
+	t.Parallel()
+
 	_, err := ResolveAPIKey("config", "", "")
 	assert.Error(t, err)
 }
 
 func TestResolveAPIKeyUnknownSource(t *testing.T) {
+	t.Parallel()
+
 	_, err := ResolveAPIKey("unknown", "", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown api_key_source")
 }
 
 func TestOpenAICompatibleEnvVar(t *testing.T) {
+	t.Parallel()
+
 	assert.Equal(t, "OPENROUTER_API_KEY", OpenAICompatibleEnvVar("openrouter"))
 	assert.Equal(t, "AZURE_OPENAI_API_KEY", OpenAICompatibleEnvVar("azure-openai"))
 	assert.Equal(t, "MY_PROVIDER_01_API_KEY", OpenAICompatibleEnvVar(" my.provider 01 "))
@@ -67,6 +77,8 @@ func TestHasUsableCredentialsForDefaultProvider(t *testing.T) {
 }
 
 func TestHasUsableCredentialsForProviderAnthropicConfig(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 	cfg.Provider.Default = "anthropic"
 	cfg.Provider.Anthropic.APIKeySource = "config"

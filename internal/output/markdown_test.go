@@ -11,6 +11,8 @@ import (
 )
 
 func TestMarkdownFormatterBasic(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:     "say hello",
@@ -30,6 +32,8 @@ func TestMarkdownFormatterBasic(t *testing.T) {
 }
 
 func TestMarkdownFormatterWithToolCalls(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:   "read a file",
@@ -54,6 +58,8 @@ func TestMarkdownFormatterWithToolCalls(t *testing.T) {
 }
 
 func TestMarkdownFormatterWithError(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:     "fail",
@@ -73,6 +79,8 @@ func TestMarkdownFormatterWithError(t *testing.T) {
 }
 
 func TestMarkdownFormatterUsesSummaryWhenResponseEmpty(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:     "inspect",
@@ -90,6 +98,8 @@ func TestMarkdownFormatterUsesSummaryWhenResponseEmpty(t *testing.T) {
 }
 
 func TestMarkdownFormatterIncludesSummaryAlongsideError(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Summary:    "Run failed after 2 tool call(s); 1 returned errors.",
@@ -108,6 +118,8 @@ func TestMarkdownFormatterIncludesSummaryAlongsideError(t *testing.T) {
 }
 
 func TestMarkdownFormatterIncludesEvidenceSection(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:          "build app",
@@ -129,6 +141,8 @@ func TestMarkdownFormatterIncludesEvidenceSection(t *testing.T) {
 }
 
 func TestMarkdownFormatterIgnoresWhitespaceOnlySummaryAndEvidence(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:          "test",
@@ -147,6 +161,8 @@ func TestMarkdownFormatterIgnoresWhitespaceOnlySummaryAndEvidence(t *testing.T) 
 }
 
 func TestMarkdownFormatterWithSecurityFindings(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:     "review code",
@@ -174,6 +190,8 @@ func TestMarkdownFormatterWithSecurityFindings(t *testing.T) {
 }
 
 func TestMarkdownFormatterNoSecuritySection(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:     "hello",
@@ -191,6 +209,8 @@ func TestMarkdownFormatterNoSecuritySection(t *testing.T) {
 }
 
 func TestMarkdownFormatterNoToolCallsSection(t *testing.T) {
+	t.Parallel()
+
 	f := NewMarkdownFormatter()
 	result := &RunResult{
 		Prompt:     "hello",

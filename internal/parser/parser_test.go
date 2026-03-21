@@ -9,6 +9,8 @@ import (
 )
 
 func TestParseGoFile(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`package main
 
@@ -24,6 +26,8 @@ func main() {
 }
 
 func TestParsePythonFile(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`def hello():
     print("hello")
@@ -39,6 +43,8 @@ def world():
 }
 
 func TestParseUnknownExtension(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`some content`)
 	_, err := p.Parse("file.xyz", source)
@@ -47,6 +53,8 @@ func TestParseUnknownExtension(t *testing.T) {
 }
 
 func TestFunctionsExtraction(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`package main
 
@@ -75,6 +83,8 @@ func world(name string) string {
 }
 
 func TestImportsExtraction(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`package main
 
@@ -100,6 +110,8 @@ func main() {
 }
 
 func TestParsePythonFunctions(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`def greet(name):
     print(f"Hello, {name}")
@@ -118,6 +130,8 @@ def farewell():
 }
 
 func TestParsePythonImports(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`import os
 import sys
@@ -137,6 +151,8 @@ def main():
 }
 
 func TestParseJavaScriptFile(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`function hello() {
   console.log("hello");
@@ -158,6 +174,8 @@ function world(name) {
 }
 
 func TestParseJSModernPatterns(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`const greet = (name) => {
   console.log(name);
@@ -185,6 +203,8 @@ class Calculator {
 }
 
 func TestParseJSSideEffectImport(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`import 'side-effect-module';
 import "polyfill";
@@ -201,6 +221,8 @@ import { useState } from 'react';
 }
 
 func TestParseTypeScriptFile(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`function greet(name: string): void {
   console.log(name);
@@ -217,6 +239,8 @@ func TestParseTypeScriptFile(t *testing.T) {
 }
 
 func TestParseGoMethodDeclaration(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`package main
 
@@ -240,6 +264,8 @@ func (f *Foo) Baz(x int) int {
 }
 
 func TestParseSingleImport(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`package main
 
@@ -259,6 +285,8 @@ func main() {
 }
 
 func TestParseRustFunctionsAndImports(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`use std::io;
 use std::collections::HashMap;
@@ -287,6 +315,8 @@ fn add(a: i32, b: i32) -> i32 {
 }
 
 func TestParseCFunctionsAndIncludes(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`#include <stdio.h>
 #include "myheader.h"
@@ -316,6 +346,8 @@ void greet(const char *name) {
 }
 
 func TestParseCppFunctionsAndIncludes(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`#include <iostream>
 
@@ -338,6 +370,8 @@ int main() {
 }
 
 func TestParseRubyFunctionsAndRequire(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`require 'json'
 require_relative 'helper'
@@ -365,6 +399,8 @@ end
 }
 
 func TestParseJavaFunctions(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	source := []byte(`import java.util.List;
 
@@ -393,6 +429,8 @@ public class Main {
 }
 
 func TestWalkNilNode(t *testing.T) {
+	t.Parallel()
+
 	// walk should handle nil nodes gracefully without panic
 	var called bool
 	walk(nil, func(_ *sitter.Node) {
@@ -402,6 +440,8 @@ func TestWalkNilNode(t *testing.T) {
 }
 
 func TestExtractImportPath(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input string
 		want  string
@@ -419,33 +459,45 @@ func TestExtractImportPath(t *testing.T) {
 }
 
 func TestExtractRustUseEmpty(t *testing.T) {
+	t.Parallel()
+
 	result := extractRustUse("use ;")
 	assert.Empty(t, result)
 }
 
 func TestExtractCIncludeEmpty(t *testing.T) {
+	t.Parallel()
+
 	result := extractCInclude("#include")
 	assert.Empty(t, result)
 }
 
 func TestExtractRubyRequireNonRequire(t *testing.T) {
+	t.Parallel()
+
 	result := extractRubyRequire("puts 'hello'")
 	assert.Empty(t, result)
 }
 
 func TestExtractGenericImportWithFrom(t *testing.T) {
+	t.Parallel()
+
 	result := extractGenericImport("import { useState } from 'react'")
 	require.Len(t, result, 1)
 	assert.Equal(t, "react", result[0])
 }
 
 func TestExtractGenericImportWithAlias(t *testing.T) {
+	t.Parallel()
+
 	result := extractGenericImport("import os as operating_system")
 	require.Len(t, result, 1)
 	assert.Equal(t, "os", result[0])
 }
 
 func TestExtractPythonFromImportEmpty(t *testing.T) {
+	t.Parallel()
+
 	result := extractPythonFromImport("from  import something")
 	// "from " trimmed leaves " import something", split on " import " gives ["", "something"]
 	// first part is empty after trim, so nil
@@ -453,6 +505,8 @@ func TestExtractPythonFromImportEmpty(t *testing.T) {
 }
 
 func TestLanguageDetectionByExtension(t *testing.T) {
+	t.Parallel()
+
 	p := NewParser()
 	extensions := []struct {
 		filename string
@@ -491,6 +545,8 @@ func TestLanguageDetectionByExtension(t *testing.T) {
 }
 
 func TestQuery(t *testing.T) {
+	t.Parallel()
+
 	src := `package main
 
 func hello() {
@@ -515,6 +571,8 @@ func add(a, b int) int {
 }
 
 func TestQueryInvalidPattern(t *testing.T) {
+	t.Parallel()
+
 	src := `package main`
 	p := NewParser()
 	tree, err := p.Parse("main.go", []byte(src))
@@ -527,6 +585,8 @@ func TestQueryInvalidPattern(t *testing.T) {
 }
 
 func TestQueryNoMatches(t *testing.T) {
+	t.Parallel()
+
 	src := `package main
 
 var x = 42

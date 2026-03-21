@@ -3,7 +3,6 @@ package tools
 import (
 	"os/exec"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,8 +18,8 @@ func TestPipeProcessIOWriteAndRead(t *testing.T) {
 	_, err = pio.Write([]byte("hello\n"))
 	require.NoError(t, err)
 
+	// Read() blocks on the pipe until data arrives — no polling needed.
 	buf := make([]byte, 64)
-	time.Sleep(50 * time.Millisecond)
 	n, err := pio.Read(buf)
 	require.NoError(t, err)
 	assert.Equal(t, "hello\n", string(buf[:n]))
@@ -50,8 +49,7 @@ func TestPipeProcessIOCapturesStderr(t *testing.T) {
 	require.NoError(t, cmd.Start())
 	defer func() { _ = cmd.Wait() }()
 
-	time.Sleep(100 * time.Millisecond)
-
+	// Read() blocks on the pipe until data arrives.
 	buf := make([]byte, 64)
 	n, err := pio.Read(buf)
 	require.NoError(t, err)

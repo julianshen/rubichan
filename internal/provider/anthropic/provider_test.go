@@ -59,6 +59,7 @@ data: {"type":"message_stop"}
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	// Verify it satisfies the LLMProvider interface
 	var _ provider.LLMProvider = p
@@ -135,6 +136,7 @@ data: {"type":"message_stop"}
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "claude-sonnet-4-5",
@@ -187,6 +189,7 @@ func TestStreamAPIError(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "claude-sonnet-4-5",
@@ -237,6 +240,7 @@ func TestStreamContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -298,6 +302,7 @@ data: {"type":"message_stop"}
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "claude-sonnet-4-5",
@@ -335,6 +340,7 @@ data: {"type":"message_stop"}
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "claude-sonnet-4-5",
@@ -372,6 +378,7 @@ data: {"type":"message_stop"}
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "claude-sonnet-4-5",
@@ -410,6 +417,7 @@ data: {"type":"message_stop"}
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "claude-sonnet-4-5",
@@ -450,6 +458,7 @@ func TestStreamContextCancelledDuringEventIteration(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -503,6 +512,7 @@ func TestStreamRequestBody(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:       "claude-sonnet-4-5",
@@ -562,6 +572,7 @@ func TestStreamToolResultUsesContentField(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
 
 	// Send a tool_result message — the result text must serialize as "content", not "text"
 	req := provider.CompletionRequest{

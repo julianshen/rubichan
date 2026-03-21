@@ -40,6 +40,7 @@ func TestStreamTextResponse(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	// Verify it satisfies the LLMProvider interface
 	var _ provider.LLMProvider = p
@@ -84,6 +85,7 @@ func TestStreamAPIError(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "nonexistent",
@@ -136,6 +138,7 @@ func TestStreamContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 	ctx, cancel := context.WithCancel(context.Background())
 
 	req := provider.CompletionRequest{
@@ -182,6 +185,7 @@ func TestStreamToolCallResponse(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "llama3",
@@ -241,6 +245,7 @@ func TestBuildRequestBodyWithTools(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "llama3",
@@ -329,6 +334,7 @@ func TestBuildRequestBodyWithAssistantToolCalls(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	// Build a multi-turn conversation with an assistant message containing tool_use blocks
 	req := provider.CompletionRequest{
@@ -398,6 +404,7 @@ func TestBuildRequestBodyWithToolResults(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	// Create a message with multiple tool_result blocks
 	req := provider.CompletionRequest{
@@ -456,6 +463,7 @@ func TestBuildRequestBodyWithToolResultsAndText(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	// User message containing both tool_result and text blocks
 	req := provider.CompletionRequest{
@@ -513,6 +521,7 @@ func TestBuildRequestBodyWithUnknownRole(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	// Message with role "system" in the Messages array (not req.System) hits default case
 	req := provider.CompletionRequest{
@@ -569,6 +578,7 @@ func TestBuildRequestBodyWithTemperature(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	temp := 0.7
 	req := provider.CompletionRequest{
@@ -609,6 +619,7 @@ func TestStreamMalformedJSON(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "llama3",
@@ -649,6 +660,7 @@ func TestStreamWithEmptyLines(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "llama3",
@@ -677,6 +689,7 @@ func TestStreamConnectionError(t *testing.T) {
 	server.Close() // Close immediately
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "llama3",
@@ -704,6 +717,7 @@ func TestStreamTruncatedWithoutDone(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "llama3",
@@ -741,6 +755,7 @@ func TestStreamToolCallWithNilArguments(t *testing.T) {
 	defer server.Close()
 
 	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
 
 	req := provider.CompletionRequest{
 		Model:     "llama3",

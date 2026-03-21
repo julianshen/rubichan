@@ -20,6 +20,8 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 }
 
 func TestPrioritizerScoresAuthCode(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "auth.go", `package main
 
@@ -37,6 +39,8 @@ func authenticate(user string) bool {
 }
 
 func TestPrioritizerScoresExecCode(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "runner.go", `package main
 
@@ -55,6 +59,8 @@ func runCommand() {
 }
 
 func TestPrioritizerAddsScores(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "combined.go", `package main
 
@@ -77,6 +83,8 @@ func loginHandler(db *sql.DB) {
 }
 
 func TestPrioritizerRespectsMinScore(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "boring.go", `package main
 
@@ -92,6 +100,8 @@ func hello() {
 }
 
 func TestPrioritizerRespectsBudgetCap(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Create multiple high-risk files to generate many chunks.
 	for i := 0; i < 10; i++ {
@@ -112,6 +122,8 @@ func run() {
 }
 
 func TestPrioritizerBoostedByStaticFindings(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "flagged.go", `package main
 
@@ -133,6 +145,8 @@ func hello() {
 }
 
 func TestPrioritizerSortsHighestFirst(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "low.go", `package main
 
@@ -158,6 +172,8 @@ func dangerous() {
 }
 
 func TestPrioritizerEmptyDir(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	p := NewPrioritizer(PrioritizerConfig{MinRiskScore: 0, MaxChunks: 100})
@@ -167,6 +183,8 @@ func TestPrioritizerEmptyDir(t *testing.T) {
 }
 
 func TestPrioritizerSplitsFunctions(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "multi.go", `package main
 
@@ -200,6 +218,8 @@ func third() {
 }
 
 func TestPrioritizerExcludesPatterns(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "main.go", `package main
 
@@ -228,6 +248,8 @@ func auth() {
 }
 
 func TestPrioritizerUnsupportedFileType(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "config.yaml", `auth:
   password: secret

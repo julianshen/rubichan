@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,17 +101,18 @@ func TestRunReplayFollowText(t *testing.T) {
 		done <- runReplay(ctx, path, "text", false, true, true, false, &out)
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // let file watcher initialize
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	require.NoError(t, err)
 	_, err = f.WriteString(`{"type":"assistant_final","actor":{"name":"primary","kind":"agent"},"assistant":{"content":"done"}}` + "\n")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return strings.Contains(out.String(), "Assistant (primary): done")
+	}, 5*time.Second, 50*time.Millisecond)
 	cancel()
 	require.NoError(t, <-done)
-	assert.Contains(t, out.String(), "Assistant (primary): done")
 }
 
 func TestRunReplayFollowSinceBeginningFalseSkipsExistingEvents(t *testing.T) {
@@ -129,18 +131,19 @@ func TestRunReplayFollowSinceBeginningFalseSkipsExistingEvents(t *testing.T) {
 		done <- runReplay(ctx, path, "text", false, true, false, false, &out)
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // let file watcher initialize
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	require.NoError(t, err)
 	_, err = f.WriteString(`{"type":"assistant_final","actor":{"name":"primary","kind":"agent"},"assistant":{"content":"new"}}` + "\n")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return strings.Contains(out.String(), "Assistant (primary): new")
+	}, 5*time.Second, 50*time.Millisecond)
 	cancel()
 	require.NoError(t, <-done)
 	assert.NotContains(t, out.String(), "old")
-	assert.Contains(t, out.String(), "Assistant (primary): new")
 }
 
 func TestRunReplayFollowClearOnUpdate(t *testing.T) {
@@ -157,16 +160,17 @@ func TestRunReplayFollowClearOnUpdate(t *testing.T) {
 		done <- runReplay(ctx, path, "text", true, true, true, true, &out)
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // let file watcher initialize
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	require.NoError(t, err)
 	_, err = f.WriteString(`{"type":"verification_snapshot","verification":{"verdict":"passed","reason":"ok"}}` + "\n")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return strings.Contains(out.String(), "Last verification: passed (ok)")
+	}, 5*time.Second, 50*time.Millisecond)
 	cancel()
 	require.NoError(t, <-done)
 	assert.Contains(t, out.String(), "\x1b[H\x1b[2J")
-	assert.Contains(t, out.String(), "Last verification: passed (ok)")
 }

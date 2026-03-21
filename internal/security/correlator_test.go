@@ -8,6 +8,8 @@ import (
 )
 
 func TestCorrelatorDetectsUnauthSQLI(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -53,6 +55,8 @@ func TestCorrelatorDetectsUnauthSQLI(t *testing.T) {
 }
 
 func TestCorrelatorDetectsUnauthDataAccess(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -98,6 +102,8 @@ func TestCorrelatorDetectsUnauthDataAccess(t *testing.T) {
 }
 
 func TestCorrelatorDetectsRecoverableSecret(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -143,6 +149,8 @@ func TestCorrelatorDetectsRecoverableSecret(t *testing.T) {
 }
 
 func TestCorrelatorDetectsTOCTOU(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -188,6 +196,8 @@ func TestCorrelatorDetectsTOCTOU(t *testing.T) {
 }
 
 func TestCorrelatorDeduplicates(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -221,6 +231,8 @@ func TestCorrelatorDeduplicates(t *testing.T) {
 }
 
 func TestCorrelatorDeduplicatesKeepsHighestConfidence(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -264,6 +276,8 @@ func TestCorrelatorDeduplicatesKeepsHighestConfidence(t *testing.T) {
 }
 
 func TestCorrelatorNoChains(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -296,6 +310,8 @@ func TestCorrelatorNoChains(t *testing.T) {
 }
 
 func TestCorrelatorEmptyInput(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	chains, deduped := c.Correlate(nil)
@@ -308,6 +324,8 @@ func TestCorrelatorEmptyInput(t *testing.T) {
 }
 
 func TestCorrelatorMultipleChains(t *testing.T) {
+	t.Parallel()
+
 	c := NewCorrelator()
 
 	findings := []Finding{
@@ -381,6 +399,8 @@ func TestCorrelatorMultipleChains(t *testing.T) {
 }
 
 func TestLinesClose(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		a, b      Location
@@ -432,6 +452,8 @@ func TestLinesClose(t *testing.T) {
 }
 
 func TestProximateLinesFallbackWhenNoFunction(t *testing.T) {
+	t.Parallel()
+
 	// When sameFunc is required but function names are empty,
 	// should fall back to line proximity.
 	a := Finding{
@@ -450,6 +472,8 @@ func TestProximateLinesFallbackWhenNoFunction(t *testing.T) {
 }
 
 func TestProximateFunctionMatchOverridesLineDistance(t *testing.T) {
+	t.Parallel()
+
 	// When both have function names, function match is authoritative.
 	a := Finding{
 		Location: Location{File: "handler.go", StartLine: 10, Function: "A"},

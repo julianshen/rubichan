@@ -8,6 +8,8 @@ import (
 )
 
 func TestManifestType(t *testing.T) {
+	t.Parallel()
+
 	m := Manifest{
 		Name:        "my-skill",
 		Version:     "1.0.0",
@@ -26,6 +28,8 @@ func TestManifestType(t *testing.T) {
 // TestContextInterface is a compile-time interface check that verifies Context
 // has all required methods. If any method is missing, the test will not compile.
 func TestContextInterface(t *testing.T) {
+	t.Parallel()
+
 	// Compile-time assertion: if Context is missing any method, this fails to build.
 	var _ Context = (*mockContext)(nil)
 }
@@ -55,6 +59,8 @@ func (m *mockContext) InvokeSkill(name string, input map[string]any) (map[string
 }
 
 func TestMockContext(t *testing.T) {
+	t.Parallel()
+
 	var ctx Context = &mockContext{}
 
 	t.Run("ReadFile", func(t *testing.T) {

@@ -1030,6 +1030,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		if a.rateLimiter != nil {
+			if !a.rateLimiter.AllowNow() {
+				ch <- TurnEvent{Type: "rate_limited"}
+			}
 			if err := a.rateLimiter.Wait(ctx); err != nil {
 				ch <- TurnEvent{Type: "error", Error: fmt.Errorf("rate limiter: %w", err)}
 				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)

@@ -12,6 +12,8 @@ import (
 )
 
 func TestCustomRuleScanner_MatchesPattern(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("// TODO: HACK fix this later\n"), 0o644))
 
@@ -36,6 +38,8 @@ func TestCustomRuleScanner_MatchesPattern(t *testing.T) {
 }
 
 func TestCustomRuleScanner_NoMatch(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "clean.go"), []byte("package clean\n"), 0o644))
 
@@ -50,6 +54,8 @@ func TestCustomRuleScanner_NoMatch(t *testing.T) {
 }
 
 func TestCustomRuleScanner_InvalidRegex(t *testing.T) {
+	t.Parallel()
+
 	rules := []security.CustomRule{
 		{ID: "custom-bad", Pattern: "[invalid", Severity: "high", Title: "Bad pattern"},
 	}
@@ -61,6 +67,8 @@ func TestCustomRuleScanner_InvalidRegex(t *testing.T) {
 }
 
 func TestCustomRuleScanner_EmptyRules(t *testing.T) {
+	t.Parallel()
+
 	s := NewCustomRuleScanner(nil)
 	findings, err := s.Scan(context.Background(), security.ScanTarget{RootDir: t.TempDir()})
 	require.NoError(t, err)
@@ -68,6 +76,8 @@ func TestCustomRuleScanner_EmptyRules(t *testing.T) {
 }
 
 func TestCustomRuleScanner_Name(t *testing.T) {
+	t.Parallel()
+
 	s := NewCustomRuleScanner(nil)
 	assert.Equal(t, "custom-rules", s.Name())
 }

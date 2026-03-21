@@ -28,6 +28,15 @@ func NewSharedRateLimiter(requestsPerMinute int) *SharedRateLimiter {
 	}
 }
 
+// AllowNow reports whether a request can proceed immediately without waiting.
+// It does not consume a token. A nil receiver always returns true.
+func (rl *SharedRateLimiter) AllowNow() bool {
+	if rl == nil {
+		return true
+	}
+	return rl.limiter.Tokens() >= 1
+}
+
 // Wait blocks until a request is permitted or ctx is cancelled.
 // A nil receiver is a no-op.
 func (rl *SharedRateLimiter) Wait(ctx context.Context) error {

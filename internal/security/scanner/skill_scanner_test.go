@@ -11,6 +11,8 @@ import (
 )
 
 func TestSkillScannerAdapterName(t *testing.T) {
+	t.Parallel()
+
 	adapter := NewSkillScannerAdapter("my-skill-scanner", func(_ context.Context, _ security.ScanTarget) ([]security.Finding, error) {
 		return nil, nil
 	})
@@ -18,12 +20,16 @@ func TestSkillScannerAdapterName(t *testing.T) {
 }
 
 func TestSkillScannerAdapterInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ security.StaticScanner = NewSkillScannerAdapter("test", func(_ context.Context, _ security.ScanTarget) ([]security.Finding, error) {
 		return nil, nil
 	})
 }
 
 func TestSkillScannerAdapterCallsFunction(t *testing.T) {
+	t.Parallel()
+
 	called := false
 	expectedFindings := []security.Finding{
 		{
@@ -48,6 +54,8 @@ func TestSkillScannerAdapterCallsFunction(t *testing.T) {
 }
 
 func TestSkillScannerAdapterPropagatesError(t *testing.T) {
+	t.Parallel()
+
 	expectedErr := errors.New("skill scan failed")
 
 	adapter := NewSkillScannerAdapter("failing-skill", func(_ context.Context, _ security.ScanTarget) ([]security.Finding, error) {

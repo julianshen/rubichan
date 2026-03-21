@@ -10,15 +10,21 @@ import (
 )
 
 func TestAppleScannerName(t *testing.T) {
+	t.Parallel()
+
 	s := NewAppleScanner()
 	assert.Equal(t, "apple-platform", s.Name())
 }
 
 func TestAppleScannerInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ security.StaticScanner = NewAppleScanner()
 }
 
 func TestAppleScannerDetectsATSBypass(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -54,6 +60,8 @@ func TestAppleScannerDetectsATSBypass(t *testing.T) {
 }
 
 func TestAppleScannerDetectsExcessiveEntitlements(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	t.Run("disable library validation", func(t *testing.T) {
@@ -116,6 +124,8 @@ func TestAppleScannerDetectsExcessiveEntitlements(t *testing.T) {
 }
 
 func TestAppleScannerCleanPlist(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -141,6 +151,8 @@ func TestAppleScannerCleanPlist(t *testing.T) {
 }
 
 func TestAppleScannerNoAppleFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "main.go", `package main
 
@@ -154,6 +166,8 @@ func main() {}
 }
 
 func TestAppleScannerContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -174,6 +188,8 @@ func TestAppleScannerContextCancellation(t *testing.T) {
 }
 
 func TestAppleScannerPlistWithIntegerAndArray(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -199,6 +215,8 @@ func TestAppleScannerPlistWithIntegerAndArray(t *testing.T) {
 }
 
 func TestAppleScannerPlistReadError(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Need at least one valid apple file so scanner doesn't return early.
 	writeFile(t, dir, "AppDelegate.swift", `import UIKit
@@ -216,6 +234,8 @@ class AppDelegate {}
 }
 
 func TestAppleScannerPlistInvalidXML(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `not valid xml at all {{{{`)
 
@@ -227,6 +247,8 @@ func TestAppleScannerPlistInvalidXML(t *testing.T) {
 }
 
 func TestAppleScannerEntitlementInvalidXML(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Bad.entitlements", `not valid xml {{{{`)
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
@@ -246,6 +268,8 @@ func TestAppleScannerEntitlementInvalidXML(t *testing.T) {
 }
 
 func TestAppleScannerEntitlementNotTrue(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Safe.entitlements", `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -268,6 +292,8 @@ func TestAppleScannerEntitlementNotTrue(t *testing.T) {
 }
 
 func TestAppleScannerEntitlementReadError(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Provide an entitlements file that doesn't exist alongside a real plist.
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
@@ -291,6 +317,8 @@ func TestAppleScannerEntitlementReadError(t *testing.T) {
 }
 
 func TestAppleScannerSwiftFileReadError(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -311,6 +339,8 @@ func TestAppleScannerSwiftFileReadError(t *testing.T) {
 }
 
 func TestAppleScannerCleanSwiftFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -338,6 +368,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 func TestAppleScannerDetectsUserDefaultsSensitiveData(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Info.plist", `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
