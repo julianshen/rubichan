@@ -35,6 +35,7 @@
   - [4.10 Built-in Skills](#410-built-in-skills)
   - [4.11 Example Skills](#411-example-skills)
   - [4.12 Skill Registry & Distribution](#412-skill-registry--distribution)
+  - [4.13 Skill Authoring Patterns](#413-skill-authoring-patterns)
 - [5. Project Structure](#5-project-structure)
 - [6. Key Interface Definitions](#6-key-interface-definitions)
 - [7. Technology Reference](#7-technology-reference)
@@ -995,6 +996,8 @@ These skills are compiled into the binary and always available:
 
 ### 4.11 Example Skills
 
+> **Note:** For guidance on writing effective prompt skill content — including thinking phases, anti-pattern lists, calibration, and verification checklists — see [Section 4.13: Skill Authoring Patterns](#413-skill-authoring-patterns).
+
 #### Example: Tool Skill — Database Query
 
 ```
@@ -1779,6 +1782,125 @@ registry/
 ```
 
 The registry is a YAML index in a public git repo. No server required — the CLI clones/fetches it.
+
+### 4.13 Skill Authoring Patterns
+
+Prompt skills inject domain knowledge into the LLM's system prompt. The *content structure* of these prompts determines their effectiveness. This section defines five structural patterns for writing high-quality prompt skill content.
+
+Key insight: **prompt skill effectiveness comes from structure, not volume.** A compact skill with the right patterns outperforms a lengthy reference document because it shapes *how the LLM reasons*, not just what it knows.
+
+#### Pattern 1: Pre-Action Thinking Phase
+
+Every prompt skill should open with a structured decision framework that forces the LLM to analyze context before acting. The thinking phase transforms a skill from "here are rules to follow" into "here's how to reason about this domain."
+
+```markdown
+## Thinking Phase
+
+Before acting, analyze:
+- **Context**: What is the user's situation? What constraints exist?
+- **Approach**: What strategy fits this specific case?
+- **Calibration**: How much depth/complexity does this warrant?
+- **Differentiation**: What makes this response specifically useful vs generic?
+```
+
+**Why:** LLMs default to pattern-matching from training data. A thinking phase forces situation-specific analysis, producing output tailored to the actual context rather than statistical averages.
+
+#### Pattern 2: Anti-Pattern Lists
+
+Explicitly name what the LLM must NOT do. LLMs have statistical favorites — outputs they gravitate toward because those patterns appear frequently in training data. Naming these defaults breaks mode-collapse and forces genuine reasoning.
+
+```markdown
+## Anti-Patterns
+
+NEVER:
+- [specific bad default the LLM gravitates toward]
+- [named cliché that seems helpful but produces generic output]
+- [common shortcut that sacrifices quality]
+```
+
+**Why:** "Do X well" is vague. "Never do Y" is precise and falsifiable. Anti-pattern lists create hard boundaries that prevent the most common failure modes.
+
+**Guideline:** Anti-patterns should name *specific* defaults, not abstract categories. "Don't use bad fonts" is useless. "Don't use Inter, Roboto, Arial, or Space Grotesk" is actionable.
+
+#### Pattern 3: Complexity-Vision Matching (Calibration)
+
+Calibrate output depth to the task's intent, not to a fixed level. A prompt skill that always produces maximum-detail output wastes tokens on simple tasks and under-serves complex ones.
+
+```markdown
+## Calibration
+
+Match implementation depth to the task:
+- Simple/routine tasks → precise, minimal output
+- Complex/novel tasks → elaborate, detailed output
+- The appropriate level of detail depends on [domain-specific signal]
+```
+
+**Why:** Without calibration, LLMs default to a single output depth. Calibration prevents both over-engineering simple requests and under-serving complex ones.
+
+#### Pattern 4: Inspirational Anchoring
+
+Provide creative seeds — a set of named approaches, directions, or extremes — that give the LLM a starting vocabulary without prescribing a template. These anchors prevent the blank-page problem while preserving creative latitude.
+
+```markdown
+## Approaches
+
+Consider directions like: [list of named extremes/options]
+
+Use these for inspiration, not as templates. Choose the approach
+that best fits the specific context.
+```
+
+**Why:** Without anchors, LLMs converge on the same 2-3 default approaches. A curated list of diverse options expands the solution space while keeping output grounded in recognized patterns.
+
+**Anti-convergence rule:** If a skill provides anchors, it should also instruct: "NEVER converge on the same choice across sessions." This prevents the LLM from developing a favorite.
+
+#### Pattern 5: Pre-Delivery Verification
+
+A checklist the LLM evaluates before presenting output. This catches common quality issues that slip through when the LLM is focused on content generation.
+
+```markdown
+## Verification
+
+Before delivering output:
+- [ ] Output matches the chosen approach from the thinking phase
+- [ ] Anti-patterns are avoided
+- [ ] Depth is appropriate for the context
+- [ ] [Domain-specific quality checks]
+```
+
+**Why:** Generation and verification are different cognitive modes. A verification section activates the LLM's critical evaluation after generation is complete. Without it, the LLM's self-assessment is ad-hoc and often skipped.
+
+#### Pattern Interaction
+
+The five patterns form a pipeline:
+
+```
+Thinking → Anchoring → Calibration → [Generation] → Verification
+   ↑                                                      ↑
+   └────── Anti-Patterns constrain all stages ────────────┘
+```
+
+Not every prompt skill needs all five patterns. The minimum effective set depends on the skill domain:
+
+| Skill Domain | Required Patterns | Optional Patterns |
+|-------------|-------------------|-------------------|
+| Creative (design, writing) | Thinking, Anti-Patterns, Anchoring | Calibration, Verification |
+| Reference (APIs, platforms) | Thinking, Anti-Patterns | Calibration |
+| Operational (review, audit) | Thinking, Anti-Patterns, Verification | Calibration, Anchoring |
+| Security (rules, scanning) | Thinking, Anti-Patterns, Verification | Calibration, Anchoring |
+
+#### Future Enhancement: Section-Priority Budgeting
+
+The prompt budgeting system (`PromptCollector.BudgetedFragments`) currently treats prompt content as an opaque blob, truncating from the end when over budget. A future enhancement could recognize markdown `##` section headers and assign priority weights to named sections, ensuring behavioral guidance survives truncation even when reference material is cut. This requires no manifest schema changes — section headers in the markdown body serve as implicit structure.
+
+Proposed priority order (highest to lowest):
+
+1. `## Anti-Patterns` — prevents harmful defaults
+2. `## Thinking Phase` — ensures context analysis
+3. `## Calibration` — scales output appropriately
+4. `## Verification` — quality gate
+5. `## Approaches` — creative direction
+6. All other sections — reference material
 
 ---
 
