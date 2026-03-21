@@ -16,6 +16,8 @@ func TestMatchDomainWildcard(t *testing.T) {
 	assert.True(t, MatchDomain("registry.npmjs.org", []string{"*.npmjs.org"}))
 	assert.False(t, MatchDomain("npmjs.org", []string{"*.npmjs.org"}))
 	assert.False(t, MatchDomain("evil.npmjs.org.bad.com", []string{"*.npmjs.org"}))
+	// Multi-level subdomain must NOT match single-label wildcard
+	assert.False(t, MatchDomain("a.b.npmjs.org", []string{"*.npmjs.org"}), "multi-level subdomain should not match")
 }
 
 func TestMatchDomainEdgeCases(t *testing.T) {

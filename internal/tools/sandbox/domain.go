@@ -15,8 +15,12 @@ func MatchDomain(domain string, patterns []string) bool {
 		}
 		if strings.HasPrefix(p, "*.") {
 			suffix := p[1:] // ".npmjs.org"
-			if strings.HasSuffix(domain, suffix) && len(domain) > len(suffix) {
-				return true
+			if strings.HasSuffix(domain, suffix) {
+				label := strings.TrimSuffix(domain, suffix)
+				// Single-label wildcard only: "registry" matches, "a.b" does not.
+				if label != "" && !strings.Contains(label, ".") {
+					return true
+				}
 			}
 		}
 	}

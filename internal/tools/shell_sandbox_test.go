@@ -181,8 +181,7 @@ func TestSeatbeltProfileWithProxyPort(t *testing.T) {
 	profile := buildSeatbeltProfile(policy)
 
 	assert.Contains(t, profile, "network-outbound")
-	assert.Contains(t, profile, "127.0.0.1")
-	assert.Contains(t, profile, "12345")
+	assert.Contains(t, profile, "localhost:12345")
 	assert.NotContains(t, profile, "(deny network*)")
 }
 
@@ -236,10 +235,10 @@ func TestSandboxCommandEnvNoProxy(t *testing.T) {
 		}
 	}
 
-	_, hasHTTP := envMap["HTTP_PROXY"]
-	_, hasHTTPS := envMap["HTTPS_PROXY"]
-	assert.False(t, hasHTTP, "HTTP_PROXY should not be set when proxyPort is 0")
-	assert.False(t, hasHTTPS, "HTTPS_PROXY should not be set when proxyPort is 0")
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"} {
+		_, has := envMap[key]
+		assert.False(t, has, "%s should not be set when proxyPort is 0", key)
+	}
 }
 
 func TestBuildSandboxPolicyMergesConfig(t *testing.T) {

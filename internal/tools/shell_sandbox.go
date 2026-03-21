@@ -293,7 +293,7 @@ func buildSeatbeltProfile(policy ShellSandboxPolicy) string {
 		lines = append(lines, "(allow process-fork)")
 	}
 	if policy.ProxyPort > 0 {
-		lines = append(lines, fmt.Sprintf("(allow network-outbound (remote ip \"127.0.0.1\") (remote tcp \"*:%d\"))", policy.ProxyPort))
+		lines = append(lines, fmt.Sprintf("(allow network-outbound (remote tcp \"localhost:%d\"))", policy.ProxyPort))
 	}
 	for _, path := range allowed {
 		lines = append(lines, fmt.Sprintf("(allow file-read* (subpath %q))", path))

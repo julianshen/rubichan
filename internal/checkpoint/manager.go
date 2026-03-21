@@ -249,8 +249,12 @@ func (m *Manager) restore(cp Checkpoint) error {
 	}
 
 	// In-memory creation checkpoint: file did not exist, remove it.
+	// Treat "already gone" as success (idempotent undo).
 	if cp.OriginalData == nil {
-		return os.Remove(cp.FilePath)
+		if err := os.Remove(cp.FilePath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
 	}
 
 	mode := cp.FileMode
