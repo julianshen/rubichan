@@ -21,6 +21,13 @@ func TestSystemPrompt_ContainsKeyTopics(t *testing.T) {
 	assert.Contains(t, p, "code signing")
 }
 
+func TestSystemPrompt_ContainsAuthoringPatterns(t *testing.T) {
+	p := SystemPrompt()
+	assert.Contains(t, p, "## Thinking Phase")
+	assert.Contains(t, p, "## Anti-Patterns")
+	assert.Contains(t, p, "## Calibration")
+}
+
 func TestRegisterPrompt(t *testing.T) {
 	loader := skills.NewLoader("", "")
 	RegisterPrompt(loader)
