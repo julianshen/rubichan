@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -239,6 +240,29 @@ func TestSandboxCommandEnvNoProxy(t *testing.T) {
 	_, hasHTTPS := envMap["HTTPS_PROXY"]
 	assert.False(t, hasHTTP, "HTTP_PROXY should not be set when proxyPort is 0")
 	assert.False(t, hasHTTPS, "HTTPS_PROXY should not be set when proxyPort is 0")
+}
+
+func TestBuildSandboxPolicyMergesConfig(t *testing.T) {
+	cfg := config.SandboxConfig{
+		Filesystem: config.SandboxFilesystemConfig{
+			AllowWrite: []string{"/opt/custom"},
+			DenyRead:   []string{"/etc/secrets"},
+		},
+		Network: config.SandboxNetworkConfig{ProxyPort: 9999},
+	}
+	policy := BuildSandboxPolicy("/project", cfg)
+
+	assert.Contains(t, policy.WritablePaths, filepath.Clean("/project"))
+	assert.Contains(t, policy.WritablePaths, "/opt/custom")
+	assert.Contains(t, policy.DeniedPaths, "/etc/secrets")
+	assert.Equal(t, 9999, policy.ProxyPort)
+}
+
+func TestBuildSandboxPolicyDefaults(t *testing.T) {
+	policy := BuildSandboxPolicy("/project", config.SandboxConfig{})
+	assert.Contains(t, policy.WritablePaths, filepath.Clean("/project"))
+	assert.Equal(t, 0, policy.ProxyPort)
+	assert.Empty(t, policy.DeniedPaths)
 }
 
 type recordingSandbox struct {

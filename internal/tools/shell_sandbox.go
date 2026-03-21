@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/julianshen/rubichan/internal/config"
 )
 
 // ShellSandbox wraps shell executions in an OS-specific sandbox backend.
@@ -58,6 +60,16 @@ func DefaultShellSandboxPolicy(workDir string) ShellSandboxPolicy {
 		WritablePaths: normalizeSandboxPaths(writable),
 		AllowSubprocs: true,
 	}
+}
+
+// BuildSandboxPolicy creates a ShellSandboxPolicy from defaults plus config overrides.
+// Config paths are appended to defaults, not replacing them.
+func BuildSandboxPolicy(workDir string, cfg config.SandboxConfig) ShellSandboxPolicy {
+	policy := DefaultShellSandboxPolicy(workDir)
+	policy.ProxyPort = cfg.Network.ProxyPort
+	policy.WritablePaths = append(policy.WritablePaths, normalizeSandboxPaths(cfg.Filesystem.AllowWrite)...)
+	policy.DeniedPaths = append(policy.DeniedPaths, normalizeSandboxPaths(cfg.Filesystem.DenyRead)...)
+	return policy
 }
 
 // NewDefaultShellSandbox selects the best available platform sandbox backend.
