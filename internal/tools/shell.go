@@ -126,6 +126,9 @@ func (s *ShellTool) SetSandboxConfig(cfg config.SandboxConfig, proxy *sandbox.Do
 	s.domainProxy = proxy
 }
 
+// Sandbox returns the attached OS-level sandbox, or nil if none is set.
+func (s *ShellTool) Sandbox() ShellSandbox { return s.sandbox }
+
 // SetProcessManager attaches a ProcessManager for background execution support.
 func (s *ShellTool) SetProcessManager(pm *ProcessManager) {
 	s.processManager = pm

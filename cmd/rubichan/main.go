@@ -57,6 +57,7 @@ import (
 	gittools "github.com/julianshen/rubichan/internal/tools/git"
 	httptool "github.com/julianshen/rubichan/internal/tools/http"
 	"github.com/julianshen/rubichan/internal/tools/lsp"
+	toolsandbox "github.com/julianshen/rubichan/internal/tools/sandbox"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/internal/wiki"
@@ -1149,6 +1150,28 @@ func runInteractive() error {
 		shellTool := tools.NewShellTool(cwd, 120*time.Second)
 		shellTool.SetDiffTracker(diffTracker)
 		shellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
+
+		// Sandbox proxy and config wiring
+		var domainProxy *toolsandbox.DomainProxy
+		if cfg.Sandbox.IsEnabled() && len(cfg.Sandbox.Network.AllowedDomains) > 0 {
+			domainProxy = toolsandbox.NewDomainProxy(
+				cfg.Sandbox.Network.AllowedDomains,
+				toolsandbox.WithOnBlocked(func(domain, cmd string) {
+					log.Printf("[sandbox] blocked connection to %s", domain)
+				}),
+			)
+			if _, err := domainProxy.Start(); err != nil {
+				log.Printf("warning: sandbox proxy failed to start: %v", err)
+			} else {
+				defer domainProxy.Stop()
+			}
+		}
+		shellTool.SetSandboxConfig(cfg.Sandbox, domainProxy)
+
+		if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && shellTool.Sandbox() == nil {
+			return fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
+		}
+
 		if err := registry.Register(shellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
@@ -1637,6 +1660,28 @@ func runHeadless() error {
 		headlessShellTool := tools.NewShellTool(cwd, timeoutFlag)
 		headlessShellTool.SetDiffTracker(headlessDiffTracker)
 		headlessShellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
+
+		// Sandbox proxy and config wiring
+		var headlessDomainProxy *toolsandbox.DomainProxy
+		if cfg.Sandbox.IsEnabled() && len(cfg.Sandbox.Network.AllowedDomains) > 0 {
+			headlessDomainProxy = toolsandbox.NewDomainProxy(
+				cfg.Sandbox.Network.AllowedDomains,
+				toolsandbox.WithOnBlocked(func(domain, cmd string) {
+					log.Printf("[sandbox] blocked connection to %s", domain)
+				}),
+			)
+			if _, err := headlessDomainProxy.Start(); err != nil {
+				log.Printf("warning: sandbox proxy failed to start: %v", err)
+			} else {
+				defer headlessDomainProxy.Stop()
+			}
+		}
+		headlessShellTool.SetSandboxConfig(cfg.Sandbox, headlessDomainProxy)
+
+		if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && headlessShellTool.Sandbox() == nil {
+			return fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
+		}
+
 		if err := registry.Register(headlessShellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
