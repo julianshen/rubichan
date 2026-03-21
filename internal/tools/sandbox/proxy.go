@@ -32,6 +32,8 @@ type DomainProxy struct {
 	mu        sync.RWMutex
 	runtime   map[string]bool // session-only additions
 	server    *http.Server
+	stopOnce  sync.Once
+	tunnels   sync.WaitGroup // tracks active CONNECT tunnels
 }
 
 // NewDomainProxy creates a new domain-filtering proxy.
@@ -65,13 +67,18 @@ func (p *DomainProxy) Start() (string, error) {
 
 // Stop gracefully shuts down the proxy. It is safe to call multiple times.
 func (p *DomainProxy) Stop() error {
-	if p.server == nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err := p.server.Shutdown(ctx)
-	p.server = nil
+	var err error
+	p.stopOnce.Do(func() {
+		if p.server == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err = p.server.Shutdown(ctx)
+		// Wait for active CONNECT tunnels to finish (bounded by the
+		// connection deadlines set in handleConnect).
+		p.tunnels.Wait()
+	})
 	return err
 }
 
@@ -196,13 +203,23 @@ func (p *DomainProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	clientBuf.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	clientBuf.Flush()
 
+	// Track tunnel for graceful shutdown.
+	p.tunnels.Add(1)
+
 	// Bidirectional copy.
 	go func() {
-		io.Copy(targetConn, clientConn)
+		defer p.tunnels.Done()
+		done := make(chan struct{})
+		go func() {
+			io.Copy(targetConn, clientConn)
+			close(done)
+		}()
+		go func() {
+			io.Copy(clientConn, targetConn)
+		}()
+		<-done
+		// One direction finished — close both to unblock the other.
 		targetConn.Close()
-	}()
-	go func() {
-		io.Copy(clientConn, targetConn)
 		clientConn.Close()
 	}()
 }

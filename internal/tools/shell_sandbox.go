@@ -77,6 +77,32 @@ func NewDefaultShellSandbox(workDir string) ShellSandbox {
 	return selectShellSandbox(runtime.GOOS, workDir, exec.LookPath, sandboxBackendAvailable)
 }
 
+// NewShellSandboxWithPolicy creates a sandbox backend using the given policy.
+// Used to rebuild the sandbox when the proxy port is known after startup.
+func NewShellSandboxWithPolicy(workDir string, policy ShellSandboxPolicy) ShellSandbox {
+	return selectShellSandboxWithPolicy(runtime.GOOS, workDir, policy, exec.LookPath, sandboxBackendAvailable)
+}
+
+func selectShellSandboxWithPolicy(goos, workDir string, policy ShellSandboxPolicy, lookPath lookPathFunc, probe sandboxProbeFunc) ShellSandbox {
+	switch goos {
+	case "darwin":
+		if binary, err := lookPath("sandbox-exec"); err == nil {
+			if probe != nil && !probe(goos, binary, workDir) {
+				return nil
+			}
+			return &seatbeltSandbox{binary: binary, policy: policy}
+		}
+	case "linux":
+		if binary, err := lookPath("bwrap"); err == nil {
+			if probe != nil && !probe(goos, binary, workDir) {
+				return nil
+			}
+			return &bubblewrapSandbox{binary: binary, policy: policy}
+		}
+	}
+	return nil
+}
+
 type lookPathFunc func(file string) (string, error)
 type sandboxProbeFunc func(goos, binary, workDir string) bool
 

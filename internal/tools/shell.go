@@ -124,6 +124,15 @@ func (s *ShellTool) SetSandbox(sb ShellSandbox) {
 func (s *ShellTool) SetSandboxConfig(cfg config.SandboxConfig, proxy *sandbox.DomainProxy) {
 	s.sandboxCfg = cfg
 	s.domainProxy = proxy
+
+	// If a proxy is running, rebuild the sandbox backend with a policy that
+	// includes the proxy port. Without this, the sandbox blocks the proxy
+	// (Seatbelt won't allow network-outbound, bwrap won't add --share-net).
+	if proxy != nil && proxy.Port() > 0 && s.sandbox != nil {
+		cfg.Network.ProxyPort = proxy.Port()
+		policy := BuildSandboxPolicy(s.workDir, cfg)
+		s.sandbox = NewShellSandboxWithPolicy(s.workDir, policy)
+	}
 }
 
 // Sandbox returns the attached OS-level sandbox, or nil if none is set.
