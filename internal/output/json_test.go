@@ -9,6 +9,8 @@ import (
 )
 
 func TestJSONFormatterBasic(t *testing.T) {
+	t.Parallel()
+
 	f := NewJSONFormatter()
 	result := &RunResult{
 		Prompt:     "say hello",
@@ -33,6 +35,8 @@ func TestJSONFormatterBasic(t *testing.T) {
 }
 
 func TestJSONFormatterWithToolCalls(t *testing.T) {
+	t.Parallel()
+
 	f := NewJSONFormatter()
 	result := &RunResult{
 		Prompt:   "read file",
@@ -58,6 +62,8 @@ func TestJSONFormatterWithToolCalls(t *testing.T) {
 }
 
 func TestJSONFormatterWithError(t *testing.T) {
+	t.Parallel()
+
 	f := NewJSONFormatter()
 	result := &RunResult{
 		Prompt:     "fail",
@@ -79,6 +85,8 @@ func TestJSONFormatterWithError(t *testing.T) {
 }
 
 func TestJSONFormatterWithSecurityFindings(t *testing.T) {
+	t.Parallel()
+
 	f := NewJSONFormatter()
 	result := &RunResult{
 		Prompt:     "review",
@@ -108,6 +116,8 @@ func TestJSONFormatterWithSecurityFindings(t *testing.T) {
 }
 
 func TestJSONFormatterNoSecurityFields(t *testing.T) {
+	t.Parallel()
+
 	f := NewJSONFormatter()
 	result := &RunResult{
 		Prompt:     "hello",

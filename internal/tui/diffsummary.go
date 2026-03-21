@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
 )
 
 var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file(?:\(s\)|s)?\s+changed`)

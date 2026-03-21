@@ -30,8 +30,14 @@ func New(baseURL, apiKey string) *Provider {
 	return &Provider{
 		baseURL: baseURL,
 		apiKey:  apiKey,
-		client:  &http.Client{},
+		client:  provider.NewHTTPClient(),
 	}
+}
+
+// SetHTTPClient replaces the default HTTP client. This is intended for
+// testing with custom transports (e.g. in-memory mem:// servers).
+func (p *Provider) SetHTTPClient(c *http.Client) {
+	p.client = c
 }
 
 // apiRequest is the request body sent to the Anthropic API.

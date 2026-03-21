@@ -97,7 +97,10 @@ func TestProcessManagerReadOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for the process to exit and output to be captured.
-	time.Sleep(500 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		_, status, _ := pm.ReadOutput(id)
+		return status == ProcessExited
+	}, 5*time.Second, 50*time.Millisecond)
 
 	output, status, err := pm.ReadOutput(id)
 	require.NoError(t, err)
@@ -135,8 +138,11 @@ func TestProcessManagerWriteStdin(t *testing.T) {
 	err = pm.WriteStdin(id, "hello from stdin\n")
 	require.NoError(t, err)
 
-	// Give cat time to echo the input back.
-	time.Sleep(300 * time.Millisecond)
+	// Wait for cat to echo the input back.
+	require.Eventually(t, func() bool {
+		out, _, _ := pm.ReadOutput(id)
+		return strings.Contains(out, "hello from stdin")
+	}, 5*time.Second, 50*time.Millisecond)
 
 	output, status, err := pm.ReadOutput(id)
 	require.NoError(t, err)
@@ -157,7 +163,10 @@ func TestProcessManagerWriteStdinExitedProcess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for process to exit.
-	time.Sleep(500 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		_, status, _ := pm.ReadOutput(id)
+		return status == ProcessExited
+	}, 5*time.Second, 50*time.Millisecond)
 
 	err = pm.WriteStdin(id, "data")
 	require.Error(t, err)
@@ -266,7 +275,15 @@ func TestProcessManagerExecLimitCountsOnlyRunning(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for it to exit.
-	time.Sleep(500 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		running := 0
+		for _, p := range pm.List() {
+			if p.Status == ProcessRunning {
+				running++
+			}
+		}
+		return running == 0
+	}, 5*time.Second, 50*time.Millisecond)
 
 	// Start two long processes — both should succeed because the first exited.
 	_, _, err = pm.Exec(ctx, "sleep 60")
@@ -354,7 +371,10 @@ func TestProcessManagerReadOutputExitCode(t *testing.T) {
 	id, _, err := pm.Exec(ctx, "sh -c 'exit 42'")
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		_, status, _ := pm.ReadOutput(id)
+		return status == ProcessExited
+	}, 5*time.Second, 50*time.Millisecond)
 
 	_, status, err := pm.ReadOutput(id)
 	require.NoError(t, err)
@@ -387,7 +407,10 @@ func TestProcessManagerOutputBufferWrap(t *testing.T) {
 	id, _, err := pm.Exec(ctx, "echo 'this is a long line that exceeds the buffer capacity for sure'")
 	require.NoError(t, err)
 
-	time.Sleep(500 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		_, status, _ := pm.ReadOutput(id)
+		return status == ProcessExited
+	}, 5*time.Second, 50*time.Millisecond)
 
 	output, _, err := pm.ReadOutput(id)
 	require.NoError(t, err)

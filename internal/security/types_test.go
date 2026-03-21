@@ -10,6 +10,8 @@ import (
 )
 
 func TestSeverityString(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		severity Severity
 		expected string
@@ -29,6 +31,8 @@ func TestSeverityString(t *testing.T) {
 }
 
 func TestSeverityCompare(t *testing.T) {
+	t.Parallel()
+
 	// Verify strict ordering: Critical > High > Medium > Low > Info.
 	assert.Greater(t, SeverityRank(SeverityCritical), SeverityRank(SeverityHigh))
 	assert.Greater(t, SeverityRank(SeverityHigh), SeverityRank(SeverityMedium))
@@ -47,6 +51,8 @@ func TestSeverityCompare(t *testing.T) {
 }
 
 func TestConfidenceString(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		confidence Confidence
 		expected   string
@@ -64,6 +70,8 @@ func TestConfidenceString(t *testing.T) {
 }
 
 func TestCategoryValues(t *testing.T) {
+	t.Parallel()
+
 	categories := AllCategories()
 
 	// Must contain exactly 13 categories.
@@ -95,6 +103,8 @@ func TestCategoryValues(t *testing.T) {
 }
 
 func TestCategoryNoDuplicates(t *testing.T) {
+	t.Parallel()
+
 	categories := AllCategories()
 	seen := make(map[Category]bool, len(categories))
 	for _, c := range categories {
@@ -104,6 +114,8 @@ func TestCategoryNoDuplicates(t *testing.T) {
 }
 
 func TestFindingValidation(t *testing.T) {
+	t.Parallel()
+
 	f := Finding{
 		ID:          "SEC-001",
 		Scanner:     "secret-scanner",
@@ -147,6 +159,8 @@ func TestFindingValidation(t *testing.T) {
 }
 
 func TestReportSummary(t *testing.T) {
+	t.Parallel()
+
 	report := &Report{
 		Findings: []Finding{
 			{Severity: SeverityCritical},
@@ -178,6 +192,8 @@ func TestReportSummary(t *testing.T) {
 }
 
 func TestReportSummaryEmpty(t *testing.T) {
+	t.Parallel()
+
 	report := &Report{}
 	summary := report.Summary()
 
@@ -191,6 +207,8 @@ func TestReportSummaryEmpty(t *testing.T) {
 }
 
 func TestScanErrorString(t *testing.T) {
+	t.Parallel()
+
 	t.Run("non-fatal error", func(t *testing.T) {
 		err := ScanError{
 			Scanner: "secret-scanner",
@@ -211,6 +229,8 @@ func TestScanErrorString(t *testing.T) {
 }
 
 func TestScanErrorImplementsError(t *testing.T) {
+	t.Parallel()
+
 	var err error = ScanError{
 		Scanner: "test",
 		Err:     errors.New("test error"),
@@ -220,6 +240,8 @@ func TestScanErrorImplementsError(t *testing.T) {
 }
 
 func TestAttackChainSeverity(t *testing.T) {
+	t.Parallel()
+
 	chain := AttackChain{
 		ID:       "chain-001",
 		Title:    "SQL injection to admin access",
@@ -255,6 +277,8 @@ func TestAttackChainSeverity(t *testing.T) {
 }
 
 func TestScanTarget(t *testing.T) {
+	t.Parallel()
+
 	target := ScanTarget{
 		RootDir:         "/project",
 		Files:           []string{"main.go", "handler.go"},
@@ -267,6 +291,8 @@ func TestScanTarget(t *testing.T) {
 }
 
 func TestAnalysisChunk(t *testing.T) {
+	t.Parallel()
+
 	chunk := AnalysisChunk{
 		File:      "handler.go",
 		StartLine: 10,
@@ -284,6 +310,8 @@ func TestAnalysisChunk(t *testing.T) {
 }
 
 func TestScanStats(t *testing.T) {
+	t.Parallel()
+
 	stats := ScanStats{
 		Duration:       5 * time.Second,
 		FilesScanned:   150,
@@ -300,6 +328,8 @@ func TestScanStats(t *testing.T) {
 }
 
 func TestLocationFields(t *testing.T) {
+	t.Parallel()
+
 	loc := Location{
 		File:      "internal/auth/jwt.go",
 		StartLine: 100,

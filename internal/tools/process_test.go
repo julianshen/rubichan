@@ -144,7 +144,10 @@ func TestProcessToolReadOutput(t *testing.T) {
 	require.Len(t, procs, 1)
 	pid := procs[0].ID
 
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		_, status, _ := pm.ReadOutput(pid)
+		return status == ProcessExited
+	}, 5*time.Second, 50*time.Millisecond)
 
 	readInput, _ := json.Marshal(map[string]string{
 		"operation":  "read_output",

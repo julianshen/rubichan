@@ -13,15 +13,21 @@ import (
 )
 
 func TestDepScannerName(t *testing.T) {
+	t.Parallel()
+
 	s := NewDepScanner(nil)
 	assert.Equal(t, "dependency-audit", s.Name())
 }
 
 func TestDepScannerInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ security.StaticScanner = NewDepScanner(nil)
 }
 
 func TestDepScannerParsesGoSum(t *testing.T) {
+	t.Parallel()
+
 	// Mock OSV server that returns a vulnerability for "golang.org/x/text".
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req osvQueryRequest
@@ -99,6 +105,8 @@ golang.org/x/net v0.0.0-20220722155237-a158d28d115b/go.mod h1:XRhObCWvk6IyKnWLug
 }
 
 func TestDepScannerParsesPackageLock(t *testing.T) {
+	t.Parallel()
+
 	// Mock OSV server that returns no vulnerabilities.
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -136,6 +144,8 @@ func TestDepScannerParsesPackageLock(t *testing.T) {
 }
 
 func TestDepScannerHandlesOSVUnavailable(t *testing.T) {
+	t.Parallel()
+
 	// Mock server that returns 503.
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -161,6 +171,8 @@ golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=
 }
 
 func TestDepScannerNoLockfiles(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "main.go", `package main
 func main() {}
@@ -173,6 +185,8 @@ func main() {}
 }
 
 func TestDepScannerNilClient(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "go.sum", `golang.org/x/text v0.3.7 h1:olpwvP2KacW1ZWvsR7uQhoyTYvKAupfQrRGBFM352Gk=
 golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=
@@ -186,6 +200,8 @@ golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=
 }
 
 func TestDepScannerParsesRequirementsTxt(t *testing.T) {
+	t.Parallel()
+
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req osvQueryRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -238,6 +254,8 @@ flask==2.3.0
 }
 
 func TestDepScannerParsesGemfileLock(t *testing.T) {
+	t.Parallel()
+
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
@@ -271,6 +289,8 @@ DEPENDENCIES
 }
 
 func TestDepScannerParsesCargoLock(t *testing.T) {
+	t.Parallel()
+
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
@@ -299,6 +319,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 }
 
 func TestDepScannerParsesPodfileLock(t *testing.T) {
+	t.Parallel()
+
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(osvQueryResponse{})
@@ -329,6 +351,8 @@ SPEC REPOS:
 }
 
 func TestDepScannerPackageLockV1Dependencies(t *testing.T) {
+	t.Parallel()
+
 	// Test parsing the older lockfileVersion 1 format with "dependencies" field.
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -362,6 +386,8 @@ func TestDepScannerPackageLockV1Dependencies(t *testing.T) {
 }
 
 func TestDepScannerContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "go.sum", `golang.org/x/text v0.3.7 h1:olpwvP2KacW1ZWvsR7uQhoyTYvKAupfQrRGBFM352Gk=
 `)
@@ -375,6 +401,8 @@ func TestDepScannerContextCancellation(t *testing.T) {
 }
 
 func TestDepScannerClassifyOSVSeverityAllRanges(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		score    string
@@ -401,6 +429,8 @@ func TestDepScannerClassifyOSVSeverityAllRanges(t *testing.T) {
 }
 
 func TestDepScannerClassifyOSVSeverityNoCVSS(t *testing.T) {
+	t.Parallel()
+
 	// No severity entries at all -> default to Medium.
 	vuln := osvVuln{}
 	assert.Equal(t, security.SeverityMedium, classifyOSVSeverity(vuln))
@@ -413,6 +443,8 @@ func TestDepScannerClassifyOSVSeverityNoCVSS(t *testing.T) {
 }
 
 func TestDepScannerUnquoteTOMLVariants(t *testing.T) {
+	t.Parallel()
+
 	// Quoted value.
 	assert.Equal(t, "serde", unquoteTOML(`"serde"`))
 	// Unquoted value (no surrounding quotes).
@@ -426,6 +458,8 @@ func TestDepScannerUnquoteTOMLVariants(t *testing.T) {
 }
 
 func TestDepScannerGoSumEdgeCases(t *testing.T) {
+	t.Parallel()
+
 	// Test with empty lines, short lines, duplicates.
 	data := []byte(`
 golang.org/x/text v0.3.7 h1:abc=
@@ -441,6 +475,8 @@ golang.org/x/net v0.1.0 h1:xyz=
 }
 
 func TestDepScannerQueryOSVInvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	// Mock server that returns invalid JSON body.
 	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -463,6 +499,8 @@ func TestDepScannerQueryOSVInvalidJSON(t *testing.T) {
 }
 
 func TestDepScannerPackageLockEmptyVersion(t *testing.T) {
+	t.Parallel()
+
 	// Test that packages with empty version are skipped.
 	data := []byte(`{
 		"packages": {

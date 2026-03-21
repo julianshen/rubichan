@@ -10,6 +10,8 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 	assert.Equal(t, "anthropic", cfg.Provider.Default)
 	assert.Equal(t, "claude-sonnet-4-5", cfg.Provider.Model)
@@ -23,6 +25,8 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestLoadFromFile(t *testing.T) {
+	t.Parallel()
+
 	tomlContent := `
 [provider]
 default = "openai"
@@ -50,6 +54,8 @@ context_budget = 50000
 }
 
 func TestLoadOpenAICompatibleProviders(t *testing.T) {
+	t.Parallel()
+
 	tomlContent := `
 [provider]
 default = "openrouter"
@@ -81,6 +87,8 @@ extra_headers = { HTTP-Referer = "https://github.com/user/rubichan" }
 }
 
 func TestLoadMissingFileReturnsDefaults(t *testing.T) {
+	t.Parallel()
+
 	cfg, err := Load("/nonexistent/path/config.toml")
 	require.NoError(t, err)
 	assert.Equal(t, "anthropic", cfg.Provider.Default)
@@ -88,6 +96,8 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 }
 
 func TestLoadInvalidTOML(t *testing.T) {
+	t.Parallel()
+
 	tmpFile := filepath.Join(t.TempDir(), "bad.toml")
 	require.NoError(t, os.WriteFile(tmpFile, []byte("[invalid toml..."), 0644))
 
@@ -97,6 +107,8 @@ func TestLoadInvalidTOML(t *testing.T) {
 }
 
 func TestConfigWithSkillsSection(t *testing.T) {
+	t.Parallel()
+
 	tomlContent := `
 [skills]
 registry_url = "https://custom.registry.dev"
@@ -124,6 +136,8 @@ approved_skills = ["code-review", "doc-gen"]
 }
 
 func TestConfigSkillsDefaults(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 	assert.Equal(t, "https://registry.rubichan.dev", cfg.Skills.RegistryURL)
 	assert.Nil(t, cfg.Skills.ApprovedSkills)
@@ -136,6 +150,8 @@ func TestConfigSkillsDefaults(t *testing.T) {
 }
 
 func TestOllamaConfig(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [provider]
 default = "ollama"
@@ -154,6 +170,8 @@ base_url = "http://localhost:11434"
 }
 
 func TestMCPServersConfig(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [[mcp.servers]]
 name = "filesystem"
@@ -184,6 +202,8 @@ url = "http://localhost:3001/sse"
 }
 
 func TestBrowserConfig(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [browser]
 preferred_backend = "native"
@@ -201,6 +221,8 @@ artifact_dir = ".rubichan/browser-artifacts"
 }
 
 func TestMCPServerConfigValidate(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		cfg     MCPServerConfig
@@ -255,6 +277,8 @@ func TestMCPServerConfigValidate(t *testing.T) {
 }
 
 func TestLoadMCPServerValidationError(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [[mcp.servers]]
 name = "broken"
@@ -269,6 +293,8 @@ transport = "stdio"
 }
 
 func TestSecurityConfigDefaults(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 	assert.Equal(t, "high", cfg.Security.FailOn)
 	assert.False(t, cfg.Security.EnableLLMAnalysis)
@@ -277,6 +303,8 @@ func TestSecurityConfigDefaults(t *testing.T) {
 }
 
 func TestSecurityConfigFromTOML(t *testing.T) {
+	t.Parallel()
+
 	tomlContent := `
 [security]
 fail_on = "critical"
@@ -296,6 +324,8 @@ exclude_patterns = ["vendor/**", "testdata/**"]
 }
 
 func TestConfigSkillsApproved(t *testing.T) {
+	t.Parallel()
+
 	tomlContent := `
 [skills]
 approved_skills = ["lint-fixer", "test-gen", "security-scan"]
@@ -317,6 +347,8 @@ approved_skills = ["lint-fixer", "test-gen", "security-scan"]
 }
 
 func TestSaveAndReload(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
@@ -338,11 +370,15 @@ func TestSaveAndReload(t *testing.T) {
 }
 
 func TestTrustRulesDefaultEmpty(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 	assert.Nil(t, cfg.Agent.TrustRules)
 }
 
 func TestTrustRulesFromTOML(t *testing.T) {
+	t.Parallel()
+
 	tomlContent := `
 [agent]
 max_turns = 50
@@ -384,6 +420,8 @@ action = "allow"
 }
 
 func TestSaveCreatesDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sub", "dir", "config.toml")
 
@@ -395,6 +433,8 @@ func TestSaveCreatesDirectory(t *testing.T) {
 }
 
 func TestConfigAgentDefinitions(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [provider]
 default = "anthropic"
@@ -426,6 +466,8 @@ max_depth = 2
 }
 
 func TestConfigAgentDefinitionsMultiple(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [agent]
 max_turns = 10
@@ -451,11 +493,15 @@ model = "claude-sonnet-4-5"
 }
 
 func TestConfigAgentDefinitionsDefaultEmpty(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 	assert.Nil(t, cfg.Agent.Definitions)
 }
 
 func TestConfigCacheSection(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [provider]
 default = "ollama"
@@ -473,6 +519,8 @@ ollama_keep_alive = "15m"
 }
 
 func TestConfigPermissionsSection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`
@@ -501,6 +549,8 @@ deny_patterns = [".env"]
 }
 
 func TestWorktreeConfigFromTOML(t *testing.T) {
+	t.Parallel()
+
 	tomlData := `
 [worktree]
 max_count = 10
@@ -519,6 +569,8 @@ auto_cleanup = false
 }
 
 func TestConfigHooksSection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`
@@ -550,6 +602,8 @@ command = "echo {command}"
 }
 
 func TestConfigLSPSection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`
@@ -568,6 +622,8 @@ auto_install = false
 }
 
 func TestConfigLSPDefaults(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`
@@ -582,6 +638,8 @@ default = "anthropic"
 }
 
 func TestConfigSubagentSettings(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`
@@ -600,6 +658,8 @@ max_requests_per_minute = 120
 }
 
 func TestSandboxConfigDefaults(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 	assert.False(t, cfg.Sandbox.IsEnabled())
 	assert.True(t, cfg.Sandbox.IsAllowUnsandboxedCommands())
@@ -611,6 +671,8 @@ func TestSandboxConfigDefaults(t *testing.T) {
 }
 
 func TestSandboxConfigFromTOML(t *testing.T) {
+	t.Parallel()
+
 	tomlContent := `
 [sandbox]
 enabled = true
@@ -640,6 +702,8 @@ deny_read = ["/etc/shadow", "/root"]
 }
 
 func TestSandboxConfigValidate(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		cfg     SandboxConfig

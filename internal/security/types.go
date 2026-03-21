@@ -220,10 +220,11 @@ type LLMAnalyzer interface {
 
 // EngineConfig controls the behavior of the security engine.
 type EngineConfig struct {
-	MaxLLMChunks    int      // maximum number of chunks to send to LLM analyzers
-	MinRiskScore    int      // minimum risk score for a chunk to be analyzed
-	ExcludePatterns []string // file patterns to exclude from scanning
-	Concurrency     int      // maximum concurrent scanner/analyzer goroutines
+	MaxLLMChunks    int           // maximum number of chunks to send to LLM analyzers
+	MinRiskScore    int           // minimum risk score for a chunk to be analyzed
+	ExcludePatterns []string      // file patterns to exclude from scanning
+	Concurrency     int           // maximum concurrent scanner/analyzer goroutines
+	ScannerTimeout  time.Duration // per-scanner timeout; zero means 30s default
 }
 
 // OutputFormatter is the interface for rendering a security report into a

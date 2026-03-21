@@ -32,8 +32,14 @@ type Provider struct {
 func New(baseURL string) *Provider {
 	return &Provider{
 		baseURL: baseURL,
-		client:  &http.Client{},
+		client:  provider.NewHTTPClient(),
 	}
+}
+
+// SetHTTPClient replaces the default HTTP client. This is intended for
+// testing with custom transports (e.g. in-memory mem:// servers).
+func (p *Provider) SetHTTPClient(c *http.Client) {
+	p.client = c
 }
 
 // SetKeepAlive configures the keep_alive duration sent with each request.

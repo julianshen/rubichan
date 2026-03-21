@@ -10,15 +10,21 @@ import (
 )
 
 func TestConfigScannerName(t *testing.T) {
+	t.Parallel()
+
 	s := NewConfigScanner()
 	assert.Equal(t, "config", s.Name())
 }
 
 func TestConfigScannerInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ security.StaticScanner = NewConfigScanner()
 }
 
 func TestConfigScannerDockerfileRoot(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	t.Run("explicit USER root", func(t *testing.T) {
@@ -91,6 +97,8 @@ CMD ["app"]
 }
 
 func TestConfigScannerK8sPrivileged(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "deploy.yaml", `apiVersion: apps/v1
 kind: Deployment
@@ -122,6 +130,8 @@ spec:
 }
 
 func TestConfigScannerK8sHostNetwork(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "pod.yaml", `apiVersion: v1
 kind: Pod
@@ -149,6 +159,8 @@ spec:
 }
 
 func TestConfigScannerCISecrets(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, ".github/workflows/ci.yml", `name: CI
 on: push
@@ -178,6 +190,8 @@ jobs:
 }
 
 func TestConfigScannerCISecretsIgnoresReferences(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, ".github/workflows/safe.yml", `name: CI
 on: push
@@ -204,6 +218,8 @@ jobs:
 }
 
 func TestConfigScannerDebugMode(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "config.yaml", `server:
   port: 8080
@@ -225,6 +241,8 @@ func TestConfigScannerDebugMode(t *testing.T) {
 }
 
 func TestConfigScannerPermissiveCORS(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "server.yaml", `server:
   port: 8080
@@ -246,6 +264,8 @@ func TestConfigScannerPermissiveCORS(t *testing.T) {
 }
 
 func TestConfigScannerContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Dockerfile", "FROM ubuntu:22.04\nUSER root\n")
 
@@ -259,6 +279,8 @@ func TestConfigScannerContextCancellation(t *testing.T) {
 }
 
 func TestConfigScannerK8sHostPID(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "pod.yaml", `apiVersion: v1
 kind: Pod
@@ -286,6 +308,8 @@ spec:
 }
 
 func TestConfigScannerK8sRunAsRoot(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "deploy.yaml", `apiVersion: apps/v1
 kind: Deployment
@@ -316,6 +340,8 @@ spec:
 }
 
 func TestConfigScannerGitLabCIConfig(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, ".gitlab-ci.yml", `stages:
   - build
@@ -340,6 +366,8 @@ build:
 }
 
 func TestConfigScannerCircleCIConfig(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, ".circleci/config.yml", `version: 2.1
 jobs:
@@ -366,6 +394,8 @@ jobs:
 }
 
 func TestConfigScannerExtractConfigValueEquals(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Use a GitHub Actions workflow to trigger CI config scanning,
 	// with key=value format that exercises the equals path.
@@ -394,6 +424,8 @@ jobs:
 }
 
 func TestConfigScannerIsConfigFileVariousExtensions(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// Create config files with various extensions that have debug mode.
@@ -426,6 +458,8 @@ func TestConfigScannerIsConfigFileVariousExtensions(t *testing.T) {
 }
 
 func TestConfigScannerFindLineNumberNoMatch(t *testing.T) {
+	t.Parallel()
+
 	// When the regex doesn't match, findLineNumber returns 1.
 	pat := dockerUserRootPat
 	result := findLineNumber("no match here", pat)
@@ -433,6 +467,8 @@ func TestConfigScannerFindLineNumberNoMatch(t *testing.T) {
 }
 
 func TestConfigScannerCleanFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "Dockerfile", `FROM ubuntu:22.04
 RUN apt-get update

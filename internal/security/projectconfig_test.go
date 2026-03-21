@@ -10,6 +10,8 @@ import (
 )
 
 func TestLoadProjectConfig_ValidYAML(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	yaml := `
 rules:
@@ -51,6 +53,8 @@ ci:
 }
 
 func TestLoadProjectConfig_MissingFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	cfg, err := LoadProjectConfig(dir)
@@ -59,6 +63,8 @@ func TestLoadProjectConfig_MissingFile(t *testing.T) {
 }
 
 func TestLoadProjectConfig_EmptyFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".security.yaml"), []byte(""), 0o644))
 
@@ -68,6 +74,8 @@ func TestLoadProjectConfig_EmptyFile(t *testing.T) {
 }
 
 func TestLoadProjectConfig_InvalidYAML(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".security.yaml"), []byte("{{invalid"), 0o644))
 
@@ -76,6 +84,8 @@ func TestLoadProjectConfig_InvalidYAML(t *testing.T) {
 }
 
 func TestApplyOverrides_ChangesSeverity(t *testing.T) {
+	t.Parallel()
+
 	findings := []Finding{
 		{ID: "SEC-001", Severity: SeverityHigh, Title: "High finding"},
 		{ID: "SEC-002", Severity: SeverityMedium, Title: "Medium finding"},
@@ -91,6 +101,8 @@ func TestApplyOverrides_ChangesSeverity(t *testing.T) {
 }
 
 func TestApplyOverrides_NoMatches(t *testing.T) {
+	t.Parallel()
+
 	findings := []Finding{
 		{ID: "SEC-001", Severity: SeverityHigh, Title: "High finding"},
 	}
@@ -104,12 +116,16 @@ func TestApplyOverrides_NoMatches(t *testing.T) {
 }
 
 func TestApplyOverrides_EmptyInputs(t *testing.T) {
+	t.Parallel()
+
 	assert.Equal(t, 0, ApplyOverrides(nil, nil))
 	assert.Equal(t, 0, ApplyOverrides([]Finding{}, nil))
 	assert.Equal(t, 0, ApplyOverrides(nil, []Override{{FindingID: "x"}}))
 }
 
 func TestLoadProjectConfig_InvalidRuleSeverity(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	yaml := `
 rules:
@@ -127,6 +143,8 @@ rules:
 }
 
 func TestLoadProjectConfig_InvalidOverrideSeverity(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	yaml := `
 overrides:
@@ -142,6 +160,8 @@ overrides:
 }
 
 func TestLoadProjectConfig_MissingRuleID(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	yaml := `
 rules:

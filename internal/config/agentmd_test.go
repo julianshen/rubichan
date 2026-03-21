@@ -11,6 +11,8 @@ import (
 )
 
 func TestLoadAgentMD_FileExists(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	content := "## Project Rules\n\nUse TDD always.\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte(content), 0o644))
@@ -21,6 +23,8 @@ func TestLoadAgentMD_FileExists(t *testing.T) {
 }
 
 func TestLoadAgentMD_FileMissing(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	result, err := LoadAgentMD(dir)
@@ -29,6 +33,8 @@ func TestLoadAgentMD_FileMissing(t *testing.T) {
 }
 
 func TestLoadAgentMD_EmptyFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte(""), 0o644))
 
@@ -38,6 +44,8 @@ func TestLoadAgentMD_EmptyFile(t *testing.T) {
 }
 
 func TestLoadIdentityMD_FileExists(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	content := "# Identity\nRuby\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte(content), 0o644))
@@ -48,6 +56,8 @@ func TestLoadIdentityMD_FileExists(t *testing.T) {
 }
 
 func TestLoadIdentityMD_FileMissing(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	result, err := LoadIdentityMD(dir)
@@ -56,6 +66,8 @@ func TestLoadIdentityMD_FileMissing(t *testing.T) {
 }
 
 func TestLoadSoulMD_FileExists(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	content := "# Soul\nBe useful.\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte(content), 0o644))
@@ -66,6 +78,8 @@ func TestLoadSoulMD_FileExists(t *testing.T) {
 }
 
 func TestLoadSoulMD_FileMissing(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	result, err := LoadSoulMD(dir)
@@ -74,6 +88,8 @@ func TestLoadSoulMD_FileMissing(t *testing.T) {
 }
 
 func TestLoadIdentityMD_RejectsSymlink(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink behavior requires elevated privileges on Windows")
 	}
@@ -91,6 +107,8 @@ func TestLoadIdentityMD_RejectsSymlink(t *testing.T) {
 }
 
 func TestLoadAgentMDWithHooks(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("---\nhooks:\n  - event: post_edit\n    pattern: \"*.go\"\n    command: \"gofmt -w {file}\"\n  - event: pre_shell\n    command: \"echo {command}\"\n---\n\n# Project Instructions\nUse Go.\n"), 0644)
 
@@ -105,6 +123,8 @@ func TestLoadAgentMDWithHooks(t *testing.T) {
 }
 
 func TestLoadAgentMDWithHooksNoFrontmatter(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("# Just markdown\nNo frontmatter here.\n"), 0644)
 
@@ -115,6 +135,8 @@ func TestLoadAgentMDWithHooksNoFrontmatter(t *testing.T) {
 }
 
 func TestLoadAgentMDWithHooksNoFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	body, hooks, err := LoadAgentMDWithHooks(dir)
 	require.NoError(t, err)
@@ -123,6 +145,8 @@ func TestLoadAgentMDWithHooksNoFile(t *testing.T) {
 }
 
 func TestLoadAgentMDStripsHookFrontmatter(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("---\nhooks:\n  - event: post_edit\n    command: \"test\"\n---\n\n# Instructions\n"), 0644)
 

@@ -129,8 +129,8 @@ var (
 
 	// Approval option key styling.
 	styleApprovalKey = lipgloss.NewStyle().
-			Foreground(colorPrimaryBold).
-			Bold(true)
+				Foreground(colorPrimaryBold).
+				Bold(true)
 
 	styleApprovalLabel = lipgloss.NewStyle().
 				Foreground(colorTextNormal)

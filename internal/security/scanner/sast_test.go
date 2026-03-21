@@ -10,15 +10,21 @@ import (
 )
 
 func TestSASTScannerName(t *testing.T) {
+	t.Parallel()
+
 	s := NewSASTScanner()
 	assert.Equal(t, "sast", s.Name())
 }
 
 func TestSASTScannerInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ security.StaticScanner = NewSASTScanner()
 }
 
 func TestSASTDetectsSQLInjectionGo(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "handler.go", `package handler
 
@@ -49,6 +55,8 @@ func GetUser(db *sql.DB, name string) {
 }
 
 func TestSASTDetectsCommandInjectionGo(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "run.go", `package run
 
@@ -77,6 +85,8 @@ func RunCommand(input string) {
 }
 
 func TestSASTDetectsWeakCryptoGo(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "hash.go", `package hash
 
@@ -109,6 +119,8 @@ func Hash(data []byte) string {
 }
 
 func TestSASTDetectsPythonSQLInjection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "db.py", `import sqlite3
 
@@ -137,6 +149,8 @@ def get_user(name):
 }
 
 func TestSASTDetectsJSXSS(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Test detects unsafe DOM manipulation patterns in JavaScript
 	writeFile(t, dir, "app.js", "function renderContent(userInput) {\n"+
@@ -162,6 +176,8 @@ func TestSASTDetectsJSXSS(t *testing.T) {
 }
 
 func TestSASTSkipsUnsupportedLanguage(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "main.rb", `
 def get_user(name)
@@ -176,6 +192,8 @@ end
 }
 
 func TestSASTEmptyDir(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	s := NewSASTScanner()
@@ -185,6 +203,8 @@ func TestSASTEmptyDir(t *testing.T) {
 }
 
 func TestSASTContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "main.go", `package main
 func main() {}
@@ -200,6 +220,8 @@ func main() {}
 }
 
 func TestSASTDetectsGoPathTraversal(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "files.go", `package files
 
@@ -228,6 +250,8 @@ func ReadUserFile(path string) {
 }
 
 func TestSASTDetectsPythonCommandInjection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "run.py", `import os
 import subprocess
@@ -256,6 +280,8 @@ def run_shell(cmd):
 }
 
 func TestSASTDetectsTSXXSS(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "component.tsx", `function renderContent(userInput: string) {
     const div = document.getElementById("output");
@@ -279,6 +305,8 @@ func TestSASTDetectsTSXXSS(t *testing.T) {
 }
 
 func TestSASTDetectsJSXXSS(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "component.jsx", `function renderContent(userInput) {
     const div = document.getElementById("output");
@@ -301,6 +329,8 @@ func TestSASTDetectsJSXXSS(t *testing.T) {
 }
 
 func TestSASTDetectsJSSQLInjection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "db.js", `function getUser(name) {
     const result = db.query("SELECT * FROM users WHERE name = '" + name + "'");
@@ -324,6 +354,8 @@ func TestSASTDetectsJSSQLInjection(t *testing.T) {
 }
 
 func TestSASTDetectsTSSQLInjection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "db.ts", `function getUser(name: string) {
     const result = db.query("SELECT * FROM users WHERE name = '" + name + "'");
@@ -346,6 +378,8 @@ func TestSASTDetectsTSSQLInjection(t *testing.T) {
 }
 
 func TestSASTScannerUnreadableFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	s := NewSASTScanner()
@@ -359,6 +393,8 @@ func TestSASTScannerUnreadableFile(t *testing.T) {
 }
 
 func TestSASTScannerCleanGoFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "clean.go", `package clean
 

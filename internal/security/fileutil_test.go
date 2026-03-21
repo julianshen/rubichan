@@ -11,6 +11,8 @@ import (
 )
 
 func TestCollectFilesReturnsTargetFiles(t *testing.T) {
+	t.Parallel()
+
 	target := ScanTarget{
 		RootDir: "/unused",
 		Files:   []string{"a.go", "b.py", "c.txt"},
@@ -21,6 +23,8 @@ func TestCollectFilesReturnsTargetFiles(t *testing.T) {
 }
 
 func TestCollectFilesFiltersTargetFilesByExtension(t *testing.T) {
+	t.Parallel()
+
 	target := ScanTarget{
 		RootDir: "/unused",
 		Files:   []string{"a.go", "b.py", "c.txt", "d.go"},
@@ -31,6 +35,8 @@ func TestCollectFilesFiltersTargetFilesByExtension(t *testing.T) {
 }
 
 func TestCollectFilesWalksDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "main.go", "package main")
 	writeTestFile(t, dir, "lib.py", "print('hello')")
@@ -43,6 +49,8 @@ func TestCollectFilesWalksDirectory(t *testing.T) {
 }
 
 func TestCollectFilesWithExtensionFilter(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "main.go", "package main")
 	writeTestFile(t, dir, "lib.py", "print('hello')")
@@ -55,6 +63,8 @@ func TestCollectFilesWithExtensionFilter(t *testing.T) {
 }
 
 func TestCollectFilesRespectsExcludePatterns(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "main.go", "package main")
 	writeTestFile(t, dir, "vendor/dep.go", "package dep")
@@ -70,6 +80,8 @@ func TestCollectFilesRespectsExcludePatterns(t *testing.T) {
 }
 
 func TestCollectFilesExcludePatternsWithExtensions(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "main.go", "package main")
 	writeTestFile(t, dir, "test.go", "package main")
@@ -87,6 +99,8 @@ func TestCollectFilesExcludePatternsWithExtensions(t *testing.T) {
 }
 
 func TestCollectFilesEmptyDir(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	files, err := CollectFiles(ScanTarget{RootDir: dir}, nil)
 	require.NoError(t, err)
@@ -94,6 +108,8 @@ func TestCollectFilesEmptyDir(t *testing.T) {
 }
 
 func TestCollectFilesSubdirectories(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTestFile(t, dir, "a/b/c.go", "package c")
 	writeTestFile(t, dir, "d.go", "package d")
@@ -105,22 +121,30 @@ func TestCollectFilesSubdirectories(t *testing.T) {
 }
 
 func TestIsExcludedExactMatch(t *testing.T) {
+	t.Parallel()
+
 	assert.True(t, IsExcluded("secret.env", []string{"secret.env"}))
 	assert.False(t, IsExcluded("main.go", []string{"secret.env"}))
 }
 
 func TestIsExcludedGlobPattern(t *testing.T) {
+	t.Parallel()
+
 	assert.True(t, IsExcluded("config.yaml", []string{"*.yaml"}))
 	assert.False(t, IsExcluded("config.toml", []string{"*.yaml"}))
 }
 
 func TestIsExcludedDoubleStarPattern(t *testing.T) {
+	t.Parallel()
+
 	assert.True(t, IsExcluded("vendor/dep.go", []string{"vendor/**"}))
 	assert.True(t, IsExcluded("vendor/sub/deep.go", []string{"vendor/**"}))
 	assert.False(t, IsExcluded("main.go", []string{"vendor/**"}))
 }
 
 func TestIsExcludedMultiplePatterns(t *testing.T) {
+	t.Parallel()
+
 	patterns := []string{"vendor/**", "*.test", "node_modules/**"}
 	assert.True(t, IsExcluded("vendor/dep.go", patterns))
 	assert.True(t, IsExcluded("foo.test", patterns))
@@ -129,11 +153,15 @@ func TestIsExcludedMultiplePatterns(t *testing.T) {
 }
 
 func TestIsExcludedEmptyPatterns(t *testing.T) {
+	t.Parallel()
+
 	assert.False(t, IsExcluded("anything.go", nil))
 	assert.False(t, IsExcluded("anything.go", []string{}))
 }
 
 func TestCollectFilesNonexistentDir(t *testing.T) {
+	t.Parallel()
+
 	target := ScanTarget{RootDir: filepath.Join(os.TempDir(), "nonexistent-dir-abc123")}
 	files, err := CollectFiles(target, nil)
 	// filepath.Walk returns an error for non-existent root directories.

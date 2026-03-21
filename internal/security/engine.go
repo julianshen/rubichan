@@ -9,6 +9,8 @@ import (
 	"github.com/sourcegraph/conc/pool"
 )
 
+const defaultScannerTimeout = 30 * time.Second
+
 // Engine orchestrates the two-phase security pipeline: static scanners
 // followed by LLM-powered analyzers on prioritized code segments.
 type Engine struct {
@@ -120,10 +122,17 @@ func (e *Engine) runScanners(ctx context.Context, target ScanTarget) ([]Finding,
 	var findings []Finding
 	var errors []ScanError
 
+	scannerTimeout := e.config.ScannerTimeout
+	if scannerTimeout <= 0 {
+		scannerTimeout = defaultScannerTimeout
+	}
+
 	for _, s := range e.scanners {
 		s := s // capture loop variable
 		p.Go(func() {
-			result, err := s.Scan(ctx, target)
+			scanCtx, cancel := context.WithTimeout(ctx, scannerTimeout)
+			defer cancel()
+			result, err := s.Scan(scanCtx, target)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

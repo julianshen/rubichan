@@ -944,6 +944,7 @@ func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt 
 
 	p := toolexec.NewPipeline(
 		toolexec.RegistryExecutor(registry),
+		toolexec.SchemaValidationMiddleware(registry),
 		toolexec.ClassifierMiddleware(classifier),
 		toolexec.RuleEngineMiddleware(ruleEngine),
 		toolexec.HookMiddleware(hookAdapter),
@@ -1172,49 +1173,11 @@ func runInteractive() error {
 		CLIOverrides: allowed,
 	}
 
-	if toolsCfg.ShouldEnable("file") {
-		fileTool := tools.NewFileTool(cwd)
-		fileTool.SetDiffTracker(diffTracker)
-		if err := registry.Register(fileTool); err != nil {
-			return fmt.Errorf("registering file tool: %w", err)
-		}
-	}
-
-	if toolsCfg.ShouldEnable("shell") {
-		shellTool := tools.NewShellTool(cwd, 120*time.Second)
-		shellTool.SetDiffTracker(diffTracker)
-		shellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
-
-		if cleanup, err := wireSandboxProxy(cfg, shellTool); err != nil {
-			return err
-		} else if cleanup != nil {
-			defer cleanup()
-		}
-
-		if err := registry.Register(shellTool); err != nil {
-			return fmt.Errorf("registering shell tool: %w", err)
-		}
-	}
-	if toolsCfg.ShouldEnable("search") {
-		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
-			return fmt.Errorf("registering search tool: %w", err)
-		}
-	}
-	if toolsCfg.ShouldEnable("process") {
-		procMgr := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
-		defer func() { _ = procMgr.Shutdown(context.Background()) }()
-		if err := registry.Register(tools.NewProcessTool(procMgr)); err != nil {
-			return fmt.Errorf("registering process tool: %w", err)
-		}
-	}
-	if err := wireExtendedTools(cwd, registry, cfg, toolsCfg); err != nil {
+	coreResult, err := registerCoreTools(cwd, registry, cfg, toolsCfg, diffTracker, 120*time.Second)
+	if err != nil {
 		return err
 	}
-
-	// LSP tools — language-aware code navigation and diagnostics.
-	if cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
-		return err
-	} else if cleanup != nil {
+	for _, cleanup := range coreResult.cleanups {
 		defer cleanup()
 	}
 
@@ -1668,48 +1631,11 @@ func runHeadless() error {
 		HeadlessMode: true,
 	}
 
-	if headlessToolsCfg.ShouldEnable("file") {
-		headlessFileTool := tools.NewFileTool(cwd)
-		headlessFileTool.SetDiffTracker(headlessDiffTracker)
-		if err := registry.Register(headlessFileTool); err != nil {
-			return fmt.Errorf("registering file tool: %w", err)
-		}
-	}
-	if headlessToolsCfg.ShouldEnable("shell") {
-		headlessShellTool := tools.NewShellTool(cwd, timeoutFlag)
-		headlessShellTool.SetDiffTracker(headlessDiffTracker)
-		headlessShellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
-
-		if cleanup, err := wireSandboxProxy(cfg, headlessShellTool); err != nil {
-			return err
-		} else if cleanup != nil {
-			defer cleanup()
-		}
-
-		if err := registry.Register(headlessShellTool); err != nil {
-			return fmt.Errorf("registering shell tool: %w", err)
-		}
-	}
-	if headlessToolsCfg.ShouldEnable("search") {
-		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
-			return fmt.Errorf("registering search tool: %w", err)
-		}
-	}
-	if headlessToolsCfg.ShouldEnable("process") {
-		pm := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
-		defer func() { _ = pm.Shutdown(context.Background()) }()
-		if err := registry.Register(tools.NewProcessTool(pm)); err != nil {
-			return fmt.Errorf("registering process tool: %w", err)
-		}
-	}
-	if err := wireExtendedTools(cwd, registry, cfg, headlessToolsCfg); err != nil {
+	headlessCoreResult, err := registerCoreTools(cwd, registry, cfg, headlessToolsCfg, headlessDiffTracker, timeoutFlag)
+	if err != nil {
 		return err
 	}
-
-	// LSP tools — language-aware code navigation and diagnostics.
-	if cleanup, err := wireLSPTools(cfg, registry, headlessToolsCfg, cwd); err != nil {
-		return err
-	} else if cleanup != nil {
+	for _, cleanup := range headlessCoreResult.cleanups {
 		defer cleanup()
 	}
 
@@ -1816,6 +1742,66 @@ func runHeadless() error {
 	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
+	// --- Subagent system wiring (headless) ---
+	// Only create spawner/worktree infrastructure when task tools are enabled.
+	var headlessWakeManager *agent.WakeManager
+	var headlessSpawner *agent.DefaultSubagentSpawner
+	if headlessToolsCfg.ShouldEnable("task") || headlessToolsCfg.ShouldEnable("list_tasks") {
+		headlessAgentDefReg := agent.NewAgentDefRegistry()
+		if err := headlessAgentDefReg.Register(&agent.AgentDef{
+			Name:        "general",
+			Description: "General-purpose agent with all available tools",
+		}); err != nil {
+			log.Printf("warning: registering general agent def: %v", err)
+		}
+		for _, defConf := range cfg.Agent.Definitions {
+			if err := headlessAgentDefReg.Register(&agent.AgentDef{
+				Name:          defConf.Name,
+				Description:   defConf.Description,
+				SystemPrompt:  defConf.SystemPrompt,
+				Tools:         defConf.Tools,
+				MaxTurns:      defConf.MaxTurns,
+				MaxDepth:      defConf.MaxDepth,
+				Model:         defConf.Model,
+				InheritSkills: defConf.InheritSkills,
+				ExtraSkills:   defConf.ExtraSkills,
+				DisableSkills: defConf.DisableSkills,
+			}); err != nil {
+				log.Printf("warning: registering agent def %q: %v", defConf.Name, err)
+			}
+		}
+		headlessWakeManager = agent.NewWakeManager()
+		headlessSpawner = &agent.DefaultSubagentSpawner{
+			Config:    cfg,
+			AgentDefs: headlessAgentDefReg,
+		}
+		if out, gitErr := runGitCommand("rev-parse", "--show-toplevel"); gitErr == nil {
+			root := strings.TrimSpace(out)
+			wtCfg := worktree.Config{
+				MaxWorktrees: cfg.Worktree.MaxCount,
+				BaseBranch:   cfg.Worktree.BaseBranch,
+				AutoCleanup:  cfg.Worktree.AutoCleanup,
+			}
+			headlessSpawner.WorktreeProvider = &worktreeProviderAdapter{mgr: worktree.NewManager(root, wtCfg)}
+		}
+		headlessTaskTool := tools.NewTaskTool(
+			&spawnerAdapter{spawner: headlessSpawner},
+			&agentDefLookupAdapter{reg: headlessAgentDefReg},
+			0,
+		)
+		headlessTaskTool.SetBackgroundManager(&wakeManagerAdapter{wm: headlessWakeManager})
+		if headlessToolsCfg.ShouldEnable("task") {
+			if err := registry.Register(headlessTaskTool); err != nil {
+				return fmt.Errorf("registering task tool: %w", err)
+			}
+		}
+		if headlessToolsCfg.ShouldEnable("list_tasks") {
+			if err := registry.Register(tools.NewListTasksTool(&wakeStatusAdapter{wm: headlessWakeManager})); err != nil {
+				return fmt.Errorf("registering list_tasks tool: %w", err)
+			}
+		}
+	}
+
 	// Headless auto-approves all tools (restricted via --tools allowlist),
 	// but still respects hierarchical deny policies so org-level restrictions
 	// apply in CI/CD.
@@ -1825,23 +1811,37 @@ func runHeadless() error {
 			headlessCheckers = append(headlessCheckers, hc)
 		}
 		headlessCheckers = append(headlessCheckers, agent.AlwaysAutoApprove{})
-		opts = append(opts, agent.WithApprovalChecker(agent.NewCompositeApprovalChecker(headlessCheckers...)))
+		composite := agent.NewCompositeApprovalChecker(headlessCheckers...)
+		opts = append(opts, agent.WithApprovalChecker(composite))
+		if headlessSpawner != nil {
+			headlessSpawner.ApprovalChecker = composite
+		}
 	}
 	opts = append(opts, agent.WithParallelPolicy(agent.AllowAllParallel{}))
+	if headlessWakeManager != nil {
+		opts = append(opts, agent.WithWakeManager(headlessWakeManager))
+	}
 
 	// Build tool execution pipeline.
 	hpc := buildPipeline(registry, cfg, cwd, rt)
 	opts = append(opts, agent.WithPipeline(hpc.Pipeline))
 
 	// Create shared rate limiter for throttling LLM API requests.
-	// Note: headless mode does not create a DefaultSubagentSpawner, so no
-	// spawner.RateLimiter wiring is needed here. If headless gains subagent
-	// support, propagate the limiter to the spawner at that time.
+	var headlessRateLimiter *agent.SharedRateLimiter
 	if cfg.Agent.MaxRequestsPerMinute > 0 {
-		opts = append(opts, agent.WithRateLimiter(agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)))
+		headlessRateLimiter = agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)
+		opts = append(opts, agent.WithRateLimiter(headlessRateLimiter))
 	}
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
+
+	// Wire spawner dependencies that need the agent and provider.
+	if headlessSpawner != nil {
+		headlessSpawner.Provider = p
+		headlessSpawner.ParentTools = registry
+		headlessSpawner.ParentSkillRuntime = rt
+		headlessSpawner.RateLimiter = headlessRateLimiter
+	}
 
 	// Register notes tool backed by agent's scratchpad.
 	if headlessToolsCfg.ShouldEnable("notes") {
@@ -2187,6 +2187,65 @@ func containsSkill(name, flagValue string) bool {
 		}
 	}
 	return false
+}
+
+// coreToolsResult holds the artifacts produced by registerCoreTools.
+type coreToolsResult struct {
+	cleanups []func() // cleanup functions that must be deferred by the caller
+}
+
+// registerCoreTools registers the standard tool set (file, shell, search,
+// process, extended, LSP) into the given registry. It is shared between
+// interactive and headless modes to eliminate duplication.
+func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig, diffTracker *tools.DiffTracker, shellTimeout time.Duration) (*coreToolsResult, error) {
+	result := &coreToolsResult{}
+
+	if toolsCfg.ShouldEnable("file") {
+		fileTool := tools.NewFileTool(cwd)
+		fileTool.SetDiffTracker(diffTracker)
+		if err := registry.Register(fileTool); err != nil {
+			return nil, fmt.Errorf("registering file tool: %w", err)
+		}
+	}
+
+	if toolsCfg.ShouldEnable("shell") {
+		shellTool := tools.NewShellTool(cwd, shellTimeout)
+		shellTool.SetDiffTracker(diffTracker)
+		shellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
+
+		if cleanup, err := wireSandboxProxy(cfg, shellTool); err != nil {
+			return nil, err
+		} else if cleanup != nil {
+			result.cleanups = append(result.cleanups, cleanup)
+		}
+
+		if err := registry.Register(shellTool); err != nil {
+			return nil, fmt.Errorf("registering shell tool: %w", err)
+		}
+	}
+	if toolsCfg.ShouldEnable("search") {
+		if err := registry.Register(tools.NewSearchTool(cwd)); err != nil {
+			return nil, fmt.Errorf("registering search tool: %w", err)
+		}
+	}
+	if toolsCfg.ShouldEnable("process") {
+		procMgr := tools.NewProcessManager(cwd, tools.ProcessManagerConfig{})
+		result.cleanups = append(result.cleanups, func() { _ = procMgr.Shutdown(context.Background()) })
+		if err := registry.Register(tools.NewProcessTool(procMgr)); err != nil {
+			return nil, fmt.Errorf("registering process tool: %w", err)
+		}
+	}
+	if err := wireExtendedTools(cwd, registry, cfg, toolsCfg); err != nil {
+		return nil, err
+	}
+
+	if cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
+		return nil, err
+	} else if cleanup != nil {
+		result.cleanups = append(result.cleanups, cleanup)
+	}
+
+	return result, nil
 }
 
 // wireAppleDev registers Xcode tools and delegates enablement decisions to ToolsConfig.

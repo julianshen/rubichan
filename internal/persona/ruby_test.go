@@ -8,6 +8,8 @@ import (
 )
 
 func TestSystemPromptContainsIdentity(t *testing.T) {
+	t.Parallel()
+
 	prompt := SystemPrompt()
 	assert.NotEmpty(t, prompt)
 	assert.Contains(t, prompt, "## Identity")
@@ -23,24 +25,32 @@ func TestSystemPromptContainsIdentity(t *testing.T) {
 }
 
 func TestBaseSystemPrompt(t *testing.T) {
+	t.Parallel()
+
 	prompt := BaseSystemPrompt()
 	assert.Contains(t, prompt, "coding assistant")
 	assert.NotContains(t, prompt, "Ruby Kurosawa")
 }
 
 func TestIdentityPrompt(t *testing.T) {
+	t.Parallel()
+
 	prompt := IdentityPrompt()
 	assert.Contains(t, prompt, "Ruby Kurosawa")
 	assert.Contains(t, prompt, "Pigi")
 }
 
 func TestSoulPrompt(t *testing.T) {
+	t.Parallel()
+
 	prompt := SoulPrompt()
 	assert.Contains(t, prompt, "Core Principles")
 	assert.Contains(t, prompt, "Boundaries")
 }
 
 func TestWelcomeMessage(t *testing.T) {
+	t.Parallel()
+
 	msg := WelcomeMessage()
 	assert.NotEmpty(t, msg)
 	assert.Contains(t, msg, "Ruby")
@@ -48,6 +58,8 @@ func TestWelcomeMessage(t *testing.T) {
 }
 
 func TestGoodbyeMessage(t *testing.T) {
+	t.Parallel()
+
 	msg := GoodbyeMessage()
 	assert.NotEmpty(t, msg)
 	assert.Contains(t, msg, "Ruby")
@@ -73,6 +85,8 @@ func TestThinkingMessageRotates(t *testing.T) {
 }
 
 func TestThinkingMessageAllContainKaomoji(t *testing.T) {
+	t.Parallel()
+
 	for i, msg := range rubyThinkingMessages {
 		assert.Contains(t, msg, "(", "message %d should contain kaomoji: %s", i, msg)
 		assert.Contains(t, msg, ")", "message %d should contain kaomoji: %s", i, msg)
@@ -80,24 +94,32 @@ func TestThinkingMessageAllContainKaomoji(t *testing.T) {
 }
 
 func TestErrorMessageIncludesError(t *testing.T) {
+	t.Parallel()
+
 	msg := ErrorMessage("file not found")
 	assert.Contains(t, msg, "Pigi")
 	assert.Contains(t, msg, "file not found")
 }
 
 func TestSuccessMessage(t *testing.T) {
+	t.Parallel()
+
 	msg := SuccessMessage()
 	assert.NotEmpty(t, msg)
 	assert.Contains(t, msg, "ガンバ")
 }
 
 func TestStatusPrefix(t *testing.T) {
+	t.Parallel()
+
 	prefix := StatusPrefix()
 	assert.NotEmpty(t, prefix)
 	assert.Contains(t, prefix, "Ruby")
 }
 
 func TestApprovalAskIncludesTool(t *testing.T) {
+	t.Parallel()
+
 	msg := ApprovalAsk("shell_exec")
 	assert.Contains(t, msg, "Ruby")
 	assert.Contains(t, msg, "shell_exec")
@@ -106,6 +128,8 @@ func TestApprovalAskIncludesTool(t *testing.T) {
 // --- Persona interface tests ---
 
 func TestRubyPersonaImplementsInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ Persona = (*RubyPersona)(nil)
 }
 
@@ -145,6 +169,8 @@ func TestApprovalAskFallbackWhenToolNameMissing(t *testing.T) {
 }
 
 func TestSetActiveNilPanics(t *testing.T) {
+	t.Parallel()
+
 	assert.Panics(t, func() {
 		SetActive(nil)
 	}, "SetActive(nil) should panic")

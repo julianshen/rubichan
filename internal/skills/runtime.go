@@ -181,6 +181,8 @@ func (rt *Runtime) isAutoApproved(name string) bool {
 // the mutex across potentially slow I/O (network, disk, process spawn).
 func (rt *Runtime) Activate(name string) error {
 	// Phase 1: Read skill metadata and transition to Activating under lock.
+	// The active check and state transition must be atomic to prevent two
+	// goroutines from both passing the check and both activating.
 	rt.mu.Lock()
 	sk, ok := rt.skills[name]
 	if !ok {
@@ -188,9 +190,12 @@ func (rt *Runtime) Activate(name string) error {
 		return fmt.Errorf("skill %q not found", name)
 	}
 
-	// Guard against concurrent activation: if another goroutine already
-	// activated or is activating this skill, return early.
 	if _, alreadyActive := rt.active[name]; alreadyActive {
+		rt.mu.Unlock()
+		return nil
+	}
+
+	if sk.State == SkillStateActivating {
 		rt.mu.Unlock()
 		return nil
 	}

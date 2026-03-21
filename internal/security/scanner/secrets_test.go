@@ -10,15 +10,21 @@ import (
 )
 
 func TestSecretScannerName(t *testing.T) {
+	t.Parallel()
+
 	s := NewSecretScanner()
 	assert.Equal(t, "secrets", s.Name())
 }
 
 func TestSecretScannerInterface(t *testing.T) {
+	t.Parallel()
+
 	var _ security.StaticScanner = NewSecretScanner()
 }
 
 func TestSecretScannerDetectsAWSKey(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "config.go", `package config
 const awsKey = "AKIAIOSFODNN7REALKEY1"
@@ -42,6 +48,8 @@ const awsKey = "AKIAIOSFODNN7REALKEY1"
 }
 
 func TestSecretScannerDetectsGitHubToken(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "auth.go", `package auth
 var token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
@@ -64,6 +72,8 @@ var token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
 }
 
 func TestSecretScannerDetectsPrivateKey(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "certs/key.pem", `-----BEGIN RSA PRIVATE KEY-----
 MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/yGOQ
@@ -81,6 +91,8 @@ MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/yGOQ
 }
 
 func TestSecretScannerDetectsGenericHighEntropy(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Use "credential" which is in the entropy variable pattern but NOT in
 	// the generic API key rule, so the entropy detector fires separately.
@@ -105,6 +117,8 @@ my_credential = "aB3$xZ9kL7wQ2mN5pR8vT1yU4"
 }
 
 func TestSecretScannerDetectsDBConnectionString(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "db.go", `package db
 const dsn = "postgres://user:pass@localhost:5432/mydb"
@@ -126,6 +140,8 @@ const dsn = "postgres://user:pass@localhost:5432/mydb"
 }
 
 func TestSecretScannerSkipsBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Binary file: contains null bytes within the first 512 bytes.
 	content := []byte("AKIAIOSFODNN7EXAMPLE\x00\x00binarydata")
@@ -138,6 +154,8 @@ func TestSecretScannerSkipsBinary(t *testing.T) {
 }
 
 func TestSecretScannerSkipsExcluded(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "vendor/lib/config.go", `package lib
 const key = "AKIAIOSFODNN7EXAMPLE"
@@ -156,6 +174,8 @@ func main() {}
 }
 
 func TestSecretScannerNoFalsePositiveOnExamples(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "readme.go", `package docs
 // Example key: EXAMPLE_KEY
@@ -170,6 +190,8 @@ const dummy = "AKIAIOSFODNN7_EXAMPLE"
 }
 
 func TestSecretScannerEmptyDir(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	s := NewSecretScanner()
@@ -179,6 +201,8 @@ func TestSecretScannerEmptyDir(t *testing.T) {
 }
 
 func TestSecretScannerUsesTargetFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", `package a
 const key = "AKIAIOSFODNN7REALKEY1"
@@ -202,6 +226,8 @@ const key = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
 }
 
 func TestSecretScannerDetectsSlackToken(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Build the token via concatenation to avoid triggering GitHub push protection.
 	slackToken := "xox" + "b-123456789012-1234567890123-abcdefghijklmnop"
@@ -225,6 +251,8 @@ var token = "`+slackToken+`"
 }
 
 func TestSecretScannerDetectsGitLabToken(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "gitlab.go", `package gitlab
 var token = "glpat-abcdefghijklmnopqrst"
@@ -246,6 +274,8 @@ var token = "glpat-abcdefghijklmnopqrst"
 }
 
 func TestSecretScannerDetectsBearerToken(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "auth.go", `package auth
 const header = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ"
@@ -267,6 +297,8 @@ const header = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3
 }
 
 func TestSecretScannerDetectsJWTSecret(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "config.go", `package config
 var jwt_secret = "mySuper$ecretJWT!Key"
@@ -288,6 +320,8 @@ var jwt_secret = "mySuper$ecretJWT!Key"
 }
 
 func TestSecretScannerDetectsGenericAPIKeyAssignment(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "app.go", `package app
 var api_key = "sk_live_a1b2c3d4e5f6g7h8i9j0"
@@ -309,6 +343,8 @@ var api_key = "sk_live_a1b2c3d4e5f6g7h8i9j0"
 }
 
 func TestSecretScannerContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "config.go", `package config
 const awsKey = "AKIAIOSFODNN7EXAMPLE"
@@ -323,6 +359,8 @@ const awsKey = "AKIAIOSFODNN7EXAMPLE"
 }
 
 func TestSecretScannerMaskSecretShortValue(t *testing.T) {
+	t.Parallel()
+
 	// Values <= 4 chars should be fully masked.
 	result := maskSecret("abc", "test-rule")
 	assert.Equal(t, "***", result)
@@ -332,6 +370,8 @@ func TestSecretScannerMaskSecretShortValue(t *testing.T) {
 }
 
 func TestSecretScannerMaskSecretLongValue(t *testing.T) {
+	t.Parallel()
+
 	result := maskSecret("AKIAIOSFODNN7REALKEY1", "aws-key")
 	assert.Contains(t, result, "AKIA")
 	assert.Contains(t, result, "aws-key")
@@ -339,22 +379,30 @@ func TestSecretScannerMaskSecretLongValue(t *testing.T) {
 }
 
 func TestSecretScannerShannonEntropyEmptyString(t *testing.T) {
+	t.Parallel()
+
 	result := shannonEntropy("")
 	assert.Equal(t, 0.0, result)
 }
 
 func TestSecretScannerShannonEntropyLowEntropy(t *testing.T) {
+	t.Parallel()
+
 	// Repeating character has zero entropy.
 	result := shannonEntropy("aaaaaaaaaa")
 	assert.Equal(t, 0.0, result)
 }
 
 func TestSecretScannerShannonEntropyHighEntropy(t *testing.T) {
+	t.Parallel()
+
 	result := shannonEntropy("aB3$xZ9kL7wQ2mN5pR8v")
 	assert.Greater(t, result, 4.0)
 }
 
 func TestSecretScannerUnreadableFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", `package a
 const key = "AKIAIOSFODNN7REALKEY1"

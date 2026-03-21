@@ -37,6 +37,8 @@ func (m *mockAnalyzer) Analyze(_ context.Context, _ []AnalysisChunk) ([]Finding,
 }
 
 func TestEngineRunBothPhases(t *testing.T) {
+	t.Parallel()
+
 	e := NewEngine(EngineConfig{
 		MaxLLMChunks: 100,
 		MinRiskScore: 0,
@@ -73,6 +75,8 @@ func main() { exec.Command("sh").Run() }
 }
 
 func TestEngineHandlesScannerError(t *testing.T) {
+	t.Parallel()
+
 	e := NewEngine(EngineConfig{Concurrency: 1})
 	e.AddScanner(&mockScanner{
 		name: "failing-scanner",
@@ -86,6 +90,8 @@ func TestEngineHandlesScannerError(t *testing.T) {
 }
 
 func TestEngineHandlesAnalyzerError(t *testing.T) {
+	t.Parallel()
+
 	e := NewEngine(EngineConfig{
 		MaxLLMChunks: 100,
 		MinRiskScore: 0,
@@ -109,6 +115,8 @@ func Login() { exec.Command("sh").Run() }
 }
 
 func TestEngineContextCancellation(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
@@ -121,7 +129,37 @@ func TestEngineContextCancellation(t *testing.T) {
 	_ = report
 }
 
+// slowScanner blocks until context is cancelled, simulating a hanging scanner.
+type slowScanner struct{ name string }
+
+func (s *slowScanner) Name() string { return s.name }
+func (s *slowScanner) Scan(ctx context.Context, _ ScanTarget) ([]Finding, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestEngineScannerTimeout(t *testing.T) {
+	t.Parallel()
+
+	e := NewEngine(EngineConfig{
+		Concurrency:    1,
+		ScannerTimeout: 100 * time.Millisecond,
+	})
+	e.AddScanner(&slowScanner{name: "slow-scanner"})
+
+	start := time.Now()
+	report, err := e.Run(context.Background(), ScanTarget{RootDir: t.TempDir()})
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "engine should not fail for timed-out scanners")
+	require.NotEmpty(t, report.Errors, "timed-out scanner should produce an error")
+	assert.Equal(t, "slow-scanner", report.Errors[0].Scanner)
+	assert.Less(t, elapsed, 5*time.Second, "should not hang — timeout should kick in")
+}
+
 func TestEngineEmptyTarget(t *testing.T) {
+	t.Parallel()
+
 	e := NewEngine(EngineConfig{Concurrency: 1})
 	report, err := e.Run(context.Background(), ScanTarget{RootDir: t.TempDir()})
 	require.NoError(t, err)

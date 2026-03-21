@@ -9,6 +9,8 @@ import (
 )
 
 func TestRunResultToolCallLogJSON(t *testing.T) {
+	t.Parallel()
+
 	r := RunResult{
 		Prompt:     "hello",
 		Response:   "world",

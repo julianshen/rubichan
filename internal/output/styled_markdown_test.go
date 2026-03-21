@@ -17,6 +17,8 @@ func stripANSI(s string) string {
 }
 
 func TestStyledMarkdownFormatterContainsANSI(t *testing.T) {
+	t.Parallel()
+
 	f := NewStyledMarkdownFormatter(80)
 	result := &RunResult{
 		Prompt:     "say hello",
@@ -36,6 +38,8 @@ func TestStyledMarkdownFormatterContainsANSI(t *testing.T) {
 }
 
 func TestStyledMarkdownFormatterPreservesContent(t *testing.T) {
+	t.Parallel()
+
 	f := NewStyledMarkdownFormatter(80)
 	result := &RunResult{
 		Prompt:   "review code",
@@ -57,6 +61,8 @@ func TestStyledMarkdownFormatterPreservesContent(t *testing.T) {
 }
 
 func TestStyledMarkdownFormatterError(t *testing.T) {
+	t.Parallel()
+
 	f := NewStyledMarkdownFormatter(80)
 	result := &RunResult{
 		Prompt:     "fail",
@@ -74,6 +80,8 @@ func TestStyledMarkdownFormatterError(t *testing.T) {
 }
 
 func TestStyledMarkdownFormatterNilRendererFallback(t *testing.T) {
+	t.Parallel()
+
 	f := &StyledMarkdownFormatter{
 		inner:    NewMarkdownFormatter(),
 		renderer: nil,
@@ -96,6 +104,8 @@ func TestStyledMarkdownFormatterNilRendererFallback(t *testing.T) {
 }
 
 func TestStyledMarkdownFormatterEmpty(t *testing.T) {
+	t.Parallel()
+
 	f := NewStyledMarkdownFormatter(80)
 	result := &RunResult{
 		Prompt:     "hello",
