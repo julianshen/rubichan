@@ -154,6 +154,38 @@ func appendWorkingDirOption(opts []agent.AgentOption, cwd string) []agent.AgentO
 	return append(opts, agent.WithWorkingDir(cwd))
 }
 
+// wireSandboxProxy creates a DomainProxy if sandbox is enabled with allowed domains,
+// configures the shell tool, and validates hard-lockdown requirements.
+// Returns a cleanup function that must be deferred, or nil if no proxy was started.
+func wireSandboxProxy(cfg *config.Config, shellTool *tools.ShellTool) (cleanup func(), err error) {
+	var proxy *toolsandbox.DomainProxy
+	if cfg.Sandbox.IsEnabled() && len(cfg.Sandbox.Network.AllowedDomains) > 0 {
+		proxy = toolsandbox.NewDomainProxy(
+			cfg.Sandbox.Network.AllowedDomains,
+			toolsandbox.WithOnBlocked(func(domain, cmd string) {
+				log.Printf("[sandbox] blocked connection to %s", domain)
+			}),
+		)
+		if _, err := proxy.Start(); err != nil {
+			log.Printf("warning: sandbox proxy failed to start: %v", err)
+			proxy = nil
+		}
+	}
+	shellTool.SetSandboxConfig(cfg.Sandbox, proxy)
+
+	if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && shellTool.Sandbox() == nil {
+		if proxy != nil {
+			proxy.Stop()
+		}
+		return nil, fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
+	}
+
+	if proxy != nil {
+		return func() { proxy.Stop() }, nil
+	}
+	return nil, nil
+}
+
 // wireLSPTools registers LSP tools into the registry if LSP is enabled.
 // Returns a cleanup function that must be deferred, or nil if LSP is disabled.
 // The cleanup function uses context.Background() because it runs during defers
@@ -1151,25 +1183,10 @@ func runInteractive() error {
 		shellTool.SetDiffTracker(diffTracker)
 		shellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
 
-		// Sandbox proxy and config wiring
-		var domainProxy *toolsandbox.DomainProxy
-		if cfg.Sandbox.IsEnabled() && len(cfg.Sandbox.Network.AllowedDomains) > 0 {
-			domainProxy = toolsandbox.NewDomainProxy(
-				cfg.Sandbox.Network.AllowedDomains,
-				toolsandbox.WithOnBlocked(func(domain, cmd string) {
-					log.Printf("[sandbox] blocked connection to %s", domain)
-				}),
-			)
-			if _, err := domainProxy.Start(); err != nil {
-				log.Printf("warning: sandbox proxy failed to start: %v", err)
-			} else {
-				defer domainProxy.Stop()
-			}
-		}
-		shellTool.SetSandboxConfig(cfg.Sandbox, domainProxy)
-
-		if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && shellTool.Sandbox() == nil {
-			return fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
+		if cleanup, err := wireSandboxProxy(cfg, shellTool); err != nil {
+			return err
+		} else if cleanup != nil {
+			defer cleanup()
 		}
 
 		if err := registry.Register(shellTool); err != nil {
@@ -1661,25 +1678,10 @@ func runHeadless() error {
 		headlessShellTool.SetDiffTracker(headlessDiffTracker)
 		headlessShellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
 
-		// Sandbox proxy and config wiring
-		var headlessDomainProxy *toolsandbox.DomainProxy
-		if cfg.Sandbox.IsEnabled() && len(cfg.Sandbox.Network.AllowedDomains) > 0 {
-			headlessDomainProxy = toolsandbox.NewDomainProxy(
-				cfg.Sandbox.Network.AllowedDomains,
-				toolsandbox.WithOnBlocked(func(domain, cmd string) {
-					log.Printf("[sandbox] blocked connection to %s", domain)
-				}),
-			)
-			if _, err := headlessDomainProxy.Start(); err != nil {
-				log.Printf("warning: sandbox proxy failed to start: %v", err)
-			} else {
-				defer headlessDomainProxy.Stop()
-			}
-		}
-		headlessShellTool.SetSandboxConfig(cfg.Sandbox, headlessDomainProxy)
-
-		if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && headlessShellTool.Sandbox() == nil {
-			return fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
+		if cleanup, err := wireSandboxProxy(cfg, headlessShellTool); err != nil {
+			return err
+		} else if cleanup != nil {
+			defer cleanup()
 		}
 
 		if err := registry.Register(headlessShellTool); err != nil {

@@ -237,7 +237,11 @@ func (m *Manager) restore(cp Checkpoint) error {
 		if err != nil {
 			return fmt.Errorf("read spill file: %w", err)
 		}
-		if err := os.WriteFile(cp.FilePath, data, cp.FileMode); err != nil {
+		mode := cp.FileMode
+		if mode == 0 {
+			mode = 0644
+		}
+		if err := os.WriteFile(cp.FilePath, data, mode); err != nil {
 			return fmt.Errorf("write file: %w", err)
 		}
 		os.Remove(cp.spillPath) // best-effort cleanup after successful write
