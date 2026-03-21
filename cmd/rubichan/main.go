@@ -41,6 +41,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/builtin"
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
+	"github.com/julianshen/rubichan/internal/skills/builtin/codereview"
 	"github.com/julianshen/rubichan/internal/skills/builtin/frontenddesign"
 	"github.com/julianshen/rubichan/internal/skills/builtin/superpowers"
 	"github.com/julianshen/rubichan/internal/skills/builtin/uiuxpromax"
@@ -722,6 +723,7 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 func registerBuiltinSkillPrompts(loader *skills.Loader, configDir string) error {
 	superpowers.Register(loader)
 	frontenddesign.Register(loader)
+	codereview.Register(loader)
 	appledev.RegisterPrompt(loader)
 	return uiuxpromax.Register(loader, configDir)
 }
