@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ProxyOption configures a DomainProxy.
@@ -67,7 +68,9 @@ func (p *DomainProxy) Stop() error {
 	if p.server == nil {
 		return nil
 	}
-	err := p.server.Shutdown(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := p.server.Shutdown(ctx)
 	p.server = nil
 	return err
 }
@@ -168,7 +171,7 @@ func (p *DomainProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Dial the target.
-	targetConn, err := net.Dial("tcp", r.Host)
+	targetConn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("proxy connect error: %v", err), http.StatusBadGateway)
 		return
