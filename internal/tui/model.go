@@ -222,8 +222,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 	}
 
-	bannerText := RenderBanner()
-	m.content.WriteString(bannerText)
+	m.content.WriteString(RenderBanner())
 	m.content.WriteString("\n")
 	m.viewport.SetContent(m.viewportContent())
 
@@ -254,7 +253,10 @@ func (m *Model) ClearContent() {
 	if m.sessionState != nil {
 		m.sessionState.ResetForPrompt("")
 	}
-	m.viewport.SetContent("")
+	// Show compact banner after clear to reclaim vertical space.
+	m.content.WriteString(RenderCompactBanner())
+	m.content.WriteString("\n")
+	m.viewport.SetContent(m.viewportContent())
 }
 
 // SwitchModel updates the model name and status bar. This is used by the
@@ -406,7 +408,7 @@ func (m *Model) headerRows() int {
 }
 
 func (m *Model) footerRows() int {
-	rows := 2 // status + input
+	rows := 1 + m.input.Height() // status line + input area
 	if m.completion != nil && m.completion.View() != "" {
 		rows++
 	}

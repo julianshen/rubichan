@@ -23,7 +23,7 @@ const Banner = ` _  .-')             .-. .-')                             ('-. .
  ` + "`" + `--' '--' ` + "`" + `-----'    ` + "`" + `------'   ` + "`" + `--'            ` + "`" + `-----' ` + "`" + `--' ` + "`" + `--'  ` + "`" + `--' ` + "`" + `--'` + "`" + `--'  ` + "`" + `--'
                                      何が好き？`
 
-// RenderBanner returns the banner with a rainbow gradient applied per line.
+// RenderBanner returns the full banner with a rainbow gradient applied per line.
 func RenderBanner() string {
 	lines := strings.Split(Banner, "\n")
 	styled := make([]string, len(lines))
@@ -33,4 +33,12 @@ func RenderBanner() string {
 		styled[i] = style.Render(line)
 	}
 	return strings.Join(styled, "\n") + "\n" + styleWelcome.Render(persona.WelcomeMessage())
+}
+
+// RenderCompactBanner returns a one-line banner for resume sessions or
+// short terminals, preserving the pink identity with adaptive colors.
+func RenderCompactBanner() string {
+	name := lipgloss.NewStyle().Foreground(colorPrimary).Bold(true).Render("rubichan")
+	tag := lipgloss.NewStyle().Foreground(colorPrimaryDim).Render("何が好き？")
+	return name + " " + tag + " " + styleWelcome.Render(persona.StatusPrefix()+" ready")
 }

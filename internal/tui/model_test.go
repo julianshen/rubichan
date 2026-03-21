@@ -90,7 +90,8 @@ func TestModelHandleSlashClear(t *testing.T) {
 	cmd := m.handleCommand("/clear")
 
 	assert.Nil(t, cmd, "handleCommand(/clear) should return nil (doesn't quit)")
-	assert.Equal(t, "", m.content.String())
+	assert.Contains(t, m.content.String(), "rubichan")
+	assert.NotContains(t, m.content.String(), "some previous content")
 }
 
 func TestModelHandleSlashHelp(t *testing.T) {
@@ -838,7 +839,7 @@ func TestModelViewStreaming(t *testing.T) {
 func TestModelViewAwaitingApproval(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 80, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 80, nil)
 	view := m.View()
 
 	assert.Contains(t, view, "Ruby")
@@ -1249,7 +1250,7 @@ func TestModelApprovalKeyYes(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,
@@ -1282,7 +1283,7 @@ func TestModelApprovalKeyNo(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, 60, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"rm -rf /"}`,
@@ -1313,7 +1314,7 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,
@@ -1345,7 +1346,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,
@@ -1372,7 +1373,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 func TestModelApprovalViewShowsPrompt(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, 60, nil)
+	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, "", 60, nil)
 
 	view := m.View()
 	assert.Contains(t, view, "file")
@@ -1741,7 +1742,7 @@ func TestModelCtrlCDuringApproval(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, 60, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,
@@ -1828,7 +1829,9 @@ func TestModelClearContent(t *testing.T) {
 	m.viewport.SetContent(m.content.String())
 
 	m.ClearContent()
-	assert.Equal(t, "", m.content.String())
+	// ClearContent shows compact banner instead of empty viewport.
+	assert.Contains(t, m.content.String(), "rubichan")
+	assert.NotContains(t, m.content.String(), "some content")
 }
 
 func TestModelSwitchModel(t *testing.T) {

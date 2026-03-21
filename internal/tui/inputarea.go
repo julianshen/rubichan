@@ -1,9 +1,16 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+)
+
+const (
+	inputMinHeight = 3
+	inputMaxHeight = 8
 )
 
 // InputArea wraps a bubbles textarea.Model for multi-line input.
@@ -21,7 +28,7 @@ func NewInputArea() *InputArea {
 	ta.Placeholder = "Type a message..."
 	ta.ShowLineNumbers = false
 	ta.Prompt = ""
-	ta.SetHeight(3)
+	ta.SetHeight(inputMinHeight)
 	ta.CharLimit = 0
 
 	// Remap InsertNewline from enter to alt+enter/ctrl+j so the parent
@@ -46,9 +53,10 @@ func (ia *InputArea) SetValue(s string) {
 	ia.textarea.SetValue(s)
 }
 
-// Reset clears the text content.
+// Reset clears the text content and shrinks back to minimum height.
 func (ia *InputArea) Reset() {
 	ia.textarea.Reset()
+	ia.textarea.SetHeight(inputMinHeight)
 }
 
 // Init initializes the textarea and returns its initial command.
@@ -56,11 +64,35 @@ func (ia *InputArea) Init() tea.Cmd {
 	return ia.textarea.Focus()
 }
 
-// Update delegates a message to the textarea and returns any command.
+// Update delegates a message to the textarea, auto-grows height based on
+// content line count (between inputMinHeight and inputMaxHeight), and
+// returns any command.
 func (ia *InputArea) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	ia.textarea, cmd = ia.textarea.Update(msg)
+	ia.autoGrow()
 	return cmd
+}
+
+// autoGrow adjusts the textarea height to fit the content line count,
+// clamped between inputMinHeight and inputMaxHeight.
+func (ia *InputArea) autoGrow() {
+	lines := strings.Count(ia.textarea.Value(), "\n") + 1
+	h := lines
+	if h < inputMinHeight {
+		h = inputMinHeight
+	}
+	if h > inputMaxHeight {
+		h = inputMaxHeight
+	}
+	if h != ia.textarea.Height() {
+		ia.textarea.SetHeight(h)
+	}
+}
+
+// Height returns the current textarea height in rows.
+func (ia *InputArea) Height() int {
+	return ia.textarea.Height()
 }
 
 // View renders the textarea.

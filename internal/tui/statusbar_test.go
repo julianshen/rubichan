@@ -116,6 +116,28 @@ func TestFormatElapsed(t *testing.T) {
 	assert.Equal(t, "2m30s", formatElapsed(150*time.Second))
 }
 
+// --- Subagent status bar tests ---
+
+func TestStatusBarSetSubagent_ShowsNameInView(t *testing.T) {
+	t.Parallel()
+	sb := NewStatusBar(80)
+	sb.SetModel("test-model")
+	sb.SetSubagent("code-review")
+	result := sb.View()
+	assert.Contains(t, result, "code-review", "subagent name should appear in status bar view")
+}
+
+func TestStatusBarSetSubagent_EmptyClearsFromView(t *testing.T) {
+	t.Parallel()
+	sb := NewStatusBar(80)
+	sb.SetModel("test-model")
+	sb.SetSubagent("code-review")
+	sb.SetSubagent("")
+	result := sb.View()
+	assert.NotContains(t, result, "code-review", "clearing subagent should remove it from view")
+	assert.NotContains(t, result, "🔄", "clearing subagent should remove the icon from view")
+}
+
 func TestStatusBarAllFields(t *testing.T) {
 	sb := NewStatusBar(80)
 	sb.SetModel("claude-sonnet-4-5")
