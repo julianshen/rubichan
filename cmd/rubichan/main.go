@@ -57,6 +57,7 @@ import (
 	gittools "github.com/julianshen/rubichan/internal/tools/git"
 	httptool "github.com/julianshen/rubichan/internal/tools/http"
 	"github.com/julianshen/rubichan/internal/tools/lsp"
+	toolsandbox "github.com/julianshen/rubichan/internal/tools/sandbox"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/internal/wiki"
@@ -151,6 +152,38 @@ func appendWorkingDirOption(opts []agent.AgentOption, cwd string) []agent.AgentO
 		return opts
 	}
 	return append(opts, agent.WithWorkingDir(cwd))
+}
+
+// wireSandboxProxy creates a DomainProxy if sandbox is enabled with allowed domains,
+// configures the shell tool, and validates hard-lockdown requirements.
+// Returns a cleanup function that must be deferred, or nil if no proxy was started.
+func wireSandboxProxy(cfg *config.Config, shellTool *tools.ShellTool) (cleanup func(), err error) {
+	var proxy *toolsandbox.DomainProxy
+	if cfg.Sandbox.IsEnabled() && len(cfg.Sandbox.Network.AllowedDomains) > 0 {
+		proxy = toolsandbox.NewDomainProxy(
+			cfg.Sandbox.Network.AllowedDomains,
+			toolsandbox.WithOnBlocked(func(domain, cmd string) {
+				log.Printf("[sandbox] blocked connection to %s", domain)
+			}),
+		)
+		if _, err := proxy.Start(); err != nil {
+			log.Printf("warning: sandbox proxy failed to start: %v", err)
+			proxy = nil
+		}
+	}
+	shellTool.SetSandboxConfig(cfg.Sandbox, proxy)
+
+	if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && shellTool.Sandbox() == nil {
+		if proxy != nil {
+			proxy.Stop()
+		}
+		return nil, fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
+	}
+
+	if proxy != nil {
+		return func() { proxy.Stop() }, nil
+	}
+	return nil, nil
 }
 
 // wireLSPTools registers LSP tools into the registry if LSP is enabled.
@@ -1149,6 +1182,13 @@ func runInteractive() error {
 		shellTool := tools.NewShellTool(cwd, 120*time.Second)
 		shellTool.SetDiffTracker(diffTracker)
 		shellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
+
+		if cleanup, err := wireSandboxProxy(cfg, shellTool); err != nil {
+			return err
+		} else if cleanup != nil {
+			defer cleanup()
+		}
+
 		if err := registry.Register(shellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}
@@ -1637,6 +1677,13 @@ func runHeadless() error {
 		headlessShellTool := tools.NewShellTool(cwd, timeoutFlag)
 		headlessShellTool.SetDiffTracker(headlessDiffTracker)
 		headlessShellTool.SetSandbox(tools.NewDefaultShellSandbox(cwd))
+
+		if cleanup, err := wireSandboxProxy(cfg, headlessShellTool); err != nil {
+			return err
+		} else if cleanup != nil {
+			defer cleanup()
+		}
+
 		if err := registry.Register(headlessShellTool); err != nil {
 			return fmt.Errorf("registering shell tool: %w", err)
 		}

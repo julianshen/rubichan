@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/tools/sandbox"
 )
 
 // maxShellTimeout is the maximum allowed per-command timeout (10 minutes).
@@ -92,6 +95,8 @@ type ShellTool struct {
 	diffTracker    *DiffTracker
 	sandbox        ShellSandbox
 	processManager *ProcessManager
+	sandboxCfg     config.SandboxConfig
+	domainProxy    *sandbox.DomainProxy // nil when not configured
 }
 
 // NewShellTool creates a new ShellTool that runs commands in the given
@@ -114,6 +119,24 @@ func (s *ShellTool) SetDiffTracker(dt *DiffTracker) {
 func (s *ShellTool) SetSandbox(sb ShellSandbox) {
 	s.sandbox = sb
 }
+
+// SetSandboxConfig attaches sandbox configuration and an optional domain proxy.
+func (s *ShellTool) SetSandboxConfig(cfg config.SandboxConfig, proxy *sandbox.DomainProxy) {
+	s.sandboxCfg = cfg
+	s.domainProxy = proxy
+
+	// If a proxy is running, rebuild the sandbox backend with a policy that
+	// includes the proxy port. Without this, the sandbox blocks the proxy
+	// (Seatbelt won't allow network-outbound, bwrap won't add --share-net).
+	if proxy != nil && proxy.Port() > 0 && s.sandbox != nil {
+		cfg.Network.ProxyPort = proxy.Port()
+		policy := BuildSandboxPolicy(s.workDir, cfg)
+		s.sandbox = NewShellSandboxWithPolicy(s.workDir, policy)
+	}
+}
+
+// Sandbox returns the attached OS-level sandbox, or nil if none is set.
+func (s *ShellTool) Sandbox() ShellSandbox { return s.sandbox }
 
 // SetProcessManager attaches a ProcessManager for background execution support.
 func (s *ShellTool) SetProcessManager(pm *ProcessManager) {
@@ -280,18 +303,26 @@ func (s *ShellTool) ExecuteStream(ctx context.Context, input json.RawMessage, em
 
 	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", in.Command)
 	cmd.Dir = workDir
-	if s.sandbox != nil {
+	excluded := IsExcludedFromSandbox(in.Command, s.sandboxCfg.ExcludedCommands)
+	if s.sandbox != nil && !excluded {
 		if err := s.sandbox.Wrap(cmd); err != nil {
 			if isSandboxUnavailableError(err) {
-				s.sandbox = nil
-				return s.ExecuteStream(ctx, input, emit)
+				if !s.sandboxCfg.IsAllowUnsandboxedCommands() {
+					res := ToolResult{Content: "sandbox unavailable and unsandboxed execution is disabled", IsError: true}
+					emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Content, IsError: true})
+					return res, nil
+				}
+				// Per-command fallback — do NOT set s.sandbox = nil
+				// Fall through to execute unsandboxed
+			} else {
+				// Policy deny or other hard error
+				res := withInterceptionWarnings(ToolResult{
+					Content: fmt.Sprintf("tool execution error: sandbox: %s", err.Error()),
+					IsError: true,
+				}, interception.warnings)
+				emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
+				return res, nil
 			}
-			res := withInterceptionWarnings(ToolResult{
-				Content: fmt.Sprintf("tool execution error: sandbox setup failed: %s", err.Error()),
-				IsError: true,
-			}, interception.warnings)
-			emitToolEvent(emit, ToolEvent{Stage: EventEnd, Content: res.Display(), IsError: true})
-			return res, nil
 		}
 	}
 	emitToolEvent(emit, ToolEvent{Stage: EventBegin, Content: in.Command})
@@ -414,6 +445,32 @@ func isSandboxUnavailableError(err error) bool {
 	return strings.Contains(msg, "sandbox unavailable") ||
 		strings.Contains(msg, "sandbox_apply: operation not permitted") ||
 		strings.Contains(msg, "operation not permitted")
+}
+
+// IsExcludedFromSandbox checks if the lead command in fullCommand matches any excluded name.
+func IsExcludedFromSandbox(fullCommand string, excluded []string) bool {
+	if len(excluded) == 0 {
+		return false
+	}
+	segments := splitAllShellSegments(fullCommand)
+	if len(segments) == 0 {
+		return false
+	}
+	exe := extractExecutableName(segments[0])
+	for _, ex := range excluded {
+		if exe == ex {
+			return true
+		}
+	}
+	return false
+}
+
+func extractExecutableName(segment string) string {
+	name, args := parseCommandExecutable(segment)
+	for isCommandPrefixWrapper(name) && len(args) > 0 {
+		name, args = parseCommandExecutable(strings.Join(args, " "))
+	}
+	return filepath.Base(name)
 }
 
 func inspectShellCommand(command, workDir string) commandInterception {
