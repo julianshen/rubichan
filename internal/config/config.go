@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -20,6 +21,7 @@ type Config struct {
 	Permissions PermissionsConfig `toml:"permissions"`
 	Hooks       HooksConfig       `toml:"hooks"`
 	LSP         LSPConfig         `toml:"lsp"`
+	Sandbox     SandboxConfig     `toml:"sandbox"`
 }
 
 // LSPConfig holds settings for language server protocol integration.
@@ -42,6 +44,92 @@ func (c LSPConfig) IsAutoInstall() bool {
 		return true
 	}
 	return *c.AutoInstall
+}
+
+// SandboxConfig holds settings for command sandboxing.
+type SandboxConfig struct {
+	Enabled                  *bool                   `toml:"enabled"`
+	AllowUnsandboxedCommands *bool                   `toml:"allow_unsandboxed_commands"`
+	ExcludedCommands         []string                `toml:"excluded_commands"`
+	Network                  SandboxNetworkConfig    `toml:"network"`
+	Filesystem               SandboxFilesystemConfig `toml:"filesystem"`
+}
+
+// IsEnabled returns whether sandboxing is enabled (default false).
+func (c SandboxConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// IsAllowUnsandboxedCommands returns whether unsandboxed commands are allowed (default true).
+func (c SandboxConfig) IsAllowUnsandboxedCommands() bool {
+	if c.AllowUnsandboxedCommands == nil {
+		return true
+	}
+	return *c.AllowUnsandboxedCommands
+}
+
+// Validate checks that SandboxConfig fields are well-formed.
+func (c SandboxConfig) Validate() error {
+	for i, cmd := range c.ExcludedCommands {
+		if strings.Contains(cmd, "/") || strings.Contains(cmd, " ") {
+			return fmt.Errorf("excluded_commands[%d]: must not contain '/' or spaces", i)
+		}
+	}
+	for i, domain := range c.Network.AllowedDomains {
+		if strings.Contains(domain, "://") || hasPort(domain) {
+			return fmt.Errorf("allowed_domains[%d]: must not contain scheme (://) or port (:port)", i)
+		}
+	}
+	for i, p := range c.Filesystem.AllowWrite {
+		if !isValidFSPath(p) {
+			return fmt.Errorf("allow_write[%d]: must start with '/', '~/', or './'", i)
+		}
+	}
+	for i, p := range c.Filesystem.DenyRead {
+		if !isValidFSPath(p) {
+			return fmt.Errorf("deny_read[%d]: must start with '/', '~/', or './'", i)
+		}
+	}
+	return nil
+}
+
+// hasPort checks if a domain string ends with a port suffix like ":443".
+func hasPort(s string) bool {
+	idx := strings.LastIndex(s, ":")
+	if idx < 0 {
+		return false
+	}
+	// Everything after the last colon must be digits (port number).
+	port := s[idx+1:]
+	if len(port) == 0 {
+		return false
+	}
+	for _, ch := range port {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidFSPath checks that a filesystem path starts with "/", "~/", or "./".
+func isValidFSPath(p string) bool {
+	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "./")
+}
+
+// SandboxNetworkConfig holds network sandbox settings.
+type SandboxNetworkConfig struct {
+	AllowedDomains []string `toml:"allowed_domains"`
+	ProxyPort      int      `toml:"proxy_port"`
+}
+
+// SandboxFilesystemConfig holds filesystem sandbox settings.
+type SandboxFilesystemConfig struct {
+	AllowWrite []string `toml:"allow_write"`
+	DenyRead   []string `toml:"deny_read"`
 }
 
 // HooksConfig holds settings for user-configured shell hooks.
@@ -270,6 +358,11 @@ func Load(path string) (*Config, error) {
 		if err := srv.Validate(); err != nil {
 			return nil, err
 		}
+	}
+
+	// Validate sandbox config.
+	if err := cfg.Sandbox.Validate(); err != nil {
+		return nil, fmt.Errorf("sandbox config: %w", err)
 	}
 
 	return cfg, nil

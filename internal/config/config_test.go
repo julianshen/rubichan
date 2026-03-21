@@ -598,3 +598,131 @@ max_requests_per_minute = 120
 	assert.Equal(t, 5, cfg.Agent.MaxSubagents)
 	assert.Equal(t, 120, cfg.Agent.MaxRequestsPerMinute)
 }
+
+func TestSandboxConfigDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.False(t, cfg.Sandbox.IsEnabled())
+	assert.True(t, cfg.Sandbox.IsAllowUnsandboxedCommands())
+	assert.Nil(t, cfg.Sandbox.ExcludedCommands)
+	assert.Nil(t, cfg.Sandbox.Network.AllowedDomains)
+	assert.Equal(t, 0, cfg.Sandbox.Network.ProxyPort)
+	assert.Nil(t, cfg.Sandbox.Filesystem.AllowWrite)
+	assert.Nil(t, cfg.Sandbox.Filesystem.DenyRead)
+}
+
+func TestSandboxConfigFromTOML(t *testing.T) {
+	tomlContent := `
+[sandbox]
+enabled = true
+allow_unsandboxed_commands = false
+excluded_commands = ["git", "docker"]
+
+[sandbox.network]
+allowed_domains = ["api.github.com", "registry.npmjs.org"]
+proxy_port = 8080
+
+[sandbox.filesystem]
+allow_write = ["/tmp", "~/projects"]
+deny_read = ["/etc/shadow", "/root"]
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	assert.True(t, cfg.Sandbox.IsEnabled())
+	assert.False(t, cfg.Sandbox.IsAllowUnsandboxedCommands())
+	assert.Equal(t, []string{"git", "docker"}, cfg.Sandbox.ExcludedCommands)
+	assert.Equal(t, []string{"api.github.com", "registry.npmjs.org"}, cfg.Sandbox.Network.AllowedDomains)
+	assert.Equal(t, 8080, cfg.Sandbox.Network.ProxyPort)
+	assert.Equal(t, []string{"/tmp", "~/projects"}, cfg.Sandbox.Filesystem.AllowWrite)
+	assert.Equal(t, []string{"/etc/shadow", "/root"}, cfg.Sandbox.Filesystem.DenyRead)
+}
+
+func TestSandboxConfigValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     SandboxConfig
+		wantErr string
+	}{
+		{
+			name: "valid config",
+			cfg: SandboxConfig{
+				ExcludedCommands: []string{"git", "docker"},
+				Network: SandboxNetworkConfig{
+					AllowedDomains: []string{"api.github.com"},
+				},
+				Filesystem: SandboxFilesystemConfig{
+					AllowWrite: []string{"/tmp", "~/projects", "./local"},
+					DenyRead:   []string{"/etc/shadow"},
+				},
+			},
+		},
+		{
+			name: "empty config is valid",
+			cfg:  SandboxConfig{},
+		},
+		{
+			name: "excluded command with path",
+			cfg: SandboxConfig{
+				ExcludedCommands: []string{"/usr/bin/git"},
+			},
+			wantErr: "excluded_commands[0]: must not contain '/' or spaces",
+		},
+		{
+			name: "excluded command with spaces",
+			cfg: SandboxConfig{
+				ExcludedCommands: []string{"git commit"},
+			},
+			wantErr: "excluded_commands[0]: must not contain '/' or spaces",
+		},
+		{
+			name: "domain with scheme",
+			cfg: SandboxConfig{
+				Network: SandboxNetworkConfig{
+					AllowedDomains: []string{"https://api.github.com"},
+				},
+			},
+			wantErr: "allowed_domains[0]: must not contain scheme (://) or port (:port)",
+		},
+		{
+			name: "domain with port",
+			cfg: SandboxConfig{
+				Network: SandboxNetworkConfig{
+					AllowedDomains: []string{"api.github.com:443"},
+				},
+			},
+			wantErr: "allowed_domains[0]: must not contain scheme (://) or port (:port)",
+		},
+		{
+			name: "filesystem path without valid prefix",
+			cfg: SandboxConfig{
+				Filesystem: SandboxFilesystemConfig{
+					AllowWrite: []string{"relative/path"},
+				},
+			},
+			wantErr: "allow_write[0]: must start with '/', '~/', or './'",
+		},
+		{
+			name: "deny_read path without valid prefix",
+			cfg: SandboxConfig{
+				Filesystem: SandboxFilesystemConfig{
+					DenyRead: []string{"no-prefix"},
+				},
+			},
+			wantErr: "deny_read[0]: must start with '/', '~/', or './'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
