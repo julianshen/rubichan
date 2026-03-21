@@ -22,7 +22,7 @@ type ShellSandbox interface {
 // ShellSandboxPolicy describes the filesystem and network policy applied to a
 // shell command when a platform backend is available.
 type ShellSandboxPolicy struct {
-	AllowNetwork  bool
+	ProxyPort     int
 	AllowedPaths  []string
 	WritablePaths []string
 	DeniedPaths   []string
@@ -153,7 +153,7 @@ func (s *seatbeltSandbox) Wrap(cmd *exec.Cmd) error {
 	}
 
 	profile := buildSeatbeltProfile(s.policy)
-	cmd.Env = sandboxCommandEnv(cmd)
+	cmd.Env = sandboxCommandEnv(cmd, s.policy.ProxyPort)
 	cmd.Path = s.binary
 	cmd.Args = append([]string{s.binary, "-p", profile, originalPath}, originalArgs[1:]...)
 	return nil
@@ -185,7 +185,7 @@ func (s *bubblewrapSandbox) Wrap(cmd *exec.Cmd) error {
 		"--proc", "/proc",
 		"--dev", "/dev",
 	}
-	if s.policy.AllowNetwork {
+	if s.policy.ProxyPort > 0 {
 		args = append(args, "--share-net")
 	}
 
@@ -206,7 +206,7 @@ func (s *bubblewrapSandbox) Wrap(cmd *exec.Cmd) error {
 		args = append(args, "--chdir", cmd.Dir)
 	}
 
-	cmd.Env = sandboxCommandEnv(cmd)
+	cmd.Env = sandboxCommandEnv(cmd, s.policy.ProxyPort)
 	args = append(args, "--", originalPath)
 	args = append(args, originalArgs[1:]...)
 
@@ -254,8 +254,8 @@ func buildSeatbeltProfile(policy ShellSandboxPolicy) string {
 	if policy.AllowSubprocs {
 		lines = append(lines, "(allow process-fork)")
 	}
-	if !policy.AllowNetwork {
-		lines = append(lines, "(deny network*)")
+	if policy.ProxyPort > 0 {
+		lines = append(lines, fmt.Sprintf("(allow network-outbound (remote ip \"127.0.0.1\") (remote tcp \"*:%d\"))", policy.ProxyPort))
 	}
 	for _, path := range allowed {
 		lines = append(lines, fmt.Sprintf("(allow file-read* (subpath %q))", path))
@@ -270,17 +270,27 @@ func buildSeatbeltProfile(policy ShellSandboxPolicy) string {
 	return strings.Join(lines, "\n")
 }
 
-func sandboxCommandEnv(cmd *exec.Cmd) []string {
+func sandboxCommandEnv(cmd *exec.Cmd, proxyPort int) []string {
 	env := cmd.Environ()
 	sandboxHome := filepath.Join(cmd.Dir, ".rubichan-sandbox")
 	if cmd.Dir == "" {
 		sandboxHome = filepath.Join(os.TempDir(), "rubichan-sandbox")
 	}
-	return setEnvValues(env, map[string]string{
+	values := map[string]string{
 		"HOME":            sandboxHome,
 		"XDG_CACHE_HOME":  filepath.Join(sandboxHome, ".cache"),
 		"XDG_CONFIG_HOME": filepath.Join(sandboxHome, ".config"),
-	})
+	}
+	if proxyPort > 0 {
+		proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+		values["HTTP_PROXY"] = proxyURL
+		values["HTTPS_PROXY"] = proxyURL
+		values["http_proxy"] = proxyURL
+		values["https_proxy"] = proxyURL
+		values["NO_PROXY"] = "localhost,127.0.0.1"
+		values["no_proxy"] = "localhost,127.0.0.1"
+	}
+	return setEnvValues(env, values)
 }
 
 func setEnvValues(env []string, values map[string]string) []string {

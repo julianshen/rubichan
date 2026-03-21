@@ -169,6 +169,78 @@ func TestSandboxBackendAvailableLinuxProbe(t *testing.T) {
 	assert.False(t, sandboxBackendAvailable("linux", "/nonexistent/bwrap", t.TempDir()))
 }
 
+func TestSeatbeltProfileWithProxyPort(t *testing.T) {
+	policy := ShellSandboxPolicy{
+		AllowedPaths:  []string{"/bin"},
+		WritablePaths: []string{"/tmp/work"},
+		AllowSubprocs: true,
+		ProxyPort:     12345,
+	}
+
+	profile := buildSeatbeltProfile(policy)
+
+	assert.Contains(t, profile, "network-outbound")
+	assert.Contains(t, profile, "127.0.0.1")
+	assert.Contains(t, profile, "12345")
+	assert.NotContains(t, profile, "(deny network*)")
+}
+
+func TestSeatbeltProfileNoNetwork(t *testing.T) {
+	policy := ShellSandboxPolicy{
+		AllowedPaths:  []string{"/bin"},
+		WritablePaths: []string{"/tmp/work"},
+		AllowSubprocs: true,
+		ProxyPort:     0,
+	}
+
+	profile := buildSeatbeltProfile(policy)
+
+	assert.NotContains(t, profile, "network-outbound")
+	assert.Contains(t, profile, "(deny default)")
+}
+
+func TestSandboxCommandEnvProxyVars(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "echo hello")
+	cmd.Dir = t.TempDir()
+
+	env := sandboxCommandEnv(cmd, 8080)
+
+	envMap := make(map[string]string)
+	for _, entry := range env {
+		k, v, ok := strings.Cut(entry, "=")
+		if ok {
+			envMap[k] = v
+		}
+	}
+
+	assert.Equal(t, "http://127.0.0.1:8080", envMap["HTTP_PROXY"])
+	assert.Equal(t, "http://127.0.0.1:8080", envMap["HTTPS_PROXY"])
+	assert.Equal(t, "http://127.0.0.1:8080", envMap["http_proxy"])
+	assert.Equal(t, "http://127.0.0.1:8080", envMap["https_proxy"])
+	assert.Equal(t, "localhost,127.0.0.1", envMap["NO_PROXY"])
+	assert.Equal(t, "localhost,127.0.0.1", envMap["no_proxy"])
+}
+
+func TestSandboxCommandEnvNoProxy(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "echo hello")
+	cmd.Dir = t.TempDir()
+
+	env := sandboxCommandEnv(cmd, 0)
+
+	envMap := make(map[string]string)
+	for _, entry := range env {
+		k, v, ok := strings.Cut(entry, "=")
+		if ok {
+			envMap[k] = v
+		}
+	}
+
+	_, hasHTTP := envMap["HTTP_PROXY"]
+	_, hasHTTPS := envMap["HTTPS_PROXY"]
+	assert.False(t, hasHTTP, "HTTP_PROXY should not be set when proxyPort is 0")
+	assert.False(t, hasHTTPS, "HTTPS_PROXY should not be set when proxyPort is 0")
+}
+
 type recordingSandbox struct {
 	called bool
 	path   string
