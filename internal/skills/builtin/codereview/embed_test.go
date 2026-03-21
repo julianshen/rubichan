@@ -1,91 +1,57 @@
 package codereview
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/julianshen/rubichan/internal/skills"
 )
 
-func TestRegisterPopulatesLoader(t *testing.T) {
+// discoverSkill is a test helper that registers and discovers the single
+// built-in skill, returning it. It fails the test if registration or
+// discovery produces an error or unexpected count.
+func discoverSkill(t *testing.T) skills.DiscoveredSkill {
+	t.Helper()
 	loader := skills.NewLoader("", "")
 	Register(loader)
 
 	discovered, _, err := loader.Discover(nil)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
+	require.NoError(t, err)
+	require.Len(t, discovered, 1)
+	return discovered[0]
+}
 
-	if len(discovered) != 1 {
-		t.Fatalf("got %d skills, want 1", len(discovered))
-	}
+func TestRegisterPopulatesLoader(t *testing.T) {
+	ds := discoverSkill(t)
 
-	ds := discovered[0]
-	if ds.Manifest.Name != "review-guide" {
-		t.Errorf("name = %q, want %q", ds.Manifest.Name, "review-guide")
-	}
-	if ds.Source != skills.SourceBuiltin {
-		t.Errorf("source = %q, want %q", ds.Source, skills.SourceBuiltin)
-	}
-	if ds.Manifest.Description == "" {
-		t.Error("description is empty")
-	}
-	if len(ds.Manifest.Types) != 1 || ds.Manifest.Types[0] != skills.SkillTypePrompt {
-		t.Errorf("types = %v, want [prompt]", ds.Manifest.Types)
-	}
-	if ds.Manifest.Prompt.SystemPromptFile == "" {
-		t.Error("SystemPromptFile is empty")
-	}
-	if len(ds.Manifest.Prompt.SystemPromptFile) < 100 {
-		t.Errorf("content too short (%d bytes)", len(ds.Manifest.Prompt.SystemPromptFile))
-	}
+	assert.Equal(t, "review-guide", ds.Manifest.Name)
+	assert.Equal(t, skills.SourceBuiltin, ds.Source)
+	assert.NotEmpty(t, ds.Manifest.Description)
+	assert.Equal(t, []skills.SkillType{skills.SkillTypePrompt}, ds.Manifest.Types)
+	assert.NotEmpty(t, ds.Manifest.Prompt.SystemPromptFile)
+	assert.Greater(t, len(ds.Manifest.Prompt.SystemPromptFile), 100)
 }
 
 func TestReviewGuideIncludesAuthoringPatterns(t *testing.T) {
-	loader := skills.NewLoader("", "")
-	Register(loader)
+	ds := discoverSkill(t)
+	content := ds.Manifest.Prompt.SystemPromptFile
 
-	discovered, _, err := loader.Discover(nil)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-	if len(discovered) == 0 {
-		t.Fatal("Discover returned no skills")
-	}
-
-	content := discovered[0].Manifest.Prompt.SystemPromptFile
-
-	requiredSections := []string{
+	for _, section := range []string{
 		"## Thinking Phase",
 		"## Anti-Patterns",
 		"## Calibration",
 		"## Approaches",
 		"## Verification",
-	}
-	for _, section := range requiredSections {
-		if !strings.Contains(content, section) {
-			t.Errorf("content missing required section %q", section)
-		}
+	} {
+		assert.Contains(t, content, section)
 	}
 }
 
 func TestReviewGuideIncludesTriggers(t *testing.T) {
-	loader := skills.NewLoader("", "")
-	Register(loader)
+	ds := discoverSkill(t)
 
-	discovered, _, err := loader.Discover(nil)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-	if len(discovered) == 0 {
-		t.Fatal("Discover returned no skills")
-	}
-
-	ds := discovered[0]
-	if len(ds.Manifest.Triggers.Keywords) == 0 {
-		t.Fatal("expected keyword triggers")
-	}
-	if len(ds.Manifest.Triggers.Modes) == 0 {
-		t.Fatal("expected mode triggers")
-	}
+	assert.NotEmpty(t, ds.Manifest.Triggers.Keywords)
+	assert.NotEmpty(t, ds.Manifest.Triggers.Modes)
 }
