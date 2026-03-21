@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +19,10 @@ import (
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
+
+// taskToolName is the tool name used by the subagent/task system.
+// This couples to internal/tools.NewTaskTool's Name() return value.
+const taskToolName = "task"
 
 // TurnEventMsg wraps an agent.TurnEvent as a Bubble Tea message so streaming
 // events from the agent can be dispatched through the Update loop.
@@ -103,7 +108,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case approvalRequestMsg:
 		m.state = StateAwaitingApproval
-		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, m.width, msg.options)
+		workDir := ""
+		if m.agent != nil {
+			workDir = m.agent.WorkingDir()
+		}
+		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, workDir, m.width, msg.options)
 		m.pendingApproval = &approvalRequest{
 			tool:          msg.tool,
 			input:         msg.input,
@@ -334,7 +343,11 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		// Forward key to input area
 		if m.state == StateInput {
+			prevHeight := m.input.Height()
 			cmd := m.input.Update(msg)
+			if m.input.Height() != prevHeight {
+				m.reflowViewport()
+			}
 			m.syncCompletion()
 			return m, cmd
 		}
@@ -453,6 +466,24 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 				m.toolCallArgs = make(map[string]string)
 			}
 			m.toolCallArgs[msg.ToolCall.ID] = args
+
+			// Track subagent launches in the status bar.
+			// Coupled to the "task" tool name from internal/tools.NewTaskTool.
+			if strings.EqualFold(name, taskToolName) {
+				var taskArgs struct {
+					Description string `json:"description"`
+				}
+				if err := json.Unmarshal([]byte(args), &taskArgs); err != nil {
+					if m.debug {
+						log.Printf("[debug] failed to parse task tool args: %v", err)
+					}
+					m.statusBar.SetSubagent("subagent")
+				} else if taskArgs.Description != "" {
+					m.statusBar.SetSubagent(taskArgs.Description)
+				} else {
+					m.statusBar.SetSubagent("subagent")
+				}
+			}
 		}
 		// Rotate thinking message on each tool call (state update, not render).
 		m.thinkingMsg = persona.ThinkingMessage()
@@ -536,6 +567,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "subagent_done":
+		m.statusBar.SetSubagent("")
 		summary := msg.Text
 		output := ""
 		if summary == "" && msg.SubagentResult != nil {

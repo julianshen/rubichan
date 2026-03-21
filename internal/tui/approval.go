@@ -120,6 +120,7 @@ func OptionsForRisk(tool, args string) []ApprovalResult {
 type ApprovalPrompt struct {
 	tool    string
 	args    string
+	workDir string
 	options []ApprovalResult
 	result  ApprovalResult
 	done    bool
@@ -130,7 +131,7 @@ type ApprovalPrompt struct {
 // The width parameter controls the box width. The options parameter specifies
 // which approval choices to display. If options is nil, defaults are chosen
 // based on risk level.
-func NewApprovalPrompt(tool, args string, width int, options []ApprovalResult) *ApprovalPrompt {
+func NewApprovalPrompt(tool, args, workDir string, width int, options []ApprovalResult) *ApprovalPrompt {
 	boxWidth := width - 4
 	if boxWidth < 20 {
 		boxWidth = 20
@@ -144,6 +145,7 @@ func NewApprovalPrompt(tool, args string, width int, options []ApprovalResult) *
 	return &ApprovalPrompt{
 		tool:    tool,
 		args:    args,
+		workDir: workDir,
 		options: options,
 		box:     box,
 	}
@@ -423,6 +425,11 @@ func (a *ApprovalPrompt) View() string {
 		lines[i] = "    " + lines[i]
 	}
 	detail := styleSectionLabel.Render(strings.Join(lines, "\n"))
+
+	// Show working directory for shell/exec tools.
+	if a.workDir != "" && risk == RiskHigh {
+		detail += "\n" + styleTextDim.Render("    cwd: "+a.workDir)
+	}
 
 	body := header + "\n" + detail
 

@@ -22,6 +22,7 @@ type StatusBar struct {
 	gitBranch    string
 	elapsed      time.Duration
 	skillSummary string
+	subagentName string
 }
 
 // NewStatusBar creates a new StatusBar with the given terminal width.
@@ -61,6 +62,10 @@ func (s *StatusBar) ClearElapsed() { s.elapsed = 0 }
 // SetSkillSummary sets the active skill summary for display.
 func (s *StatusBar) SetSkillSummary(summary string) { s.skillSummary = summary }
 
+// SetSubagent sets the currently running subagent name for display.
+// Pass empty string to clear.
+func (s *StatusBar) SetSubagent(name string) { s.subagentName = name }
+
 // View renders the status bar as a styled string with clear segments.
 func (s *StatusBar) View() string {
 	sep := styleTextDim.Render(" │ ")
@@ -80,6 +85,9 @@ func (s *StatusBar) View() string {
 	}
 	if s.wikiStage != "" {
 		segments = append(segments, styleStatusLabel.Render("Wiki: ")+styleStatusValue.Render(s.wikiStage))
+	}
+	if s.subagentName != "" {
+		segments = append(segments, styleStatusLabel.Render("🔄 ")+styleStatusValue.Render(s.subagentName))
 	}
 	if s.skillSummary != "" {
 		segments = append(segments, styleStatusLabel.Render("Skills: ")+styleStatusValue.Render(s.skillSummary))

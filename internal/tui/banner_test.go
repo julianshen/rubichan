@@ -45,6 +45,21 @@ func TestRenderBannerContainsWelcome(t *testing.T) {
 	assert.Contains(t, rendered, "Ruby")
 }
 
+// --- Compact banner tests ---
+
+func TestRenderCompactBanner_ContainsRubichan(t *testing.T) {
+	t.Parallel()
+	result := RenderCompactBanner()
+	assert.Contains(t, result, "rubichan", "compact banner should contain 'rubichan'")
+}
+
+func TestRenderCompactBanner_ContainsPersonaStatusPrefix(t *testing.T) {
+	t.Parallel()
+	result := RenderCompactBanner()
+	// The persona status prefix (e.g. "Ruby") should appear in the compact banner.
+	assert.Contains(t, result, "Ruby", "compact banner should contain the persona status prefix")
+}
+
 func TestNewModelInitialContent(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 

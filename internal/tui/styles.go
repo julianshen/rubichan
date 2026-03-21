@@ -6,23 +6,25 @@ import "github.com/charmbracelet/lipgloss"
 // These constants define a cohesive pink-themed color scheme inspired by
 // Ruby's persona. The palette uses warm pinks, soft magentas, and
 // complementary neutrals for a clean, readable terminal UI.
+// Primary and accent colors use AdaptiveColor for proper light/dark contrast.
 var (
 	// Primary brand colors — used for headers, accents, active elements.
-	colorPrimary      = lipgloss.Color("#FF6B9D") // warm pink
-	colorPrimaryBold  = lipgloss.Color("#FF3385") // hot pink — emphasis
-	colorPrimaryLight = lipgloss.Color("#FFB3D0") // pastel pink — subtle accents
-	colorPrimaryDim   = lipgloss.Color("#CC5580") // muted pink — secondary text
+	// Light mode uses deeper pinks for contrast against white backgrounds.
+	colorPrimary      = lipgloss.AdaptiveColor{Light: "#CC4477", Dark: "#FF6B9D"} // warm pink
+	colorPrimaryBold  = lipgloss.AdaptiveColor{Light: "#CC1166", Dark: "#FF3385"} // hot pink — emphasis
+	colorPrimaryLight = lipgloss.AdaptiveColor{Light: "#DD6699", Dark: "#FFB3D0"} // pastel pink — subtle accents
+	colorPrimaryDim   = lipgloss.AdaptiveColor{Light: "#994466", Dark: "#CC5580"} // muted pink — secondary text
 
 	// Accent colors — used for interactive highlights and selections.
-	colorAccent     = lipgloss.Color("#FF85B5") // rose — selections, highlights
-	colorAccentDim  = lipgloss.Color("#D4609A") // dusty rose — dimmed accents
-	colorAccentGlow = lipgloss.Color("#FF9EC7") // light rose — hover/glow
+	colorAccent     = lipgloss.AdaptiveColor{Light: "#CC5588", Dark: "#FF85B5"} // rose — selections, highlights
+	colorAccentDim  = lipgloss.AdaptiveColor{Light: "#AA4477", Dark: "#D4609A"} // dusty rose — dimmed accents
+	colorAccentGlow = lipgloss.AdaptiveColor{Light: "#DD7799", Dark: "#FF9EC7"} // light rose — hover/glow
 
 	// Semantic colors — used for status indicators.
-	colorSuccess = lipgloss.Color("#7CDB8A") // green — success, added lines
-	colorWarning = lipgloss.Color("#FFB347") // amber — warnings, medium risk
-	colorDanger  = lipgloss.Color("#FF6B6B") // red — errors, high risk, removed lines
-	colorInfo    = lipgloss.Color("#7CC4E8") // blue — info, hunk headers
+	colorSuccess = lipgloss.AdaptiveColor{Light: "#2D8B3D", Dark: "#7CDB8A"} // green — success, added lines
+	colorWarning = lipgloss.AdaptiveColor{Light: "#CC8822", Dark: "#FFB347"} // amber — warnings, medium risk
+	colorDanger  = lipgloss.AdaptiveColor{Light: "#CC3333", Dark: "#FF6B6B"} // red — errors, high risk, removed lines
+	colorInfo    = lipgloss.AdaptiveColor{Light: "#3377AA", Dark: "#7CC4E8"} // blue — info, hunk headers
 
 	// Neutral colors — used for text, borders, backgrounds.
 	colorTextBright = lipgloss.AdaptiveColor{Light: "#1A1A2E", Dark: "#F0E6F0"}
@@ -35,6 +37,8 @@ var (
 	colorBgSelected = lipgloss.AdaptiveColor{Light: "#FFD6E8", Dark: "#4A2040"}
 
 	// Banner gradient — pink spectrum from light to deep.
+	// Non-adaptive because gradient ordering requires precise color steps;
+	// dual-mode gradients would double the palette for diminishing returns.
 	bannerGradient = []lipgloss.Color{
 		"#FFB3D0", // pastel pink
 		"#FF9EC7", // light rose
