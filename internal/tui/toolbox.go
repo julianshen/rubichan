@@ -90,6 +90,7 @@ type CollapsibleToolResult struct {
 	IsError   bool
 	Collapsed bool
 	ToolType  ToolType // tool category for visual differentiation
+	ExitCode  *int     // shell exit code (nil for non-shell tools)
 }
 
 // Render returns the rendered view of a tool result, either collapsed
@@ -108,17 +109,22 @@ func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 
 // lineLabel returns a human-friendly line count label.
 // When content exceeds maxToolResultLines, it shows "N lines (20 shown)".
+// For shell tools, appends "[exit N]" when ExitCode is set.
 func (c *CollapsibleToolResult) lineLabel() string {
+	label := ""
 	if c.LineCount == 0 {
-		return "empty"
+		label = "empty"
+	} else if c.LineCount > maxToolResultLines {
+		label = fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
+	} else if c.LineCount == 1 {
+		label = "1 line"
+	} else {
+		label = fmt.Sprintf("%d lines", c.LineCount)
 	}
-	if c.LineCount > maxToolResultLines {
-		return fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
+	if c.ExitCode != nil {
+		label += fmt.Sprintf(" [exit %d]", *c.ExitCode)
 	}
-	if c.LineCount == 1 {
-		return "1 line"
-	}
-	return fmt.Sprintf("%d lines", c.LineCount)
+	return label
 }
 
 // toolResultPlaceholder returns a placeholder marker for the given tool result ID.

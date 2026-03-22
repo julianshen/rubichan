@@ -526,6 +526,15 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			Collapsed: false, // expanded during streaming
 			ToolType:  ClassifyTool(resultName),
 		}
+		if cr.ToolType == ToolTypeShell {
+			if cr.IsError {
+				code := 1
+				cr.ExitCode = &code
+			} else {
+				code := 0
+				cr.ExitCode = &code
+			}
+		}
 		m.toolResults = append(m.toolResults, cr)
 		m.content.WriteString(toolResultPlaceholder(m.nextToolResultID))
 		m.nextToolResultID++

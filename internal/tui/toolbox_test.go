@@ -293,3 +293,72 @@ func TestCollapsibleToolResult_DefaultNoIcon(t *testing.T) {
 	assert.NotContains(t, result, "~ ")
 	assert.NotContains(t, result, "? ")
 }
+
+func TestCollapsibleToolResult_ExitCodeDisplay(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	exitCode := 0
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="ls"`,
+		Content:   "file1\nfile2",
+		LineCount: 2,
+		ToolType:  ToolTypeShell,
+		ExitCode:  &exitCode,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "[exit 0]")
+}
+
+func TestCollapsibleToolResult_ExitCodeNonZero(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	exitCode := 1
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="make"`,
+		Content:   "error: build failed",
+		LineCount: 1,
+		ToolType:  ToolTypeShell,
+		ExitCode:  &exitCode,
+		IsError:   true,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "[exit 1]")
+}
+
+func TestCollapsibleToolResult_ExitCodeWithTruncation(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	exitCode := 1
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="find /"`,
+		Content:   strings.Repeat("line\n", 50),
+		LineCount: 50,
+		ToolType:  ToolTypeShell,
+		ExitCode:  &exitCode,
+		IsError:   true,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "50 lines (20 shown)")
+	assert.Contains(t, result, "[exit 1]")
+}
+
+func TestCollapsibleToolResult_NoExitCodeForNonShell(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "file_read",
+		Args:      `path="a.go"`,
+		Content:   "content",
+		LineCount: 1,
+		ToolType:  ToolTypeFile,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.NotContains(t, result, "[exit")
+}
