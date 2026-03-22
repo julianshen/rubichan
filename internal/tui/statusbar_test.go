@@ -116,6 +116,80 @@ func TestFormatElapsed(t *testing.T) {
 	assert.Equal(t, "2m30s", formatElapsed(150*time.Second))
 }
 
+// --- Responsive / priority-based elision tests ---
+
+func TestStatusBarNarrowHidesGitBranch(t *testing.T) {
+	sb := NewStatusBar(70) // narrower than 80
+	sb.SetModel("claude-sonnet")
+	sb.SetTokens(1200, 100000)
+	sb.SetTurn(3, 50)
+	sb.SetCost(0.02)
+	sb.SetGitBranch("feature/test")
+	sb.SetElapsed(30 * time.Second)
+	result := sb.View()
+	// At width 70, git branch and elapsed should be hidden
+	assert.NotContains(t, result, "feature/test")
+	assert.NotContains(t, result, "⏱")
+	// Core segments should remain
+	assert.Contains(t, result, "claude-sonnet")
+	assert.Contains(t, result, "Turn 3/50")
+}
+
+func TestFitSegmentsDropsLowestPriority(t *testing.T) {
+	sb := NewStatusBar(40) // very narrow
+	sep := " | "
+	segments := []statusSegment{
+		{"Model", priorityAlways},   // 5 chars
+		{"Turn", priorityAlways},    // 4 chars
+		{"Tokens", priorityHigh},    // 6 chars
+		{"$0.02", priorityHigh},     // 5 chars
+		{"branch", priorityMedium},  // 6 chars
+		{"elapsed", priorityMedium}, // 7 chars
+		{"skills", priorityLow},     // 6 chars
+	}
+	result := sb.fitSegments(segments, sep)
+	names := make([]string, len(result))
+	for i, s := range result {
+		names[i] = s.content
+	}
+	assert.Contains(t, names, "Model")
+	assert.Contains(t, names, "Turn")
+	assert.NotContains(t, names, "skills")
+}
+
+func TestFitSegmentsKeepsAllWhenFit(t *testing.T) {
+	sb := NewStatusBar(200)
+	sep := " | "
+	segments := []statusSegment{
+		{"Model", priorityAlways},
+		{"Turn", priorityAlways},
+		{"Tokens", priorityHigh},
+	}
+	result := sb.fitSegments(segments, sep)
+	assert.Len(t, result, 3)
+}
+
+func TestStatusBarWideShowsAll(t *testing.T) {
+	sb := NewStatusBar(120)
+	sb.SetModel("claude-sonnet")
+	sb.SetTokens(1200, 100000)
+	sb.SetTurn(3, 50)
+	sb.SetCost(0.02)
+	sb.SetGitBranch("main")
+	sb.SetElapsed(65 * time.Second)
+	sb.SetSubagent("worker")
+	sb.SetSkillSummary("2 active")
+	result := sb.View()
+	assert.Contains(t, result, "claude-sonnet")
+	assert.Contains(t, result, "1.2k/100k")
+	assert.Contains(t, result, "Turn 3/50")
+	assert.Contains(t, result, "$0.02")
+	assert.Contains(t, result, "main")
+	assert.Contains(t, result, "⏱")
+	assert.Contains(t, result, "worker")
+	assert.Contains(t, result, "2 active")
+}
+
 // --- Subagent status bar tests ---
 
 func TestStatusBarSetSubagent_ShowsNameInView(t *testing.T) {

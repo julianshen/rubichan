@@ -5,8 +5,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/julianshen/rubichan/internal/persona"
 )
+
+// segment priority tiers (lower = higher priority = shown first)
+const (
+	priorityAlways = iota // model name, turn count
+	priorityHigh          // tokens, cost
+	priorityMedium        // git branch, elapsed
+	priorityLow           // wiki, subagent, skills
+)
+
+type statusSegment struct {
+	content  string
+	priority int
+}
 
 // StatusBar displays model, token usage, turn count, estimated cost,
 // git branch, and turn elapsed time.
@@ -67,41 +81,97 @@ func (s *StatusBar) SetSkillSummary(summary string) { s.skillSummary = summary }
 func (s *StatusBar) SetSubagent(name string) { s.subagentName = name }
 
 // View renders the status bar as a styled string with clear segments.
+// Lower-priority segments are elided first when the bar does not fit the terminal width.
 func (s *StatusBar) View() string {
 	sep := styleTextDim.Render(" │ ")
 
-	segments := []string{
-		styleStatusLabel.Render(persona.StatusPrefix()),
-		styleStatusValue.Render(s.model),
-		styleTextDim.Render(fmt.Sprintf("%s/%s", formatTokens(s.inputTokens), formatTokens(s.maxTokens))),
-		styleStatusValue.Render(fmt.Sprintf("Turn %d/%d", s.turn, s.maxTurns)),
-		styleTextDim.Render(fmt.Sprintf("~$%.2f", s.cost)),
+	segments := []statusSegment{
+		{styleStatusLabel.Render(persona.StatusPrefix()), priorityAlways},
+		{styleStatusValue.Render(s.model), priorityAlways},
+		{styleTextDim.Render(fmt.Sprintf("%s/%s", formatTokens(s.inputTokens), formatTokens(s.maxTokens))), priorityHigh},
+		{styleStatusValue.Render(fmt.Sprintf("Turn %d/%d", s.turn, s.maxTurns)), priorityAlways},
+		{styleTextDim.Render(fmt.Sprintf("~$%.2f", s.cost)), priorityHigh},
 	}
 	if s.gitBranch != "" {
-		segments = append(segments, styleStatusLabel.Render("⎇ ")+styleStatusValue.Render(s.gitBranch))
+		segments = append(segments, statusSegment{
+			styleStatusLabel.Render("⎇ ") + styleStatusValue.Render(s.gitBranch), priorityMedium,
+		})
 	}
 	if s.elapsed > 0 {
-		segments = append(segments, styleTextDim.Render("⏱ "+formatElapsed(s.elapsed)))
+		segments = append(segments, statusSegment{
+			styleTextDim.Render("⏱ " + formatElapsed(s.elapsed)), priorityMedium,
+		})
 	}
 	if s.wikiStage != "" {
-		segments = append(segments, styleStatusLabel.Render("Wiki: ")+styleStatusValue.Render(s.wikiStage))
+		segments = append(segments, statusSegment{
+			styleStatusLabel.Render("Wiki: ") + styleStatusValue.Render(s.wikiStage), priorityLow,
+		})
 	}
 	if s.subagentName != "" {
-		segments = append(segments, styleStatusLabel.Render("🔄 ")+styleStatusValue.Render(s.subagentName))
+		segments = append(segments, statusSegment{
+			styleStatusLabel.Render("🔄 ") + styleStatusValue.Render(s.subagentName), priorityLow,
+		})
 	}
 	if s.skillSummary != "" {
-		segments = append(segments, styleStatusLabel.Render("Skills: ")+styleStatusValue.Render(s.skillSummary))
+		segments = append(segments, statusSegment{
+			styleStatusLabel.Render("Skills: ") + styleStatusValue.Render(s.skillSummary), priorityLow,
+		})
 	}
+
+	visible := s.fitSegments(segments, sep)
 
 	var b strings.Builder
 	b.WriteString(" ")
-	for i, seg := range segments {
+	for i, seg := range visible {
 		if i > 0 {
 			b.WriteString(sep)
 		}
-		b.WriteString(seg)
+		b.WriteString(seg.content)
 	}
 	return b.String()
+}
+
+// fitSegments returns segments that fit within the status bar width,
+// dropping lowest-priority segments first.
+func (s *StatusBar) fitSegments(segments []statusSegment, sep string) []statusSegment {
+	if s.width <= 0 {
+		return segments
+	}
+
+	visible := make([]statusSegment, len(segments))
+	copy(visible, segments)
+
+	for {
+		if s.segmentsWidth(visible, sep) <= s.width {
+			return visible
+		}
+		worstIdx := -1
+		worstPri := -1
+		for i := len(visible) - 1; i >= 0; i-- {
+			if visible[i].priority > worstPri {
+				worstPri = visible[i].priority
+				worstIdx = i
+			}
+		}
+		if worstIdx < 0 || worstPri == priorityAlways {
+			break
+		}
+		visible = append(visible[:worstIdx], visible[worstIdx+1:]...)
+	}
+	return visible
+}
+
+// segmentsWidth calculates the total rendered width of segments with separators.
+func (s *StatusBar) segmentsWidth(segments []statusSegment, sep string) int {
+	total := 1 // leading space
+	sepW := lipgloss.Width(sep)
+	for i, seg := range segments {
+		if i > 0 {
+			total += sepW
+		}
+		total += lipgloss.Width(seg.content)
+	}
+	return total
 }
 
 // formatTokens formats a token count for compact display.
