@@ -94,7 +94,7 @@ type CollapsibleToolResult struct {
 	IsError       bool
 	Collapsed     bool
 	FullyExpanded bool     // show all content (no truncation); only meaningful when Collapsed == false
-	ToolType ToolType // tool category for visual differentiation
+	ToolType      ToolType // tool category for visual differentiation
 }
 
 // Render returns the rendered view of a tool result in one of three states:
@@ -117,8 +117,8 @@ func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 }
 
 // lineLabel returns a human-friendly line count label.
-// When content exceeds maxToolResultLines, it shows "N lines (20 shown)".
-// For shell tools, appends "[exit N]" when ExitCode is set.
+// When content exceeds maxToolResultLines, it shows "N lines (20 shown)"
+// unless FullyExpanded is true. For shell tools, appends [ok] or [error].
 func (c *CollapsibleToolResult) lineLabel() string {
 	label := ""
 	if c.LineCount == 0 {
