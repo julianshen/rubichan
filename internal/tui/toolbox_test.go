@@ -419,3 +419,37 @@ func TestCollapsibleToolResult_ShortNoExpandHint(t *testing.T) {
 	assert.NotContains(t, result, "Ctrl+E")
 	assert.NotContains(t, result, "more lines")
 }
+
+func TestToggleFullExpandMostRecent(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "shell", LineCount: 5, Collapsed: true},
+		{ID: 1, Name: "file_read", LineCount: 50, Collapsed: false, FullyExpanded: false},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
+	assert.True(t, results[1].FullyExpanded)
+}
+
+func TestToggleFullExpandMostRecentToggleOff(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "file_read", LineCount: 50, Collapsed: false, FullyExpanded: true},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
+}
+
+func TestToggleFullExpandSkipsCollapsed(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "file_read", LineCount: 50, Collapsed: true},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
+}
+
+func TestToggleFullExpandSkipsShortResults(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "shell", LineCount: 5, Collapsed: false},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
+}

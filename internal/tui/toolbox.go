@@ -160,6 +160,18 @@ func replaceToolResultPlaceholders(content string, results []CollapsibleToolResu
 	return content
 }
 
+// toggleFullExpandMostRecent toggles FullyExpanded on the most recent
+// non-collapsed tool result that has truncatable content (LineCount > maxToolResultLines).
+// Iterates from end to find the right target.
+func toggleFullExpandMostRecent(results []CollapsibleToolResult) {
+	for i := len(results) - 1; i >= 0; i-- {
+		if !results[i].Collapsed && results[i].LineCount > maxToolResultLines {
+			results[i].FullyExpanded = !results[i].FullyExpanded
+			return
+		}
+	}
+}
+
 // isDiffContent returns true if the content appears to be a unified diff
 // (contains at least one @@ hunk header).
 func isDiffContent(content string) bool {

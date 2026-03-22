@@ -277,6 +277,13 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Ctrl+E toggles full expansion on the most recent truncated tool result.
+	if msg.Type == tea.KeyCtrlE && m.state == StateInput && len(m.toolResults) > 0 {
+		toggleFullExpandMostRecent(m.toolResults)
+		m.viewport.SetContent(m.viewportContent())
+		return m, nil
+	}
+
 	if msg.Type == tea.KeyCtrlG && m.state == StateInput && strings.TrimSpace(m.diffSummary) != "" {
 		m.diffExpanded = !m.diffExpanded
 		m.viewport.SetContent(m.viewportContent())
