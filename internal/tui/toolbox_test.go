@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -361,4 +362,60 @@ func TestCollapsibleToolResult_NoExitCodeForNonShell(t *testing.T) {
 	}
 	result := cr.Render(r)
 	assert.NotContains(t, result, "[exit")
+}
+
+func TestCollapsibleToolResult_FullyExpanded(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i+1)
+	}
+	cr := &CollapsibleToolResult{
+		ID:            1,
+		Name:          "file_read",
+		Args:          `path="big.go"`,
+		Content:       strings.Join(lines, "\n"),
+		LineCount:     50,
+		Collapsed:     false,
+		FullyExpanded: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "line 50")
+	assert.NotContains(t, result, "more lines")
+}
+
+func TestCollapsibleToolResult_TruncatedShowsExpandHint(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i+1)
+	}
+	cr := &CollapsibleToolResult{
+		ID:            1,
+		Name:          "file_read",
+		Args:          `path="big.go"`,
+		Content:       strings.Join(lines, "\n"),
+		LineCount:     50,
+		Collapsed:     false,
+		FullyExpanded: false,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "30 more lines")
+	assert.Contains(t, result, "Ctrl+E")
+	assert.NotContains(t, result, "line 50")
+}
+
+func TestCollapsibleToolResult_ShortNoExpandHint(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="echo hi"`,
+		Content:   "hi",
+		LineCount: 1,
+		Collapsed: false,
+	}
+	result := cr.Render(r)
+	assert.NotContains(t, result, "Ctrl+E")
+	assert.NotContains(t, result, "more lines")
 }

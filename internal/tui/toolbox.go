@@ -57,9 +57,19 @@ func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) s
 
 	display := ColorizeDiffLines(strings.Join(lines, "\n"))
 	if truncated > 0 {
-		display += fmt.Sprintf("\n[%d more lines]", truncated)
+		display += fmt.Sprintf("\n[%d more lines — Ctrl+E to expand]", truncated)
 	}
 
+	box := r.normalBox
+	if isError {
+		box = r.errorBox
+	}
+	return box.Render(display) + "\n"
+}
+
+// RenderToolResultFull renders a tool result without truncation.
+func (r *ToolBoxRenderer) RenderToolResultFull(name, content string, isError bool) string {
+	display := ColorizeDiffLines(content)
 	box := r.normalBox
 	if isError {
 		box = r.errorBox
@@ -82,19 +92,22 @@ func (r *ToolBoxRenderer) RenderToolProgress(name, stage, content string, isErro
 
 // CollapsibleToolResult tracks a single tool result with collapse state.
 type CollapsibleToolResult struct {
-	ID        int
-	Name      string
-	Args      string
-	Content   string
-	LineCount int
-	IsError   bool
-	Collapsed bool
-	ToolType  ToolType // tool category for visual differentiation
-	ExitCode  *int     // shell exit code (nil for non-shell tools)
+	ID            int
+	Name          string
+	Args          string
+	Content       string
+	LineCount     int
+	IsError       bool
+	Collapsed     bool
+	FullyExpanded bool     // show all content (no truncation); only meaningful when Collapsed == false
+	ToolType      ToolType // tool category for visual differentiation
+	ExitCode      *int     // shell exit code (nil for non-shell tools)
 }
 
-// Render returns the rendered view of a tool result, either collapsed
-// (single summary line) or expanded (bordered box with content).
+// Render returns the rendered view of a tool result in one of three states:
+//   - collapsed: single summary line with ▶ indicator
+//   - expanded-truncated: ▼ header + first maxToolResultLines lines + expand hint
+//   - expanded-full: ▼ header + all lines (when FullyExpanded == true)
 func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	lineLabel := c.lineLabel()
 	icon := c.ToolType.Icon()
@@ -104,6 +117,9 @@ func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	}
 	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s(%s)", icon, c.Name, c.Args)) +
 		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
+	if c.FullyExpanded {
+		return header + r.RenderToolResultFull(c.Name, c.Content, c.IsError)
+	}
 	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
 }
 
