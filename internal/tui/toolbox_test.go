@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,14 +19,14 @@ func TestRenderToolCall(t *testing.T) {
 
 func TestRenderToolResult(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	result := r.RenderToolResult("file_read", "package main\n\nfunc main() {}", false)
+	result := r.RenderToolResult("package main\n\nfunc main() {}", false)
 	assert.Contains(t, result, "main")
 	assert.Contains(t, result, "\u256d")
 }
 
 func TestRenderToolResultError(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	result := r.RenderToolResult("shell", "command not found", true)
+	result := r.RenderToolResult("command not found", true)
 	assert.Contains(t, result, "command not found")
 }
 
@@ -35,7 +36,7 @@ func TestRenderToolResultTruncation(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		longContent += "line content here\n"
 	}
-	result := r.RenderToolResult("file_read", longContent, false)
+	result := r.RenderToolResult(longContent, false)
 	assert.Contains(t, result, "more lines")
 }
 
@@ -56,13 +57,13 @@ func TestRenderToolResultExactlyMaxLines(t *testing.T) {
 		lines[i] = "line"
 	}
 	content := strings.Join(lines, "\n")
-	result := r.RenderToolResult("test", content, false)
+	result := r.RenderToolResult(content, false)
 	assert.NotContains(t, result, "more lines")
 }
 
 func TestRenderToolResultEmptyContent(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	result := r.RenderToolResult("test", "", false)
+	result := r.RenderToolResult("", false)
 	assert.Contains(t, result, "\u256d")
 }
 
@@ -244,4 +245,209 @@ func TestCollapsibleToolResult_SingleLineLabel(t *testing.T) {
 	result := cr.Render(r)
 	assert.Contains(t, result, "1 line")
 	assert.NotContains(t, result, "1 lines")
+}
+
+func TestCollapsibleToolResult_ShellIcon(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="ls"`,
+		Content:   "file1\nfile2",
+		LineCount: 2,
+		ToolType:  ToolTypeShell,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "$ ")
+	assert.Contains(t, result, "▶")
+}
+
+func TestCollapsibleToolResult_FileIcon(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "file_read",
+		Args:      `path="main.go"`,
+		Content:   "package main",
+		LineCount: 1,
+		ToolType:  ToolTypeFile,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "~ ")
+}
+
+func TestCollapsibleToolResult_DefaultNoIcon(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "custom",
+		Args:      "",
+		Content:   "output",
+		LineCount: 1,
+		ToolType:  ToolTypeDefault,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.NotContains(t, result, "$ ")
+	assert.NotContains(t, result, "~ ")
+	assert.NotContains(t, result, "? ")
+}
+
+func TestCollapsibleToolResult_ShellStatusOk(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="ls"`,
+		Content:   "file1\nfile2",
+		LineCount: 2,
+		ToolType:  ToolTypeShell,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "[ok]")
+}
+
+func TestCollapsibleToolResult_ShellStatusError(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="make"`,
+		Content:   "error: build failed",
+		LineCount: 1,
+		ToolType:  ToolTypeShell,
+		IsError:   true,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "[error]")
+}
+
+func TestCollapsibleToolResult_ShellStatusWithTruncation(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="find /"`,
+		Content:   strings.Repeat("line\n", 50),
+		LineCount: 50,
+		ToolType:  ToolTypeShell,
+		IsError:   true,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "50 lines (20 shown)")
+	assert.Contains(t, result, "[error]")
+}
+
+func TestCollapsibleToolResult_NoStatusForNonShell(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "file_read",
+		Args:      `path="a.go"`,
+		Content:   "content",
+		LineCount: 1,
+		ToolType:  ToolTypeFile,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.NotContains(t, result, "[ok]")
+	assert.NotContains(t, result, "[error]")
+}
+
+func TestCollapsibleToolResult_FullyExpanded(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i+1)
+	}
+	cr := &CollapsibleToolResult{
+		ID:            1,
+		Name:          "file_read",
+		Args:          `path="big.go"`,
+		Content:       strings.Join(lines, "\n"),
+		LineCount:     50,
+		Collapsed:     false,
+		FullyExpanded: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "line 50")
+	assert.NotContains(t, result, "more lines")
+	// When fully expanded, label should say "50 lines" not "50 lines (20 shown)"
+	assert.Contains(t, result, "50 lines")
+	assert.NotContains(t, result, "20 shown")
+}
+
+func TestCollapsibleToolResult_TruncatedShowsExpandHint(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i+1)
+	}
+	cr := &CollapsibleToolResult{
+		ID:            1,
+		Name:          "file_read",
+		Args:          `path="big.go"`,
+		Content:       strings.Join(lines, "\n"),
+		LineCount:     50,
+		Collapsed:     false,
+		FullyExpanded: false,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "30 more lines")
+	assert.Contains(t, result, "Ctrl+E")
+	assert.NotContains(t, result, "line 50")
+}
+
+func TestCollapsibleToolResult_ShortNoExpandHint(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="echo hi"`,
+		Content:   "hi",
+		LineCount: 1,
+		Collapsed: false,
+	}
+	result := cr.Render(r)
+	assert.NotContains(t, result, "Ctrl+E")
+	assert.NotContains(t, result, "more lines")
+}
+
+func TestToggleFullExpandMostRecent(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "shell", LineCount: 5, Collapsed: true},
+		{ID: 1, Name: "file_read", LineCount: 50, Collapsed: false, FullyExpanded: false},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
+	assert.True(t, results[1].FullyExpanded)
+}
+
+func TestToggleFullExpandMostRecentToggleOff(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "file_read", LineCount: 50, Collapsed: false, FullyExpanded: true},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
+}
+
+func TestToggleFullExpandSkipsCollapsed(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "file_read", LineCount: 50, Collapsed: true},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
+}
+
+func TestToggleFullExpandSkipsShortResults(t *testing.T) {
+	results := []CollapsibleToolResult{
+		{ID: 0, Name: "shell", LineCount: 5, Collapsed: false},
+	}
+	toggleFullExpandMostRecent(results)
+	assert.False(t, results[0].FullyExpanded)
 }

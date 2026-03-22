@@ -45,9 +45,17 @@ func (r *ToolBoxRenderer) RenderToolCall(name, args string) string {
 	return r.normalBox.Render(header) + "\n"
 }
 
-// RenderToolResult renders a tool result in a bordered box.
-// If isError is true, the border is red.
-func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) string {
+// renderInBox renders content in a bordered box, choosing error style when isError is true.
+func (r *ToolBoxRenderer) renderInBox(content string, isError bool) string {
+	box := r.normalBox
+	if isError {
+		box = r.errorBox
+	}
+	return box.Render(content) + "\n"
+}
+
+// RenderToolResult renders a tool result in a bordered box, truncating to maxToolResultLines.
+func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string {
 	lines := strings.Split(content, "\n")
 	truncated := 0
 	if len(lines) > maxToolResultLines {
@@ -57,14 +65,14 @@ func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) s
 
 	display := ColorizeDiffLines(strings.Join(lines, "\n"))
 	if truncated > 0 {
-		display += fmt.Sprintf("\n[%d more lines]", truncated)
+		display += fmt.Sprintf("\n[%d more lines — Ctrl+E to expand]", truncated)
 	}
+	return r.renderInBox(display, isError)
+}
 
-	box := r.normalBox
-	if isError {
-		box = r.errorBox
-	}
-	return box.Render(display) + "\n"
+// RenderToolResultFull renders a tool result without truncation.
+func (r *ToolBoxRenderer) RenderToolResultFull(content string, isError bool) string {
+	return r.renderInBox(ColorizeDiffLines(content), isError)
 }
 
 // RenderToolProgress renders streaming tool progress output.
@@ -73,50 +81,67 @@ func (r *ToolBoxRenderer) RenderToolProgress(name, stage, content string, isErro
 		return ""
 	}
 	prefix := fmt.Sprintf("[%s:%s]\n", name, stage)
-	box := r.normalBox
-	if isError {
-		box = r.errorBox
-	}
-	return box.Render(prefix+content) + "\n"
+	return r.renderInBox(prefix+content, isError)
 }
 
 // CollapsibleToolResult tracks a single tool result with collapse state.
 type CollapsibleToolResult struct {
-	ID        int
-	Name      string
-	Args      string
-	Content   string
-	LineCount int
-	IsError   bool
-	Collapsed bool
+	ID            int
+	Name          string
+	Args          string
+	Content       string
+	LineCount     int
+	IsError       bool
+	Collapsed     bool
+	FullyExpanded bool     // show all content (no truncation); only meaningful when Collapsed == false
+	ToolType      ToolType // tool category for visual differentiation
 }
 
-// Render returns the rendered view of a tool result, either collapsed
-// (single summary line) or expanded (bordered box with content).
+// Render returns the rendered view of a tool result in one of three states:
+//   - collapsed: single summary line with ▶ indicator
+//   - expanded-truncated: ▼ header + first maxToolResultLines lines + expand hint
+//   - expanded-full: ▼ header + all lines (when FullyExpanded == true)
 func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	lineLabel := c.lineLabel()
+	icon := c.ToolType.Icon()
 	if c.Collapsed {
-		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s(%s)", c.Name, c.Args)) +
+		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s%s(%s)", icon, c.Name, c.Args)) +
 			styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	}
-	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s(%s)", c.Name, c.Args)) +
+	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s(%s)", icon, c.Name, c.Args)) +
 		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
-	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
+	if c.FullyExpanded {
+		return header + r.RenderToolResultFull(c.Content, c.IsError)
+	}
+	return header + r.RenderToolResult(c.Content, c.IsError)
 }
 
 // lineLabel returns a human-friendly line count label.
-// When content exceeds maxToolResultLines, it shows "N lines (20 shown)".
+// When content exceeds maxToolResultLines, it shows "N lines (20 shown)"
+// unless FullyExpanded is true. For shell tools, appends [ok] or [error].
 func (c *CollapsibleToolResult) lineLabel() string {
+	label := ""
 	if c.LineCount == 0 {
-		return "empty"
+		label = "empty"
+	} else if c.LineCount > maxToolResultLines {
+		if c.FullyExpanded {
+			label = fmt.Sprintf("%d lines", c.LineCount)
+		} else {
+			label = fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
+		}
+	} else if c.LineCount == 1 {
+		label = "1 line"
+	} else {
+		label = fmt.Sprintf("%d lines", c.LineCount)
 	}
-	if c.LineCount > maxToolResultLines {
-		return fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
+	if c.ToolType == ToolTypeShell {
+		if c.IsError {
+			label += " [error]"
+		} else {
+			label += " [ok]"
+		}
 	}
-	if c.LineCount == 1 {
-		return "1 line"
-	}
-	return fmt.Sprintf("%d lines", c.LineCount)
+	return label
 }
 
 // toolResultPlaceholder returns a placeholder marker for the given tool result ID.
@@ -134,6 +159,18 @@ func replaceToolResultPlaceholders(content string, results []CollapsibleToolResu
 		content = strings.Replace(content, placeholder, results[i].Render(r), 1)
 	}
 	return content
+}
+
+// toggleFullExpandMostRecent toggles FullyExpanded on the most recent
+// non-collapsed tool result that has truncatable content (LineCount > maxToolResultLines).
+// Iterates from end to find the right target.
+func toggleFullExpandMostRecent(results []CollapsibleToolResult) {
+	for i := len(results) - 1; i >= 0; i-- {
+		if !results[i].Collapsed && results[i].LineCount > maxToolResultLines {
+			results[i].FullyExpanded = !results[i].FullyExpanded
+			return
+		}
+	}
 }
 
 // isDiffContent returns true if the content appears to be a unified diff
