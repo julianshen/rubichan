@@ -45,9 +45,17 @@ func (r *ToolBoxRenderer) RenderToolCall(name, args string) string {
 	return r.normalBox.Render(header) + "\n"
 }
 
-// RenderToolResult renders a tool result in a bordered box.
-// If isError is true, the border is red.
-func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) string {
+// renderInBox renders content in a bordered box, choosing error style when isError is true.
+func (r *ToolBoxRenderer) renderInBox(content string, isError bool) string {
+	box := r.normalBox
+	if isError {
+		box = r.errorBox
+	}
+	return box.Render(content) + "\n"
+}
+
+// RenderToolResult renders a tool result in a bordered box, truncating to maxToolResultLines.
+func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string {
 	lines := strings.Split(content, "\n")
 	truncated := 0
 	if len(lines) > maxToolResultLines {
@@ -59,22 +67,12 @@ func (r *ToolBoxRenderer) RenderToolResult(name, content string, isError bool) s
 	if truncated > 0 {
 		display += fmt.Sprintf("\n[%d more lines — Ctrl+E to expand]", truncated)
 	}
-
-	box := r.normalBox
-	if isError {
-		box = r.errorBox
-	}
-	return box.Render(display) + "\n"
+	return r.renderInBox(display, isError)
 }
 
 // RenderToolResultFull renders a tool result without truncation.
-func (r *ToolBoxRenderer) RenderToolResultFull(name, content string, isError bool) string {
-	display := ColorizeDiffLines(content)
-	box := r.normalBox
-	if isError {
-		box = r.errorBox
-	}
-	return box.Render(display) + "\n"
+func (r *ToolBoxRenderer) RenderToolResultFull(content string, isError bool) string {
+	return r.renderInBox(ColorizeDiffLines(content), isError)
 }
 
 // RenderToolProgress renders streaming tool progress output.
@@ -83,11 +81,7 @@ func (r *ToolBoxRenderer) RenderToolProgress(name, stage, content string, isErro
 		return ""
 	}
 	prefix := fmt.Sprintf("[%s:%s]\n", name, stage)
-	box := r.normalBox
-	if isError {
-		box = r.errorBox
-	}
-	return box.Render(prefix+content) + "\n"
+	return r.renderInBox(prefix+content, isError)
 }
 
 // CollapsibleToolResult tracks a single tool result with collapse state.
@@ -118,9 +112,9 @@ func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s(%s)", icon, c.Name, c.Args)) +
 		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	if c.FullyExpanded {
-		return header + r.RenderToolResultFull(c.Name, c.Content, c.IsError)
+		return header + r.RenderToolResultFull(c.Content, c.IsError)
 	}
-	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
+	return header + r.RenderToolResult(c.Content, c.IsError)
 }
 
 // lineLabel returns a human-friendly line count label.
