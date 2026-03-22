@@ -89,17 +89,19 @@ type CollapsibleToolResult struct {
 	LineCount int
 	IsError   bool
 	Collapsed bool
+	ToolType  ToolType // tool category for visual differentiation
 }
 
 // Render returns the rendered view of a tool result, either collapsed
 // (single summary line) or expanded (bordered box with content).
 func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	lineLabel := c.lineLabel()
+	icon := c.ToolType.Icon()
 	if c.Collapsed {
-		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s(%s)", c.Name, c.Args)) +
+		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s%s(%s)", icon, c.Name, c.Args)) +
 			styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	}
-	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s(%s)", c.Name, c.Args)) +
+	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s(%s)", icon, c.Name, c.Args)) +
 		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	return header + r.RenderToolResult(c.Name, c.Content, c.IsError)
 }

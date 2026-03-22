@@ -245,3 +245,51 @@ func TestCollapsibleToolResult_SingleLineLabel(t *testing.T) {
 	assert.Contains(t, result, "1 line")
 	assert.NotContains(t, result, "1 lines")
 }
+
+func TestCollapsibleToolResult_ShellIcon(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "shell",
+		Args:      `command="ls"`,
+		Content:   "file1\nfile2",
+		LineCount: 2,
+		ToolType:  ToolTypeShell,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "$ ")
+	assert.Contains(t, result, "▶")
+}
+
+func TestCollapsibleToolResult_FileIcon(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "file_read",
+		Args:      `path="main.go"`,
+		Content:   "package main",
+		LineCount: 1,
+		ToolType:  ToolTypeFile,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.Contains(t, result, "~ ")
+}
+
+func TestCollapsibleToolResult_DefaultNoIcon(t *testing.T) {
+	r := NewToolBoxRenderer(60)
+	cr := &CollapsibleToolResult{
+		ID:        1,
+		Name:      "custom",
+		Args:      "",
+		Content:   "output",
+		LineCount: 1,
+		ToolType:  ToolTypeDefault,
+		Collapsed: true,
+	}
+	result := cr.Render(r)
+	assert.NotContains(t, result, "$ ")
+	assert.NotContains(t, result, "~ ")
+	assert.NotContains(t, result, "? ")
+}

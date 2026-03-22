@@ -524,6 +524,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			LineCount: lineCount,
 			IsError:   isError,
 			Collapsed: false, // expanded during streaming
+			ToolType:  ClassifyTool(resultName),
 		}
 		m.toolResults = append(m.toolResults, cr)
 		m.content.WriteString(toolResultPlaceholder(m.nextToolResultID))
