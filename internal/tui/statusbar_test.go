@@ -169,6 +169,29 @@ func TestFitSegmentsKeepsAllWhenFit(t *testing.T) {
 	assert.Len(t, result, 3)
 }
 
+func TestFitSegmentsZeroWidthReturnsAll(t *testing.T) {
+	sb := NewStatusBar(0)
+	sep := " | "
+	segments := []statusSegment{
+		{"Model", priorityAlways},
+		{"Turn", priorityAlways},
+	}
+	result := sb.fitSegments(segments, sep)
+	assert.Len(t, result, 2)
+}
+
+func TestFitSegmentsAllAlwaysNeverDropped(t *testing.T) {
+	sb := NewStatusBar(10) // too narrow for content but all are priorityAlways
+	sep := " | "
+	segments := []statusSegment{
+		{"ModelName", priorityAlways},
+		{"TurnCount", priorityAlways},
+	}
+	result := sb.fitSegments(segments, sep)
+	// priorityAlways segments are never dropped even when they overflow
+	assert.Len(t, result, 2)
+}
+
 func TestStatusBarWideShowsAll(t *testing.T) {
 	sb := NewStatusBar(120)
 	sb.SetModel("claude-sonnet")

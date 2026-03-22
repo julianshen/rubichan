@@ -12,22 +12,14 @@ func TestClassifyTool(t *testing.T) {
 		toolName string
 		want     ToolType
 	}{
-		{"shell tool", "shell", ToolTypeShell},
-		{"bash tool", "bash", ToolTypeShell},
-		{"exec tool", "exec", ToolTypeShell},
-		{"file_read", "file_read", ToolTypeFile},
-		{"file_write", "file_write", ToolTypeFile},
-		{"patch", "patch", ToolTypeFile},
-		{"edit", "edit", ToolTypeFile},
-		{"write", "write", ToolTypeFile},
-		{"grep tool", "grep", ToolTypeSearch},
-		{"code_search", "code_search", ToolTypeSearch},
-		{"glob", "glob", ToolTypeSearch},
-		{"find", "find", ToolTypeSearch},
+		{"shell", "shell", ToolTypeShell},
+		{"file", "file", ToolTypeFile},
+		{"search", "search", ToolTypeSearch},
 		{"process", "process", ToolTypeProcess},
-		{"spawn", "spawn", ToolTypeProcess},
 		{"task", "task", ToolTypeSubagent},
-		{"unknown", "custom_tool", ToolTypeDefault},
+		{"unknown tool", "custom_tool", ToolTypeDefault},
+		{"git tool", "git_status", ToolTypeDefault},
+		{"notes tool", "notes", ToolTypeDefault},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

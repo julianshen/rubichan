@@ -7,23 +7,24 @@ type ToolType int
 
 const (
 	ToolTypeDefault  ToolType = iota
-	ToolTypeShell             // shell, bash, exec
-	ToolTypeFile              // file_read, file_write, patch, edit
-	ToolTypeSearch            // grep, code_search, glob, find
-	ToolTypeProcess           // process, spawn
+	ToolTypeShell             // shell
+	ToolTypeFile              // file
+	ToolTypeSearch            // search
+	ToolTypeProcess           // process
 	ToolTypeSubagent          // task (subagent dispatch)
 )
 
 // ClassifyTool returns the ToolType for a given tool name.
+// Names must match the canonical Tool.Name() values from internal/tools/.
 func ClassifyTool(name string) ToolType {
 	switch name {
-	case "shell", "bash", "exec":
+	case "shell":
 		return ToolTypeShell
-	case "file_read", "file_write", "patch", "edit", "write":
+	case "file":
 		return ToolTypeFile
-	case "grep", "code_search", "glob", "find":
+	case "search":
 		return ToolTypeSearch
-	case "process", "spawn":
+	case "process":
 		return ToolTypeProcess
 	case "task":
 		return ToolTypeSubagent
