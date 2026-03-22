@@ -295,9 +295,8 @@ func TestCollapsibleToolResult_DefaultNoIcon(t *testing.T) {
 	assert.NotContains(t, result, "? ")
 }
 
-func TestCollapsibleToolResult_ExitCodeDisplay(t *testing.T) {
+func TestCollapsibleToolResult_ShellStatusOk(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	exitCode := 0
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "shell",
@@ -305,16 +304,14 @@ func TestCollapsibleToolResult_ExitCodeDisplay(t *testing.T) {
 		Content:   "file1\nfile2",
 		LineCount: 2,
 		ToolType:  ToolTypeShell,
-		ExitCode:  &exitCode,
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.Contains(t, result, "[exit 0]")
+	assert.Contains(t, result, "[ok]")
 }
 
-func TestCollapsibleToolResult_ExitCodeNonZero(t *testing.T) {
+func TestCollapsibleToolResult_ShellStatusError(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	exitCode := 1
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "shell",
@@ -322,17 +319,15 @@ func TestCollapsibleToolResult_ExitCodeNonZero(t *testing.T) {
 		Content:   "error: build failed",
 		LineCount: 1,
 		ToolType:  ToolTypeShell,
-		ExitCode:  &exitCode,
 		IsError:   true,
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.Contains(t, result, "[exit 1]")
+	assert.Contains(t, result, "[error]")
 }
 
-func TestCollapsibleToolResult_ExitCodeWithTruncation(t *testing.T) {
+func TestCollapsibleToolResult_ShellStatusWithTruncation(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	exitCode := 1
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "shell",
@@ -340,16 +335,15 @@ func TestCollapsibleToolResult_ExitCodeWithTruncation(t *testing.T) {
 		Content:   strings.Repeat("line\n", 50),
 		LineCount: 50,
 		ToolType:  ToolTypeShell,
-		ExitCode:  &exitCode,
 		IsError:   true,
 		Collapsed: true,
 	}
 	result := cr.Render(r)
 	assert.Contains(t, result, "50 lines (20 shown)")
-	assert.Contains(t, result, "[exit 1]")
+	assert.Contains(t, result, "[error]")
 }
 
-func TestCollapsibleToolResult_NoExitCodeForNonShell(t *testing.T) {
+func TestCollapsibleToolResult_NoStatusForNonShell(t *testing.T) {
 	r := NewToolBoxRenderer(60)
 	cr := &CollapsibleToolResult{
 		ID:        1,
@@ -361,7 +355,8 @@ func TestCollapsibleToolResult_NoExitCodeForNonShell(t *testing.T) {
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.NotContains(t, result, "[exit")
+	assert.NotContains(t, result, "[ok]")
+	assert.NotContains(t, result, "[error]")
 }
 
 func TestCollapsibleToolResult_FullyExpanded(t *testing.T) {
@@ -382,6 +377,9 @@ func TestCollapsibleToolResult_FullyExpanded(t *testing.T) {
 	result := cr.Render(r)
 	assert.Contains(t, result, "line 50")
 	assert.NotContains(t, result, "more lines")
+	// When fully expanded, label should say "50 lines" not "50 lines (20 shown)"
+	assert.Contains(t, result, "50 lines")
+	assert.NotContains(t, result, "20 shown")
 }
 
 func TestCollapsibleToolResult_TruncatedShowsExpandHint(t *testing.T) {
