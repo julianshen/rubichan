@@ -261,25 +261,15 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Ctrl+T toggles collapse/expand on all tool results.
-	if msg.Type == tea.KeyCtrlT && m.state == StateInput && len(m.toolResults) > 0 {
-		// If any are collapsed, expand all; otherwise collapse all.
-		anyCollapsed := false
-		for _, tr := range m.toolResults {
-			if tr.Collapsed {
-				anyCollapsed = true
-				break
-			}
-		}
-		for i := range m.toolResults {
-			m.toolResults[i].Collapsed = !anyCollapsed
-		}
+	if msg.Type == tea.KeyCtrlT && m.state == StateInput && m.content.ToolResultCount() > 0 {
+		m.content.ToggleAllToolResults()
 		m.viewport.SetContent(m.viewportContent())
 		return m, nil
 	}
 
 	// Ctrl+E toggles full expansion on the most recent truncated tool result.
-	if msg.Type == tea.KeyCtrlE && m.state == StateInput && len(m.toolResults) > 0 {
-		toggleFullExpandMostRecent(m.toolResults)
+	if msg.Type == tea.KeyCtrlE && m.state == StateInput && m.content.ToolResultCount() > 0 {
+		m.content.ToggleFullExpandMostRecent()
 		m.viewport.SetContent(m.viewportContent())
 		return m, nil
 	}
@@ -326,8 +316,6 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Reset per-turn state.
 		m.diffSummary = ""
 		m.diffExpanded = false
-		m.toolResults = nil
-		m.nextToolResultID = 0
 		m.toolCallArgs = nil
 		m.content.WriteString(styleUserPrompt.Render("❯ ") + text + "\n")
 		m.viewport.SetContent(m.viewportContent())
@@ -338,7 +326,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.emitSessionEvent(session.NewTurnStartedEvent(text, m.modelName))
 		m.emitSessionEvent(session.NewCheckpointCreatedEvent(fmt.Sprintf("turn-%d", m.turnCount+1), "turn_started"))
-		m.assistantStartIdx = m.content.Len()
+		m.assistantStartIdx = m.content.LenWithWidth(m.width)
 		m.assistantEndIdx = m.assistantStartIdx
 		m.state = StateStreaming
 		m.thinkingMsg = persona.ThinkingMessage()
@@ -447,7 +435,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case "text_delta":
 		if m.rawAssistant.Len() == 0 {
-			m.assistantStartIdx = m.content.Len()
+			m.assistantStartIdx = m.content.LenWithWidth(m.width)
 			m.assistantEndIdx = m.assistantStartIdx
 		}
 		m.rawAssistant.WriteString(msg.Text)
@@ -524,7 +512,6 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			args = m.toolCallArgs[msg.ToolResult.ID]
 		}
 		cr := CollapsibleToolResult{
-			ID:        m.nextToolResultID,
 			Name:      resultName,
 			Args:      args,
 			Content:   resultContent,
@@ -533,9 +520,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			Collapsed: false, // expanded during streaming
 			ToolType:  ClassifyTool(resultName),
 		}
-		m.toolResults = append(m.toolResults, cr)
-		m.content.WriteString(toolResultPlaceholder(m.nextToolResultID))
-		m.nextToolResultID++
+		m.content.AppendToolResult(cr)
 		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
@@ -618,9 +603,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		m.diffSummary = msg.DiffSummary
 		m.diffExpanded = false
 		// Collapse all tool results from this turn.
-		for i := range m.toolResults {
-			m.toolResults[i].Collapsed = true
-		}
+		m.content.CollapseAllToolResults()
 		if summary := m.DebugVerificationSnapshot(); summary != "" {
 			gate := session.ParseVerificationGate(summary)
 			verdict, reason := session.ParseVerificationSnapshot(summary)
@@ -680,7 +663,6 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 func (m *Model) renderAssistantMarkdown() {
 	raw := SanitizeAssistantOutput(m.rawAssistant.String())
 	if raw == "" {
-		m.replaceAssistantContent("")
 		return
 	}
 	rendered, err := m.mdRenderer.Render(raw)
@@ -693,7 +675,7 @@ func (m *Model) renderAssistantMarkdown() {
 // replaceAssistantContent swaps only the assistant's display slice, preserving
 // any tool output appended after the assistant started streaming.
 func (m *Model) replaceAssistantContent(text string) {
-	contentStr := m.content.String()
+	contentStr := m.content.Render(m.width)
 	if m.assistantStartIdx > len(contentStr) {
 		return
 	}
@@ -704,10 +686,7 @@ func (m *Model) replaceAssistantContent(text string) {
 		m.assistantEndIdx = len(contentStr)
 	}
 
-	m.content.Reset()
-	m.content.WriteString(contentStr[:m.assistantStartIdx])
-	m.content.WriteString(text)
-	m.content.WriteString(contentStr[m.assistantEndIdx:])
+	m.content.ReplaceTextRangeWithWidth(m.width, m.assistantStartIdx, m.assistantEndIdx, text)
 	m.assistantEndIdx = m.assistantStartIdx + len(text)
 }
 
@@ -741,7 +720,7 @@ func (m *Model) advanceRalphLoop(raw string) tea.Cmd {
 	m.diffExpanded = false
 	m.content.WriteString(styleUserPrompt.Render("❯ ") + prompt + "\n")
 	m.setContentAndAutoScroll()
-	m.assistantStartIdx = m.content.Len()
+	m.assistantStartIdx = m.content.LenWithWidth(m.width)
 	m.assistantEndIdx = m.assistantStartIdx
 	m.state = StateStreaming
 	m.thinkingMsg = persona.ThinkingMessage()
