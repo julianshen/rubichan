@@ -10,11 +10,7 @@ import (
 var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file(?:\(s\)|s)?\s+changed`)
 
 func (m *Model) viewportContent() string {
-	content := m.content.String()
-	// Replace tool result placeholders with rendered (collapsed/expanded) output.
-	if len(m.toolResults) > 0 {
-		content = replaceToolResultPlaceholders(content, m.toolResults, m.toolBox)
-	}
+	content := m.content.Render(m.width)
 	panel := m.renderDiffSummaryPanel()
 	if panel == "" {
 		return content

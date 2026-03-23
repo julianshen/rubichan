@@ -62,7 +62,7 @@ type Model struct {
 	input             *InputArea
 	viewport          viewport.Model
 	spinner           spinner.Model
-	content           strings.Builder
+	content           ContentBuffer
 	rawAssistant      strings.Builder
 	mdRenderer        *MarkdownRenderer
 	toolBox           *ToolBoxRenderer
@@ -94,8 +94,6 @@ type Model struct {
 	ralph             *ralphLoopState
 	wikiForm          *WikiForm
 	fileCompletion    *FileCompletionOverlay
-	toolResults       []CollapsibleToolResult
-	nextToolResultID  int
 	toolCallArgs      map[string]string
 	thinkingMsg       string
 	wikiRunning       bool
@@ -222,8 +220,8 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 	}
 
-	m.content.WriteString(RenderBanner())
-	m.content.WriteString("\n")
+	m.content.AppendText(RenderBanner())
+	m.content.AppendText("\n")
 	m.viewport.SetContent(m.viewportContent())
 
 	return m
@@ -247,15 +245,13 @@ func (m *Model) ClearContent() {
 	m.content.Reset()
 	m.diffSummary = ""
 	m.diffExpanded = false
-	m.toolResults = nil
-	m.nextToolResultID = 0
 	m.toolCallArgs = nil
 	if m.sessionState != nil {
 		m.sessionState.ResetForPrompt("")
 	}
 	// Show compact banner after clear to reclaim vertical space.
-	m.content.WriteString(RenderCompactBanner())
-	m.content.WriteString("\n")
+	m.content.AppendText(RenderCompactBanner())
+	m.content.AppendText("\n")
 	m.viewport.SetContent(m.viewportContent())
 }
 
@@ -790,7 +786,7 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	m.diffExpanded = false
 	m.content.WriteString(styleUserPrompt.Render("❯ ") + prompt + "\n")
 	m.setContentAndAutoScroll()
-	m.assistantStartIdx = m.content.Len()
+	m.assistantStartIdx = m.content.LenWithWidth(m.width)
 	m.state = StateStreaming
 	m.statusBar.ClearElapsed()
 	m.turnStartTime = time.Now()

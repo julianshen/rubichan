@@ -2090,8 +2090,9 @@ func TestModelToolResultsCollapsedOnDone(t *testing.T) {
 	})
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
-	assert.Len(t, um.toolResults, 1)
-	assert.False(t, um.toolResults[0].Collapsed, "result should be expanded during streaming")
+	results := um.content.ToolResults()
+	assert.Len(t, results, 1)
+	assert.False(t, results[0].Collapsed, "result should be expanded during streaming")
 
 	// Now handle "done" event
 	ch2 := make(chan agent.TurnEvent)
@@ -2100,7 +2101,8 @@ func TestModelToolResultsCollapsedOnDone(t *testing.T) {
 	doneEvt := TurnEventMsg(agent.TurnEvent{Type: "done"})
 	updated2, _ := um.Update(doneEvt)
 	um2 := updated2.(*Model)
-	assert.True(t, um2.toolResults[0].Collapsed, "result should be collapsed after done")
+	results = um2.content.ToolResults()
+	assert.True(t, results[0].Collapsed, "result should be collapsed after done")
 }
 
 func TestModelToolResultsExpandedDuringStreaming(t *testing.T) {
@@ -2120,8 +2122,9 @@ func TestModelToolResultsExpandedDuringStreaming(t *testing.T) {
 	})
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
-	assert.Len(t, um.toolResults, 1)
-	assert.False(t, um.toolResults[0].Collapsed)
+	results := um.content.ToolResults()
+	assert.Len(t, results, 1)
+	assert.False(t, results[0].Collapsed)
 	// Viewport content should contain the file contents (expanded)
 	vc := um.viewportContent()
 	assert.Contains(t, vc, "file contents")
@@ -2131,22 +2134,22 @@ func TestModelCtrlTTogglesToolResults(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateInput
 	// Add some collapsed tool results
-	m.toolResults = []CollapsibleToolResult{
-		{ID: 0, Name: "file", Args: "a.go", Content: "content a", LineCount: 1, Collapsed: true},
-		{ID: 1, Name: "file", Args: "b.go", Content: "content b", LineCount: 1, Collapsed: true},
-	}
+	m.content.AppendToolResult(CollapsibleToolResult{Name: "file", Args: "a.go", Content: "content a", LineCount: 1, Collapsed: true})
+	m.content.AppendToolResult(CollapsibleToolResult{Name: "file", Args: "b.go", Content: "content b", LineCount: 1, Collapsed: true})
 
 	// Ctrl+T should expand all
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	um := updated.(*Model)
-	assert.False(t, um.toolResults[0].Collapsed)
-	assert.False(t, um.toolResults[1].Collapsed)
+	results := um.content.ToolResults()
+	assert.False(t, results[0].Collapsed)
+	assert.False(t, results[1].Collapsed)
 
 	// Ctrl+T again should collapse all
 	updated2, _ := um.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	um2 := updated2.(*Model)
-	assert.True(t, um2.toolResults[0].Collapsed)
-	assert.True(t, um2.toolResults[1].Collapsed)
+	results = um2.content.ToolResults()
+	assert.True(t, results[0].Collapsed)
+	assert.True(t, results[1].Collapsed)
 }
 
 func TestModelToolCallArgsCachedForResults(t *testing.T) {
@@ -2179,21 +2182,18 @@ func TestModelToolCallArgsCachedForResults(t *testing.T) {
 	})
 	updated2, _ := um.Update(resultEvt)
 	um2 := updated2.(*Model)
-	assert.Len(t, um2.toolResults, 1)
-	assert.Equal(t, `{"path":"src/main.go"}`, um2.toolResults[0].Args)
+	results := um2.content.ToolResults()
+	assert.Len(t, results, 1)
+	assert.Equal(t, `{"path":"src/main.go"}`, results[0].Args)
 }
 
 func TestModelClearContentResetsToolResults(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
-	m.toolResults = []CollapsibleToolResult{
-		{ID: 0, Name: "file", Args: "a.go", Content: "x", LineCount: 1},
-	}
-	m.nextToolResultID = 1
+	m.content.AppendToolResult(CollapsibleToolResult{Name: "file", Args: "a.go", Content: "x", LineCount: 1})
 	m.toolCallArgs = map[string]string{"t1": "args"}
 
 	m.ClearContent()
-	assert.Nil(t, m.toolResults)
-	assert.Equal(t, 0, m.nextToolResultID)
+	assert.Equal(t, 0, m.content.ToolResultCount())
 	assert.Nil(t, m.toolCallArgs)
 }
 
@@ -2214,7 +2214,8 @@ func TestModelToolResultEmptyContentLineCount(t *testing.T) {
 	})
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
-	assert.Equal(t, 0, um.toolResults[0].LineCount)
+	results := um.content.ToolResults()
+	assert.Equal(t, 0, results[0].LineCount)
 }
 
 func TestBuildVerificationSnapshotPassed(t *testing.T) {
