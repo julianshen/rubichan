@@ -88,3 +88,73 @@ func TestContentBufferOutputStableAcrossWidthChanges(t *testing.T) {
 	assert.NotEmpty(t, w120)
 	assert.Equal(t, w80First, w80Second)
 }
+
+func TestContentBufferReplaceTextRangePreservesToolResultSegments(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendText("assistant old text")
+	buf.AppendToolResult(CollapsibleToolResult{
+		Name:      "shell",
+		Args:      `{"command":"echo hi"}`,
+		Content:   "hi",
+		LineCount: 1,
+		Collapsed: false,
+		ToolType:  ToolTypeShell,
+	})
+	buf.AppendText("\nafter\n")
+
+	// Replace only the assistant text prefix.
+	buf.ReplaceTextRange(0, len("assistant old text"), "assistant new text")
+
+	results := buf.ToolResults()
+	require.Len(t, results, 1, "tool-result segments should survive text replacement")
+	assert.False(t, results[0].Collapsed)
+	assert.True(t, buf.ToggleToolResult(results[0].ID), "tool-result should remain interactive")
+	assert.True(t, buf.ToolResults()[0].Collapsed)
+}
+
+func TestContentBufferReplaceTextRangeInsideToolResultInsertsBeforeTool(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendText("prefix ")
+	buf.AppendToolResult(CollapsibleToolResult{
+		Name:      "shell",
+		Args:      `{"command":"echo hi"}`,
+		Content:   "hi",
+		LineCount: 1,
+		Collapsed: false,
+		ToolType:  ToolTypeShell,
+	})
+	buf.AppendText(" suffix")
+
+	rendered := buf.Render(80)
+	toolStart := len("prefix ")
+	toolEnd := len(rendered) - len(" suffix")
+	require.Greater(t, toolEnd, toolStart)
+
+	// Start/end are inside tool-result rendered text.
+	buf.ReplaceTextRange(toolStart+1, toolStart+2, "[X]")
+
+	updated := buf.Render(80)
+	assert.Contains(t, updated, "prefix [X]")
+	assert.Contains(t, updated, "shell")
+	assert.Contains(t, updated, " suffix")
+}
+
+func TestContentBufferReplaceTextRangeWithWidthPreservesToolResultSegments(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendText("assistant old text")
+	buf.AppendToolResult(CollapsibleToolResult{
+		Name:      "shell",
+		Args:      `{"command":"echo hi"}`,
+		Content:   "hi",
+		LineCount: 1,
+		Collapsed: false,
+		ToolType:  ToolTypeShell,
+	})
+	buf.AppendText("\nafter\n")
+
+	buf.ReplaceTextRangeWithWidth(120, 0, len("assistant old text"), "assistant new text")
+
+	results := buf.ToolResults()
+	require.Len(t, results, 1, "tool-result segments should survive width-aware replacement")
+	assert.True(t, buf.ToggleToolResult(results[0].ID), "tool-result should remain interactive")
+}

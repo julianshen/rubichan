@@ -191,27 +191,126 @@ func (b *ContentBuffer) Reset() {
 }
 
 func (b *ContentBuffer) ReplaceTextRange(start, end int, replacement string) {
-	content := b.String()
-	b.replaceTextRange(content, start, end, replacement)
+	b.replaceTextRangeWithWidth(80, start, end, replacement)
 }
 
 func (b *ContentBuffer) ReplaceTextRangeWithWidth(width int, start, end int, replacement string) {
-	content := b.Render(width)
-	b.replaceTextRange(content, start, end, replacement)
+	b.replaceTextRangeWithWidth(width, start, end, replacement)
 }
 
-func (b *ContentBuffer) replaceTextRange(content string, start, end int, replacement string) {
-	if start < 0 || start > len(content) {
+func (b *ContentBuffer) replaceTextRangeWithWidth(width, start, end int, replacement string) {
+	contentLen := b.LenWithWidth(width)
+	if start < 0 || start > contentLen {
 		return
 	}
 	if end < start {
 		end = start
 	}
-	if end > len(content) {
-		end = len(content)
+	if end > contentLen {
+		end = contentLen
 	}
-	b.Reset()
-	b.AppendText(content[:start])
-	b.AppendText(replacement)
-	b.AppendText(content[end:])
+
+	newSegments := make([]ContentSegment, 0, len(b.segments)+2)
+	cursor := 0
+	inserted := false
+
+	for i := range b.segments {
+		seg := b.segments[i]
+		segRendered := b.segmentRender(seg, width)
+		segLen := len(segRendered)
+		segStart := cursor
+		segEnd := cursor + segLen
+
+		switch {
+		case segEnd <= start:
+			newSegments = append(newSegments, cloneSegment(seg))
+		case segStart >= end:
+			if !inserted {
+				newSegments = appendTextSegment(newSegments, replacement)
+				inserted = true
+			}
+			newSegments = append(newSegments, cloneSegment(seg))
+		default:
+			if seg.Type == SegmentTypeText {
+				localStart := start - segStart
+				if localStart < 0 {
+					localStart = 0
+				}
+				if localStart > len(seg.Text) {
+					localStart = len(seg.Text)
+				}
+
+				localEnd := end - segStart
+				if localEnd < 0 {
+					localEnd = 0
+				}
+				if localEnd > len(seg.Text) {
+					localEnd = len(seg.Text)
+				}
+				if localEnd < localStart {
+					localEnd = localStart
+				}
+
+				newSegments = appendTextSegment(newSegments, seg.Text[:localStart])
+				if !inserted {
+					newSegments = appendTextSegment(newSegments, replacement)
+					inserted = true
+				}
+				newSegments = appendTextSegment(newSegments, seg.Text[localEnd:])
+			} else {
+				// Tool-result segments are atomic; keep them interactive even when
+				// replacement indexes overlap rendered output.
+				if !inserted {
+					newSegments = appendTextSegment(newSegments, replacement)
+					inserted = true
+				}
+				newSegments = append(newSegments, cloneSegment(seg))
+			}
+		}
+
+		cursor = segEnd
+	}
+
+	if !inserted {
+		newSegments = appendTextSegment(newSegments, replacement)
+	}
+
+	b.segments = newSegments
+}
+
+func appendTextSegment(segments []ContentSegment, text string) []ContentSegment {
+	if text == "" {
+		return segments
+	}
+	return append(segments, ContentSegment{
+		Type:  SegmentTypeText,
+		Text:  text,
+		dirty: true,
+	})
+}
+
+func cloneSegment(seg ContentSegment) ContentSegment {
+	cloned := seg
+	if seg.ToolResult != nil {
+		tool := *seg.ToolResult
+		cloned.ToolResult = &tool
+	}
+	cloned.dirty = true
+	cloned.lastWidth = 0
+	cloned.lastRender = ""
+	return cloned
+}
+
+func (b *ContentBuffer) segmentRender(seg ContentSegment, width int) string {
+	switch seg.Type {
+	case SegmentTypeText:
+		return seg.Text
+	case SegmentTypeToolResult:
+		if seg.ToolResult == nil {
+			return ""
+		}
+		return seg.ToolResult.Render(NewToolBoxRenderer(width))
+	default:
+		return ""
+	}
 }
