@@ -2,183 +2,157 @@ package platform
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"strings"
+
+	"github.com/google/go-github/v68/github"
 )
 
-const defaultGitHubAPIURL = "https://api.github.com"
-
-// GitHubClient implements Platform using the GitHub REST API.
+// GitHubClient implements Platform using the go-github SDK.
 type GitHubClient struct {
-	token   string
-	baseURL string
-	client  *http.Client
+	client *github.Client
 }
 
-// NewGitHubClient creates a GitHub platform client.
+// NewGitHubClient creates a GitHub platform client authenticated with the given token.
 func NewGitHubClient(token string) *GitHubClient {
 	return &GitHubClient{
-		token:   token,
-		baseURL: defaultGitHubAPIURL,
-		client:  &http.Client{},
+		client: github.NewClient(nil).WithAuthToken(token),
 	}
+}
+
+// NewGitHubClientWithURL creates a GitHub client pointing to a custom base URL
+// (e.g., GitHub Enterprise). The URL should include the /api/v3/ suffix.
+func NewGitHubClientWithURL(token, baseURL string) (*GitHubClient, error) {
+	c := github.NewClient(nil).WithAuthToken(token)
+	var err error
+	c, err = c.WithEnterpriseURLs(baseURL, baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("github: configuring enterprise URL: %w", err)
+	}
+	return &GitHubClient{client: c}, nil
 }
 
 func (g *GitHubClient) Name() string { return "github" }
 
 func (g *GitHubClient) PostPRComment(ctx context.Context, repo string, prNum int, body string) error {
-	// GitHub uses the issues API for PR comments.
-	path := fmt.Sprintf("/repos/%s/issues/%d/comments", repo, prNum)
-	payload := map[string]string{"body": body}
-	_, err := g.doJSON(ctx, http.MethodPost, path, payload, http.StatusCreated)
-	return err
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return err
+	}
+	comment := &github.IssueComment{Body: github.Ptr(body)}
+	_, _, err = g.client.Issues.CreateComment(ctx, owner, name, prNum, comment)
+	if err != nil {
+		return fmt.Errorf("github: posting PR comment: %w", err)
+	}
+	return nil
 }
 
 func (g *GitHubClient) PostPRReview(ctx context.Context, repo string, prNum int, review Review) error {
-	path := fmt.Sprintf("/repos/%s/pulls/%d/reviews", repo, prNum)
-
-	type ghComment struct {
-		Path string `json:"path"`
-		Line int    `json:"line"`
-		Body string `json:"body"`
-		Side string `json:"side"`
-	}
-	type ghReview struct {
-		Body     string      `json:"body"`
-		Event    string      `json:"event"`
-		Comments []ghComment `json:"comments"`
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return err
 	}
 
-	payload := ghReview{
-		Body:     review.Body,
-		Event:    review.Event,
-		Comments: make([]ghComment, len(review.Comments)),
-	}
+	comments := make([]*github.DraftReviewComment, len(review.Comments))
 	for i, c := range review.Comments {
-		payload.Comments[i] = ghComment{
-			Path: c.Path,
-			Line: c.Line,
-			Body: c.Body,
-			Side: c.Side,
+		comments[i] = &github.DraftReviewComment{
+			Path: github.Ptr(c.Path),
+			Line: github.Ptr(c.Line),
+			Body: github.Ptr(c.Body),
+			Side: github.Ptr(c.Side),
 		}
 	}
 
-	_, err := g.doJSON(ctx, http.MethodPost, path, payload, http.StatusOK)
-	return err
+	ghReview := &github.PullRequestReviewRequest{
+		Body:     github.Ptr(review.Body),
+		Event:    github.Ptr(review.Event),
+		Comments: comments,
+	}
+	_, _, err = g.client.PullRequests.CreateReview(ctx, owner, name, prNum, ghReview)
+	if err != nil {
+		return fmt.Errorf("github: posting PR review: %w", err)
+	}
+	return nil
 }
 
 func (g *GitHubClient) GetPRDiff(ctx context.Context, repo string, prNum int) (string, error) {
-	path := fmt.Sprintf("/repos/%s/pulls/%d", repo, prNum)
-	req, err := g.newRequest(ctx, http.MethodGet, path, nil)
+	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3.diff")
-
-	resp, err := g.client.Do(req)
+	diff, _, err := g.client.PullRequests.GetRaw(ctx, owner, name, prNum, github.RawOptions{Type: github.Diff})
 	if err != nil {
-		return "", fmt.Errorf("github: GET %s: %w", path, err)
+		return "", fmt.Errorf("github: getting PR diff: %w", err)
 	}
-	defer resp.Body.Close()
-
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("github: reading response: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("github: GET %s returned %d: %s", path, resp.StatusCode, string(b))
-	}
-	return string(b), nil
+	return diff, nil
 }
 
 func (g *GitHubClient) ListPRFiles(ctx context.Context, repo string, prNum int) ([]PRFile, error) {
-	path := fmt.Sprintf("/repos/%s/pulls/%d/files", repo, prNum)
-	respBody, err := g.doJSON(ctx, http.MethodGet, path, nil, http.StatusOK)
+	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return nil, err
 	}
-
-	var ghFiles []struct {
-		Filename string `json:"filename"`
-		Status   string `json:"status"`
-		Patch    string `json:"patch"`
-	}
-	if err := json.Unmarshal(respBody, &ghFiles); err != nil {
-		return nil, fmt.Errorf("github: parsing files response: %w", err)
+	ghFiles, _, err := g.client.PullRequests.ListFiles(ctx, owner, name, prNum, nil)
+	if err != nil {
+		return nil, fmt.Errorf("github: listing PR files: %w", err)
 	}
 
 	files := make([]PRFile, len(ghFiles))
 	for i, f := range ghFiles {
 		files[i] = PRFile{
-			Filename: f.Filename,
-			Status:   f.Status,
-			Patch:    f.Patch,
+			Filename: f.GetFilename(),
+			Status:   f.GetStatus(),
+			Patch:    f.GetPatch(),
 		}
 	}
 	return files, nil
 }
 
 func (g *GitHubClient) UploadSARIF(ctx context.Context, repo string, ref string, sarif []byte) error {
-	path := fmt.Sprintf("/repos/%s/code-scanning/sarifs", repo)
-	payload := map[string]string{
-		"commit_sha": ref,
-		"ref":        ref,
-		"sarif":      base64.StdEncoding.EncodeToString(sarif),
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return err
 	}
-	_, err := g.doJSON(ctx, http.MethodPost, path, payload, http.StatusAccepted)
-	return err
+
+	// GitHub requires gzip + base64 encoding for SARIF uploads.
+	encoded, err := gzipBase64(sarif)
+	if err != nil {
+		return fmt.Errorf("github: encoding SARIF: %w", err)
+	}
+
+	analysis := &github.SarifAnalysis{
+		CommitSHA: github.Ptr(ref),
+		Ref:       github.Ptr(ref),
+		Sarif:     github.Ptr(encoded),
+	}
+	_, _, err = g.client.CodeScanning.UploadSarif(ctx, owner, name, analysis)
+	if err != nil {
+		return fmt.Errorf("github: uploading SARIF: %w", err)
+	}
+	return nil
 }
 
-// doJSON sends a JSON request and returns the response body.
-func (g *GitHubClient) doJSON(ctx context.Context, method, path string, payload interface{}, expectStatus int) ([]byte, error) {
-	var bodyReader io.Reader
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("github: marshaling request: %w", err)
-		}
-		bodyReader = bytes.NewReader(b)
+// splitRepo splits "owner/repo" into owner and repo name.
+func splitRepo(repo string) (owner, name string, err error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid repo format %q: expected owner/repo", repo)
 	}
-
-	req, err := g.newRequest(ctx, method, path, bodyReader)
-	if err != nil {
-		return nil, err
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := g.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("github: %s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("github: reading response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 || (expectStatus > 0 && resp.StatusCode != expectStatus) {
-		return nil, fmt.Errorf("github: %s %s returned %d: %s", method, path, resp.StatusCode, string(respBody))
-	}
-
-	return respBody, nil
+	return parts[0], parts[1], nil
 }
 
-func (g *GitHubClient) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
-	url := g.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("github: creating request: %w", err)
+// gzipBase64 compresses data with gzip then base64-encodes it.
+func gzipBase64(data []byte) (string, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(data); err != nil {
+		return "", err
 	}
-	if g.token != "" {
-		req.Header.Set("Authorization", "Bearer "+g.token)
+	if err := gz.Close(); err != nil {
+		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	return req, nil
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }

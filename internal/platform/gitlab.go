@@ -1,47 +1,47 @@
 package platform
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"strings"
+
+	gitlab "github.com/xanzy/go-gitlab"
 )
 
-const defaultGitLabAPIURL = "https://gitlab.com"
-
-// GitLabClient implements Platform using the GitLab REST API.
+// GitLabClient implements Platform using the go-gitlab SDK.
 type GitLabClient struct {
-	token   string
-	baseURL string
-	client  *http.Client
+	client *gitlab.Client
 }
 
-// NewGitLabClient creates a GitLab platform client.
+// NewGitLabClient creates a GitLab platform client authenticated with the given token.
 func NewGitLabClient(token string) *GitLabClient {
-	return &GitLabClient{
-		token:   token,
-		baseURL: defaultGitLabAPIURL,
-		client:  &http.Client{},
+	c, _ := gitlab.NewClient(token)
+	return &GitLabClient{client: c}
+}
+
+// NewGitLabClientWithURL creates a GitLab client pointing to a self-hosted instance.
+func NewGitLabClientWithURL(token, baseURL string) (*GitLabClient, error) {
+	c, err := gitlab.NewClient(token, gitlab.WithBaseURL(baseURL))
+	if err != nil {
+		return nil, fmt.Errorf("gitlab: configuring base URL: %w", err)
 	}
+	return &GitLabClient{client: c}, nil
 }
 
 func (g *GitLabClient) Name() string { return "gitlab" }
 
 func (g *GitLabClient) PostPRComment(ctx context.Context, repo string, prNum int, body string) error {
-	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/notes", encodeProject(repo), prNum)
-	payload := map[string]string{"body": body}
-	_, err := g.doJSON(ctx, http.MethodPost, path, payload, http.StatusCreated)
-	return err
+	opts := &gitlab.CreateMergeRequestNoteOptions{Body: gitlab.Ptr(body)}
+	_, _, err := g.client.Notes.CreateMergeRequestNote(repo, prNum, opts, gitlab.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("gitlab: posting MR comment: %w", err)
+	}
+	return nil
 }
 
 func (g *GitLabClient) PostPRReview(ctx context.Context, repo string, prNum int, review Review) error {
-	// GitLab doesn't have a native "review" concept. We post:
-	// 1. A summary MR note
-	// 2. One discussion per inline comment
+	// GitLab doesn't have a native "review" concept.
+	// Post summary as MR note + one discussion per inline comment.
 
 	if review.Body != "" {
 		if err := g.PostPRComment(ctx, repo, prNum, review.Body); err != nil {
@@ -58,83 +58,62 @@ func (g *GitLabClient) PostPRReview(ctx context.Context, repo string, prNum int,
 }
 
 func (g *GitLabClient) postDiscussion(ctx context.Context, repo string, prNum int, c ReviewComment) error {
-	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/discussions", encodeProject(repo), prNum)
-
-	type position struct {
-		BaseSHA      string `json:"base_sha"`
-		StartSHA     string `json:"start_sha"`
-		HeadSHA      string `json:"head_sha"`
-		PositionType string `json:"position_type"`
-		NewPath      string `json:"new_path"`
-		NewLine      int    `json:"new_line"`
-	}
-
-	payload := map[string]interface{}{
-		"body": c.Body,
-		"position": position{
-			PositionType: "text",
-			NewPath:      c.Path,
-			NewLine:      c.Line,
+	opts := &gitlab.CreateMergeRequestDiscussionOptions{
+		Body: gitlab.Ptr(c.Body),
+		Position: &gitlab.PositionOptions{
+			PositionType: gitlab.Ptr("text"),
+			NewPath:      gitlab.Ptr(c.Path),
+			NewLine:      gitlab.Ptr(c.Line),
 		},
 	}
-	_, err := g.doJSON(ctx, http.MethodPost, path, payload, http.StatusCreated)
-	return err
+	_, _, err := g.client.Discussions.CreateMergeRequestDiscussion(repo, prNum, opts, gitlab.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("gitlab: creating discussion: %w", err)
+	}
+	return nil
 }
 
 func (g *GitLabClient) GetPRDiff(ctx context.Context, repo string, prNum int) (string, error) {
-	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/diffs", encodeProject(repo), prNum)
-	respBody, err := g.doJSON(ctx, http.MethodGet, path, nil, http.StatusOK)
+	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, prNum, nil, gitlab.WithContext(ctx))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gitlab: getting MR diff versions: %w", err)
+	}
+	if len(versions) == 0 {
+		return "", nil
 	}
 
-	var diffs []struct {
-		Diff    string `json:"diff"`
-		OldPath string `json:"old_path"`
-		NewPath string `json:"new_path"`
-	}
-	if err := json.Unmarshal(respBody, &diffs); err != nil {
-		return "", fmt.Errorf("gitlab: parsing diffs: %w", err)
+	// Use the latest diff version.
+	latest := versions[0]
+	version, _, err := g.client.MergeRequests.GetSingleMergeRequestDiffVersion(repo, prNum, latest.ID, nil, gitlab.WithContext(ctx))
+	if err != nil {
+		return "", fmt.Errorf("gitlab: getting MR diff: %w", err)
 	}
 
 	var b strings.Builder
-	for _, d := range diffs {
+	for _, d := range version.Diffs {
 		fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n%s\n", d.OldPath, d.NewPath, d.Diff)
 	}
 	return b.String(), nil
 }
 
 func (g *GitLabClient) ListPRFiles(ctx context.Context, repo string, prNum int) ([]PRFile, error) {
-	path := fmt.Sprintf("/api/v4/projects/%s/merge_requests/%d/diffs", encodeProject(repo), prNum)
-	respBody, err := g.doJSON(ctx, http.MethodGet, path, nil, http.StatusOK)
+	changes, _, err := g.client.MergeRequests.GetMergeRequestChanges(repo, prNum, nil, gitlab.WithContext(ctx))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gitlab: listing MR files: %w", err)
 	}
 
-	var glDiffs []struct {
-		OldPath     string `json:"old_path"`
-		NewPath     string `json:"new_path"`
-		Diff        string `json:"diff"`
-		NewFile     bool   `json:"new_file"`
-		RenamedFile bool   `json:"renamed_file"`
-		DeletedFile bool   `json:"deleted_file"`
-	}
-	if err := json.Unmarshal(respBody, &glDiffs); err != nil {
-		return nil, fmt.Errorf("gitlab: parsing diffs: %w", err)
-	}
-
-	files := make([]PRFile, len(glDiffs))
-	for i, d := range glDiffs {
+	files := make([]PRFile, len(changes.Changes))
+	for i, c := range changes.Changes {
 		status := "modified"
-		if d.NewFile {
+		if c.NewFile {
 			status = "added"
-		} else if d.DeletedFile {
+		} else if c.DeletedFile {
 			status = "removed"
 		}
 		files[i] = PRFile{
-			Filename: d.NewPath,
+			Filename: c.NewPath,
 			Status:   status,
-			Patch:    d.Diff,
+			Patch:    c.Diff,
 		}
 	}
 	return files, nil
@@ -144,50 +123,4 @@ func (g *GitLabClient) UploadSARIF(_ context.Context, _ string, _ string, _ []by
 	// GitLab uses artifact-based SAST reports rather than API upload.
 	// Users should output SARIF to a file and configure it as a CI artifact.
 	return nil
-}
-
-// doJSON sends a JSON request and returns the response body.
-func (g *GitLabClient) doJSON(ctx context.Context, method, path string, payload interface{}, expectStatus int) ([]byte, error) {
-	var bodyReader io.Reader
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("gitlab: marshaling request: %w", err)
-		}
-		bodyReader = bytes.NewReader(b)
-	}
-
-	reqURL := g.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: creating request: %w", err)
-	}
-	if g.token != "" {
-		req.Header.Set("PRIVATE-TOKEN", g.token)
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := g.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: %s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("gitlab: reading response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 || (expectStatus > 0 && resp.StatusCode != expectStatus) {
-		return nil, fmt.Errorf("gitlab: %s %s returned %d: %s", method, path, resp.StatusCode, string(respBody))
-	}
-
-	return respBody, nil
-}
-
-// encodeProject URL-encodes the project path for GitLab API (e.g., "group/repo" → "group%2Frepo").
-func encodeProject(project string) string {
-	return url.PathEscape(project)
 }
