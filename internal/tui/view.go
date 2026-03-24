@@ -20,9 +20,12 @@ func (m *Model) View() string {
 		return persona.GoodbyeMessage()
 	}
 
-	// Full-screen overlays (config form, wiki form) take over the entire view.
-	if m.activeOverlay != nil && (m.state == StateConfigOverlay || m.state == StateWikiOverlay) {
-		return m.activeOverlay.View()
+	// Full-screen overlays take over the entire view.
+	if m.activeOverlay != nil {
+		switch m.activeOverlay.(type) {
+		case *ConfigOverlay, *WikiOverlay:
+			return m.activeOverlay.View()
+		}
 	}
 
 	var b strings.Builder
