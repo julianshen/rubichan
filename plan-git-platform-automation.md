@@ -1,340 +1,246 @@
 # Plan: GitHub & GitLab Platform Automation
 
-Adds first-class support for GitHub and GitLab APIs/CLIs, enabling Rubichan to
+Adds first-class support for GitHub and GitLab APIs, enabling Rubichan to
 post PR comments, manage issues, annotate code, and integrate into CI/CD
 pipelines on both platforms. Informed by Claude Code's GitHub automation patterns
 (event-driven workflows, label-based state, AI-powered triage) and the Rubichan
 spec (FR-2.4, FR-2.8, FR-4.10).
 
-## Reference: Claude Code Patterns Worth Adopting
+## Key Finding: Existing Formatters Already Implemented
 
-From DeepWiki analysis of `anthropics/claude-code`:
-- **Event-driven architecture** — workflows triggered by repo events, not polling
-- **Label-based state management** — issue/PR lifecycle tracked via labels
-- **Separation of concerns** — AI handles judgment (triage, review), scripts handle deterministic state transitions
-- **Human-in-the-loop safeguards** — grace periods, reaction monitoring, activity detection
-- **Structured output** — SARIF for security, PR comments for reviews
+The following formatters **already exist** and must NOT be duplicated:
+
+| Formatter | Location | Operates on |
+|-----------|----------|-------------|
+| SARIF v2.1.0 | `internal/security/output/sarif.go` | `*security.Report` |
+| GitHub PR Review | `internal/security/output/github_pr.go` | `*security.Report` → `PRReview`/`PRComment` |
+| PR Comment (Markdown) | `internal/output/pr_comment.go` | `*output.RunResult` |
+| GitHub Actions Annotations | `internal/output/github_annotations.go` | `*output.RunResult` |
+| JSON, Markdown, StyledMarkdown | `internal/output/*.go` | `*output.RunResult` |
+
+The work remaining is:
+1. **Platform abstraction layer** — actual API clients to post results
+2. **CI environment detection** — auto-detect platform, repo, PR number
+3. **Bridge** — connect existing formatters to platform API calls
+4. **CLI wiring** — new flags in `runHeadless()` to trigger posting
+
+---
 
 ## Architecture
 
 ```
 internal/platform/           # NEW — git hosting platform abstraction
-├── platform.go              # Platform interface + types (PR, Issue, Comment, ReviewComment)
-├── github.go                # GitHub implementation (go-github + gh CLI fallback)
-├── gitlab.go                # GitLab implementation (go-gitlab + glab CLI fallback)
-├── detect.go                # Auto-detect platform from git remote URL
-├── github_test.go
-├── gitlab_test.go
-├── detect_test.go
-└── platform_test.go
-
-internal/output/
-├── sarif.go                 # NEW — SARIF v2.1.0 formatter (owenrumney/go-sarif)
-├── sarif_test.go
-├── pr_comment.go            # NEW — PR comment formatter (Markdown with annotations)
-├── pr_comment_test.go
-├── github_annotations.go    # NEW — GitHub Actions workflow annotations (::error, ::warning)
-└── github_annotations_test.go
+├── platform.go              # Platform interface + types
+├── github.go                # GitHub impl via google/go-github/v68
+├── gitlab.go                # GitLab impl via xanzy/go-gitlab
+├── cienv.go                 # CI environment detection (env vars, git remote)
+├── bridge.go                # Connects existing formatters → Platform API calls
+├── platform_test.go         # Interface compliance tests
+├── github_test.go           # GitHub API tests (httptest mocks)
+├── gitlab_test.go           # GitLab API tests (httptest mocks)
+├── cienv_test.go            # CI env detection tests
+└── bridge_test.go           # Bridge integration tests
 ```
+
+## ADR: Use go-github and go-gitlab SDKs (not raw net/http)
+
+**Decision**: Use `google/go-github/v68` and `xanzy/go-gitlab` as primary API clients, with CLI (`gh`/`glab`) fallback when tokens are unavailable.
+
+**Rationale**:
+- The spec explicitly lists `google/go-github` in its tech stack
+- ADR-006's "no vendor SDKs" restriction applies to **LLM** provider SDKs only, not platform SDKs
+- SDK approach provides type-safe API coverage, automatic pagination, built-in retry/rate-limiting
+- CLI fallback ensures functionality when API tokens are not available (e.g., local dev)
+- Both libraries are well-maintained and permissively licensed (BSD-3 and Apache-2.0)
+
+**Rejected alternative**: Raw `net/http` — would require reimplementing pagination, auth, rate limiting, type marshaling that the SDKs already handle correctly.
 
 ---
 
-## Feature 1: Platform Abstraction Layer (`internal/platform/`)
+## PR 1: Platform Abstraction Layer (`internal/platform/`)
 
-**Goal**: Define a unified interface for interacting with GitHub and GitLab,
-enabling all downstream features (PR comments, issue management, CI annotations)
-to be platform-agnostic.
+Foundation for everything else. Defines interface + GitHub and GitLab implementations using Go SDK libraries.
 
 ### Interface Design
 
 ```go
 // Platform abstracts git hosting platform operations.
 type Platform interface {
-    // Identity
-    Name() string  // "github" or "gitlab"
+    Name() string // "github" or "gitlab"
 
     // Pull/Merge Requests
     PostPRComment(ctx context.Context, repo string, prNumber int, body string) error
-    PostPRReviewComment(ctx context.Context, repo string, prNumber int, comment ReviewComment) error
     PostPRReview(ctx context.Context, repo string, prNumber int, review Review) error
-    GetPRDiff(ctx context.Context, repo string, prNumber int) (string, error)
-    ListPRFiles(ctx context.Context, repo string, prNumber int) ([]PRFile, error)
-
-    // Issues
-    CreateIssue(ctx context.Context, repo string, issue Issue) (*Issue, error)
-    AddLabels(ctx context.Context, repo string, issueNumber int, labels []string) error
-    AddComment(ctx context.Context, repo string, issueNumber int, body string) error
 
     // CI Integration
-    GetCheckRunStatus(ctx context.Context, repo string, ref string) ([]CheckRun, error)
-    CreateCheckRun(ctx context.Context, repo string, check CheckRun) error
-    UpdateCheckRun(ctx context.Context, repo string, checkID int64, check CheckRun) error
+    CreateCommitStatus(ctx context.Context, repo string, sha string, status CommitStatus) error
+    UploadSARIF(ctx context.Context, repo string, ref string, sarifData []byte) error
 }
 ```
+
+The interface is deliberately small — only the operations needed for CI integration. Issue management and check runs can be added later via interface extension.
 
 ### Types
 
 ```go
+type Review struct {
+    Body     string
+    Event    string // "APPROVE", "REQUEST_CHANGES", "COMMENT"
+    Comments []ReviewComment
+}
+
 type ReviewComment struct {
     Path     string
     Line     int
     Body     string
-    Side     string  // "LEFT" or "RIGHT"
+    Side     string // "LEFT" or "RIGHT"
 }
 
-type Review struct {
-    Body     string
-    Event    string  // "APPROVE", "REQUEST_CHANGES", "COMMENT"
-    Comments []ReviewComment
-}
-
-type PRFile struct {
-    Filename string
-    Status   string  // "added", "modified", "removed"
-    Patch    string
-}
-
-type Issue struct {
-    Number int
-    Title  string
-    Body   string
-    Labels []string
-    State  string
-}
-
-type CheckRun struct {
-    ID         int64
-    Name       string
-    Status     string  // "queued", "in_progress", "completed"
-    Conclusion string  // "success", "failure", "neutral", "action_required"
-    Output     CheckRunOutput
-}
-
-type CheckRunOutput struct {
-    Title       string
-    Summary     string
-    Annotations []Annotation
-}
-
-type Annotation struct {
-    Path      string
-    StartLine int
-    EndLine   int
-    Level     string  // "notice", "warning", "failure"
-    Message   string
-    Title     string
+type CommitStatus struct {
+    State       string // "success", "failure", "pending"
+    Description string
+    Context     string
+    TargetURL   string
 }
 ```
 
 ### Tests
 
-- [ ] **1.1** `TestPlatformInterfaceCompliance_GitHub` — GitHub client implements Platform interface
-- [ ] **1.2** `TestPlatformInterfaceCompliance_GitLab` — GitLab client implements Platform interface
-- [ ] **1.3** `TestDetectPlatformFromRemote_GitHub` — `git@github.com:owner/repo.git` → GitHub
-- [ ] **1.4** `TestDetectPlatformFromRemote_GitLabSSH` — `git@gitlab.com:group/repo.git` → GitLab
-- [ ] **1.5** `TestDetectPlatformFromRemote_GitLabHTTPS` — `https://gitlab.example.com/group/repo` → GitLab
-- [ ] **1.6** `TestDetectPlatformFromRemote_Unknown` — Unknown host → error
-- [ ] **1.7** `TestDetectPlatformFromEnv` — `GITHUB_ACTIONS=true` → GitHub; `GITLAB_CI=true` → GitLab
-- [ ] **1.8** `TestParseRepoFromRemote` — Extracts `owner/repo` from SSH and HTTPS remote URLs
-- [ ] **1.9** `TestGitHubPostPRComment` — Posts comment via go-github (HTTP mock)
-- [ ] **1.10** `TestGitHubPostPRReviewComment` — Posts inline review comment (HTTP mock)
-- [ ] **1.11** `TestGitHubPostPRReview` — Submits full review with inline comments (HTTP mock)
-- [ ] **1.12** `TestGitHubCreateCheckRun` — Creates check run with annotations (HTTP mock)
-- [ ] **1.13** `TestGitLabPostMRComment` — Posts MR note via go-gitlab (HTTP mock)
-- [ ] **1.14** `TestGitLabPostMRReviewComment` — Posts inline MR discussion (HTTP mock)
-- [ ] **1.15** `TestGitLabCreateIssue` — Creates issue via go-gitlab (HTTP mock)
-- [ ] **1.16** `TestGitHubCLIFallback` — When no token, falls back to `gh` CLI
-- [ ] **1.17** `TestGitLabCLIFallback` — When no token, falls back to `glab` CLI
+- [ ] **1.01** `TestPlatformInterfaceCompliance_GitHub` — `*GitHubClient` satisfies `Platform`
+- [ ] **1.02** `TestPlatformInterfaceCompliance_GitLab` — `*GitLabClient` satisfies `Platform`
+- [ ] **1.03** `TestGitHubPostPRComment` — Posts comment via `go-github` Issues API (httptest mock)
+- [ ] **1.04** `TestGitHubPostPRReview` — Creates review with inline comments via `go-github` (httptest mock)
+- [ ] **1.05** `TestGitHubUploadSARIF` — Uploads gzip+base64 SARIF to code-scanning API (httptest mock)
+- [ ] **1.06** `TestGitHubCreateCommitStatus` — Creates commit status via `go-github` (httptest mock)
+- [ ] **1.07** `TestGitLabPostMRComment` — Posts MR note via `go-gitlab` (httptest mock)
+- [ ] **1.08** `TestGitLabPostMRReview` — Posts MR discussions with position info via `go-gitlab` (httptest mock)
+- [ ] **1.09** `TestGitLabUploadSARIF_NoOp` — GitLab SARIF upload is no-op (GitLab ingests via CI artifact)
+- [ ] **1.10** `TestGitHubAuthFromToken` — `GITHUB_TOKEN` env var creates authenticated `go-github` client
+- [ ] **1.11** `TestGitLabAuthFromToken` — `GITLAB_TOKEN` env var creates authenticated `go-gitlab` client
+- [ ] **1.12** `TestGitHubNewClient_CustomBaseURL` — GitHub Enterprise URL configures `go-github` base URL
+- [ ] **1.13** `TestGitLabNewClient_CustomBaseURL` — Self-hosted GitLab URL configures `go-gitlab` base URL
 
 ### Implementation Notes
 
-- GitHub: use `google/go-github` (already in spec's tech stack)
-- GitLab: use `xanzy/go-gitlab` (MIT license, well-maintained)
-- Auth: `GITHUB_TOKEN` / `GITLAB_TOKEN` env vars, with CLI fallback (`gh` / `glab`)
-- Auto-detection order: env vars (`GITHUB_ACTIONS`, `GITLAB_CI`) → git remote URL parsing
+- **GitHub**: Wrap `google/go-github/v68`. `PostPRReview` maps `Review.Comments` to `github.DraftReviewComment` entries. `UploadSARIF` uses `POST /repos/{owner}/{repo}/code-scanning/sarifs` with gzip+base64 encoding as GitHub requires.
+- **GitLab**: Wrap `xanzy/go-gitlab`. For inline comments, use MR Discussions API with `PositionOptions`. `UploadSARIF` is a no-op — GitLab ingests SARIF as a CI artifact, not via API.
+- **Auth**: Constructor accepts token directly; caller reads from env. No hidden env var coupling in the client.
 
 ---
 
-## Feature 2: SARIF Output Formatter (`internal/output/sarif.go`)
+## PR 2: CI Environment Detection (`internal/platform/cienv.go`)
 
-**Goal**: Produce SARIF v2.1.0 output from security findings, enabling native
-integration with GitHub Code Scanning, GitLab SAST reports, and VS Code.
+Focused helper for detecting CI environment details — platform, repo, PR number, SHA.
+
+### Struct Design
+
+```go
+type CIEnvironment struct {
+    Provider string // "github-actions", "gitlab-ci", "jenkins"
+    Repo     string // "owner/repo" or "group/project"
+    PRNumber int    // 0 if not a PR context
+    Ref      string // git ref
+    SHA      string // commit SHA
+    Token    string // auth token from env
+}
+```
 
 ### Tests
 
-- [ ] **2.1** `TestSARIFFormatterEmpty` — Empty findings → valid SARIF with empty results array
-- [ ] **2.2** `TestSARIFFormatterSingleFinding` — One finding maps to correct SARIF result (ruleId, level, location)
-- [ ] **2.3** `TestSARIFFormatterSeverityMapping` — critical→error, high→error, medium→warning, low→note, info→note
-- [ ] **2.4** `TestSARIFFormatterMultipleFindings` — Multiple findings in correct order with distinct rule entries
-- [ ] **2.5** `TestSARIFFormatterWithLocation` — File + line → SARIF physicalLocation with artifactLocation + region
-- [ ] **2.6** `TestSARIFFormatterNoLocation` — Finding without file/line → result without location (still valid)
-- [ ] **2.7** `TestSARIFFormatterValidatesAgainstSchema` — Output validates against SARIF v2.1.0 JSON schema
-- [ ] **2.8** `TestSARIFFormatterToolInfo` — Includes rubichan tool info (name, version, semanticVersion)
+- [ ] **2.01** `TestParseRepoFromRemote_GitHubSSH` — `git@github.com:owner/repo.git` → `"owner/repo"`
+- [ ] **2.02** `TestParseRepoFromRemote_GitHubHTTPS` — `https://github.com/owner/repo.git` → `"owner/repo"`
+- [ ] **2.03** `TestParseRepoFromRemote_GitLabSSH` — `git@gitlab.com:group/project.git` → `"group/project"`
+- [ ] **2.04** `TestParseRepoFromRemote_GitLabHTTPS` — `https://gitlab.example.com/group/sub/project` → `"group/sub/project"`
+- [ ] **2.05** `TestParseRepoFromRemote_Invalid` — Invalid URL returns error
+- [ ] **2.06** `TestDetectPlatformFromEnv_GitHub` — `GITHUB_ACTIONS=true` → GitHub
+- [ ] **2.07** `TestDetectPlatformFromEnv_GitLab` — `GITLAB_CI=true` → GitLab
+- [ ] **2.08** `TestDetectPlatformFromRemote_GitHub` — URL with `github.com` host → GitHub
+- [ ] **2.09** `TestDetectPlatformFromRemote_GitLab` — URL with `gitlab.com` host → GitLab
+- [ ] **2.10** `TestDetectPlatformFromRemote_Unknown` — Unknown host returns error
+- [ ] **2.11** `TestDetectPRNumber_GitHubActions` — `GITHUB_REF=refs/pull/42/merge` → 42
+- [ ] **2.12** `TestDetectPRNumber_GitLabCI` — `CI_MERGE_REQUEST_IID=17` → 17
+- [ ] **2.13** `TestDetectPRNumber_NoCIEnv` — No CI env vars → 0 and error
+- [ ] **2.14** `TestDetectRepo_GitHubActions` — `GITHUB_REPOSITORY=owner/repo` → `"owner/repo"`
+- [ ] **2.15** `TestDetectRepo_GitLabCI` — `CI_PROJECT_PATH=group/project` → `"group/project"`
+- [ ] **2.16** `TestCIEnvDetect_NoneDetected` — Clean environment returns nil
+- [ ] **2.17** `TestGitHubCLIFallback` — When no token, uses `gh api` for operations
+- [ ] **2.18** `TestGitLabCLIFallback` — When no token, uses `glab api` for operations
 
 ### Implementation Notes
 
-- Use `owenrumney/go-sarif` library (already in spec's tech stack)
-- Map `SecurityFinding.Severity` to SARIF levels
-- Include tool component info for each scanner
-- Upload via `gh` CLI: `gh api -X POST repos/{owner}/{repo}/code-scanning/sarifs`
+- Detection order: env vars (`GITHUB_ACTIONS`, `GITLAB_CI`) → git remote URL parsing
+- Remote URL parsing supports SSH (`git@host:path`) and HTTPS (`https://host/path`) formats
+- GitLab paths may have subgroups (`group/sub/project`) — don't assume single-level
 
 ---
 
-## Feature 3: PR Comment Formatter (`internal/output/pr_comment.go`)
+## PR 3: Platform Bridge (`internal/platform/bridge.go`)
 
-**Goal**: Format RunResult as a well-structured PR comment suitable for posting
-via the Platform interface.
+Connects the **existing** formatters in `internal/security/output/` and `internal/output/` to actual Platform API calls. This is the key integration piece.
 
 ### Tests
 
-- [ ] **3.1** `TestPRCommentFormatterBasic` — Produces Markdown with summary header, response body
-- [ ] **3.2** `TestPRCommentFormatterWithFindings` — Security findings render as severity-grouped table
-- [ ] **3.3** `TestPRCommentFormatterWithToolCalls` — Tool calls shown in collapsible details section
-- [ ] **3.4** `TestPRCommentFormatterCollapsesLongOutput` — Response > 65000 chars truncated with "see full report" link
-- [ ] **3.5** `TestPRCommentFormatterCodeReviewMode` — Code review mode adds inline suggestion blocks
-- [ ] **3.6** `TestPRCommentFormatterErrorResult` — Error result shows error message prominently
-- [ ] **3.7** `TestPRCommentFormatterSecuritySummaryBadge` — Summary includes severity counts as badges/emoji
+- [ ] **3.01** `TestBridgePostReviewFromSecurityReport` — Takes `*security.Report`, formats via existing `GitHubPRFormatter`, posts via `Platform.PostPRReview`
+- [ ] **3.02** `TestBridgePostReviewEmptyReport` — Empty report posts summary-only comment (no inline comments)
+- [ ] **3.03** `TestBridgePostSARIF` — Takes `*security.Report`, formats via existing `SARIFFormatter`, uploads via `Platform.UploadSARIF`
+- [ ] **3.04** `TestBridgePostRunResult` — Takes `*output.RunResult`, formats via existing `PRCommentFormatter`, posts via `Platform.PostPRComment`
+- [ ] **3.05** `TestBridgeTruncatesLongComments` — Comments exceeding 65000 chars truncated with notice
+- [ ] **3.06** `TestBridgeMapsSecurityPRCommentToPlatformReview` — `PRComment{Path, Line, Body}` maps correctly to `platform.ReviewComment`
 
 ### Implementation Notes
 
-- Max GitHub comment size is ~65536 chars; truncate with link to full report
-- Use collapsible `<details>` blocks for tool calls and evidence
-- Security findings grouped by severity with emoji indicators
-- Code review suggestions use GitHub's suggestion block syntax:
-  ````
-  ```suggestion
-  corrected code here
-  ```
-  ````
+- The bridge does NOT re-implement formatting. It calls existing `GitHubPRFormatter.Format()` and `SARIFFormatter.Format()`, then maps results to platform API calls.
+- For `PostPRReview`: unmarshals `PRReview` JSON from `GitHubPRFormatter`, creates `platform.Review`, calls `Platform.PostPRReview`.
+- The bridge is package-level functions, not a type — follows codebase's preference for simple functions.
 
 ---
 
-## Feature 4: GitHub Actions Annotations (`internal/output/github_annotations.go`)
+## PR 4: CLI Integration Flags (`cmd/rubichan/main.go`)
 
-**Goal**: Emit `::error`, `::warning`, `::notice` workflow commands so findings
-appear as inline annotations in GitHub's PR file view.
+Ties everything together with new flags wired into `runHeadless()`.
 
-### Tests
-
-- [ ] **4.1** `TestGitHubAnnotationsSingleFinding` — One finding → `::warning file=...,line=...::message`
-- [ ] **4.2** `TestGitHubAnnotationsSeverityMapping` — critical/high→error, medium→warning, low/info→notice
-- [ ] **4.3** `TestGitHubAnnotationsMultipleFindings` — Multiple findings each on their own line
-- [ ] **4.4** `TestGitHubAnnotationsEscaping` — Special chars in messages properly escaped (`%0A`, `%25`)
-- [ ] **4.5** `TestGitHubAnnotationsNoFile` — Finding without file → annotation without file/line params
-
-### Implementation Notes
-
-- Only emitted when `GITHUB_ACTIONS=true` env var is set
-- Format: `::warning file={path},line={line},endLine={endLine},title={title}::{message}`
-- Escape `%`, `\n`, `\r` per GitHub's workflow command spec
-
----
-
-## Feature 5: CI Pipeline Integration (`--post-to-pr` flag)
-
-**Goal**: Add end-to-end CI integration so Rubichan can auto-detect the platform,
-run analysis, and post results back to the PR — all in one command.
-
-### CLI Additions
+### New Flags
 
 ```bash
-# Auto-detect platform + PR, post comment
-rubichan --headless --mode=code-review --post-to-pr
-
-# Explicit PR number
-rubichan --headless --mode=code-review --post-to-pr --pr=42
-
-# SARIF upload to GitHub Code Scanning
-rubichan --headless --mode=code-review --output=sarif --upload-sarif
-
-# GitLab: post to MR + emit SAST report artifact
-rubichan --headless --mode=code-review --post-to-pr --output=sarif > gl-sast-report.json
+--post-to-pr              # Auto-detect platform, format results, post to PR
+--pr=N                    # Explicit PR number override
+--upload-sarif            # Upload SARIF to GitHub Code Scanning API
 ```
 
 ### Tests
 
-- [ ] **5.1** `TestPostToPRFlag` — `--post-to-pr` flag is registered and parsed
-- [ ] **5.2** `TestPostToPRAutoDetectsPlatform` — Detects GitHub/GitLab from environment
-- [ ] **5.3** `TestPostToPRAutoDetectsPRNumber` — Reads PR number from `GITHUB_REF` or `CI_MERGE_REQUEST_IID`
-- [ ] **5.4** `TestPostToPRFormatsAndPosts` — Runs analysis, formats as PR comment, posts via Platform
-- [ ] **5.5** `TestUploadSARIF` — `--upload-sarif` uploads SARIF to GitHub Code Scanning API
-- [ ] **5.6** `TestPostToPRExplicitNumber` — `--pr=42` overrides auto-detection
-- [ ] **5.7** `TestPostToPRNoPlatformDetected` — Error message when platform cannot be determined
+- [ ] **4.01** `TestPostToPRFlagRegistered` — Flag exists and defaults to false
+- [ ] **4.02** `TestPRFlagRegistered` — `--pr` flag exists and defaults to 0
+- [ ] **4.03** `TestUploadSARIFFlagRegistered` — `--upload-sarif` flag exists and defaults to false
+- [ ] **4.04** `TestPostToPRRequiresCodeReviewMode` — `--post-to-pr` without `--mode=code-review` returns clear error
+- [ ] **4.05** `TestPostToPRAutoDetectsPlatform` — When `GITHUB_ACTIONS=true`, detects GitHub and PR number
+- [ ] **4.06** `TestPostToPRExplicitPRNumber` — `--pr=42` overrides auto-detected PR number
+- [ ] **4.07** `TestPostToPRNoPlatformError` — No CI env and no remote URL returns descriptive error
+- [ ] **4.08** `TestUploadSARIFPostsToAPI` — Formats SARIF from security report and uploads
+- [ ] **4.09** `TestAnnotationsEmittedInGitHubActions` — When `GITHUB_ACTIONS=true`, annotations written to stdout
+- [ ] **4.10** `TestPostToPRAndOutputCombined` — `--post-to-pr --output=json` posts to PR AND writes JSON to stdout
 
-### Implementation Notes
+### Wiring (after existing formatter switch at ~line 1949 in `runHeadless()`)
 
-- PR number auto-detection:
-  - GitHub Actions: parse `GITHUB_REF` (`refs/pull/42/merge`) or `GITHUB_EVENT_PATH`
-  - GitLab CI: read `CI_MERGE_REQUEST_IID` env var
-- Repo auto-detection: parse `GITHUB_REPOSITORY` or `CI_PROJECT_PATH`
+1. If `--post-to-pr`: detect platform → resolve PR number → bridge posts review + comment
+2. If `--upload-sarif`: format via existing SARIF formatter → `Platform.UploadSARIF`
+3. If `GITHUB_ACTIONS=true`: emit annotations via existing `GitHubAnnotationsFormatter`
 
 ---
 
-## Feature 6: Example CI Workflow Files (FR-2.8)
+## PR 5: Example CI Workflow Files
 
-**Goal**: Provide ready-to-use CI configuration files that users can drop into
-their repos.
+### Tests
+
+- [ ] **5.01** `TestExampleGitHubActionsYAMLIsValid` — Parses as valid YAML
+- [ ] **5.02** `TestExampleGitLabCIYAMLIsValid` — Parses as valid YAML
+- [ ] **5.03** `TestExampleFilesExist` — All three example files exist
 
 ### Files
 
-- [ ] **6.1** `examples/ci/github-actions.yml` — GitHub Actions workflow for PR code review
-- [ ] **6.2** `examples/ci/gitlab-ci.yml` — GitLab CI pipeline with SAST artifact
-- [ ] **6.3** `examples/ci/jenkinsfile` — Jenkins pipeline with SARIF archiving
-
-### GitHub Actions Example
-
-```yaml
-name: Rubichan Code Review
-on:
-  pull_request:
-    types: [opened, synchronize]
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      security-events: write  # for SARIF upload
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Install Rubichan
-        run: go install github.com/julianshen/rubichan/cmd/rubichan@latest
-      - name: Run Code Review
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: rubichan --headless --mode=code-review --post-to-pr
-      - name: Upload SARIF
-        if: always()
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          rubichan --headless --mode=code-review --output=sarif > results.sarif
-          gh api -X POST repos/${{ github.repository }}/code-scanning/sarifs \
-            --field sarif=@results.sarif --field ref=${{ github.ref }}
-```
-
-### GitLab CI Example
-
-```yaml
-rubichan-review:
-  stage: test
-  image: golang:1.22
-  script:
-    - go install github.com/julianshen/rubichan/cmd/rubichan@latest
-    - rubichan --headless --mode=code-review --post-to-pr --output=sarif > gl-sast-report.json
-  artifacts:
-    reports:
-      sast: gl-sast-report.json
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-  variables:
-    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
-    GITLAB_TOKEN: $CI_JOB_TOKEN
-```
+- [ ] **5.04** `examples/ci/github-actions.yml` — GitHub Actions workflow for PR code review
+- [ ] **5.05** `examples/ci/gitlab-ci.yml` — GitLab CI pipeline with SAST artifact
+- [ ] **5.06** `examples/ci/jenkinsfile` — Jenkins pipeline with SARIF archiving
 
 ---
 
@@ -342,22 +248,45 @@ rubichan-review:
 
 | Library | Purpose | License |
 |---------|---------|---------|
-| `google/go-github/v60` | GitHub API client | BSD-3 (already in spec) |
-| `xanzy/go-gitlab` | GitLab API client | Apache-2.0 |
-| `owenrumney/go-sarif/v2` | SARIF generation | MIT (already in spec) |
+| `google/go-github/v68` | GitHub API client (SDK-first, type-safe) | BSD-3 (spec-approved) |
+| `xanzy/go-gitlab` | GitLab API client (SDK-first, type-safe) | Apache-2.0 |
+| `golang.org/x/oauth2` | Token transport for go-github (transitive) | BSD-3 |
+
+**NOT needed**: `owenrumney/go-sarif` — custom SARIF implementation already exists at `internal/security/output/sarif.go`.
 
 ---
 
-## Implementation Order
+## Implementation Order & Dependencies
 
-1. **Feature 1** (Platform Abstraction) — foundation for everything else
-2. **Feature 2** (SARIF Formatter) — standalone, no platform dependency
-3. **Feature 3** (PR Comment Formatter) — standalone, no platform dependency
-4. **Feature 4** (GitHub Annotations) — standalone, GitHub-specific
-5. **Feature 5** (CI Integration) — ties Features 1-4 together
-6. **Feature 6** (Example Configs) — documentation, done last
+```
+PR 1: Platform Abstraction Layer (go-github, go-gitlab SDKs)
+  |
+  v
+PR 2: CI Environment Detection (parallel-safe with PR 1)
+  |
+  +---> PR 3: Platform Bridge (depends on PR 1)
+  |
+  v
+PR 4: CLI Integration Flags (depends on PRs 1-3)
+  |
+  v
+PR 5: Example CI Workflows (depends on PR 4)
+```
 
-Features 2, 3, and 4 can be developed in parallel since they're independent formatters.
+PRs 1 and 2 can be developed in parallel.
+
+---
+
+## Risks and Mitigations
+
+| Risk | Mitigation |
+|------|------------|
+| GitHub review API rejects comments on lines not in diff | Validate comment positions against PR diff hunk ranges before posting; skip out-of-range with warning |
+| GitLab Discussions API requires diff position objects | Map `PRComment.Path` + `PRComment.Line` to GitLab `PositionOptions` using MR diff info from `go-gitlab` |
+| Rate limiting on GitHub API | `go-github`'s built-in rate limit handling; batch comments into single review |
+| SARIF upload rejects malformed data | Existing `SARIFFormatter` is well-tested; add gzip+base64 encoding |
+| Token unavailable in CI | CLI fallback (`gh`/`glab`) which authenticate via their own token caching |
+| go-github/go-gitlab API breaking changes | Pin specific versions in go.mod; SDKs are semver-stable |
 
 ---
 
@@ -365,10 +294,10 @@ Features 2, 3, and 4 can be developed in parallel since they're independent form
 
 | Spec Requirement | Feature | Status |
 |-----------------|---------|--------|
-| FR-2.4: SARIF output | Feature 2 | Planned |
-| FR-2.4: GitHub PR comment | Features 3 + 5 | Planned |
-| FR-2.8: GitHub Actions integration | Features 5 + 6.1 | Planned |
-| FR-2.8: GitLab CI integration | Features 5 + 6.2 | Planned |
-| FR-2.8: Jenkins integration | Feature 6.3 | Planned |
-| FR-4.10: SARIF security output | Feature 2 | Planned |
-| FR-4.10: GitHub PR annotations | Feature 4 | Planned |
+| FR-2.4: SARIF output | Existing `internal/security/output/sarif.go` | **Done** |
+| FR-2.4: GitHub PR comment | Existing `internal/output/pr_comment.go` | **Done** |
+| FR-2.8: GitHub Actions integration | PRs 1-4 | Planned |
+| FR-2.8: GitLab CI integration | PRs 1-4 | Planned |
+| FR-2.8: Jenkins integration | PR 5 | Planned |
+| FR-4.10: SARIF security output | Existing `internal/security/output/sarif.go` | **Done** |
+| FR-4.10: GitHub PR annotations | Existing `internal/output/github_annotations.go` | **Done** |
