@@ -102,7 +102,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			workDir = m.agent.WorkingDir()
 		}
 		m.activeOverlay = NewApprovalOverlay(msg.tool, msg.input, workDir, m.width, msg.options)
-		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, workDir, m.width, msg.options)
 		m.pendingApproval = &approvalRequest{
 			tool:          msg.tool,
 			input:         msg.input,

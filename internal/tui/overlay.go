@@ -63,8 +63,11 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 		return nil
 	case nil:
 		// Overlay was cancelled (e.g., Escape pressed).
-		m.configForm = nil
-		m.wikiForm = nil
+		// Defensive: unblock agent if approval was somehow cancelled.
+		if m.pendingApproval != nil {
+			m.pendingApproval.responseValue <- ApprovalNo
+			m.pendingApproval = nil
+		}
 		m.approvalPrompt = nil
 		m.state = StateInput
 		return nil

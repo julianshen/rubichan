@@ -1242,7 +1242,7 @@ func TestModelApprovalRequestMsg(t *testing.T) {
 	um := updated.(*Model)
 
 	assert.Equal(t, StateAwaitingApproval, um.state)
-	assert.NotNil(t, um.approvalPrompt)
+	assert.NotNil(t, um.activeOverlay)
 	assert.NotNil(t, cmd, "should return a cmd to wait for next approval")
 }
 
