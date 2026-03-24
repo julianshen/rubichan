@@ -20,12 +20,9 @@ func (m *Model) View() string {
 		return persona.GoodbyeMessage()
 	}
 
-	if m.state == StateConfigOverlay && m.configForm != nil {
-		return m.configForm.Form().View()
-	}
-
-	if m.state == StateWikiOverlay && m.wikiForm != nil {
-		return m.wikiForm.Form().View()
+	// Full-screen overlays (config form, wiki form) take over the entire view.
+	if m.activeOverlay != nil && (m.state == StateConfigOverlay || m.state == StateWikiOverlay) {
+		return m.activeOverlay.View()
 	}
 
 	var b strings.Builder
@@ -41,7 +38,9 @@ func (m *Model) View() string {
 			}
 			b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(m.thinkingMsg), elapsed))
 		case StateAwaitingApproval:
-			if m.approvalPrompt != nil {
+			if m.activeOverlay != nil {
+				b.WriteString(m.activeOverlay.View())
+			} else if m.approvalPrompt != nil {
 				b.WriteString(m.approvalPrompt.View())
 			} else {
 				b.WriteString(m.statusBar.View())
@@ -85,7 +84,9 @@ func (m *Model) View() string {
 		}
 		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(m.thinkingMsg), elapsed))
 	case StateAwaitingApproval:
-		if m.approvalPrompt != nil {
+		if m.activeOverlay != nil {
+			b.WriteString(m.activeOverlay.View())
+		} else if m.approvalPrompt != nil {
 			b.WriteString(m.approvalPrompt.View())
 		} else {
 			b.WriteString(m.statusBar.View())

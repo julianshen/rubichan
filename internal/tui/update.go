@@ -11,7 +11,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/commands"
@@ -45,39 +44,29 @@ func (m *Model) Init() tea.Cmd {
 // Update implements tea.Model. It processes incoming messages and returns the
 // updated model and any commands to execute.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Route messages to config form overlay when active.
-	if m.state == StateConfigOverlay && m.configForm != nil {
-		form, cmd := m.configForm.Form().Update(msg)
-		if f, ok := form.(*huh.Form); ok {
-			m.configForm.SetForm(f)
+	// Ctrl+C pre-overlay intercept: must always quit and unblock agent if needed.
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC && m.activeOverlay != nil {
+		m.quitting = true
+		if m.pendingApproval != nil {
+			m.pendingApproval.responseValue <- ApprovalNo
+			m.pendingApproval = nil
 		}
-		switch m.configForm.Form().State {
-		case huh.StateCompleted:
-			_ = m.configForm.Save()
-			m.state = StateInput
-			m.configForm = nil
-		case huh.StateAborted:
-			m.state = StateInput
-			m.configForm = nil
+		if m.wikiCancel != nil {
+			m.wikiCancel()
 		}
-		return m, cmd
+		m.activeOverlay = nil
+		return m, tea.Quit
 	}
 
-	// Route messages to wiki form overlay when active.
-	if m.state == StateWikiOverlay && m.wikiForm != nil {
-		form, cmd := m.wikiForm.Form().Update(msg)
-		if f, ok := form.(*huh.Form); ok {
-			m.wikiForm.SetForm(f)
-		}
-		switch m.wikiForm.Form().State {
-		case huh.StateCompleted:
-			m.state = StateInput
-			wf := m.wikiForm
-			m.wikiForm = nil
-			return m, m.startWikiGeneration(wf)
-		case huh.StateAborted:
-			m.state = StateInput
-			m.wikiForm = nil
+	// Generic overlay delegation: route all messages to the active overlay.
+	if m.activeOverlay != nil {
+		updated, cmd := m.activeOverlay.Update(msg)
+		m.activeOverlay = updated
+		if m.activeOverlay.Done() {
+			result := m.activeOverlay.Result()
+			m.activeOverlay = nil
+			followUp := m.processOverlayResult(result)
+			return m, tea.Batch(cmd, followUp)
 		}
 		return m, cmd
 	}
@@ -112,6 +101,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.agent != nil {
 			workDir = m.agent.WorkingDir()
 		}
+		m.activeOverlay = NewApprovalOverlay(msg.tool, msg.input, workDir, m.width, msg.options)
 		m.approvalPrompt = NewApprovalPrompt(msg.tool, msg.input, workDir, m.width, msg.options)
 		m.pendingApproval = &approvalRequest{
 			tool:          msg.tool,
@@ -170,27 +160,6 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.wikiCancel()
 		}
 		return m, tea.Quit
-	}
-
-	// Delegate to approval prompt when awaiting approval.
-	if m.state == StateAwaitingApproval && m.approvalPrompt != nil {
-		if m.approvalPrompt.HandleKey(msg) {
-			result := m.approvalPrompt.Result()
-			if result == ApprovalAlways {
-				m.alwaysDenied.Delete(m.pendingApproval.tool)
-				m.alwaysApproved.Store(m.pendingApproval.tool, true)
-			}
-			if result == ApprovalDenyAlways {
-				m.alwaysApproved.Delete(m.pendingApproval.tool)
-				m.alwaysDenied.Store(m.pendingApproval.tool, true)
-			}
-			m.pendingApproval.responseValue <- result
-			m.approvalPrompt = nil
-			m.pendingApproval = nil
-			m.state = StateStreaming
-			return m, m.waitForEvent()
-		}
-		return m, nil
 	}
 
 	// Completion overlay intercepts Tab/Up/Down/Escape when visible,

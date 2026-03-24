@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
@@ -69,6 +70,8 @@ type Model struct {
 	statusBar         *StatusBar
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
+	activeOverlay     Overlay
+	checkpointMgr     *checkpoint.Manager
 	alwaysApproved    sync.Map
 	alwaysDenied      sync.Map
 	approvalCh        chan approvalRequest
@@ -669,18 +672,20 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 			m.setContentAndAutoScroll()
 			return nil
 		}
-		m.configForm = NewConfigForm(m.cfg, m.configPath)
+		overlay, initCmd := NewConfigOverlay(m.cfg, m.configPath)
+		m.activeOverlay = overlay
 		m.state = StateConfigOverlay
-		return m.configForm.Form().Init()
+		return initCmd
 	case commands.ActionOpenWiki:
 		if m.wikiRunning {
 			m.content.WriteString("Wiki generation is already running.\n")
 			m.setContentAndAutoScroll()
 			return nil
 		}
-		m.wikiForm = NewWikiForm(m.wikiCfg.WorkDir)
+		overlay, initCmd := NewWikiOverlay(m.wikiCfg.WorkDir)
+		m.activeOverlay = overlay
 		m.state = StateWikiOverlay
-		return m.wikiForm.Form().Init()
+		return initCmd
 	}
 
 	return nil
