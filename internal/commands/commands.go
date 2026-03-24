@@ -20,6 +20,8 @@ const (
 	ActionOpenConfig
 	// ActionOpenWiki requests the host to open the wiki generation form.
 	ActionOpenWiki
+	// ActionOpenUndo requests the host to open the undo checkpoint selector.
+	ActionOpenUndo
 )
 
 // Candidate represents a completion suggestion.

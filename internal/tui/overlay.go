@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"context"
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -71,9 +74,31 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 }
 
 // executeUndo applies an undo operation from the UndoResult.
-// TODO: Task 6 will implement this.
 func (m *Model) executeUndo(r UndoResult) {
-	_ = r // suppress unused warning until Task 6
-	m.content.WriteString("[undo not yet implemented]\n")
+	if m.checkpointMgr == nil {
+		m.content.WriteString("[no checkpoint manager available]\n")
+		m.setContentAndAutoScroll()
+		return
+	}
+	var restored []string
+	var err error
+	if r.All && r.Turn > 0 {
+		restored, err = m.checkpointMgr.RewindToTurn(context.Background(), r.Turn-1)
+	} else {
+		var path string
+		path, err = m.checkpointMgr.Undo(context.Background())
+		if path != "" {
+			restored = []string{path}
+		}
+	}
+	if err != nil {
+		m.content.WriteString(fmt.Sprintf("[undo failed: %s]\n", err))
+	} else if len(restored) > 0 {
+		for _, p := range restored {
+			m.content.WriteString(fmt.Sprintf("  restored %s\n", p))
+		}
+	} else {
+		m.content.WriteString("[nothing to undo]\n")
+	}
 	m.setContentAndAutoScroll()
 }

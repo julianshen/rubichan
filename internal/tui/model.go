@@ -220,6 +220,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 			}
 			return "", fmt.Errorf("no agent")
 		}))
+		_ = cmdRegistry.Register(commands.NewUndoOverlayCommand())
 		_ = cmdRegistry.Register(commands.NewHelpCommand(cmdRegistry))
 	}
 
@@ -686,6 +687,13 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 		m.activeOverlay = overlay
 		m.state = StateWikiOverlay
 		return initCmd
+	case commands.ActionOpenUndo:
+		var cps []checkpoint.Checkpoint
+		if m.checkpointMgr != nil {
+			cps = m.checkpointMgr.List()
+		}
+		m.activeOverlay = NewUndoOverlay(cps, m.width)
+		return nil
 	}
 
 	return nil

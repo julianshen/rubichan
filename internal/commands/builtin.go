@@ -181,6 +181,30 @@ func (c *helpCommand) Execute(_ context.Context, _ []string) (Result, error) {
 	return Result{Output: b.String()}, nil
 }
 
+// --- undo overlay ---
+
+type undoOverlayCommand struct{}
+
+// NewUndoOverlayCommand creates a command that requests the host to open
+// the interactive undo checkpoint selector overlay.
+func NewUndoOverlayCommand() SlashCommand {
+	return &undoOverlayCommand{}
+}
+
+func (c *undoOverlayCommand) Name() string        { return "undo" }
+func (c *undoOverlayCommand) Description() string { return "Undo recent file changes" }
+func (c *undoOverlayCommand) Arguments() []ArgumentDef {
+	return nil
+}
+
+func (c *undoOverlayCommand) Complete(_ context.Context, _ []string) []Candidate {
+	return nil
+}
+
+func (c *undoOverlayCommand) Execute(_ context.Context, _ []string) (Result, error) {
+	return Result{Action: ActionOpenUndo}, nil
+}
+
 // --- debug-verification-snapshot ---
 
 type debugVerificationSnapshotCommand struct {
