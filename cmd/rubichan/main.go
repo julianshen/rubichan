@@ -30,12 +30,14 @@ import (
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
+	"github.com/julianshen/rubichan/internal/platform"
 	"github.com/julianshen/rubichan/internal/permissions"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/pipeline"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
+	secoutput "github.com/julianshen/rubichan/internal/security/output"
 	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
@@ -107,6 +109,11 @@ var (
 	forkFlag     bool
 	failOnFlag   string
 	worktreeFlag string
+
+	postToPRFlag   bool
+	prNumberFlag   int
+	uploadSARIFFlag bool
+	annotationsFlag bool
 
 	activeSessionLogMu   sync.RWMutex
 	activeSessionLogPath string
@@ -505,6 +512,10 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&forkFlag, "fork", false, "fork the resumed session instead of continuing it")
 	rootCmd.PersistentFlags().StringVar(&failOnFlag, "fail-on", "", "exit non-zero if findings at/above severity (critical, high, medium, low)")
 	rootCmd.PersistentFlags().StringVar(&worktreeFlag, "worktree", "", "run in an isolated git worktree with the given name")
+	rootCmd.PersistentFlags().BoolVar(&postToPRFlag, "post-to-pr", false, "post results as a PR/MR comment (auto-detects GitHub/GitLab)")
+	rootCmd.PersistentFlags().IntVar(&prNumberFlag, "pr", 0, "explicit PR/MR number (overrides auto-detection)")
+	rootCmd.PersistentFlags().BoolVar(&uploadSARIFFlag, "upload-sarif", false, "upload SARIF to GitHub Code Scanning")
+	rootCmd.PersistentFlags().BoolVar(&annotationsFlag, "annotations", false, "emit GitHub Actions workflow annotations")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -1970,6 +1981,21 @@ func runHeadless() error {
 
 	fmt.Print(string(out))
 
+	// Post results to PR if requested.
+	if postToPRFlag {
+		if err := postResultsToPR(ctx, result, secReport); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to post to PR: %v\n", err)
+		}
+	}
+
+	// Emit GitHub Actions annotations if requested or auto-detected.
+	if annotationsFlag || (os.Getenv("GITHUB_ACTIONS") == "true" && len(result.SecurityFindings) > 0) {
+		annotFmt := output.NewGitHubAnnotationsFormatter()
+		if annotOut, err := annotFmt.Format(result); err == nil && len(annotOut) > 0 {
+			fmt.Print(string(annotOut))
+		}
+	}
+
 	// Save memories on completion.
 	saveMemoriesBestEffort(ctx, a, os.Stderr)
 
@@ -2698,4 +2724,56 @@ func detectGitBranch(dir string) (string, error) {
 		return "", nil
 	}
 	return branch, nil
+}
+
+// postResultsToPR detects the git platform, formats results, and posts to the PR.
+func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *security.Report) error {
+	env, err := platform.DetectFromEnv()
+	if err != nil {
+		return fmt.Errorf("detecting platform: %w", err)
+	}
+	if env == nil {
+		return fmt.Errorf("could not detect git platform from environment; set GITHUB_ACTIONS or GITLAB_CI")
+	}
+
+	// Override PR number if --pr flag was provided.
+	if prNumberFlag > 0 {
+		env.PRNumber = prNumberFlag
+	}
+	if env.PRNumber == 0 {
+		return fmt.Errorf("could not detect PR number; use --pr=N to specify")
+	}
+
+	plat, err := platform.New(env)
+	if err != nil {
+		return fmt.Errorf("creating platform client: %w", err)
+	}
+
+	// Post unified PR comment (LLM review + security findings).
+	prFmt := output.NewPRCommentFormatter()
+	commentBody, err := prFmt.Format(result)
+	if err != nil {
+		return fmt.Errorf("formatting PR comment: %w", err)
+	}
+	if err := plat.PostPRComment(ctx, env.Repo, env.PRNumber, string(commentBody)); err != nil {
+		return fmt.Errorf("posting PR comment: %w", err)
+	}
+
+	// Upload SARIF if requested and security report is available.
+	if uploadSARIFFlag && secReport != nil {
+		sarifFmt := secoutput.NewSARIFFormatter()
+		sarifBytes, err := sarifFmt.Format(secReport)
+		if err != nil {
+			return fmt.Errorf("formatting SARIF: %w", err)
+		}
+		ref := os.Getenv("GITHUB_SHA")
+		if ref == "" {
+			ref = os.Getenv("CI_COMMIT_SHA")
+		}
+		if err := plat.UploadSARIF(ctx, env.Repo, ref, sarifBytes); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to upload SARIF: %v\n", err)
+		}
+	}
+
+	return nil
 }
