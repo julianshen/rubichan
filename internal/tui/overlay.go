@@ -36,6 +36,10 @@ type UndoResult struct {
 func (m *Model) processOverlayResult(result any) tea.Cmd {
 	switch r := result.(type) {
 	case ApprovalResult:
+		if m.pendingApproval == nil {
+			m.state = StateInput
+			return nil
+		}
 		if r == ApprovalAlways {
 			m.alwaysDenied.Delete(m.pendingApproval.tool)
 			m.alwaysApproved.Store(m.pendingApproval.tool, true)

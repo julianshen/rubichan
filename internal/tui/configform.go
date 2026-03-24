@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -118,7 +119,9 @@ func (c *ConfigOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 		c.form.SetForm(f)
 	}
 	if c.form.IsCompleted() {
-		_ = c.form.Save()
+		if err := c.form.Save(); err != nil {
+			log.Printf("failed to save config: %v", err)
+		}
 	}
 	return c, cmd
 }

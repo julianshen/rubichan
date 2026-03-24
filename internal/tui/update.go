@@ -58,17 +58,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	// Window resize must be handled even during overlays so width/height stay current.
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = wsm.Width
+		m.height = wsm.Height
+		m.refreshRenderers()
+		m.reflowViewport()
+	}
+
 	// Generic overlay delegation: route all messages to the active overlay.
 	if m.activeOverlay != nil {
-		updated, cmd := m.activeOverlay.Update(msg)
-		m.activeOverlay = updated
-		if m.activeOverlay.Done() {
-			result := m.activeOverlay.Result()
-			m.activeOverlay = nil
-			followUp := m.processOverlayResult(result)
-			return m, tea.Batch(cmd, followUp)
+		if _, isResize := msg.(tea.WindowSizeMsg); !isResize {
+			updated, cmd := m.activeOverlay.Update(msg)
+			m.activeOverlay = updated
+			if m.activeOverlay.Done() {
+				result := m.activeOverlay.Result()
+				m.activeOverlay = nil
+				followUp := m.processOverlayResult(result)
+				return m, tea.Batch(cmd, followUp)
+			}
+			return m, cmd
 		}
-		return m, cmd
+		return m, nil // resize handled above, nothing more to do
 	}
 
 	var cmds []tea.Cmd
