@@ -106,6 +106,44 @@ func (wf *WikiForm) Concurrency() int {
 	return n
 }
 
+// WikiOverlay wraps WikiForm as an Overlay.
+type WikiOverlay struct {
+	wikiForm *WikiForm
+}
+
+// NewWikiOverlay creates a WikiOverlay and returns its init command.
+func NewWikiOverlay(workDir string) (*WikiOverlay, tea.Cmd) {
+	o := &WikiOverlay{wikiForm: NewWikiForm(workDir)}
+	return o, o.wikiForm.Form().Init()
+}
+
+// Update forwards the message to the underlying huh.Form.
+func (w *WikiOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
+	model, cmd := w.wikiForm.Form().Update(msg)
+	if f, ok := model.(*huh.Form); ok {
+		w.wikiForm.SetForm(f)
+	}
+	return w, cmd
+}
+
+// View renders the wiki form.
+func (w *WikiOverlay) View() string {
+	return w.wikiForm.Form().View()
+}
+
+// Done returns true when the form has been submitted or cancelled.
+func (w *WikiOverlay) Done() bool {
+	return w.wikiForm.Form().State == huh.StateCompleted || w.wikiForm.Form().State == huh.StateAborted
+}
+
+// Result returns a WikiResult when completed, nil otherwise.
+func (w *WikiOverlay) Result() any {
+	if w.wikiForm.Form().State == huh.StateCompleted {
+		return WikiResult{Form: w.wikiForm}
+	}
+	return nil
+}
+
 // startWikiGeneration launches wiki generation synchronously in a foreground tea.Cmd.
 // The TUI blocks until generation completes; progress is written to stderr.
 func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {

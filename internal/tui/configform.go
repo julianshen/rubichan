@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/julianshen/rubichan/internal/config"
 )
@@ -98,3 +99,44 @@ func (c *ConfigForm) IsCompleted() bool { return c.form.State == huh.StateComple
 
 // IsAborted returns true if the form has been aborted (cancelled).
 func (c *ConfigForm) IsAborted() bool { return c.form.State == huh.StateAborted }
+
+// ConfigOverlay wraps ConfigForm as an Overlay.
+type ConfigOverlay struct {
+	form *ConfigForm
+}
+
+// NewConfigOverlay creates a ConfigOverlay and returns its init command.
+func NewConfigOverlay(cfg *config.Config, savePath string) (*ConfigOverlay, tea.Cmd) {
+	o := &ConfigOverlay{form: NewConfigForm(cfg, savePath)}
+	return o, o.form.Form().Init()
+}
+
+// Update forwards the message to the underlying huh.Form and handles completion.
+func (c *ConfigOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
+	model, cmd := c.form.Form().Update(msg)
+	if f, ok := model.(*huh.Form); ok {
+		c.form.SetForm(f)
+	}
+	if c.form.IsCompleted() {
+		_ = c.form.Save()
+	}
+	return c, cmd
+}
+
+// View renders the config form.
+func (c *ConfigOverlay) View() string {
+	return c.form.Form().View()
+}
+
+// Done returns true when the form has been submitted or cancelled.
+func (c *ConfigOverlay) Done() bool {
+	return c.form.IsCompleted() || c.form.IsAborted()
+}
+
+// Result returns a ConfigResult when completed, nil otherwise.
+func (c *ConfigOverlay) Result() any {
+	if c.form.IsCompleted() {
+		return ConfigResult{}
+	}
+	return nil
+}

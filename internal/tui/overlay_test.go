@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -63,4 +64,19 @@ func TestApprovalOverlayRejectsDisallowedKey(t *testing.T) {
 	updated, _ := o.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	overlay := updated.(*ApprovalOverlay)
 	assert.False(t, overlay.Done()) // 'a' not allowed
+}
+
+func TestConfigOverlayImplementsOverlay(t *testing.T) {
+	cfg := &config.Config{}
+	o, initCmd := NewConfigOverlay(cfg, "")
+	var _ Overlay = o
+	assert.False(t, o.Done())
+	assert.NotNil(t, initCmd)
+}
+
+func TestWikiOverlayImplementsOverlay(t *testing.T) {
+	o, initCmd := NewWikiOverlay("/tmp")
+	var _ Overlay = o
+	assert.False(t, o.Done())
+	assert.NotNil(t, initCmd)
 }
