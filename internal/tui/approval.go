@@ -396,6 +396,40 @@ func optionLabel(opt ApprovalResult) string {
 	}
 }
 
+// ApprovalOverlay adapts ApprovalPrompt to the Overlay interface.
+type ApprovalOverlay struct {
+	prompt *ApprovalPrompt
+}
+
+// NewApprovalOverlay creates an overlay for tool approval.
+func NewApprovalOverlay(tool, args, workDir string, width int, options []ApprovalResult) *ApprovalOverlay {
+	return &ApprovalOverlay{
+		prompt: NewApprovalPrompt(tool, args, workDir, width, options),
+	}
+}
+
+func (a *ApprovalOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		a.prompt.HandleKey(keyMsg)
+	}
+	return a, nil
+}
+
+func (a *ApprovalOverlay) View() string {
+	return a.prompt.View()
+}
+
+func (a *ApprovalOverlay) Done() bool {
+	return a.prompt.Done()
+}
+
+func (a *ApprovalOverlay) Result() any {
+	if a.prompt.Done() {
+		return a.prompt.Result()
+	}
+	return nil
+}
+
 // View renders the approval prompt as a bordered box with tool info,
 // risk level indicator, destructive warning, and only the allowed options.
 func (a *ApprovalPrompt) View() string {

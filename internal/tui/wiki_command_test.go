@@ -91,7 +91,7 @@ func TestHandleCommandOpenWiki(t *testing.T) {
 	cmd := m.handleCommand("/wiki")
 	assert.NotNil(t, cmd) // form Init() returns a Cmd
 	assert.Equal(t, StateWikiOverlay, m.state)
-	assert.NotNil(t, m.wikiForm)
+	assert.NotNil(t, m.activeOverlay)
 }
 
 func TestHandleCommandOpenWikiAlreadyRunning(t *testing.T) {
@@ -147,7 +147,8 @@ func TestWikiDoneMsgWithDeadlineExceeded(t *testing.T) {
 
 func TestViewWikiOverlay(t *testing.T) {
 	m := NewModel(nil, "test", "model", 10, "", nil, nil)
-	m.wikiForm = NewWikiForm("/tmp")
+	overlay, _ := NewWikiOverlay("/tmp")
+	m.activeOverlay = overlay
 	m.state = StateWikiOverlay
 
 	view := m.View()

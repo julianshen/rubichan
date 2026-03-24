@@ -9,7 +9,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1129,7 +1128,7 @@ func TestModelHandleSlashConfig(t *testing.T) {
 	cmd := m.handleCommand("/config")
 
 	assert.Equal(t, StateConfigOverlay, m.state)
-	assert.NotNil(t, m.configForm)
+	assert.NotNil(t, m.activeOverlay)
 	assert.NotNil(t, cmd, "/config should return an init cmd from the form")
 }
 
@@ -1163,15 +1162,15 @@ func TestModelConfigOverlayCompleted(t *testing.T) {
 	m.handleCommand("/config")
 	assert.Equal(t, StateConfigOverlay, m.state)
 
-	// Simulate form completion by setting state directly
-	m.configForm.Form().State = huh.StateCompleted
+	// Simulate completion by replacing the active overlay with a done mock
+	m.activeOverlay = &mockOverlay{done: true, result: ConfigResult{}}
 
-	// Send any message to trigger the state check in Update
+	// Send any message to trigger the overlay completion check in Update
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	um := updated.(*Model)
 
 	assert.Equal(t, StateInput, um.state)
-	assert.Nil(t, um.configForm)
+	assert.Nil(t, um.activeOverlay)
 }
 
 func TestModelConfigOverlayAborted(t *testing.T) {
@@ -1181,14 +1180,14 @@ func TestModelConfigOverlayAborted(t *testing.T) {
 	m.handleCommand("/config")
 	assert.Equal(t, StateConfigOverlay, m.state)
 
-	// Simulate form abort
-	m.configForm.Form().State = huh.StateAborted
+	// Simulate form abort by replacing with a done mock returning nil (cancelled)
+	m.activeOverlay = &mockOverlay{done: true, result: nil}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	um := updated.(*Model)
 
 	assert.Equal(t, StateInput, um.state)
-	assert.Nil(t, um.configForm)
+	assert.Nil(t, um.activeOverlay)
 }
 
 func TestModelHelpIncludesConfig(t *testing.T) {
@@ -1205,13 +1204,15 @@ func TestModelConfigOverlayRoutesMessages(t *testing.T) {
 
 	m.handleCommand("/config")
 	assert.Equal(t, StateConfigOverlay, m.state)
+	assert.NotNil(t, m.activeOverlay)
 
-	// Regular key message while in config overlay should be routed to form, not handled by model
+	// Regular key message while in config overlay should be routed to overlay, not handled by model
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	um := updated.(*Model)
 
 	// Should still be in config overlay state (not input state)
 	assert.Equal(t, StateConfigOverlay, um.state)
+	assert.NotNil(t, um.activeOverlay)
 }
 
 // --- Approval wiring tests ---
@@ -1241,7 +1242,7 @@ func TestModelApprovalRequestMsg(t *testing.T) {
 	um := updated.(*Model)
 
 	assert.Equal(t, StateAwaitingApproval, um.state)
-	assert.NotNil(t, um.approvalPrompt)
+	assert.NotNil(t, um.activeOverlay)
 	assert.NotNil(t, cmd, "should return a cmd to wait for next approval")
 }
 
@@ -1250,6 +1251,7 @@ func TestModelApprovalKeyYes(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
@@ -1267,6 +1269,7 @@ func TestModelApprovalKeyYes(t *testing.T) {
 
 	assert.Equal(t, StateStreaming, um.state)
 	assert.Nil(t, um.approvalPrompt)
+	assert.Nil(t, um.activeOverlay)
 	assert.NotNil(t, cmd, "should return waitForEvent cmd")
 
 	// Check that response was sent
@@ -1283,6 +1286,7 @@ func TestModelApprovalKeyNo(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"rm -rf /"}`, "", 60, nil)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
@@ -1299,6 +1303,7 @@ func TestModelApprovalKeyNo(t *testing.T) {
 
 	assert.Equal(t, StateStreaming, um.state)
 	assert.Nil(t, um.approvalPrompt)
+	assert.Nil(t, um.activeOverlay)
 	assert.NotNil(t, cmd)
 
 	select {
@@ -1314,6 +1319,7 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
@@ -1331,6 +1337,7 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	assert.Equal(t, StateStreaming, um.state)
 	_, alwaysOK := um.alwaysApproved.Load("shell")
 	assert.True(t, alwaysOK)
+	assert.Nil(t, um.activeOverlay)
 	assert.NotNil(t, cmd)
 
 	select {
@@ -1346,6 +1353,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil)
 	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
@@ -1358,7 +1366,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 
 	// Should remain in awaiting approval state
 	assert.Equal(t, StateAwaitingApproval, um.state)
-	assert.NotNil(t, um.approvalPrompt)
+	assert.NotNil(t, um.activeOverlay)
 	assert.Nil(t, cmd)
 
 	// No response should have been sent
@@ -1373,6 +1381,7 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 func TestModelApprovalViewShowsPrompt(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
+	m.activeOverlay = NewApprovalOverlay("file", `"/etc/hosts"`, "", 60, nil)
 	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, "", 60, nil)
 
 	view := m.View()
@@ -2028,11 +2037,13 @@ func TestModelWikiOverlayRoutesMessages(t *testing.T) {
 	m.SetWikiConfig(WikiCommandConfig{WorkDir: "/tmp"})
 	m.handleCommand("/wiki")
 	assert.Equal(t, StateWikiOverlay, m.state)
+	assert.NotNil(t, m.activeOverlay)
 
-	// Regular key message while in wiki overlay should be routed to form
+	// Regular key message while in wiki overlay should be routed to overlay
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	um := updated.(*Model)
 	assert.Equal(t, StateWikiOverlay, um.state)
+	assert.NotNil(t, um.activeOverlay)
 }
 
 func TestModelWikiOverlayAborted(t *testing.T) {
@@ -2041,12 +2052,12 @@ func TestModelWikiOverlayAborted(t *testing.T) {
 	m.handleCommand("/wiki")
 	assert.Equal(t, StateWikiOverlay, m.state)
 
-	// Simulate form abort
-	m.wikiForm.Form().State = huh.StateAborted
+	// Simulate form abort by replacing with a done mock returning nil (cancelled)
+	m.activeOverlay = &mockOverlay{done: true, result: nil}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	um := updated.(*Model)
 	assert.Equal(t, StateInput, um.state)
-	assert.Nil(t, um.wikiForm)
+	assert.Nil(t, um.activeOverlay)
 }
 
 func TestModelCtrlCCancelsWiki(t *testing.T) {
