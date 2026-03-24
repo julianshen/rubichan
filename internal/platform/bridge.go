@@ -28,8 +28,8 @@ func PostSecurityReview(
 	}
 
 	var prReview secoutput.PRReview
-	if err := json.Unmarshal(formatted, &prReview); err != nil {
-		// Formatter didn't produce PRReview JSON — post as plain comment.
+	if err := json.Unmarshal(formatted, &prReview); err != nil || prReview.Body == "" {
+		// Formatter didn't produce valid PRReview JSON — post as plain comment.
 		body := truncate(string(formatted))
 		return p.PostPRComment(ctx, repo, prNumber, body)
 	}
@@ -60,13 +60,13 @@ func UploadSecuritySARIF(
 	formatter security.OutputFormatter,
 	report *security.Report,
 	repo string,
-	ref string,
+	commitSHA, ref string,
 ) error {
 	sarifBytes, err := formatter.Format(report)
 	if err != nil {
 		return fmt.Errorf("formatting SARIF: %w", err)
 	}
-	return p.UploadSARIF(ctx, repo, ref, sarifBytes)
+	return p.UploadSARIF(ctx, repo, commitSHA, ref, sarifBytes)
 }
 
 // PostRunResultComment formats a RunResult and posts it as a PR comment.

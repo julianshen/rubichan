@@ -95,23 +95,30 @@ func (g *GitHubClient) ListPRFiles(ctx context.Context, repo string, prNum int) 
 	if err != nil {
 		return nil, err
 	}
-	ghFiles, _, err := g.client.PullRequests.ListFiles(ctx, owner, name, prNum, nil)
-	if err != nil {
-		return nil, fmt.Errorf("github: listing PR files: %w", err)
-	}
 
-	files := make([]PRFile, len(ghFiles))
-	for i, f := range ghFiles {
-		files[i] = PRFile{
-			Filename: f.GetFilename(),
-			Status:   f.GetStatus(),
-			Patch:    f.GetPatch(),
+	var allFiles []PRFile
+	opts := &github.ListOptions{PerPage: 100}
+	for {
+		ghFiles, resp, err := g.client.PullRequests.ListFiles(ctx, owner, name, prNum, opts)
+		if err != nil {
+			return nil, fmt.Errorf("github: listing PR files: %w", err)
 		}
+		for _, f := range ghFiles {
+			allFiles = append(allFiles, PRFile{
+				Filename: f.GetFilename(),
+				Status:   f.GetStatus(),
+				Patch:    f.GetPatch(),
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
-	return files, nil
+	return allFiles, nil
 }
 
-func (g *GitHubClient) UploadSARIF(ctx context.Context, repo string, ref string, sarif []byte) error {
+func (g *GitHubClient) UploadSARIF(ctx context.Context, repo string, commitSHA, ref string, sarif []byte) error {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return err
@@ -124,7 +131,7 @@ func (g *GitHubClient) UploadSARIF(ctx context.Context, repo string, ref string,
 	}
 
 	analysis := &github.SarifAnalysis{
-		CommitSHA: github.Ptr(ref),
+		CommitSHA: github.Ptr(commitSHA),
 		Ref:       github.Ptr(ref),
 		Sarif:     github.Ptr(encoded),
 	}

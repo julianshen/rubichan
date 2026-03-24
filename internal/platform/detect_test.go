@@ -148,7 +148,9 @@ func TestDetectFromGitLabCI_UsesJobToken(t *testing.T) {
 }
 
 func TestDetectFromEnv_NoCIVars(t *testing.T) {
-	// No CI env vars set.
+	// Ensure CI env vars are cleared so this test works even in CI.
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("GITLAB_CI", "")
 	env, err := DetectFromEnv()
 	if err != nil {
 		t.Fatalf("DetectFromEnv() error = %v", err)

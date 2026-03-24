@@ -167,7 +167,7 @@ func TestGitLabUploadSARIF_ReturnsNil(t *testing.T) {
 	if cErr != nil {
 		t.Fatalf("NewGitLabClient() error = %v", cErr)
 	}
-	err := client.UploadSARIF(context.Background(), "g/r", "ref", []byte("sarif"))
+	err := client.UploadSARIF(context.Background(), "g/r", "abc123", "refs/heads/main", []byte("sarif"))
 	if err != nil {
 		t.Errorf("UploadSARIF() error = %v, want nil", err)
 	}

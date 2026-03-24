@@ -37,7 +37,7 @@ func (m *mockPlatform) GetPRDiff(_ context.Context, _ string, _ int) (string, er
 func (m *mockPlatform) ListPRFiles(_ context.Context, _ string, _ int) ([]platform.PRFile, error) {
 	return nil, nil
 }
-func (m *mockPlatform) UploadSARIF(_ context.Context, _ string, _ string, data []byte) error {
+func (m *mockPlatform) UploadSARIF(_ context.Context, _ string, _, _ string, data []byte) error {
 	m.sarifUploads = append(m.sarifUploads, data)
 	return m.sarifUploadErr
 }
@@ -98,7 +98,7 @@ func TestBridgePostSARIF(t *testing.T) {
 
 	mock := &mockPlatform{name: "github"}
 	formatter := secoutput.NewSARIFFormatter()
-	err := platform.UploadSecuritySARIF(context.Background(), mock, formatter, report, "o/r", "abc123")
+	err := platform.UploadSecuritySARIF(context.Background(), mock, formatter, report, "o/r", "abc123", "refs/heads/main")
 	if err != nil {
 		t.Fatalf("UploadSecuritySARIF() error = %v", err)
 	}

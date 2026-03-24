@@ -26,7 +26,8 @@ type Platform interface {
 	ListPRFiles(ctx context.Context, repo string, prNum int) ([]PRFile, error)
 
 	// UploadSARIF uploads a SARIF report for code scanning integration.
-	UploadSARIF(ctx context.Context, repo string, ref string, sarif []byte) error
+	// commitSHA is the commit hash; ref is the git ref (e.g., "refs/heads/main").
+	UploadSARIF(ctx context.Context, repo string, commitSHA, ref string, sarif []byte) error
 }
 
 // ReviewComment represents an inline comment on a specific file and line.
@@ -60,7 +61,11 @@ type DetectedEnv struct {
 }
 
 // New creates a Platform client from the detected environment.
+// Returns an error if env is nil or the platform is unsupported.
 func New(env *DetectedEnv) (Platform, error) {
+	if env == nil {
+		return nil, fmt.Errorf("no platform environment detected")
+	}
 	switch env.PlatformName {
 	case "github":
 		return NewGitHubClient(env.Token), nil

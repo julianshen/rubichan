@@ -125,7 +125,7 @@ func TestGitHubUploadSARIF(t *testing.T) {
 		w.Write([]byte(`{"id": "scan-1"}`))
 	}))
 
-	err := client.UploadSARIF(context.Background(), "owner/repo", "abc123", []byte(`{"runs":[]}`))
+	err := client.UploadSARIF(context.Background(), "owner/repo", "abc123", "refs/heads/main", []byte(`{"runs":[]}`))
 	if err != nil {
 		t.Fatalf("UploadSARIF() error = %v", err)
 	}
@@ -146,7 +146,7 @@ func TestGitHubUploadSARIF_EncodesGzipBase64(t *testing.T) {
 	}))
 
 	original := []byte(`{"$schema":"https://example.com","version":"2.1.0","runs":[]}`)
-	err := client.UploadSARIF(context.Background(), "o/r", "abc", original)
+	err := client.UploadSARIF(context.Background(), "o/r", "abc", "refs/heads/main", original)
 	if err != nil {
 		t.Fatalf("UploadSARIF() error = %v", err)
 	}

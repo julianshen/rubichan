@@ -122,7 +122,7 @@ func (g *GitLabClient) ListPRFiles(ctx context.Context, repo string, prNum int) 
 	return files, nil
 }
 
-func (g *GitLabClient) UploadSARIF(_ context.Context, _ string, _ string, _ []byte) error {
+func (g *GitLabClient) UploadSARIF(_ context.Context, _ string, _, _ string, _ []byte) error {
 	// GitLab uses artifact-based SAST reports rather than API upload.
 	// Users should output SARIF to a file and configure it as a CI artifact.
 	return nil

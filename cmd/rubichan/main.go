@@ -1988,11 +1988,19 @@ func runHeadless() error {
 		}
 	}
 
+	// Upload SARIF independently of --post-to-pr.
+	if uploadSARIFFlag && !postToPRFlag && secReport != nil {
+		if err := uploadSARIFStandalone(ctx, secReport); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to upload SARIF: %v\n", err)
+		}
+	}
+
 	// Emit GitHub Actions annotations if requested or auto-detected.
+	// Annotations go to stderr to avoid polluting structured stdout output (e.g., --output json).
 	if annotationsFlag || (os.Getenv("GITHUB_ACTIONS") == "true" && len(result.SecurityFindings) > 0) {
 		annotFmt := output.NewGitHubAnnotationsFormatter()
 		if annotOut, err := annotFmt.Format(result); err == nil && len(annotOut) > 0 {
-			fmt.Print(string(annotOut))
+			fmt.Fprint(os.Stderr, string(annotOut))
 		}
 	}
 
@@ -2765,15 +2773,50 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 
 	// Upload SARIF if requested and security report is available.
 	if uploadSARIFFlag && secReport != nil {
-		sarifFmt := secoutput.NewSARIFFormatter()
-		ref := os.Getenv("GITHUB_SHA")
-		if ref == "" {
-			ref = os.Getenv("CI_COMMIT_SHA")
-		}
-		if err := platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, ref); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to upload SARIF: %v\n", err)
+		commitSHA, ref := resolveSARIFRefs()
+		if commitSHA == "" {
+			fmt.Fprintln(os.Stderr, "warning: could not determine commit SHA for SARIF upload, skipping")
+		} else {
+			sarifFmt := secoutput.NewSARIFFormatter()
+			if err := platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, commitSHA, ref); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to upload SARIF: %v\n", err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// uploadSARIFStandalone uploads SARIF without requiring --post-to-pr.
+func uploadSARIFStandalone(ctx context.Context, secReport *security.Report) error {
+	env, err := platform.DetectFromEnv()
+	if err != nil {
+		return fmt.Errorf("detecting platform: %w", err)
+	}
+	if env == nil {
+		return fmt.Errorf("could not detect git platform from environment; set GITHUB_ACTIONS or GITLAB_CI")
+	}
+	plat, err := platform.New(env)
+	if err != nil {
+		return fmt.Errorf("creating platform client: %w", err)
+	}
+	commitSHA, ref := resolveSARIFRefs()
+	if commitSHA == "" {
+		return fmt.Errorf("could not determine commit SHA; set GITHUB_SHA or CI_COMMIT_SHA")
+	}
+	sarifFmt := secoutput.NewSARIFFormatter()
+	return platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, commitSHA, ref)
+}
+
+// resolveSARIFRefs returns the commit SHA and git ref for SARIF upload.
+func resolveSARIFRefs() (commitSHA, ref string) {
+	commitSHA = os.Getenv("GITHUB_SHA")
+	if commitSHA == "" {
+		commitSHA = os.Getenv("CI_COMMIT_SHA")
+	}
+	ref = os.Getenv("GITHUB_REF")
+	if ref == "" {
+		ref = os.Getenv("CI_COMMIT_REF_NAME")
+	}
+	return commitSHA, ref
 }
