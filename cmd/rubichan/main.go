@@ -30,10 +30,10 @@ import (
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
-	"github.com/julianshen/rubichan/internal/platform"
 	"github.com/julianshen/rubichan/internal/permissions"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/pipeline"
+	"github.com/julianshen/rubichan/internal/platform"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
@@ -110,8 +110,8 @@ var (
 	failOnFlag   string
 	worktreeFlag string
 
-	postToPRFlag   bool
-	prNumberFlag   int
+	postToPRFlag    bool
+	prNumberFlag    int
 	uploadSARIFFlag bool
 	annotationsFlag bool
 
@@ -2749,28 +2749,28 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 		return fmt.Errorf("creating platform client: %w", err)
 	}
 
-	// Post unified PR comment (LLM review + security findings).
+	// Post unified PR comment (LLM review + security findings) via bridge.
 	prFmt := output.NewPRCommentFormatter()
-	commentBody, err := prFmt.Format(result)
-	if err != nil {
-		return fmt.Errorf("formatting PR comment: %w", err)
-	}
-	if err := plat.PostPRComment(ctx, env.Repo, env.PRNumber, string(commentBody)); err != nil {
+	if err := platform.PostRunResultComment(ctx, plat, prFmt, result, env.Repo, env.PRNumber); err != nil {
 		return fmt.Errorf("posting PR comment: %w", err)
+	}
+
+	// Post inline security review comments if available.
+	if secReport != nil && len(secReport.Findings) > 0 {
+		prReviewFmt := secoutput.NewGitHubPRFormatter()
+		if err := platform.PostSecurityReview(ctx, plat, prReviewFmt, secReport, env.Repo, env.PRNumber); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to post security review: %v\n", err)
+		}
 	}
 
 	// Upload SARIF if requested and security report is available.
 	if uploadSARIFFlag && secReport != nil {
 		sarifFmt := secoutput.NewSARIFFormatter()
-		sarifBytes, err := sarifFmt.Format(secReport)
-		if err != nil {
-			return fmt.Errorf("formatting SARIF: %w", err)
-		}
 		ref := os.Getenv("GITHUB_SHA")
 		if ref == "" {
 			ref = os.Getenv("CI_COMMIT_SHA")
 		}
-		if err := plat.UploadSARIF(ctx, env.Repo, ref, sarifBytes); err != nil {
+		if err := platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, ref); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to upload SARIF: %v\n", err)
 		}
 	}
