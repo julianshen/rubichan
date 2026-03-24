@@ -135,8 +135,38 @@ func TestGitLabListMRFiles(t *testing.T) {
 	}
 }
 
+func TestNewGitLabClientWithURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 1}`))
+	}))
+	defer srv.Close()
+
+	client, err := NewGitLabClientWithURL("token", srv.URL+"/api/v4")
+	if err != nil {
+		t.Fatalf("NewGitLabClientWithURL() error = %v", err)
+	}
+	if client.Name() != "gitlab" {
+		t.Errorf("Name() = %q, want %q", client.Name(), "gitlab")
+	}
+}
+
+func TestNewGitLabClient_ReturnsError(t *testing.T) {
+	// NewGitLabClient with a valid token should not error.
+	client, err := NewGitLabClient("test-token")
+	if err != nil {
+		t.Fatalf("NewGitLabClient() error = %v", err)
+	}
+	if client == nil {
+		t.Fatal("client is nil")
+	}
+}
+
 func TestGitLabUploadSARIF_ReturnsNil(t *testing.T) {
-	client := NewGitLabClient("token")
+	client, cErr := NewGitLabClient("token")
+	if cErr != nil {
+		t.Fatalf("NewGitLabClient() error = %v", cErr)
+	}
 	err := client.UploadSARIF(context.Background(), "g/r", "ref", []byte("sarif"))
 	if err != nil {
 		t.Errorf("UploadSARIF() error = %v, want nil", err)

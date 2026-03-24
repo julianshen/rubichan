@@ -220,6 +220,38 @@ func TestSplitRepo(t *testing.T) {
 	}
 }
 
+func TestNewGitHubClientWithURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 1}`))
+	}))
+	defer srv.Close()
+
+	client, err := NewGitHubClientWithURL("token", srv.URL+"/")
+	if err != nil {
+		t.Fatalf("NewGitHubClientWithURL() error = %v", err)
+	}
+	if client.Name() != "github" {
+		t.Errorf("Name() = %q, want %q", client.Name(), "github")
+	}
+	// Verify it actually works against the custom URL.
+	err = client.PostPRComment(context.Background(), "o/r", 1, "test")
+	if err != nil {
+		t.Fatalf("PostPRComment via custom URL error = %v", err)
+	}
+}
+
+func TestGitHubInvalidRepo(t *testing.T) {
+	client := newTestGitHubClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	err := client.PostPRComment(context.Background(), "invalid", 1, "test")
+	if err == nil {
+		t.Fatal("expected error for invalid repo format")
+	}
+}
+
 func TestGzipBase64(t *testing.T) {
 	data := []byte("hello world")
 	encoded, err := gzipBase64(data)

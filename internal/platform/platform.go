@@ -65,7 +65,7 @@ func New(env *DetectedEnv) (Platform, error) {
 	case "github":
 		return NewGitHubClient(env.Token), nil
 	case "gitlab":
-		return NewGitLabClient(env.Token), nil
+		return NewGitLabClient(env.Token)
 	default:
 		return nil, fmt.Errorf("unsupported platform: %q", env.PlatformName)
 	}

@@ -14,9 +14,12 @@ type GitLabClient struct {
 }
 
 // NewGitLabClient creates a GitLab platform client authenticated with the given token.
-func NewGitLabClient(token string) *GitLabClient {
-	c, _ := gitlab.NewClient(token)
-	return &GitLabClient{client: c}
+func NewGitLabClient(token string) (*GitLabClient, error) {
+	c, err := gitlab.NewClient(token)
+	if err != nil {
+		return nil, fmt.Errorf("gitlab: creating client: %w", err)
+	}
+	return &GitLabClient{client: c}, nil
 }
 
 // NewGitLabClientWithURL creates a GitLab client pointing to a self-hosted instance.
