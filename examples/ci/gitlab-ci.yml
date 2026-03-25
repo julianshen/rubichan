@@ -1,0 +1,41 @@
+# Rubichan Code Review — GitLab CI
+#
+# This pipeline runs Rubichan in headless mode on merge requests to:
+# 1. Post a unified code review comment on the MR
+# 2. Generate a SARIF report as a SAST artifact (GitLab Security Dashboard)
+#
+# Required CI/CD variables:
+#   ANTHROPIC_API_KEY — Your Anthropic API key
+#
+# CI_JOB_TOKEN is automatically provided by GitLab CI.
+
+stages:
+  - review
+
+rubichan-review:
+  stage: review
+  image: golang:1.26
+  variables:
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    GITLAB_TOKEN: $CI_JOB_TOKEN
+  before_script:
+    - go install github.com/julianshen/rubichan/cmd/rubichan@latest
+  script:
+    # Post review comment to the MR.
+    - rubichan --headless
+        --mode=code-review
+        --post-to-pr
+        --timeout=300s
+
+    # Generate SARIF for GitLab SAST dashboard.
+    - rubichan --headless
+        --mode=code-review
+        --output=sarif
+        --timeout=300s
+        > gl-sast-report.json
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
