@@ -14,22 +14,16 @@ stages:
 
 rubichan-review:
   stage: review
-  image: golang:1.26
+  image: golang:latest
   variables:
     ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
     GITLAB_TOKEN: $CI_JOB_TOKEN
   before_script:
     - go install github.com/julianshen/rubichan/cmd/rubichan@latest
   script:
-    # Post review comment to the MR.
     - rubichan --headless
         --mode=code-review
         --post-to-pr
-        --timeout=300s
-
-    # Generate SARIF for GitLab SAST dashboard.
-    - rubichan --headless
-        --mode=code-review
         --output=sarif
         --timeout=300s
         > gl-sast-report.json

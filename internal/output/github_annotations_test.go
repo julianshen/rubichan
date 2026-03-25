@@ -64,18 +64,19 @@ func TestAnnotationEscaping(t *testing.T) {
 		t.Fatalf("Format() error = %v", err)
 	}
 	s := string(out)
-	if strings.Contains(s, "\n") && strings.Count(s, "\n") > 1 {
-		// The annotation message itself should not contain raw newlines.
-		lines := strings.Split(strings.TrimSpace(s), "\n")
-		if len(lines) != 1 {
-			t.Errorf("annotation should be one line, got %d lines", len(lines))
-		}
+	// Single finding should produce exactly one annotation line (plus trailing newline).
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected 1 annotation line, got %d: %q", len(lines), s)
 	}
 	if !strings.Contains(s, "%25") {
 		t.Error("% should be escaped to %25")
 	}
 	if !strings.Contains(s, "%0A") {
 		t.Error("\\n should be escaped to %0A")
+	}
+	if !strings.Contains(s, "%0D") {
+		t.Error("\\r should be escaped to %0D")
 	}
 }
 

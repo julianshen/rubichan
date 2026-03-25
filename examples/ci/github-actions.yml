@@ -31,7 +31,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: stable
 
       - name: Install Rubichan
         run: go install github.com/julianshen/rubichan/cmd/rubichan@latest
@@ -44,19 +44,7 @@ jobs:
           rubichan --headless \
             --mode=code-review \
             --post-to-pr \
-            --annotations \
-            --output=json \
-            --fail-on=high \
-            --timeout=300s
-
-      - name: Upload SARIF (Security Findings)
-        if: always()
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          rubichan --headless \
-            --mode=code-review \
-            --output=sarif \
             --upload-sarif \
+            --annotations \
+            --fail-on=high \
             --timeout=300s
