@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/sourcegraph/conc/pool"
@@ -479,6 +481,30 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	if _, exists := a.tools.Get(compactTool.Name()); !exists {
 		if err := a.tools.Register(compactTool); err != nil {
 			a.logger.Warn("failed to register compact_context tool: %v", err)
+		}
+	}
+
+	// Register skill_manager tool when store is available.
+	if a.store != nil {
+		skillsDir := cfg.Skills.UserDir
+		if skillsDir == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				skillsDir = filepath.Join(home, ".config", "rubichan", "skills")
+			}
+		}
+		if skillsDir != "" {
+			registryURL := defaultRegistryURL
+			adapter := &skillManagerAdapter{
+				registry:  skills.NewRegistryClient(registryURL, a.store, 5*time.Minute),
+				store:     a.store,
+				skillsDir: skillsDir,
+			}
+			skillMgrTool := tools.NewSkillManagerTool(adapter)
+			if _, exists := a.tools.Get(skillMgrTool.Name()); !exists {
+				if err := a.tools.Register(skillMgrTool); err != nil {
+					a.logger.Warn("failed to register skill_manager tool: %v", err)
+				}
+			}
 		}
 	}
 
