@@ -84,8 +84,40 @@ func TestRegistryExecutorUnknownTool(t *testing.T) {
 		Name: "nonexistent_tool",
 	})
 
-	assert.Equal(t, "unknown tool: nonexistent_tool", result.Content)
+	assert.Contains(t, result.Content, "unknown tool: nonexistent_tool")
 	assert.True(t, result.IsError)
+}
+
+func TestRegistryExecutorUnknownToolWithSuggestion(t *testing.T) {
+	registry := tools.NewRegistry()
+	_ = registry.Register(&stubTool{name: "shell", schema: json.RawMessage(`{}`)})
+	_ = registry.Register(&stubTool{name: "file", schema: json.RawMessage(`{}`)})
+
+	handler := toolexec.RegistryExecutor(registry)
+
+	// "shell_exec" contains "shell" — should suggest "shell".
+	result := handler(context.Background(), toolexec.ToolCall{
+		ID:   "call-suggest",
+		Name: "shell_exec",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, `Did you mean "shell"`)
+	assert.Contains(t, result.Content, "Available tools:")
+}
+
+func TestRegistryExecutorUnknownToolNoSuggestion(t *testing.T) {
+	registry := tools.NewRegistry()
+	_ = registry.Register(&stubTool{name: "shell", schema: json.RawMessage(`{}`)})
+
+	handler := toolexec.RegistryExecutor(registry)
+
+	// "foobar" has no similarity to "shell" — no suggestion.
+	result := handler(context.Background(), toolexec.ToolCall{
+		ID:   "call-no-suggest",
+		Name: "foobar",
+	})
+	assert.True(t, result.IsError)
+	assert.Equal(t, "unknown tool: foobar", result.Content)
 }
 
 func TestRegistryExecutorToolError(t *testing.T) {
