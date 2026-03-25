@@ -153,3 +153,87 @@ func TestRegistryAll(t *testing.T) {
 	assert.True(t, names["tool_a"])
 	assert.True(t, names["tool_b"])
 }
+
+func TestRegistryAlias(t *testing.T) {
+	reg := NewRegistry()
+	tool := newMockTool("shell", "Execute shell commands")
+	require.NoError(t, reg.Register(tool))
+
+	// Register alias.
+	reg.RegisterAlias("shell_exec", "shell")
+	reg.RegisterAlias("run_command", "shell")
+
+	// Lookup by canonical name still works.
+	got, ok := reg.Get("shell")
+	assert.True(t, ok)
+	assert.Equal(t, "shell", got.Name())
+
+	// Lookup by alias resolves to the real tool.
+	got, ok = reg.Get("shell_exec")
+	assert.True(t, ok)
+	assert.Equal(t, "shell", got.Name())
+
+	got, ok = reg.Get("run_command")
+	assert.True(t, ok)
+	assert.Equal(t, "shell", got.Name())
+
+	// Alias to nonexistent tool returns not-found.
+	reg.RegisterAlias("bad_alias", "nonexistent")
+	_, ok = reg.Get("bad_alias")
+	assert.False(t, ok)
+}
+
+func TestRegistryAliasDoesNotAppearInAll(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("file", "File operations")))
+	reg.RegisterAlias("write_file", "file")
+	reg.RegisterAlias("read_file", "file")
+
+	// All() should only return canonical tools, not aliases.
+	defs := reg.All()
+	assert.Len(t, defs, 1)
+	assert.Equal(t, "file", defs[0].Name)
+}
+
+func TestRegistryDefaultAliases(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+	require.NoError(t, reg.Register(newMockTool("file", "file")))
+	require.NoError(t, reg.Register(newMockTool("search", "search")))
+	require.NoError(t, reg.Register(newMockTool("process", "process")))
+
+	reg.RegisterDefaultAliases()
+
+	// Shell aliases resolve.
+	for _, alias := range []string{"shell_exec", "run_command", "bash", "exec"} {
+		got, ok := reg.Get(alias)
+		assert.True(t, ok, "alias %q should resolve", alias)
+		assert.Equal(t, "shell", got.Name())
+	}
+
+	// File aliases resolve.
+	for _, alias := range []string{"write_file", "read_file", "file_write", "edit_file"} {
+		got, ok := reg.Get(alias)
+		assert.True(t, ok, "alias %q should resolve", alias)
+		assert.Equal(t, "file", got.Name())
+	}
+
+	// Search aliases resolve.
+	got, ok := reg.Get("grep")
+	assert.True(t, ok)
+	assert.Equal(t, "search", got.Name())
+
+	// All() still returns only canonical tools.
+	assert.Len(t, reg.All(), 4)
+}
+
+func TestRegistryNames(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+	require.NoError(t, reg.Register(newMockTool("file", "file")))
+
+	names := reg.Names()
+	assert.Len(t, names, 2)
+	assert.Contains(t, names, "shell")
+	assert.Contains(t, names, "file")
+}
