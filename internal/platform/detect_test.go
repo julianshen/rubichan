@@ -168,6 +168,8 @@ func TestParseGitHubPRNumber(t *testing.T) {
 		{"refs/pull/42/merge", 42},
 		{"refs/pull/1/head", 1},
 		{"refs/heads/main", 0},
+		{"refs/pull/notanumber/merge", 0},
+		{"refs/pull/", 0},
 		{"", 0},
 	}
 	for _, tt := range tests {

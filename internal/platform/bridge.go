@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/security"
@@ -91,5 +92,9 @@ func truncate(s string) string {
 		return s
 	}
 	const notice = "\n\n---\n*Output truncated. Full report available in CI logs.*\n"
-	return s[:maxCommentLength-len(notice)] + notice
+	cutoff := maxCommentLength - len(notice)
+	for cutoff > 0 && !utf8.RuneStart(s[cutoff]) {
+		cutoff--
+	}
+	return s[:cutoff] + notice
 }

@@ -1984,14 +1984,14 @@ func runHeadless() error {
 	// Post results to PR if requested.
 	if postToPRFlag {
 		if err := postResultsToPR(ctx, result, secReport); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to post to PR: %v\n", err)
+			return fmt.Errorf("failed to post to PR: %w", err)
 		}
 	}
 
 	// Upload SARIF independently of --post-to-pr.
 	if uploadSARIFFlag && !postToPRFlag && secReport != nil {
 		if err := uploadSARIFStandalone(ctx, secReport); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to upload SARIF: %v\n", err)
+			return fmt.Errorf("failed to upload SARIF: %w", err)
 		}
 	}
 
@@ -1999,7 +1999,10 @@ func runHeadless() error {
 	// Annotations go to stderr to avoid polluting structured stdout output (e.g., --output json).
 	if annotationsFlag || (os.Getenv("GITHUB_ACTIONS") == "true" && len(result.SecurityFindings) > 0) {
 		annotFmt := output.NewGitHubAnnotationsFormatter()
-		if annotOut, err := annotFmt.Format(result); err == nil && len(annotOut) > 0 {
+		annotOut, err := annotFmt.Format(result)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to format annotations: %v\n", err)
+		} else if len(annotOut) > 0 {
 			fmt.Fprint(os.Stderr, string(annotOut))
 		}
 	}
@@ -2735,13 +2738,26 @@ func detectGitBranch(dir string) (string, error) {
 }
 
 // postResultsToPR detects the git platform, formats results, and posts to the PR.
-func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *security.Report) error {
+// detectPlatformClient auto-detects the CI environment and returns a platform client.
+func detectPlatformClient() (platform.Platform, *platform.DetectedEnv, error) {
 	env, err := platform.DetectFromEnv()
 	if err != nil {
-		return fmt.Errorf("detecting platform: %w", err)
+		return nil, nil, fmt.Errorf("detecting platform: %w", err)
 	}
 	if env == nil {
-		return fmt.Errorf("could not detect git platform from environment; set GITHUB_ACTIONS or GITLAB_CI")
+		return nil, nil, fmt.Errorf("could not detect git platform from environment; set GITHUB_ACTIONS or GITLAB_CI")
+	}
+	plat, err := platform.New(env)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating platform client: %w", err)
+	}
+	return plat, env, nil
+}
+
+func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *security.Report) error {
+	plat, env, err := detectPlatformClient()
+	if err != nil {
+		return err
 	}
 
 	// Override PR number if --pr flag was provided.
@@ -2750,11 +2766,6 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 	}
 	if env.PRNumber == 0 {
 		return fmt.Errorf("could not detect PR number; use --pr=N to specify")
-	}
-
-	plat, err := platform.New(env)
-	if err != nil {
-		return fmt.Errorf("creating platform client: %w", err)
 	}
 
 	// Post unified PR comment (LLM review + security findings) via bridge.
@@ -2789,16 +2800,9 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 
 // uploadSARIFStandalone uploads SARIF without requiring --post-to-pr.
 func uploadSARIFStandalone(ctx context.Context, secReport *security.Report) error {
-	env, err := platform.DetectFromEnv()
+	plat, env, err := detectPlatformClient()
 	if err != nil {
-		return fmt.Errorf("detecting platform: %w", err)
-	}
-	if env == nil {
-		return fmt.Errorf("could not detect git platform from environment; set GITHUB_ACTIONS or GITLAB_CI")
-	}
-	plat, err := platform.New(env)
-	if err != nil {
-		return fmt.Errorf("creating platform client: %w", err)
+		return err
 	}
 	commitSHA, ref := resolveSARIFRefs()
 	if commitSHA == "" {

@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-const maxPRCommentLength = 65000
-
 // PRCommentFormatter formats a RunResult as a unified PR comment combining
 // the LLM review response and security findings into a single markdown body.
 type PRCommentFormatter struct{}
@@ -63,16 +61,7 @@ func (f *PRCommentFormatter) Format(result *RunResult) ([]byte, error) {
 	// Footer
 	b.WriteString(fmt.Sprintf("---\n*%d turns, %dms*\n", result.TurnCount, result.DurationMs))
 
-	out := b.String()
-
-	// Truncate if too long for GitHub.
-	if len(out) > maxPRCommentLength {
-		truncMsg := "\n\n---\n*Output truncated. Full report available in CI logs.*\n"
-		cutoff := maxPRCommentLength - len(truncMsg)
-		out = out[:cutoff] + truncMsg
-	}
-
-	return []byte(out), nil
+	return []byte(b.String()), nil
 }
 
 func severityIndicator(severity string) string {

@@ -52,18 +52,37 @@ func (g *GitLabClient) PostPRReview(ctx context.Context, repo string, prNum int,
 		}
 	}
 
+	if len(review.Comments) == 0 {
+		return nil
+	}
+
+	// Fetch diff version SHAs required for inline discussion positions.
+	var baseSHA, headSHA, startSHA string
+	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, prNum, nil, gitlab.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("gitlab: fetching MR diff versions: %w", err)
+	}
+	if len(versions) > 0 {
+		baseSHA = versions[0].BaseCommitSHA
+		headSHA = versions[0].HeadCommitSHA
+		startSHA = versions[0].StartCommitSHA
+	}
+
 	for _, c := range review.Comments {
-		if err := g.postDiscussion(ctx, repo, prNum, c); err != nil {
+		if err := g.postDiscussion(ctx, repo, prNum, c, baseSHA, headSHA, startSHA); err != nil {
 			return fmt.Errorf("posting discussion on %s:%d: %w", c.Path, c.Line, err)
 		}
 	}
 	return nil
 }
 
-func (g *GitLabClient) postDiscussion(ctx context.Context, repo string, prNum int, c ReviewComment) error {
+func (g *GitLabClient) postDiscussion(ctx context.Context, repo string, prNum int, c ReviewComment, baseSHA, headSHA, startSHA string) error {
 	opts := &gitlab.CreateMergeRequestDiscussionOptions{
 		Body: gitlab.Ptr(c.Body),
 		Position: &gitlab.PositionOptions{
+			BaseSHA:      gitlab.Ptr(baseSHA),
+			HeadSHA:      gitlab.Ptr(headSHA),
+			StartSHA:     gitlab.Ptr(startSHA),
 			PositionType: gitlab.Ptr("text"),
 			NewPath:      gitlab.Ptr(c.Path),
 			NewLine:      gitlab.Ptr(c.Line),
@@ -123,7 +142,5 @@ func (g *GitLabClient) ListPRFiles(ctx context.Context, repo string, prNum int) 
 }
 
 func (g *GitLabClient) UploadSARIF(_ context.Context, _ string, _, _ string, _ []byte) error {
-	// GitLab uses artifact-based SAST reports rather than API upload.
-	// Users should output SARIF to a file and configure it as a CI artifact.
-	return nil
+	return fmt.Errorf("gitlab: SARIF upload is not supported via API; configure SARIF output as a CI artifact instead")
 }

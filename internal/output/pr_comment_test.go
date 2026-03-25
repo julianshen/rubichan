@@ -11,10 +11,10 @@ var _ Formatter = (*PRCommentFormatter)(nil)
 func TestPRCommentFormatterBasic(t *testing.T) {
 	f := NewPRCommentFormatter()
 	result := &RunResult{
-		Prompt:   "Review this code",
-		Response: "The code looks clean with no major issues.",
-		Mode:     "code-review",
-		TurnCount: 3,
+		Prompt:     "Review this code",
+		Response:   "The code looks clean with no major issues.",
+		Mode:       "code-review",
+		TurnCount:  3,
 		DurationMs: 1500,
 	}
 	out, err := f.Format(result)
@@ -79,9 +79,9 @@ func TestPRCommentFormatterWithToolCalls(t *testing.T) {
 	}
 }
 
-func TestPRCommentFormatterTruncation(t *testing.T) {
+func TestPRCommentFormatterLongOutput(t *testing.T) {
 	f := NewPRCommentFormatter()
-	// Create a response that exceeds the GitHub comment limit.
+	// Verify long responses are returned in full (truncation is handled by the bridge layer).
 	longResponse := strings.Repeat("x", 70000)
 	result := &RunResult{
 		Response: longResponse,
@@ -91,11 +91,8 @@ func TestPRCommentFormatterTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Format() error = %v", err)
 	}
-	if len(out) > maxPRCommentLength+100 { // Allow small overhead for truncation message.
-		t.Errorf("output length = %d, want <= ~%d", len(out), maxPRCommentLength)
-	}
-	if !strings.Contains(string(out), "truncated") {
-		t.Error("truncated output missing truncation notice")
+	if !strings.Contains(string(out), longResponse) {
+		t.Error("output should contain the full response")
 	}
 }
 

@@ -66,6 +66,9 @@ func New(env *DetectedEnv) (Platform, error) {
 	if env == nil {
 		return nil, fmt.Errorf("no platform environment detected")
 	}
+	if env.Token == "" {
+		return nil, fmt.Errorf("no authentication token for %s; set GITHUB_TOKEN or GITLAB_TOKEN", env.PlatformName)
+	}
 	switch env.PlatformName {
 	case "github":
 		return NewGitHubClient(env.Token), nil

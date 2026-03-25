@@ -2,6 +2,7 @@ package platform_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -199,6 +200,68 @@ func TestBridgeAcceptsAnyOutputFormatter(t *testing.T) {
 	// Should have fallen back to a plain comment since markdown isn't PRReview JSON.
 	if len(mock.comments) != 1 {
 		t.Errorf("expected 1 comment (fallback), got %d comments and %d reviews", len(mock.comments), len(mock.reviews))
+	}
+}
+
+// errFormatter is a mock formatter that always returns an error.
+type errSecurityFormatter struct{}
+
+func (f *errSecurityFormatter) Name() string { return "err" }
+func (f *errSecurityFormatter) Format(_ *security.Report) ([]byte, error) {
+	return nil, fmt.Errorf("formatter broken")
+}
+
+type errOutputFormatter struct{}
+
+func (f *errOutputFormatter) Format(_ *output.RunResult) ([]byte, error) {
+	return nil, fmt.Errorf("formatter broken")
+}
+
+func TestBridgePostReviewFormatterError(t *testing.T) {
+	mock := &mockPlatform{name: "github"}
+	err := platform.PostSecurityReview(context.Background(), mock, &errSecurityFormatter{}, &security.Report{}, "o/r", 1)
+	if err == nil {
+		t.Fatal("expected error from broken formatter")
+	}
+	if !strings.Contains(err.Error(), "formatter broken") {
+		t.Errorf("error = %q, want to contain 'formatter broken'", err.Error())
+	}
+}
+
+func TestBridgeUploadSARIFFormatterError(t *testing.T) {
+	mock := &mockPlatform{name: "github"}
+	err := platform.UploadSecuritySARIF(context.Background(), mock, &errSecurityFormatter{}, &security.Report{}, "o/r", "sha", "ref")
+	if err == nil {
+		t.Fatal("expected error from broken formatter")
+	}
+}
+
+func TestBridgePostRunResultFormatterError(t *testing.T) {
+	mock := &mockPlatform{name: "github"}
+	err := platform.PostRunResultComment(context.Background(), mock, &errOutputFormatter{}, &output.RunResult{}, "o/r", 1)
+	if err == nil {
+		t.Fatal("expected error from broken formatter")
+	}
+}
+
+func TestBridgePostReviewPlatformError(t *testing.T) {
+	mock := &mockPlatform{name: "github", reviewErr: fmt.Errorf("api 500")}
+	report := &security.Report{
+		Findings: []security.Finding{
+			{ID: "F1", Title: "Issue", Severity: security.SeverityHigh, Location: security.Location{File: "a.go", StartLine: 1}},
+		},
+	}
+	err := platform.PostSecurityReview(context.Background(), mock, secoutput.NewGitHubPRFormatter(), report, "o/r", 1)
+	if err == nil {
+		t.Fatal("expected error from platform API failure")
+	}
+}
+
+func TestBridgePostRunResultPlatformError(t *testing.T) {
+	mock := &mockPlatform{name: "github", commentErr: fmt.Errorf("api 401")}
+	err := platform.PostRunResultComment(context.Background(), mock, output.NewPRCommentFormatter(), &output.RunResult{Mode: "test"}, "o/r", 1)
+	if err == nil {
+		t.Fatal("expected error from platform API failure")
 	}
 }
 

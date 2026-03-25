@@ -68,6 +68,10 @@ func TestGitLabPostMRReview(t *testing.T) {
 	var gotPath string
 	client := newTestGitLabClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		if strings.Contains(r.URL.Path, "/versions") {
+			w.Write([]byte(`[{"id": 1, "base_commit_sha": "aaa", "head_commit_sha": "bbb", "start_commit_sha": "ccc"}]`))
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		if strings.Contains(r.URL.Path, "discussions") {
 			w.Write([]byte(`{"id": "abc123"}`))
@@ -135,6 +139,77 @@ func TestGitLabListMRFiles(t *testing.T) {
 	}
 }
 
+func TestGitLabGetMRDiff_EmptyVersions(t *testing.T) {
+	client := newTestGitLabClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[]`))
+	}))
+
+	diff, err := client.GetPRDiff(context.Background(), "g/r", 1)
+	if err != nil {
+		t.Fatalf("GetPRDiff() error = %v", err)
+	}
+	if diff != "" {
+		t.Errorf("diff = %q, want empty for no versions", diff)
+	}
+}
+
+func TestGitLabListMRFiles_StatusMapping(t *testing.T) {
+	client := newTestGitLabClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"changes":[
+			{"old_path":"new.go","new_path":"new.go","diff":"@@","new_file":true,"renamed_file":false,"deleted_file":false},
+			{"old_path":"del.go","new_path":"del.go","diff":"@@","new_file":false,"renamed_file":false,"deleted_file":true}
+		]}`))
+	}))
+
+	files, err := client.ListPRFiles(context.Background(), "g/r", 1)
+	if err != nil {
+		t.Fatalf("ListPRFiles() error = %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("len(files) = %d, want 2", len(files))
+	}
+	if files[0].Status != "added" {
+		t.Errorf("files[0].Status = %q, want 'added'", files[0].Status)
+	}
+	if files[1].Status != "removed" {
+		t.Errorf("files[1].Status = %q, want 'removed'", files[1].Status)
+	}
+}
+
+func TestGitLabPostMRReview_EmptyBody(t *testing.T) {
+	var paths []string
+	client := newTestGitLabClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if strings.Contains(r.URL.Path, "/versions") {
+			w.Write([]byte(`[{"id": 1, "base_commit_sha": "a", "head_commit_sha": "b", "start_commit_sha": "c"}]`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		if strings.Contains(r.URL.Path, "discussions") {
+			w.Write([]byte(`{"id": "d1"}`))
+		} else {
+			w.Write([]byte(`{"id": 1}`))
+		}
+	}))
+
+	review := Review{
+		Body: "", // Empty body — should skip note, only post discussion
+		Comments: []ReviewComment{
+			{Path: "main.go", Line: 5, Body: "fix"},
+		},
+	}
+	err := client.PostPRReview(context.Background(), "g/r", 1, review)
+	if err != nil {
+		t.Fatalf("PostPRReview() error = %v", err)
+	}
+	// Should NOT have called notes endpoint (no summary comment).
+	for _, p := range paths {
+		if strings.HasSuffix(p, "/notes") {
+			t.Error("should not post note when body is empty")
+		}
+	}
+}
+
 func TestNewGitLabClientWithURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
@@ -162,14 +237,17 @@ func TestNewGitLabClient_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestGitLabUploadSARIF_ReturnsNil(t *testing.T) {
+func TestGitLabUploadSARIF_ReturnsError(t *testing.T) {
 	client, cErr := NewGitLabClient("token")
 	if cErr != nil {
 		t.Fatalf("NewGitLabClient() error = %v", cErr)
 	}
 	err := client.UploadSARIF(context.Background(), "g/r", "abc123", "refs/heads/main", []byte("sarif"))
-	if err != nil {
-		t.Errorf("UploadSARIF() error = %v, want nil", err)
+	if err == nil {
+		t.Fatal("UploadSARIF() expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not supported") {
+		t.Errorf("UploadSARIF() error = %v, want error mentioning 'not supported'", err)
 	}
 }
 

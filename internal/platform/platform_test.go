@@ -1,7 +1,7 @@
 package platform
 
 import (
-	"context"
+	"strings"
 	"testing"
 )
 
@@ -112,6 +112,7 @@ func TestNewReturnsGitLabForGitLabEnv(t *testing.T) {
 func TestNewReturnsErrorForUnknownPlatform(t *testing.T) {
 	env := &DetectedEnv{
 		PlatformName: "bitbucket",
+		Token:        "some-token",
 	}
 	_, err := New(env)
 	if err == nil {
@@ -119,8 +120,23 @@ func TestNewReturnsErrorForUnknownPlatform(t *testing.T) {
 	}
 }
 
-// Ensure context is accepted (compile-time check via usage).
-func TestPlatformMethodsAcceptContext(t *testing.T) {
-	_ = context.Background()
-	// The interface methods all accept context.Context — verified by compile-time checks above.
+func TestNewReturnsErrorForNilEnv(t *testing.T) {
+	_, err := New(nil)
+	if err == nil {
+		t.Fatal("New(nil) expected error")
+	}
+}
+
+func TestNewReturnsErrorForEmptyToken(t *testing.T) {
+	env := &DetectedEnv{
+		PlatformName: "github",
+		Token:        "",
+	}
+	_, err := New(env)
+	if err == nil {
+		t.Fatal("New() expected error for empty token")
+	}
+	if !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+		t.Errorf("error = %q, want to mention GITHUB_TOKEN", err.Error())
+	}
 }
