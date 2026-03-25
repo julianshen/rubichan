@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -295,6 +297,44 @@ func TestValidateSkillNameAdapter(t *testing.T) {
 	assert.NoError(t, validateSkillNameAdapter("skill_v2"))
 	assert.Error(t, validateSkillNameAdapter("../../etc"))
 	assert.Error(t, validateSkillNameAdapter(""))
+}
+
+// --- agent wiring tests ---
+
+func TestAgentRegistersSkillManagerTool(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	cfg.Skills.UserDir = t.TempDir()
+
+	a := New(
+		&capturingMockProvider{events: []provider.StreamEvent{{Type: "stop"}}},
+		reg, autoApprove, cfg,
+		WithStore(s),
+	)
+	require.NotNil(t, a)
+
+	_, found := a.tools.Get("skill_manager")
+	assert.True(t, found, "skill_manager tool should be registered when store is available")
+}
+
+func TestAgentSkipSkillManagerWithoutStore(t *testing.T) {
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	a := New(
+		&capturingMockProvider{events: []provider.StreamEvent{{Type: "stop"}}},
+		reg, autoApprove, cfg,
+		// No WithStore — store is nil
+	)
+	require.NotNil(t, a)
+
+	_, found := a.tools.Get("skill_manager")
+	assert.False(t, found, "skill_manager tool should not be registered without store")
 }
 
 // Verify adapter satisfies the interface.
