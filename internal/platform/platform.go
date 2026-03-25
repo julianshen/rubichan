@@ -30,25 +30,45 @@ type Platform interface {
 	UploadSARIF(ctx context.Context, repo string, commitSHA, ref string, sarif []byte) error
 }
 
+// Review side constants.
+const (
+	SideRight = "RIGHT"
+	SideLeft  = "LEFT"
+)
+
+// Review event constants.
+const (
+	EventComment        = "COMMENT"
+	EventApprove        = "APPROVE"
+	EventRequestChanges = "REQUEST_CHANGES"
+)
+
+// PR file status constants.
+const (
+	FileStatusAdded    = "added"
+	FileStatusModified = "modified"
+	FileStatusRemoved  = "removed"
+)
+
 // ReviewComment represents an inline comment on a specific file and line.
 type ReviewComment struct {
 	Path string
 	Line int
 	Body string
-	Side string // "LEFT" or "RIGHT"
+	Side string
 }
 
 // Review represents a pull request review with summary and inline comments.
 type Review struct {
 	Body     string
-	Event    string // "APPROVE", "REQUEST_CHANGES", "COMMENT"
+	Event    string
 	Comments []ReviewComment
 }
 
 // PRFile represents a file changed in a pull request.
 type PRFile struct {
 	Filename string
-	Status   string // "added", "modified", "removed"
+	Status   string
 	Patch    string
 }
 
@@ -58,6 +78,8 @@ type DetectedEnv struct {
 	Repo         string // "owner/repo"
 	PRNumber     int    // 0 if not in a PR context
 	Token        string
+	CommitSHA    string // commit hash for SARIF upload
+	Ref          string // git ref (e.g., "refs/heads/main")
 }
 
 // New creates a Platform client from the detected environment.

@@ -26,6 +26,8 @@ func detectGitHub() *DetectedEnv {
 		Repo:         os.Getenv("GITHUB_REPOSITORY"),
 		PRNumber:     parseGitHubPRNumber(os.Getenv("GITHUB_REF")),
 		Token:        os.Getenv("GITHUB_TOKEN"),
+		CommitSHA:    os.Getenv("GITHUB_SHA"),
+		Ref:          os.Getenv("GITHUB_REF"),
 	}
 }
 
@@ -40,6 +42,8 @@ func detectGitLab() *DetectedEnv {
 		Repo:         os.Getenv("CI_PROJECT_PATH"),
 		PRNumber:     prNum,
 		Token:        token,
+		CommitSHA:    os.Getenv("CI_COMMIT_SHA"),
+		Ref:          os.Getenv("CI_COMMIT_REF_NAME"),
 	}
 }
 

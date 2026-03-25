@@ -56,33 +56,49 @@ func (g *GitLabClient) PostPRReview(ctx context.Context, repo string, prNum int,
 		return nil
 	}
 
-	// Fetch diff version SHAs required for inline discussion positions.
-	var baseSHA, headSHA, startSHA string
-	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, prNum, nil, gitlab.WithContext(ctx))
+	pos, err := g.latestDiffPosition(ctx, repo, prNum)
 	if err != nil {
 		return fmt.Errorf("gitlab: fetching MR diff versions: %w", err)
 	}
-	if len(versions) > 0 {
-		baseSHA = versions[0].BaseCommitSHA
-		headSHA = versions[0].HeadCommitSHA
-		startSHA = versions[0].StartCommitSHA
-	}
 
 	for _, c := range review.Comments {
-		if err := g.postDiscussion(ctx, repo, prNum, c, baseSHA, headSHA, startSHA); err != nil {
+		if err := g.postDiscussion(ctx, repo, prNum, c, pos); err != nil {
 			return fmt.Errorf("posting discussion on %s:%d: %w", c.Path, c.Line, err)
 		}
 	}
 	return nil
 }
 
-func (g *GitLabClient) postDiscussion(ctx context.Context, repo string, prNum int, c ReviewComment, baseSHA, headSHA, startSHA string) error {
+// diffPosition holds the SHA references for a MR diff version.
+type diffPosition struct {
+	BaseSHA  string
+	HeadSHA  string
+	StartSHA string
+}
+
+// latestDiffPosition fetches the latest MR diff version SHAs.
+func (g *GitLabClient) latestDiffPosition(ctx context.Context, repo string, prNum int) (diffPosition, error) {
+	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, prNum, nil, gitlab.WithContext(ctx))
+	if err != nil {
+		return diffPosition{}, err
+	}
+	if len(versions) == 0 {
+		return diffPosition{}, nil
+	}
+	return diffPosition{
+		BaseSHA:  versions[0].BaseCommitSHA,
+		HeadSHA:  versions[0].HeadCommitSHA,
+		StartSHA: versions[0].StartCommitSHA,
+	}, nil
+}
+
+func (g *GitLabClient) postDiscussion(ctx context.Context, repo string, prNum int, c ReviewComment, pos diffPosition) error {
 	opts := &gitlab.CreateMergeRequestDiscussionOptions{
 		Body: gitlab.Ptr(c.Body),
 		Position: &gitlab.PositionOptions{
-			BaseSHA:      gitlab.Ptr(baseSHA),
-			HeadSHA:      gitlab.Ptr(headSHA),
-			StartSHA:     gitlab.Ptr(startSHA),
+			BaseSHA:      gitlab.Ptr(pos.BaseSHA),
+			HeadSHA:      gitlab.Ptr(pos.HeadSHA),
+			StartSHA:     gitlab.Ptr(pos.StartSHA),
 			PositionType: gitlab.Ptr("text"),
 			NewPath:      gitlab.Ptr(c.Path),
 			NewLine:      gitlab.Ptr(c.Line),
@@ -126,11 +142,11 @@ func (g *GitLabClient) ListPRFiles(ctx context.Context, repo string, prNum int) 
 
 	files := make([]PRFile, len(changes.Changes))
 	for i, c := range changes.Changes {
-		status := "modified"
+		status := FileStatusModified
 		if c.NewFile {
-			status = "added"
+			status = FileStatusAdded
 		} else if c.DeletedFile {
-			status = "removed"
+			status = FileStatusRemoved
 		}
 		files[i] = PRFile{
 			Filename: c.NewPath,

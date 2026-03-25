@@ -2737,7 +2737,6 @@ func detectGitBranch(dir string) (string, error) {
 	return branch, nil
 }
 
-// postResultsToPR detects the git platform, formats results, and posts to the PR.
 // detectPlatformClient auto-detects the CI environment and returns a platform client.
 func detectPlatformClient() (platform.Platform, *platform.DetectedEnv, error) {
 	env, err := platform.DetectFromEnv()
@@ -2784,12 +2783,11 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 
 	// Upload SARIF if requested and security report is available.
 	if uploadSARIFFlag && secReport != nil {
-		commitSHA, ref := resolveSARIFRefs()
-		if commitSHA == "" {
+		if env.CommitSHA == "" {
 			fmt.Fprintln(os.Stderr, "warning: could not determine commit SHA for SARIF upload, skipping")
 		} else {
 			sarifFmt := secoutput.NewSARIFFormatter()
-			if err := platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, commitSHA, ref); err != nil {
+			if err := platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, env.CommitSHA, env.Ref); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to upload SARIF: %v\n", err)
 			}
 		}
@@ -2804,23 +2802,9 @@ func uploadSARIFStandalone(ctx context.Context, secReport *security.Report) erro
 	if err != nil {
 		return err
 	}
-	commitSHA, ref := resolveSARIFRefs()
-	if commitSHA == "" {
+	if env.CommitSHA == "" {
 		return fmt.Errorf("could not determine commit SHA; set GITHUB_SHA or CI_COMMIT_SHA")
 	}
 	sarifFmt := secoutput.NewSARIFFormatter()
-	return platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, commitSHA, ref)
-}
-
-// resolveSARIFRefs returns the commit SHA and git ref for SARIF upload.
-func resolveSARIFRefs() (commitSHA, ref string) {
-	commitSHA = os.Getenv("GITHUB_SHA")
-	if commitSHA == "" {
-		commitSHA = os.Getenv("CI_COMMIT_SHA")
-	}
-	ref = os.Getenv("GITHUB_REF")
-	if ref == "" {
-		ref = os.Getenv("CI_COMMIT_REF_NAME")
-	}
-	return commitSHA, ref
+	return platform.UploadSecuritySARIF(ctx, plat, sarifFmt, secReport, env.Repo, env.CommitSHA, env.Ref)
 }

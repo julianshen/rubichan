@@ -37,7 +37,7 @@ func PostSecurityReview(
 
 	review := Review{
 		Body:  prReview.Body,
-		Event: "COMMENT",
+		Event: EventComment,
 	}
 	for _, c := range prReview.Comments {
 		if c.Path == "" || c.Line <= 0 {
@@ -47,7 +47,7 @@ func PostSecurityReview(
 			Path: c.Path,
 			Line: c.Line,
 			Body: c.Body,
-			Side: "RIGHT",
+			Side: SideRight,
 		})
 	}
 
