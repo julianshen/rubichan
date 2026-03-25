@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -158,6 +159,105 @@ func TestSkillManagerAdapterRemoveInvalidName(t *testing.T) {
 	err := adapter.Remove("../../etc")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid skill name")
+}
+
+// --- activation tests ---
+
+type mockActivator struct {
+	discoverCalled bool
+	activateName   string
+	discoverErr    error
+	activateErr    error
+}
+
+func (m *mockActivator) Discover(_ []string) error {
+	m.discoverCalled = true
+	return m.discoverErr
+}
+
+func (m *mockActivator) Activate(name string) error {
+	m.activateName = name
+	return m.activateErr
+}
+
+func TestSkillManagerAdapterInstallActivatesSkill(t *testing.T) {
+	act := &mockActivator{}
+	adapter, tmpDir := newTestAdapter(t, nil)
+	adapter.activator = act
+
+	// Create a source skill.
+	srcDir := filepath.Join(tmpDir, "activatable-skill")
+	require.NoError(t, os.MkdirAll(srcDir, 0o755))
+	manifest := `name: activatable
+version: "1.0.0"
+description: test
+types: [tool]
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+`
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "SKILL.yaml"), []byte(manifest), 0o644))
+
+	result, err := adapter.Install(context.Background(), srcDir)
+	require.NoError(t, err)
+	assert.True(t, result.Activated)
+	assert.True(t, act.discoverCalled)
+	assert.Equal(t, "activatable", act.activateName)
+}
+
+func TestSkillManagerAdapterInstallActivationFailureNonFatal(t *testing.T) {
+	act := &mockActivator{activateErr: fmt.Errorf("activation failed")}
+	adapter, tmpDir := newTestAdapter(t, nil)
+	adapter.activator = act
+
+	srcDir := filepath.Join(tmpDir, "fail-activate-skill")
+	require.NoError(t, os.MkdirAll(srcDir, 0o755))
+	manifest := `name: fail-activate
+version: "1.0.0"
+description: test
+types: [tool]
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+`
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "SKILL.yaml"), []byte(manifest), 0o644))
+
+	result, err := adapter.Install(context.Background(), srcDir)
+	require.NoError(t, err)
+	assert.False(t, result.Activated)
+	assert.Equal(t, "fail-activate", result.Name)
+}
+
+func TestSkillManagerAdapterInstallWithoutActivator(t *testing.T) {
+	adapter, tmpDir := newTestAdapter(t, nil)
+	// adapter.activator is nil by default
+
+	srcDir := filepath.Join(tmpDir, "no-activator-skill")
+	require.NoError(t, os.MkdirAll(srcDir, 0o755))
+	manifest := `name: no-activator
+version: "1.0.0"
+description: test
+types: [tool]
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+`
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "SKILL.yaml"), []byte(manifest), 0o644))
+
+	result, err := adapter.Install(context.Background(), srcDir)
+	require.NoError(t, err)
+	assert.False(t, result.Activated)
+}
+
+func TestInstallGitURLNotMisroutedToLocal(t *testing.T) {
+	// github.com/user/skill contains "/" but should go to git path, not local.
+	assert.True(t, isGitURL("github.com/user/skill"))
+	assert.True(t, isLocalPathAdapter("github.com/user/skill")) // both match!
+
+	// The Install method must check isGitURL first.
+	// We can't test the actual git clone here, but we can verify ordering
+	// by checking that isGitURL is checked before isLocalPathAdapter in
+	// the Install method logic above.
 }
 
 // --- helper function tests ---

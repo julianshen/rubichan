@@ -19,10 +19,18 @@ const defaultRegistryURL = "https://registry.rubichan.dev"
 
 // skillManagerAdapter implements tools.SkillManagerAccess by delegating to
 // RegistryClient, Store, and the skill loader for filesystem operations.
+// skillActivator attempts to activate a newly installed skill in the current
+// session. This is optional — if nil, skills are available after restart.
+type skillActivator interface {
+	Discover(explicit []string) error
+	Activate(name string) error
+}
+
 type skillManagerAdapter struct {
 	registry  *skills.RegistryClient
 	store     *store.Store
 	skillsDir string
+	activator skillActivator // nil = no mid-session activation
 }
 
 func (a *skillManagerAdapter) Search(ctx context.Context, query string) ([]tools.SkillSearchResult, error) {
@@ -42,11 +50,11 @@ func (a *skillManagerAdapter) Search(ctx context.Context, query string) ([]tools
 }
 
 func (a *skillManagerAdapter) Install(ctx context.Context, source string) (tools.SkillInstallResult, error) {
-	if isLocalPathAdapter(source) {
-		return a.installFromLocal(source)
-	}
 	if isGitURL(source) {
 		return a.installFromGit(ctx, source)
+	}
+	if isLocalPathAdapter(source) {
+		return a.installFromLocal(source)
 	}
 	return a.installFromRegistry(ctx, source)
 }
@@ -79,9 +87,11 @@ func (a *skillManagerAdapter) installFromLocal(source string) (tools.SkillInstal
 		return tools.SkillInstallResult{}, fmt.Errorf("save skill state: %w", err)
 	}
 
+	activated := a.tryActivate(manifest.Name)
 	return tools.SkillInstallResult{
-		Name:    manifest.Name,
-		Version: manifest.Version,
+		Name:      manifest.Name,
+		Version:   manifest.Version,
+		Activated: activated,
 	}, nil
 }
 
@@ -120,9 +130,11 @@ func (a *skillManagerAdapter) installFromGit(ctx context.Context, gitURL string)
 		return tools.SkillInstallResult{}, fmt.Errorf("save skill state: %w", err)
 	}
 
+	activated := a.tryActivate(manifest.Name)
 	return tools.SkillInstallResult{
-		Name:    manifest.Name,
-		Version: manifest.Version,
+		Name:      manifest.Name,
+		Version:   manifest.Version,
+		Activated: activated,
 	}, nil
 }
 
@@ -168,10 +180,29 @@ func (a *skillManagerAdapter) installFromRegistry(ctx context.Context, source st
 		return tools.SkillInstallResult{}, fmt.Errorf("save skill state: %w", err)
 	}
 
+	activated := a.tryActivate(manifest.Name)
 	return tools.SkillInstallResult{
-		Name:    manifest.Name,
-		Version: manifest.Version,
+		Name:      manifest.Name,
+		Version:   manifest.Version,
+		Activated: activated,
 	}, nil
+}
+
+// tryActivate attempts to activate a newly installed skill in the current
+// session. Returns true if activation succeeded, false otherwise. Failure
+// is not fatal — the skill will be available after restart.
+func (a *skillManagerAdapter) tryActivate(name string) bool {
+	if a.activator == nil {
+		return false
+	}
+	// Re-discover skills so the runtime sees the newly installed one.
+	if err := a.activator.Discover(nil); err != nil {
+		return false
+	}
+	if err := a.activator.Activate(name); err != nil {
+		return false
+	}
+	return true
 }
 
 func (a *skillManagerAdapter) List() ([]tools.SkillListEntry, error) {

@@ -498,6 +498,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 				registry:  skills.NewRegistryClient(registryURL, a.store, 5*time.Minute),
 				store:     a.store,
 				skillsDir: skillsDir,
+				activator: a.skillRuntime,
 			}
 			skillMgrTool := tools.NewSkillManagerTool(adapter)
 			if _, exists := a.tools.Get(skillMgrTool.Name()); !exists {
