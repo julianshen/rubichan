@@ -1,0 +1,52 @@
+// Rubichan Code Review — Jenkins Pipeline
+//
+// This pipeline runs Rubichan in headless mode on PRs to:
+// 1. Generate a SARIF security report
+// 2. Archive the report as a build artifact
+//
+// Required credentials:
+//   ANTHROPIC_API_KEY — Your Anthropic API key (stored in Jenkins credentials)
+//
+// Note: Jenkins does not have native PR comment posting. Use the SARIF
+// report with plugins like "Warnings Next Generation" for inline annotations.
+
+pipeline {
+    agent any
+
+    environment {
+        ANTHROPIC_API_KEY = credentials('anthropic-api-key')
+    }
+
+    stages {
+        stage('Install') {
+            steps {
+                sh 'go install github.com/julianshen/rubichan/cmd/rubichan@latest'
+            }
+        }
+
+        stage('Code Review') {
+            steps {
+                sh '''
+                    rubichan --headless \
+                        --mode=code-review \
+                        --output=sarif \
+                        --timeout=300s \
+                        > rubichan-report.sarif
+                '''
+            }
+        }
+
+        stage('Archive Results') {
+            steps {
+                archiveArtifacts artifacts: 'rubichan-report.sarif', allowEmptyArchive: true
+                recordIssues(tools: [sarif(pattern: 'rubichan-report.sarif')])
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo 'Rubichan code review found issues above threshold.'
+        }
+    }
+}
