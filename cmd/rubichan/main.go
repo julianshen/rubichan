@@ -532,6 +532,7 @@ func main() {
 	rootCmd.AddCommand(ollamaCmd())
 	rootCmd.AddCommand(worktreeCmd())
 	rootCmd.AddCommand(sessionCmd())
+	rootCmd.AddCommand(initCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *runner.ExitError
@@ -800,18 +801,47 @@ func appendPersonaOptions(opts []agent.AgentOption, cwd string) []agent.AgentOpt
 func convertHookRules(rules []config.HookRuleConfig, source string) []hooks.UserHookConfig {
 	var out []hooks.UserHookConfig
 	for _, rule := range rules {
-		timeout := 30 * time.Second
-		if rule.Timeout != "" {
-			if parsed, err := time.ParseDuration(rule.Timeout); err == nil {
-				timeout = parsed
-			}
-		}
 		out = append(out, hooks.UserHookConfig{
 			Event: rule.Event, Pattern: rule.Pattern, Command: rule.Command,
-			Description: rule.Description, Timeout: timeout, Source: source,
+			Description: rule.Description, Timeout: hooks.ParseHookTimeout(rule.Timeout), Source: source,
 		})
 	}
 	return out
+}
+
+// loadProjectHooks builds the full list of user hook configs from config rules,
+// .agent/hooks.toml, and AGENT.md frontmatter. Project-level hooks (TOML and
+// AGENT.md) are gated by trust approval.
+func loadProjectHooks(cfg *config.Config, s hooks.HookApprovalStore, cwd string) []hooks.UserHookConfig {
+	configs := convertHookRules(cfg.Hooks.Rules, "config")
+
+	tomlHooks, tomlErr := hooks.LoadHooksTOML(cwd)
+	if tomlErr != nil {
+		log.Printf("warning: loading .agent/hooks.toml: %v", tomlErr)
+	}
+	if len(tomlHooks) > 0 {
+		if cfg.Hooks.TrustProjectHooks {
+			configs = append(configs, tomlHooks...)
+		} else if trusted, _ := hooks.CheckTrust(s, cwd, tomlHooks); trusted {
+			configs = append(configs, tomlHooks...)
+		} else {
+			log.Printf("Project hooks in .agent/hooks.toml not trusted — skipping.")
+		}
+	}
+
+	_, agentMDHooks, _ := config.LoadAgentMDWithHooks(cwd)
+	if len(agentMDHooks) > 0 {
+		projectHooks := convertHookRules(agentMDHooks, "agent.md")
+		if cfg.Hooks.TrustProjectHooks {
+			configs = append(configs, projectHooks...)
+		} else if trusted, _ := hooks.CheckTrust(s, cwd, projectHooks); trusted {
+			configs = append(configs, projectHooks...)
+		} else if len(projectHooks) > 0 {
+			log.Printf("Project hooks in AGENT.md not trusted — skipping.")
+		}
+	}
+
+	return configs
 }
 
 func promptFolderAccess(workingDir string, in io.Reader, out io.Writer) (bool, error) {
@@ -1326,19 +1356,8 @@ func runInteractive() error {
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
-	// Build user hooks from config and AGENT.md.
-	userHookConfigs := convertHookRules(cfg.Hooks.Rules, "config")
-	_, agentMDHooks, _ := config.LoadAgentMDWithHooks(cwd)
-	if len(agentMDHooks) > 0 {
-		projectHooks := convertHookRules(agentMDHooks, "agent.md")
-		if cfg.Hooks.TrustProjectHooks {
-			userHookConfigs = append(userHookConfigs, projectHooks...)
-		} else if trusted, _ := hooks.CheckTrust(s, cwd, projectHooks); trusted {
-			userHookConfigs = append(userHookConfigs, projectHooks...)
-		} else if len(projectHooks) > 0 {
-			log.Printf("Project hooks in AGENT.md not trusted — skipping.")
-		}
-	}
+	// Build user hooks from config, .agent/hooks.toml, and AGENT.md.
+	userHookConfigs := loadProjectHooks(cfg, s, cwd)
 	if len(userHookConfigs) > 0 {
 		opts = append(opts, agent.WithUserHooks(hooks.NewUserHookRunner(userHookConfigs, cwd)))
 	}
@@ -1731,19 +1750,8 @@ func runHeadless() error {
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
-	// Build user hooks from config and AGENT.md.
-	headlessHookConfigs := convertHookRules(cfg.Hooks.Rules, "config")
-	_, headlessAgentMDHooks, _ := config.LoadAgentMDWithHooks(cwd)
-	if len(headlessAgentMDHooks) > 0 {
-		projectHooks := convertHookRules(headlessAgentMDHooks, "agent.md")
-		if cfg.Hooks.TrustProjectHooks {
-			headlessHookConfigs = append(headlessHookConfigs, projectHooks...)
-		} else if trusted, _ := hooks.CheckTrust(s, cwd, projectHooks); trusted {
-			headlessHookConfigs = append(headlessHookConfigs, projectHooks...)
-		} else if len(projectHooks) > 0 {
-			log.Printf("Project hooks in AGENT.md not trusted — skipping.")
-		}
-	}
+	// Build user hooks from config, .agent/hooks.toml, and AGENT.md.
+	headlessHookConfigs := loadProjectHooks(cfg, s, cwd)
 	if len(headlessHookConfigs) > 0 {
 		opts = append(opts, agent.WithUserHooks(hooks.NewUserHookRunner(headlessHookConfigs, cwd)))
 	}

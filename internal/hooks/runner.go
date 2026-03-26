@@ -15,6 +15,29 @@ import (
 
 const defaultTimeout = 30 * time.Second
 
+// Event name constants for user-facing hook event configuration.
+const (
+	EventPreTool      = "pre_tool"
+	EventPostTool     = "post_tool"
+	EventPreEdit      = "pre_edit"
+	EventPostEdit     = "post_edit"
+	EventPreShell     = "pre_shell"
+	EventSessionStart = "session_start"
+	EventSetup        = "setup"
+)
+
+// ParseHookTimeout parses a duration string, returning defaultTimeout (30s)
+// if the string is empty or unparseable.
+func ParseHookTimeout(s string) time.Duration {
+	if s == "" {
+		return defaultTimeout
+	}
+	if parsed, err := time.ParseDuration(s); err == nil {
+		return parsed
+	}
+	return defaultTimeout
+}
+
 // UserHookConfig describes a single user-configured shell hook entry.
 type UserHookConfig struct {
 	Event       string
@@ -116,18 +139,20 @@ func mapEventToPhase(event string) (skills.HookPhase, bool, func(skills.HookEven
 	noFilter := func(_ skills.HookEvent, _ string) bool { return true }
 
 	switch event {
-	case "pre_tool":
+	case EventPreTool:
 		return skills.HookOnBeforeToolCall, true, noFilter
-	case "post_tool":
+	case EventPostTool:
 		return skills.HookOnAfterToolResult, false, noFilter
-	case "pre_edit":
+	case EventPreEdit:
 		return skills.HookOnBeforeToolCall, true, filterFileWritePatch
-	case "post_edit":
+	case EventPostEdit:
 		return skills.HookOnAfterToolResult, false, filterFileWritePatch
-	case "pre_shell":
+	case EventPreShell:
 		return skills.HookOnBeforeToolCall, true, filterShellTool
-	case "session_start":
+	case EventSessionStart:
 		return skills.HookOnConversationStart, false, noFilter
+	case EventSetup:
+		return skills.HookOnSetup, false, noFilter
 	default:
 		return 0, false, nil
 	}
@@ -187,7 +212,7 @@ func expandTemplateVars(cmd string, event skills.HookEvent) string {
 }
 
 // shellQuote wraps a string in single quotes for safe shell interpolation.
-// Embedded single quotes are escaped as '\''.
+// Embedded single quotes are escaped as '\”.
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"

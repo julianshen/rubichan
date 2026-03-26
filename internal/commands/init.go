@@ -10,12 +10,12 @@ import (
 	"strings"
 )
 
-// projectInfo holds detected information about a project.
-type projectInfo struct {
-	languages []string
-	buildCmds []string
-	testCmds  []string
-	lintCmds  []string
+// ProjectInfo holds detected information about a project.
+type ProjectInfo struct {
+	Languages []string
+	BuildCmds []string
+	TestCmds  []string
+	LintCmds  []string
 }
 
 // initCommand implements the /init slash command that generates AGENTS.md or CLAUDE.md.
@@ -38,7 +38,7 @@ func (c *initCommand) Arguments() []ArgumentDef {
 			Name:        "format",
 			Description: "Format to generate: agents (default) or claude",
 			Required:    false,
-			Static:      []string{"agents", "claude"},
+			Static:      []string{"agents", "claude", "agent"},
 		},
 	}
 }
@@ -59,6 +59,8 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 		filename = "AGENTS.md"
 	case "claude":
 		filename = "CLAUDE.md"
+	case "agent":
+		filename = "AGENT.md"
 	default:
 		return Result{}, fmt.Errorf("unknown format %q: use 'agents' or 'claude'", format)
 	}
@@ -70,8 +72,8 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 		return Result{}, fmt.Errorf("checking for existing %s: %w", filename, err)
 	}
 
-	info := detectProjectInfo(c.workDir)
-	content := generateContent(filename, info)
+	info := DetectProjectInfo(c.workDir)
+	content := GenerateContent(filename, info)
 
 	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 		return Result{}, fmt.Errorf("writing %s: %w", filename, err)
@@ -80,75 +82,75 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 	return Result{Output: fmt.Sprintf("Generated %s in project root.", filename)}, nil
 }
 
-// detectProjectInfo scans the working directory for project markers.
-func detectProjectInfo(dir string) projectInfo {
-	var info projectInfo
+// DetectProjectInfo scans the working directory for project markers.
+func DetectProjectInfo(dir string) ProjectInfo {
+	var info ProjectInfo
 
 	// Go
 	if fileExists(filepath.Join(dir, "go.mod")) {
-		info.languages = append(info.languages, "Go")
-		info.buildCmds = append(info.buildCmds, "go build ./...")
-		info.testCmds = append(info.testCmds, "go test ./...")
-		info.lintCmds = append(info.lintCmds, "golangci-lint run ./...")
+		info.Languages = append(info.Languages, "Go")
+		info.BuildCmds = append(info.BuildCmds, "go build ./...")
+		info.TestCmds = append(info.TestCmds, "go test ./...")
+		info.LintCmds = append(info.LintCmds, "golangci-lint run ./...")
 	}
 
 	// Node/JS/TS
 	if fileExists(filepath.Join(dir, "package.json")) {
-		info.languages = append(info.languages, "JavaScript/TypeScript")
+		info.Languages = append(info.Languages, "JavaScript/TypeScript")
 		pm := detectNodePM(dir)
 		scripts := readPackageScripts(filepath.Join(dir, "package.json"))
 		if _, ok := scripts["build"]; ok {
-			info.buildCmds = append(info.buildCmds, pm+" run build")
+			info.BuildCmds = append(info.BuildCmds, pm+" run build")
 		}
 		if _, ok := scripts["test"]; ok {
-			info.testCmds = append(info.testCmds, pm+" test")
+			info.TestCmds = append(info.TestCmds, pm+" test")
 		}
 		if _, ok := scripts["lint"]; ok {
-			info.lintCmds = append(info.lintCmds, pm+" run lint")
+			info.LintCmds = append(info.LintCmds, pm+" run lint")
 		}
 	}
 
 	// Python
 	if fileExists(filepath.Join(dir, "pyproject.toml")) || fileExists(filepath.Join(dir, "setup.py")) || fileExists(filepath.Join(dir, "requirements.txt")) {
-		info.languages = append(info.languages, "Python")
-		info.testCmds = append(info.testCmds, "pytest")
-		info.lintCmds = append(info.lintCmds, "ruff check .")
+		info.Languages = append(info.Languages, "Python")
+		info.TestCmds = append(info.TestCmds, "pytest")
+		info.LintCmds = append(info.LintCmds, "ruff check .")
 	}
 
 	// Rust
 	if fileExists(filepath.Join(dir, "Cargo.toml")) {
-		info.languages = append(info.languages, "Rust")
-		info.buildCmds = append(info.buildCmds, "cargo build")
-		info.testCmds = append(info.testCmds, "cargo test")
-		info.lintCmds = append(info.lintCmds, "cargo clippy")
+		info.Languages = append(info.Languages, "Rust")
+		info.BuildCmds = append(info.BuildCmds, "cargo build")
+		info.TestCmds = append(info.TestCmds, "cargo test")
+		info.LintCmds = append(info.LintCmds, "cargo clippy")
 	}
 
 	return info
 }
 
-// generateContent builds the markdown content for the given filename.
-func generateContent(filename string, info projectInfo) string {
+// GenerateContent builds the markdown content for the given filename.
+func GenerateContent(filename string, info ProjectInfo) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("# %s\n\n", filename))
 
 	// Project overview
 	b.WriteString("## Project Overview\n\n")
-	if len(info.languages) > 0 {
-		b.WriteString(fmt.Sprintf("This is a %s project.\n\n", strings.Join(info.languages, " / ")))
+	if len(info.Languages) > 0 {
+		b.WriteString(fmt.Sprintf("This is a %s project.\n\n", strings.Join(info.Languages, " / ")))
 	} else {
 		b.WriteString("<!-- Describe what this project does and its purpose. -->\n\n")
 	}
 
 	// Build commands
-	if len(info.buildCmds) > 0 || len(info.testCmds) > 0 || len(info.lintCmds) > 0 {
+	if len(info.BuildCmds) > 0 || len(info.TestCmds) > 0 || len(info.LintCmds) > 0 {
 		b.WriteString("## Build & Test Commands\n\n```bash\n")
-		for _, cmd := range info.buildCmds {
+		for _, cmd := range info.BuildCmds {
 			b.WriteString(cmd + "\n")
 		}
-		for _, cmd := range info.testCmds {
+		for _, cmd := range info.TestCmds {
 			b.WriteString(cmd + "\n")
 		}
-		for _, cmd := range info.lintCmds {
+		for _, cmd := range info.LintCmds {
 			b.WriteString(cmd + "\n")
 		}
 		b.WriteString("```\n\n")

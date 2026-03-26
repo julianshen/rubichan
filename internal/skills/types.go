@@ -82,6 +82,8 @@ const (
 	HookOnWorktreeCreate
 	// HookOnWorktreeRemove is called before a git worktree is removed.
 	HookOnWorktreeRemove
+	// HookOnSetup is called during project initialization (rubichan init).
+	HookOnSetup
 )
 
 // String returns the human-readable name of a HookPhase.
@@ -109,6 +111,8 @@ func (h HookPhase) String() string {
 		return "OnWorktreeCreate"
 	case HookOnWorktreeRemove:
 		return "OnWorktreeRemove"
+	case HookOnSetup:
+		return "OnSetup"
 	default:
 		return fmt.Sprintf("HookPhase(%d)", h)
 	}
