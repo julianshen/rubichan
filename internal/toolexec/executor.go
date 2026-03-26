@@ -3,6 +3,7 @@ package toolexec
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/tools"
@@ -25,6 +26,7 @@ func RegistryExecutor(lookup ToolLookup) HandlerFunc {
 			// Try to suggest the closest matching tool name.
 			if namer, ok := lookup.(ToolNamer); ok {
 				names := namer.Names()
+				sort.Strings(names)
 				if suggestion := SuggestToolName(tc.Name, names); suggestion != "" {
 					msg = fmt.Sprintf("unknown tool: %s. Did you mean %q? Available tools: %s",
 						tc.Name, suggestion, strings.Join(names, ", "))

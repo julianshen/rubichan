@@ -72,10 +72,21 @@ func (r *Registry) Get(name string) (Tool, bool) {
 // RegisterAlias maps an alias name to a canonical tool name. When Get is
 // called with the alias, it resolves to the canonical tool. Aliases do not
 // appear in All() — they are transparent to the model.
-func (r *Registry) RegisterAlias(alias, canonicalName string) {
+//
+// Returns an error if the alias shadows a registered canonical tool name
+// or if the alias is already registered with a different target.
+func (r *Registry) RegisterAlias(alias, canonicalName string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if _, exists := r.tools[alias]; exists {
+		return fmt.Errorf("alias %q shadows canonical tool name", alias)
+	}
+	if existing, exists := r.aliases[alias]; exists && existing != canonicalName {
+		return fmt.Errorf("alias %q already registered for %q", alias, existing)
+	}
 	r.aliases[alias] = canonicalName
+	return nil
 }
 
 // Names returns the canonical names of all registered tools.
@@ -119,6 +130,7 @@ func (r *Registry) Filter(names []string) *Registry {
 		for _, tool := range r.tools {
 			_ = filtered.Register(tool)
 		}
+		r.copyAliasesTo(filtered, nil)
 		return filtered
 	}
 
@@ -131,7 +143,21 @@ func (r *Registry) Filter(names []string) *Registry {
 			_ = filtered.Register(tool)
 		}
 	}
+	r.copyAliasesTo(filtered, nameSet)
 	return filtered
+}
+
+// copyAliasesTo copies aliases whose canonical targets exist in the destination
+// registry. If allowedTargets is nil, all aliases are copied.
+func (r *Registry) copyAliasesTo(dst *Registry, allowedTargets map[string]struct{}) {
+	for alias, canonical := range r.aliases {
+		if allowedTargets != nil {
+			if _, ok := allowedTargets[canonical]; !ok {
+				continue
+			}
+		}
+		dst.aliases[alias] = canonical
+	}
 }
 
 // SelectForContext returns tool definitions filtered for relevance to the
@@ -148,28 +174,33 @@ func (r *Registry) SelectForContext(messages []provider.Message) []provider.Tool
 // often hallucinate when attempting to call tools. These map commonly used
 // tool names from other frameworks to rubichan's canonical tool names.
 func (r *Registry) RegisterDefaultAliases() {
-	// Shell tool aliases — models often guess these names.
-	r.RegisterAlias("shell_exec", "shell")
-	r.RegisterAlias("run_command", "shell")
-	r.RegisterAlias("execute", "shell")
-	r.RegisterAlias("bash", "shell")
-	r.RegisterAlias("terminal", "shell")
-	r.RegisterAlias("exec", "shell")
+	aliases := [][2]string{
+		// Shell tool aliases — models often guess these names.
+		{"shell_exec", "shell"},
+		{"run_command", "shell"},
+		{"execute", "shell"},
+		{"bash", "shell"},
+		{"terminal", "shell"},
+		{"exec", "shell"},
 
-	// File tool aliases — common in other agent frameworks.
-	r.RegisterAlias("write_file", "file")
-	r.RegisterAlias("read_file", "file")
-	r.RegisterAlias("file_write", "file")
-	r.RegisterAlias("file_read", "file")
-	r.RegisterAlias("edit_file", "file")
-	r.RegisterAlias("create_file", "file")
+		// File tool aliases — common in other agent frameworks.
+		{"write_file", "file"},
+		{"read_file", "file"},
+		{"file_write", "file"},
+		{"file_read", "file"},
+		{"edit_file", "file"},
+		{"create_file", "file"},
 
-	// Search tool aliases.
-	r.RegisterAlias("grep", "search")
-	r.RegisterAlias("find", "search")
-	r.RegisterAlias("code_search", "search")
+		// Search tool aliases.
+		{"grep", "search"},
+		{"find", "search"},
+		{"code_search", "search"},
 
-	// Process tool aliases.
-	r.RegisterAlias("process_manager", "process")
-	r.RegisterAlias("bg_process", "process")
+		// Process tool aliases.
+		{"process_manager", "process"},
+		{"bg_process", "process"},
+	}
+	for _, a := range aliases {
+		_ = r.RegisterAlias(a[0], a[1])
+	}
 }

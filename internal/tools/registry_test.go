@@ -160,8 +160,8 @@ func TestRegistryAlias(t *testing.T) {
 	require.NoError(t, reg.Register(tool))
 
 	// Register alias.
-	reg.RegisterAlias("shell_exec", "shell")
-	reg.RegisterAlias("run_command", "shell")
+	require.NoError(t, reg.RegisterAlias("shell_exec", "shell"))
+	require.NoError(t, reg.RegisterAlias("run_command", "shell"))
 
 	// Lookup by canonical name still works.
 	got, ok := reg.Get("shell")
@@ -178,21 +178,67 @@ func TestRegistryAlias(t *testing.T) {
 	assert.Equal(t, "shell", got.Name())
 
 	// Alias to nonexistent tool returns not-found.
-	reg.RegisterAlias("bad_alias", "nonexistent")
+	require.NoError(t, reg.RegisterAlias("bad_alias", "nonexistent"))
 	_, ok = reg.Get("bad_alias")
 	assert.False(t, ok)
+}
+
+func TestRegistryAliasShadowCanonicalReturnsError(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+
+	err := reg.RegisterAlias("shell", "file")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "shadows canonical tool name")
+}
+
+func TestRegistryAliasDuplicateReturnsError(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.RegisterAlias("my_alias", "shell"))
+
+	// Same target is fine (idempotent).
+	require.NoError(t, reg.RegisterAlias("my_alias", "shell"))
+
+	// Different target is an error.
+	err := reg.RegisterAlias("my_alias", "file")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already registered")
 }
 
 func TestRegistryAliasDoesNotAppearInAll(t *testing.T) {
 	reg := NewRegistry()
 	require.NoError(t, reg.Register(newMockTool("file", "File operations")))
-	reg.RegisterAlias("write_file", "file")
-	reg.RegisterAlias("read_file", "file")
+	require.NoError(t, reg.RegisterAlias("write_file", "file"))
+	require.NoError(t, reg.RegisterAlias("read_file", "file"))
 
 	// All() should only return canonical tools, not aliases.
 	defs := reg.All()
 	assert.Len(t, defs, 1)
 	assert.Equal(t, "file", defs[0].Name)
+}
+
+func TestRegistryFilterCopiesAliases(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+	require.NoError(t, reg.Register(newMockTool("file", "file")))
+	require.NoError(t, reg.RegisterAlias("bash", "shell"))
+	require.NoError(t, reg.RegisterAlias("write_file", "file"))
+
+	// Filter to only "shell" — alias "bash" should come along, "write_file" should not.
+	filtered := reg.Filter([]string{"shell"})
+	got, ok := filtered.Get("bash")
+	assert.True(t, ok, "alias 'bash' should be copied to filtered registry")
+	assert.Equal(t, "shell", got.Name())
+
+	_, ok = filtered.Get("write_file")
+	assert.False(t, ok, "alias 'write_file' should not be in filtered registry")
+
+	// Filter nil copies all aliases.
+	all := reg.Filter(nil)
+	_, ok = all.Get("bash")
+	assert.True(t, ok)
+	_, ok = all.Get("write_file")
+	assert.True(t, ok)
 }
 
 func TestRegistryDefaultAliases(t *testing.T) {

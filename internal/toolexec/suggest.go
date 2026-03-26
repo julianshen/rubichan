@@ -45,7 +45,7 @@ func SuggestToolName(unknown string, available []string) string {
 	return ""
 }
 
-// splitToolName splits a tool name by underscores, hyphens, and camelCase boundaries.
+// splitToolName splits a tool name by underscores and hyphens.
 func splitToolName(name string) []string {
 	// Split by underscores and hyphens.
 	parts := strings.FieldsFunc(name, func(r rune) bool {
