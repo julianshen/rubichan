@@ -205,28 +205,28 @@ func TestDetectProjectInfoGoModule(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module github.com/user/myproject\n\ngo 1.22\n"), 0o644))
 
-	info := detectProjectInfo(dir)
-	assert.Contains(t, info.languages, "Go")
-	assert.NotEmpty(t, info.buildCmds)
-	assert.NotEmpty(t, info.testCmds)
+	info := DetectProjectInfo(dir)
+	assert.Contains(t, info.Languages, "Go")
+	assert.NotEmpty(t, info.BuildCmds)
+	assert.NotEmpty(t, info.TestCmds)
 }
 
 func TestDetectProjectInfoEmpty(t *testing.T) {
 	dir := t.TempDir()
-	info := detectProjectInfo(dir)
-	assert.Empty(t, info.languages)
-	assert.Empty(t, info.buildCmds)
+	info := DetectProjectInfo(dir)
+	assert.Empty(t, info.Languages)
+	assert.Empty(t, info.BuildCmds)
 }
 
 func TestDetectProjectInfoNodeScripts(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"app","scripts":{"test":"vitest","build":"vite build","lint":"eslint ."}}`), 0o644))
 
-	info := detectProjectInfo(dir)
-	assert.Contains(t, info.languages, "JavaScript/TypeScript")
-	assert.NotEmpty(t, info.testCmds)
-	assert.NotEmpty(t, info.buildCmds)
-	assert.NotEmpty(t, info.lintCmds)
+	info := DetectProjectInfo(dir)
+	assert.Contains(t, info.Languages, "JavaScript/TypeScript")
+	assert.NotEmpty(t, info.TestCmds)
+	assert.NotEmpty(t, info.BuildCmds)
+	assert.NotEmpty(t, info.LintCmds)
 }
 
 // --- Case-insensitive format argument ---
@@ -326,17 +326,17 @@ func TestDetectProjectInfoPythonSetupPy(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "setup.py"), []byte("from setuptools import setup\n"), 0o644))
 
-	info := detectProjectInfo(dir)
-	assert.Contains(t, info.languages, "Python")
-	assert.NotEmpty(t, info.testCmds)
+	info := DetectProjectInfo(dir)
+	assert.Contains(t, info.Languages, "Python")
+	assert.NotEmpty(t, info.TestCmds)
 }
 
 func TestDetectProjectInfoPythonRequirements(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("flask\n"), 0o644))
 
-	info := detectProjectInfo(dir)
-	assert.Contains(t, info.languages, "Python")
+	info := DetectProjectInfo(dir)
+	assert.Contains(t, info.Languages, "Python")
 }
 
 // --- readPackageScripts error resilience ---
@@ -345,12 +345,12 @@ func TestDetectProjectInfoMalformedPackageJSON(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{bad json`), 0o644))
 
-	info := detectProjectInfo(dir)
+	info := DetectProjectInfo(dir)
 	// Should still detect JS/TS language but have no script-based commands
-	assert.Contains(t, info.languages, "JavaScript/TypeScript")
-	assert.Empty(t, info.buildCmds)
-	assert.Empty(t, info.testCmds)
-	assert.Empty(t, info.lintCmds)
+	assert.Contains(t, info.Languages, "JavaScript/TypeScript")
+	assert.Empty(t, info.BuildCmds)
+	assert.Empty(t, info.TestCmds)
+	assert.Empty(t, info.LintCmds)
 }
 
 func TestReadPackageScriptsNonexistentFile(t *testing.T) {
