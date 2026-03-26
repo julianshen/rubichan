@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -44,18 +43,12 @@ func LoadHooksTOML(projectRoot string) ([]UserHookConfig, error) {
 
 	configs := make([]UserHookConfig, 0, len(file.Hooks))
 	for _, entry := range file.Hooks {
-		timeout := defaultTimeout
-		if entry.Timeout != "" {
-			if parsed, parseErr := time.ParseDuration(entry.Timeout); parseErr == nil {
-				timeout = parsed
-			}
-		}
 		configs = append(configs, UserHookConfig{
 			Event:       entry.Event,
 			Pattern:     entry.MatchTool,
 			Command:     entry.Command,
 			Description: entry.Description,
-			Timeout:     timeout,
+			Timeout:     ParseHookTimeout(entry.Timeout),
 			Source:      ".agent/hooks.toml",
 		})
 	}

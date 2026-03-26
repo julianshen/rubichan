@@ -16,8 +16,6 @@ func initCmd() *cobra.Command {
 		dir       string
 		force     bool
 		hooksOnly bool
-		// maintenance is reserved for future use (setup hooks with maintenance context).
-		maintenance bool
 	)
 
 	cmd := &cobra.Command{
@@ -37,20 +35,9 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 				dir = cwd
 			}
 
-			if hooksOnly || maintenance {
-				mode := "hooks-only"
-				if maintenance {
-					mode = "maintenance"
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Running setup hooks (mode=%s)...\n", mode)
+			if hooksOnly {
+				fmt.Fprintf(cmd.OutOrStdout(), "Running setup hooks (mode=hooks-only)...\n")
 				return nil
-			}
-
-			target := filepath.Join(dir, "AGENT.md")
-			if _, err := os.Stat(target); err == nil && !force {
-				return fmt.Errorf("AGENT.md already exists in %s; use --force to overwrite", dir)
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("checking for existing AGENT.md: %w", err)
 			}
 
 			for _, sub := range []string{".agent/skills", ".agent/hooks"} {
@@ -62,8 +49,25 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 			info := commands.DetectProjectInfo(dir)
 			content := commands.GenerateContent("AGENT.md", info)
 
-			if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+			target := filepath.Join(dir, "AGENT.md")
+			flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+			if !force {
+				flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+			}
+			f, err := os.OpenFile(target, flags, 0o644)
+			if err != nil {
+				if errors.Is(err, os.ErrExist) {
+					return fmt.Errorf("AGENT.md already exists in %s; use --force to overwrite", dir)
+				}
 				return fmt.Errorf("writing AGENT.md: %w", err)
+			}
+			_, writeErr := f.WriteString(content)
+			closeErr := f.Close()
+			if writeErr != nil {
+				return fmt.Errorf("writing AGENT.md: %w", writeErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("writing AGENT.md: %w", closeErr)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Generated AGENT.md and .agent/ structure in %s\n", dir)
@@ -74,7 +78,6 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 	cmd.Flags().StringVar(&dir, "dir", "", "Project directory (default: current directory)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing AGENT.md")
 	cmd.Flags().BoolVar(&hooksOnly, "hooks-only", false, "Run setup hooks only, skip file generation")
-	cmd.Flags().BoolVar(&maintenance, "maintenance", false, "Run setup hooks with maintenance context")
 
 	return cmd
 }
