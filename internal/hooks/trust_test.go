@@ -48,6 +48,32 @@ func TestTrustInvalidatedOnChange(t *testing.T) {
 	assert.False(t, trusted, "trust should be invalidated when hooks change")
 }
 
+func TestTrustTOMLHooksApproveAndCheck(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	tomlHooks := []hooks.UserHookConfig{
+		{Event: "setup", Command: "go mod download", Source: ".agent/hooks.toml"},
+		{Event: "pre_tool", Pattern: "shell", Command: "python3 guard.py", Source: ".agent/hooks.toml"},
+	}
+
+	trusted, err := hooks.CheckTrust(s, "/project", tomlHooks)
+	require.NoError(t, err)
+	assert.False(t, trusted)
+
+	require.NoError(t, hooks.ApproveTrust(s, "/project", tomlHooks))
+
+	trusted, err = hooks.CheckTrust(s, "/project", tomlHooks)
+	require.NoError(t, err)
+	assert.True(t, trusted)
+
+	tomlHooks[0].Command = "npm ci"
+	trusted, err = hooks.CheckTrust(s, "/project", tomlHooks)
+	require.NoError(t, err)
+	assert.False(t, trusted, "trust should be invalidated when TOML hook changes")
+}
+
 func TestTrustInvalidatedOnPatternChange(t *testing.T) {
 	s, err := store.NewStore(":memory:")
 	require.NoError(t, err)
