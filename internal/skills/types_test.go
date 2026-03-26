@@ -109,3 +109,19 @@ func TestSkillStateStringUnknown(t *testing.T) {
 	unknown := SkillState(999)
 	assert.Equal(t, "SkillState(999)", unknown.String())
 }
+
+func TestHookOnSetupString(t *testing.T) {
+	assert.Equal(t, "OnSetup", HookOnSetup.String())
+}
+
+func TestHookOnSetupIsDistinctPhase(t *testing.T) {
+	phases := []HookPhase{
+		HookOnActivate, HookOnDeactivate, HookOnConversationStart,
+		HookOnBeforePromptBuild, HookOnBeforeToolCall, HookOnAfterToolResult,
+		HookOnAfterResponse, HookOnBeforeWikiSection, HookOnSecurityScanComplete,
+		HookOnWorktreeCreate, HookOnWorktreeRemove,
+	}
+	for _, p := range phases {
+		assert.NotEqual(t, HookOnSetup, p, "HookOnSetup must be distinct from %s", p)
+	}
+}
