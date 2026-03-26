@@ -194,3 +194,23 @@ func TestRunnerInvalidEventSkipped(t *testing.T) {
 	}, t.TempDir())
 	runner.RegisterIntoLM(lm)
 }
+
+func TestRunnerSetupEventMaps(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	dir := t.TempDir()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "setup", Command: "echo setup-ran", Timeout: 5 * time.Second},
+	}, dir)
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnSetup,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"mode": "init"},
+	})
+	require.NoError(t, err)
+	// Setup is non-blocking (not a pre-event), so Cancel should be false.
+	if result != nil {
+		assert.False(t, result.Cancel)
+	}
+}

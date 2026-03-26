@@ -128,6 +128,8 @@ func mapEventToPhase(event string) (skills.HookPhase, bool, func(skills.HookEven
 		return skills.HookOnBeforeToolCall, true, filterShellTool
 	case "session_start":
 		return skills.HookOnConversationStart, false, noFilter
+	case "setup":
+		return skills.HookOnSetup, false, noFilter
 	default:
 		return 0, false, nil
 	}
