@@ -357,3 +357,17 @@ func TestReadPackageScriptsNonexistentFile(t *testing.T) {
 	result := readPackageScripts("/nonexistent/package.json")
 	assert.Nil(t, result)
 }
+
+func TestInitCommandGeneratesAgentMD(t *testing.T) {
+	dir := t.TempDir()
+	cmd := NewInitCommand(dir)
+
+	result, err := cmd.Execute(context.Background(), []string{"agent"})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "AGENT.md")
+
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# AGENT.md")
+	assert.Contains(t, string(content), "## Project Overview")
+}

@@ -38,7 +38,7 @@ func (c *initCommand) Arguments() []ArgumentDef {
 			Name:        "format",
 			Description: "Format to generate: agents (default) or claude",
 			Required:    false,
-			Static:      []string{"agents", "claude"},
+			Static:      []string{"agents", "claude", "agent"},
 		},
 	}
 }
@@ -59,6 +59,8 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 		filename = "AGENTS.md"
 	case "claude":
 		filename = "CLAUDE.md"
+	case "agent":
+		filename = "AGENT.md"
 	default:
 		return Result{}, fmt.Errorf("unknown format %q: use 'agents' or 'claude'", format)
 	}
