@@ -1329,6 +1329,22 @@ func runInteractive() error {
 
 	// Build user hooks from config and AGENT.md.
 	userHookConfigs := convertHookRules(cfg.Hooks.Rules, "config")
+
+	// Load hooks from .agent/hooks.toml (project-level TOML config).
+	tomlHooks, tomlErr := hooks.LoadHooksTOML(cwd)
+	if tomlErr != nil {
+		log.Printf("warning: loading .agent/hooks.toml: %v", tomlErr)
+	}
+	if len(tomlHooks) > 0 {
+		if cfg.Hooks.TrustProjectHooks {
+			userHookConfigs = append(userHookConfigs, tomlHooks...)
+		} else if trusted, _ := hooks.CheckTrust(s, cwd, tomlHooks); trusted {
+			userHookConfigs = append(userHookConfigs, tomlHooks...)
+		} else {
+			log.Printf("Project hooks in .agent/hooks.toml not trusted — skipping.")
+		}
+	}
+
 	_, agentMDHooks, _ := config.LoadAgentMDWithHooks(cwd)
 	if len(agentMDHooks) > 0 {
 		projectHooks := convertHookRules(agentMDHooks, "agent.md")
@@ -1734,6 +1750,22 @@ func runHeadless() error {
 
 	// Build user hooks from config and AGENT.md.
 	headlessHookConfigs := convertHookRules(cfg.Hooks.Rules, "config")
+
+	// Load hooks from .agent/hooks.toml (project-level TOML config).
+	headlessTomlHooks, headlessTomlErr := hooks.LoadHooksTOML(cwd)
+	if headlessTomlErr != nil {
+		log.Printf("warning: loading .agent/hooks.toml: %v", headlessTomlErr)
+	}
+	if len(headlessTomlHooks) > 0 {
+		if cfg.Hooks.TrustProjectHooks {
+			headlessHookConfigs = append(headlessHookConfigs, headlessTomlHooks...)
+		} else if trusted, _ := hooks.CheckTrust(s, cwd, headlessTomlHooks); trusted {
+			headlessHookConfigs = append(headlessHookConfigs, headlessTomlHooks...)
+		} else {
+			log.Printf("Project hooks in .agent/hooks.toml not trusted — skipping.")
+		}
+	}
+
 	_, headlessAgentMDHooks, _ := config.LoadAgentMDWithHooks(cwd)
 	if len(headlessAgentMDHooks) > 0 {
 		projectHooks := convertHookRules(headlessAgentMDHooks, "agent.md")
