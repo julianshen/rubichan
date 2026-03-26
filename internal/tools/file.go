@@ -50,7 +50,11 @@ func (f *FileTool) Name() string {
 }
 
 func (f *FileTool) Description() string {
-	return "Read, write, or patch files. Supports operations: read, write, patch."
+	return "Read, write, or patch files. Supports operations: read, write, patch.\n" +
+		"Examples:\n" +
+		"  Read:  {\"operation\": \"read\", \"path\": \"src/main.ts\"}\n" +
+		"  Write: {\"operation\": \"write\", \"path\": \"src/App.tsx\", \"content\": \"...\"}\n" +
+		"  Patch: {\"operation\": \"patch\", \"path\": \"package.json\", \"old_string\": \"old\", \"new_string\": \"new\"}"
 }
 
 func (f *FileTool) InputSchema() json.RawMessage {

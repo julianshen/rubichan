@@ -153,3 +153,133 @@ func TestRegistryAll(t *testing.T) {
 	assert.True(t, names["tool_a"])
 	assert.True(t, names["tool_b"])
 }
+
+func TestRegistryAlias(t *testing.T) {
+	reg := NewRegistry()
+	tool := newMockTool("shell", "Execute shell commands")
+	require.NoError(t, reg.Register(tool))
+
+	// Register alias.
+	require.NoError(t, reg.RegisterAlias("shell_exec", "shell"))
+	require.NoError(t, reg.RegisterAlias("run_command", "shell"))
+
+	// Lookup by canonical name still works.
+	got, ok := reg.Get("shell")
+	assert.True(t, ok)
+	assert.Equal(t, "shell", got.Name())
+
+	// Lookup by alias resolves to the real tool.
+	got, ok = reg.Get("shell_exec")
+	assert.True(t, ok)
+	assert.Equal(t, "shell", got.Name())
+
+	got, ok = reg.Get("run_command")
+	assert.True(t, ok)
+	assert.Equal(t, "shell", got.Name())
+
+	// Alias to nonexistent tool returns not-found.
+	require.NoError(t, reg.RegisterAlias("bad_alias", "nonexistent"))
+	_, ok = reg.Get("bad_alias")
+	assert.False(t, ok)
+}
+
+func TestRegistryAliasShadowCanonicalReturnsError(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+
+	err := reg.RegisterAlias("shell", "file")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "shadows canonical tool name")
+}
+
+func TestRegistryAliasDuplicateReturnsError(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.RegisterAlias("my_alias", "shell"))
+
+	// Same target is fine (idempotent).
+	require.NoError(t, reg.RegisterAlias("my_alias", "shell"))
+
+	// Different target is an error.
+	err := reg.RegisterAlias("my_alias", "file")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already registered")
+}
+
+func TestRegistryAliasDoesNotAppearInAll(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("file", "File operations")))
+	require.NoError(t, reg.RegisterAlias("write_file", "file"))
+	require.NoError(t, reg.RegisterAlias("read_file", "file"))
+
+	// All() should only return canonical tools, not aliases.
+	defs := reg.All()
+	assert.Len(t, defs, 1)
+	assert.Equal(t, "file", defs[0].Name)
+}
+
+func TestRegistryFilterCopiesAliases(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+	require.NoError(t, reg.Register(newMockTool("file", "file")))
+	require.NoError(t, reg.RegisterAlias("bash", "shell"))
+	require.NoError(t, reg.RegisterAlias("write_file", "file"))
+
+	// Filter to only "shell" — alias "bash" should come along, "write_file" should not.
+	filtered := reg.Filter([]string{"shell"})
+	got, ok := filtered.Get("bash")
+	assert.True(t, ok, "alias 'bash' should be copied to filtered registry")
+	assert.Equal(t, "shell", got.Name())
+
+	_, ok = filtered.Get("write_file")
+	assert.False(t, ok, "alias 'write_file' should not be in filtered registry")
+
+	// Filter nil copies all aliases.
+	all := reg.Filter(nil)
+	_, ok = all.Get("bash")
+	assert.True(t, ok)
+	_, ok = all.Get("write_file")
+	assert.True(t, ok)
+}
+
+func TestRegistryDefaultAliases(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+	require.NoError(t, reg.Register(newMockTool("file", "file")))
+	require.NoError(t, reg.Register(newMockTool("search", "search")))
+	require.NoError(t, reg.Register(newMockTool("process", "process")))
+
+	reg.RegisterDefaultAliases()
+
+	// Shell aliases resolve.
+	for _, alias := range []string{"shell_exec", "run_command", "bash", "exec"} {
+		got, ok := reg.Get(alias)
+		assert.True(t, ok, "alias %q should resolve", alias)
+		assert.Equal(t, "shell", got.Name())
+	}
+
+	// File aliases resolve.
+	for _, alias := range []string{"write_file", "read_file", "file_write", "edit_file"} {
+		got, ok := reg.Get(alias)
+		assert.True(t, ok, "alias %q should resolve", alias)
+		assert.Equal(t, "file", got.Name())
+	}
+
+	// Search aliases resolve.
+	got, ok := reg.Get("grep")
+	assert.True(t, ok)
+	assert.Equal(t, "search", got.Name())
+
+	// All() still returns only canonical tools.
+	assert.Len(t, reg.All(), 4)
+}
+
+func TestRegistryNames(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+	require.NoError(t, reg.Register(newMockTool("file", "file")))
+
+	names := reg.Names()
+	assert.Len(t, names, 2)
+	assert.Contains(t, names, "shell")
+	assert.Contains(t, names, "file")
+}

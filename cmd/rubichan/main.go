@@ -2272,6 +2272,10 @@ func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config,
 			return nil, fmt.Errorf("registering process tool: %w", err)
 		}
 	}
+	// Register common aliases so models that hallucinate tool names like
+	// "run_command" or "write_file" still resolve to the correct tool.
+	registry.RegisterDefaultAliases()
+
 	if err := wireExtendedTools(cwd, registry, cfg, toolsCfg); err != nil {
 		return nil, err
 	}

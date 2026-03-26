@@ -33,6 +33,7 @@ func TestSearchTool_Name(t *testing.T) {
 func TestSearchTool_Description(t *testing.T) {
 	s := NewSearchTool(t.TempDir())
 	assert.Contains(t, s.Description(), "Search")
+	assert.Contains(t, s.Description(), "Example:")
 }
 
 func TestSearchTool_InputSchema(t *testing.T) {

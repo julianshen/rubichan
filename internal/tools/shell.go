@@ -148,7 +148,8 @@ func (s *ShellTool) Name() string {
 }
 
 func (s *ShellTool) Description() string {
-	return "Execute shell commands. Commands are run via sh -c with a configurable timeout."
+	return "Execute shell commands. Commands are run via sh -c with a configurable timeout.\n" +
+		"Example: {\"command\": \"npm install\", \"timeout\": 60000}"
 }
 
 func (s *ShellTool) InputSchema() json.RawMessage {

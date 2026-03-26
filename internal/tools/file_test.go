@@ -469,6 +469,16 @@ func TestFileToolExecuteStreamWriteRecordsDiffTracker(t *testing.T) {
 	assert.Equal(t, "file", changes[0].Tool)
 }
 
+func TestFileToolDescriptionContainsExamples(t *testing.T) {
+	ft := NewFileTool(t.TempDir())
+	desc := ft.Description()
+	assert.Contains(t, desc, "Example")
+	assert.Contains(t, desc, `"operation"`)
+	assert.Contains(t, desc, `"read"`)
+	assert.Contains(t, desc, `"write"`)
+	assert.Contains(t, desc, `"patch"`)
+}
+
 func TestFileToolNoDiffTrackerDoesNotPanic(t *testing.T) {
 	dir := t.TempDir()
 	ft := NewFileTool(dir) // No DiffTracker set
