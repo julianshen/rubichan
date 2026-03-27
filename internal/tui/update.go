@@ -64,6 +64,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = wsm.Height
 		m.refreshRenderers()
 		m.reflowViewport()
+		if inputWidth := m.width - inputPromptWidth; inputWidth > 0 {
+			m.input.SetWidth(inputWidth)
+		}
+		if m.completion != nil {
+			m.completion.SetWidth(m.width)
+		}
+		if m.fileCompletion != nil {
+			m.fileCompletion.SetWidth(m.width)
+		}
 	}
 
 	// Generic overlay delegation: route all messages to the active overlay.
@@ -94,16 +103,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.refreshRenderers()
-		m.reflowViewport()
-		if m.completion != nil {
-			m.completion.SetWidth(m.width)
-		}
-		if m.fileCompletion != nil {
-			m.fileCompletion.SetWidth(m.width)
-		}
+		// Already handled by the early resize handler above; nothing more to do.
 		return m, nil
 
 	case approvalRequestMsg:

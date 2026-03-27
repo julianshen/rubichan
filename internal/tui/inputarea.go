@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	inputMinHeight = 3
-	inputMaxHeight = 8
+	inputMinHeight   = 3
+	inputMaxHeight   = 8
+	inputPromptWidth = 2 // width of the "❯ " prompt prefix
 )
 
 // InputArea wraps a bubbles textarea.Model for multi-line input.
@@ -88,6 +89,11 @@ func (ia *InputArea) autoGrow() {
 	if h != ia.textarea.Height() {
 		ia.textarea.SetHeight(h)
 	}
+}
+
+// SetWidth sets the textarea width in columns.
+func (ia *InputArea) SetWidth(w int) {
+	ia.textarea.SetWidth(w)
 }
 
 // Height returns the current textarea height in rows.
