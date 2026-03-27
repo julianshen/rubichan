@@ -1,0 +1,604 @@
+package ws
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
+)
+
+// AgentFactory creates a new agent for a session.
+type AgentFactory func(sessionID string, opts SessionCreatePayload) (*agentsdk.Agent, error)
+
+// Hub manages WebSocket clients and routes agent events to them.
+// It implements session.EventSink and agentsdk.UIRequestHandler.
+type Hub struct {
+	sessions map[string]*SessionState
+	clients  map[*Client]*SessionState
+	bridges  []EventBridge
+
+	agentFactory AgentFactory
+
+	mu sync.RWMutex
+}
+
+// SessionState tracks one agent session.
+type SessionState struct {
+	ID      string
+	Agent   *agentsdk.Agent
+	Clients map[*Client]struct{}
+	Buffer  *RingBuffer
+	seq     atomic.Int64
+	uiWait  map[string]chan agentsdk.UIResponse
+	cancel  context.CancelFunc
+	mu      sync.Mutex
+}
+
+// EventBridge receives agent events and forwards them to an external system.
+type EventBridge interface {
+	Publish(ctx context.Context, sessionID string, env Envelope) error
+	Close() error
+}
+
+// HubConfig configures the Hub.
+type HubConfig struct {
+	ReconnectBufferSize int
+	AgentFactory        AgentFactory
+}
+
+// NewHub creates a new Hub.
+func NewHub(cfg HubConfig) *Hub {
+	if cfg.ReconnectBufferSize <= 0 {
+		cfg.ReconnectBufferSize = 1000
+	}
+	return &Hub{
+		sessions:     make(map[string]*SessionState),
+		clients:      make(map[*Client]*SessionState),
+		agentFactory: cfg.AgentFactory,
+	}
+}
+
+// AddBridge registers an event bridge.
+func (h *Hub) AddBridge(b EventBridge) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.bridges = append(h.bridges, b)
+}
+
+// registerClient adds a client to a session.
+func (h *Hub) registerClient(c *Client, sessionID string) (*SessionState, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ss, ok := h.sessions[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("session %q not found", sessionID)
+	}
+
+	ss.mu.Lock()
+	ss.Clients[c] = struct{}{}
+	ss.mu.Unlock()
+
+	h.clients[c] = ss
+	return ss, nil
+}
+
+// unregisterClient removes a client from its session.
+func (h *Hub) unregisterClient(c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ss, ok := h.clients[c]
+	if !ok {
+		return
+	}
+
+	ss.mu.Lock()
+	delete(ss.Clients, c)
+	ss.mu.Unlock()
+
+	delete(h.clients, c)
+}
+
+// CreateSession creates a new agent session.
+func (h *Hub) CreateSession(ctx context.Context, id string, opts SessionCreatePayload, bufferSize int) (*SessionState, error) {
+	if bufferSize <= 0 {
+		bufferSize = 1000
+	}
+
+	var agent *agentsdk.Agent
+	if h.agentFactory != nil {
+		var err error
+		agent, err = h.agentFactory(id, opts)
+		if err != nil {
+			return nil, fmt.Errorf("create agent: %w", err)
+		}
+	}
+
+	ss := &SessionState{
+		ID:      id,
+		Agent:   agent,
+		Clients: make(map[*Client]struct{}),
+		Buffer:  NewRingBuffer(bufferSize),
+		uiWait:  make(map[string]chan agentsdk.UIResponse),
+	}
+
+	h.mu.Lock()
+	h.sessions[id] = ss
+	h.mu.Unlock()
+
+	return ss, nil
+}
+
+// GetSession returns a session by ID.
+func (h *Hub) GetSession(id string) (*SessionState, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	ss, ok := h.sessions[id]
+	return ss, ok
+}
+
+// ListSessions returns all session IDs and their statuses.
+func (h *Hub) ListSessions() []SessionInfoPayload {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	result := make([]SessionInfoPayload, 0, len(h.sessions))
+	for _, ss := range h.sessions {
+		result = append(result, SessionInfoPayload{
+			SessionID: ss.ID,
+			Status:    "active",
+		})
+	}
+	return result
+}
+
+// broadcastToSession sends an envelope to all clients of a session and to bridges.
+func (h *Hub) broadcastToSession(ss *SessionState, env Envelope) {
+	data, err := json.Marshal(env)
+	if err != nil {
+		return
+	}
+
+	// Buffer for reconnection.
+	ss.Buffer.Push(BufferEntry{Seq: env.Seq, Payload: data})
+
+	// Send to connected clients.
+	ss.mu.Lock()
+	for c := range ss.Clients {
+		c.Send(data)
+	}
+	ss.mu.Unlock()
+
+	// Publish to bridges.
+	h.mu.RLock()
+	bridges := h.bridges
+	h.mu.RUnlock()
+	for _, b := range bridges {
+		b.Publish(context.Background(), ss.ID, env)
+	}
+}
+
+// BroadcastTurnEvent converts a TurnEvent to an envelope and broadcasts it.
+func (h *Hub) BroadcastTurnEvent(ss *SessionState, evt agentsdk.TurnEvent) {
+	seq := ss.seq.Add(1)
+	payload, err := marshalTurnEvent(evt)
+	if err != nil {
+		return
+	}
+	env := Envelope{
+		Type:      TypeTurnEvent,
+		SessionID: ss.ID,
+		Seq:       seq,
+		Timestamp: time.Now().UTC(),
+		Payload:   payload,
+	}
+	h.broadcastToSession(ss, env)
+}
+
+// Emit implements session.EventSink — broadcasts session events to all clients.
+func (h *Hub) Emit(evt session.Event) {
+	// Session events don't carry a session ID directly on the Event struct.
+	// The caller must set it via the Actor or we broadcast to all sessions.
+	// In practice, the session layer sets this up per-session.
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, ss := range h.sessions {
+		seq := ss.seq.Add(1)
+		env := Envelope{
+			Type:      TypeEvent,
+			SessionID: ss.ID,
+			Seq:       seq,
+			Timestamp: time.Now().UTC(),
+			Payload:   payload,
+		}
+		h.broadcastToSession(ss, env)
+	}
+}
+
+// SessionEmitter returns an EventSink bound to a specific session.
+func (h *Hub) SessionEmitter(sessionID string) session.EventSink {
+	return session.SinkFunc(func(evt session.Event) {
+		ss, ok := h.GetSession(sessionID)
+		if !ok {
+			return
+		}
+		payload, err := json.Marshal(evt)
+		if err != nil {
+			return
+		}
+		seq := ss.seq.Add(1)
+		env := Envelope{
+			Type:      TypeEvent,
+			SessionID: ss.ID,
+			Seq:       seq,
+			Timestamp: time.Now().UTC(),
+			Payload:   payload,
+		}
+		h.broadcastToSession(ss, env)
+	})
+}
+
+// Request implements agentsdk.UIRequestHandler — forwards UIRequest to WebSocket
+// clients and blocks until a UIResponse arrives.
+func (h *Hub) Request(ctx context.Context, req agentsdk.UIRequest) (agentsdk.UIResponse, error) {
+	// Find which session this request belongs to by checking all sessions
+	// for the agent that initiated it. In practice, the caller knows the session.
+	// We use the request ID to correlate.
+	h.mu.RLock()
+	var targetSession *SessionState
+	for _, ss := range h.sessions {
+		// Use first session with connected clients as the target.
+		// In a real deployment, the session context would carry the session ID.
+		ss.mu.Lock()
+		if len(ss.Clients) > 0 {
+			targetSession = ss
+		}
+		ss.mu.Unlock()
+		if targetSession != nil {
+			break
+		}
+	}
+	h.mu.RUnlock()
+
+	if targetSession == nil {
+		return agentsdk.UIResponse{}, fmt.Errorf("no connected clients for UI request")
+	}
+
+	return h.requestFromSession(ctx, targetSession, req)
+}
+
+// SessionUIHandler returns a UIRequestHandler bound to a specific session.
+func (h *Hub) SessionUIHandler(sessionID string) agentsdk.UIRequestHandler {
+	return agentsdk.UIRequestFunc(func(ctx context.Context, req agentsdk.UIRequest) (agentsdk.UIResponse, error) {
+		ss, ok := h.GetSession(sessionID)
+		if !ok {
+			return agentsdk.UIResponse{}, fmt.Errorf("session %q not found", sessionID)
+		}
+		return h.requestFromSession(ctx, ss, req)
+	})
+}
+
+// requestFromSession sends a UIRequest to a session's clients and waits for a response.
+func (h *Hub) requestFromSession(ctx context.Context, ss *SessionState, req agentsdk.UIRequest) (agentsdk.UIResponse, error) {
+	// Create a response channel.
+	responseCh := make(chan agentsdk.UIResponse, 1)
+	ss.mu.Lock()
+	ss.uiWait[req.ID] = responseCh
+	ss.mu.Unlock()
+
+	defer func() {
+		ss.mu.Lock()
+		delete(ss.uiWait, req.ID)
+		ss.mu.Unlock()
+	}()
+
+	// Broadcast UIRequest to all connected clients.
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return agentsdk.UIResponse{}, fmt.Errorf("marshal UIRequest: %w", err)
+	}
+	seq := ss.seq.Add(1)
+	env := Envelope{
+		Type:      TypeUIRequest,
+		SessionID: ss.ID,
+		Seq:       seq,
+		Timestamp: time.Now().UTC(),
+		Payload:   payload,
+	}
+	h.broadcastToSession(ss, env)
+
+	// Wait for response or cancellation.
+	select {
+	case resp := <-responseCh:
+		return resp, nil
+	case <-ctx.Done():
+		return agentsdk.UIResponse{}, ctx.Err()
+	}
+}
+
+// handleClientMessage processes an incoming message from a WebSocket client.
+func (h *Hub) handleClientMessage(c *Client, env Envelope) {
+	switch env.Type {
+	case TypeUserMessage:
+		h.handleUserMessage(c, env)
+	case TypeUIResponse:
+		h.handleUIResponse(c, env)
+	case TypeSessionCreate:
+		h.handleSessionCreate(c, env)
+	case TypeSessionResume:
+		h.handleSessionResume(c, env)
+	case TypeSessionList:
+		h.handleSessionList(c)
+	case TypeCancel:
+		h.handleCancel(c, env)
+	case TypePing:
+		h.handlePing(c)
+	default:
+		h.sendError(c, "unknown_type", fmt.Sprintf("unknown message type: %q", env.Type))
+	}
+}
+
+func (h *Hub) handleUserMessage(c *Client, env Envelope) {
+	var payload UserMessagePayload
+	if err := env.ParsePayload(&payload); err != nil {
+		h.sendError(c, "invalid_payload", "failed to parse user_message payload")
+		return
+	}
+	if payload.Text == "" {
+		h.sendError(c, "empty_message", "message text cannot be empty")
+		return
+	}
+
+	h.mu.RLock()
+	ss := h.clients[c]
+	h.mu.RUnlock()
+
+	if ss == nil {
+		h.sendError(c, "no_session", "client is not attached to a session")
+		return
+	}
+
+	if ss.Agent == nil {
+		h.sendError(c, "no_agent", "session has no agent configured")
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ss.mu.Lock()
+	ss.cancel = cancel
+	ss.mu.Unlock()
+
+	turnCh, err := ss.Agent.Turn(ctx, payload.Text)
+	if err != nil {
+		cancel()
+		h.sendError(c, "turn_error", err.Error())
+		return
+	}
+
+	// Consume turn events in a goroutine and broadcast.
+	go func() {
+		defer cancel()
+		for evt := range turnCh {
+			h.BroadcastTurnEvent(ss, evt)
+		}
+	}()
+}
+
+func (h *Hub) handleUIResponse(c *Client, env Envelope) {
+	var resp agentsdk.UIResponse
+	if err := env.ParsePayload(&resp); err != nil {
+		h.sendError(c, "invalid_payload", "failed to parse ui_response payload")
+		return
+	}
+
+	h.mu.RLock()
+	ss := h.clients[c]
+	h.mu.RUnlock()
+
+	if ss == nil {
+		return
+	}
+
+	ss.mu.Lock()
+	ch, ok := ss.uiWait[resp.RequestID]
+	ss.mu.Unlock()
+
+	if ok {
+		select {
+		case ch <- resp:
+		default:
+		}
+	}
+}
+
+func (h *Hub) handleSessionCreate(c *Client, env Envelope) {
+	var payload SessionCreatePayload
+	if err := env.ParsePayload(&payload); err != nil {
+		h.sendError(c, "invalid_payload", "failed to parse session_create payload")
+		return
+	}
+
+	id := fmt.Sprintf("ws-%d", time.Now().UnixNano())
+	ss, err := h.CreateSession(context.Background(), id, payload, 1000)
+	if err != nil {
+		h.sendError(c, "create_failed", err.Error())
+		return
+	}
+
+	if _, err := h.registerClient(c, id); err != nil {
+		h.sendError(c, "register_failed", err.Error())
+		return
+	}
+
+	info := SessionInfoPayload{SessionID: ss.ID, Status: "active", Model: payload.Model}
+	h.sendEnvelope(c, TypeSessionInfo, ss.ID, info)
+}
+
+func (h *Hub) handleSessionResume(c *Client, env Envelope) {
+	var payload SessionResumePayload
+	if err := env.ParsePayload(&payload); err != nil {
+		h.sendError(c, "invalid_payload", "failed to parse session_resume payload")
+		return
+	}
+
+	ss, err := h.registerClient(c, payload.SessionID)
+	if err != nil {
+		h.sendError(c, "resume_failed", err.Error())
+		return
+	}
+
+	// Send session info.
+	info := SessionInfoPayload{SessionID: ss.ID, Status: "active"}
+	h.sendEnvelope(c, TypeSessionInfo, ss.ID, info)
+
+	// Replay buffered events since last_seq.
+	entries := ss.Buffer.Since(payload.LastSeq)
+	if payload.LastSeq > 0 && len(entries) == 0 && ss.Buffer.Len() > 0 && ss.Buffer.OldestSeq() > payload.LastSeq {
+		h.sendError(c, "gap_too_large", "reconnect buffer does not contain events since requested sequence")
+		return
+	}
+	for _, entry := range entries {
+		c.Send(entry.Payload)
+	}
+}
+
+func (h *Hub) handleSessionList(c *Client) {
+	sessions := h.ListSessions()
+	payload, _ := json.Marshal(sessions)
+	env := Envelope{
+		Type:      TypeSessionInfo,
+		Timestamp: time.Now().UTC(),
+		Payload:   payload,
+	}
+	data, _ := json.Marshal(env)
+	c.Send(data)
+}
+
+func (h *Hub) handleCancel(c *Client, _ Envelope) {
+	h.mu.RLock()
+	ss := h.clients[c]
+	h.mu.RUnlock()
+
+	if ss == nil {
+		return
+	}
+
+	ss.mu.Lock()
+	if ss.cancel != nil {
+		ss.cancel()
+		ss.cancel = nil
+	}
+	ss.mu.Unlock()
+}
+
+func (h *Hub) handlePing(c *Client) {
+	env := Envelope{
+		Type:      TypePong,
+		Timestamp: time.Now().UTC(),
+	}
+	data, _ := json.Marshal(env)
+	c.Send(data)
+}
+
+func (h *Hub) sendError(c *Client, code, message string) {
+	h.sendEnvelope(c, TypeError, "", ErrorPayload{Code: code, Message: message})
+}
+
+func (h *Hub) sendEnvelope(c *Client, msgType, sessionID string, payload any) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	env := Envelope{
+		Type:      msgType,
+		SessionID: sessionID,
+		Timestamp: time.Now().UTC(),
+		Payload:   raw,
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return
+	}
+	c.Send(data)
+}
+
+// marshalTurnEvent serializes a TurnEvent for wire transmission.
+// The error field is converted to a string since errors aren't JSON-serializable.
+type wireTurnEvent struct {
+	Type         string                    `json:"type"`
+	Text         string                    `json:"text,omitempty"`
+	ToolCall     *agentsdk.ToolCallEvent   `json:"tool_call,omitempty"`
+	ToolResult   *agentsdk.ToolResultEvent `json:"tool_result,omitempty"`
+	ToolProgress *wireToolProgress         `json:"tool_progress,omitempty"`
+	UIRequest    *agentsdk.UIRequest       `json:"ui_request,omitempty"`
+	UIUpdate     *agentsdk.UIUpdate        `json:"ui_update,omitempty"`
+	UIResponse   *agentsdk.UIResponse      `json:"ui_response,omitempty"`
+	Error        string                    `json:"error,omitempty"`
+	InputTokens  int                       `json:"input_tokens,omitempty"`
+	OutputTokens int                       `json:"output_tokens,omitempty"`
+	DiffSummary  string                    `json:"diff_summary,omitempty"`
+}
+
+type wireToolProgress struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Stage   string `json:"stage"`
+	Content string `json:"content,omitempty"`
+	IsError bool   `json:"is_error,omitempty"`
+}
+
+func marshalTurnEvent(evt agentsdk.TurnEvent) (json.RawMessage, error) {
+	w := wireTurnEvent{
+		Type:         evt.Type,
+		Text:         evt.Text,
+		ToolCall:     evt.ToolCall,
+		ToolResult:   evt.ToolResult,
+		UIRequest:    evt.UIRequest,
+		UIUpdate:     evt.UIUpdate,
+		UIResponse:   evt.UIResponse,
+		InputTokens:  evt.InputTokens,
+		OutputTokens: evt.OutputTokens,
+		DiffSummary:  evt.DiffSummary,
+	}
+	if evt.Error != nil {
+		w.Error = evt.Error.Error()
+	}
+	if evt.ToolProgress != nil {
+		w.ToolProgress = &wireToolProgress{
+			ID:      evt.ToolProgress.ID,
+			Name:    evt.ToolProgress.Name,
+			Stage:   evt.ToolProgress.Stage.String(),
+			Content: evt.ToolProgress.Content,
+			IsError: evt.ToolProgress.IsError,
+		}
+	}
+	return json.Marshal(w)
+}
+
+// Close shuts down all bridges.
+func (h *Hub) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, b := range h.bridges {
+		b.Close()
+	}
+	h.bridges = nil
+
+	for c := range h.clients {
+		c.close()
+	}
+	return nil
+}
