@@ -533,6 +533,7 @@ func main() {
 	rootCmd.AddCommand(sessionCmd())
 	rootCmd.AddCommand(initCmd())
 	rootCmd.AddCommand(serveCmd())
+	rootCmd.AddCommand(shellCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *runner.ExitError
