@@ -105,15 +105,14 @@ func (b *ChannelBridge) dispatch() {
 			return
 		case evt := <-b.events:
 			b.mu.RLock()
-			// Deliver to session-specific subscribers.
-			for _, handler := range b.subscribers[evt.SessionID] {
-				handler(evt.Envelope)
-			}
-			// Deliver to wildcard subscribers.
-			for _, handler := range b.subscribers["*"] {
-				handler(evt.Envelope)
-			}
+			handlers := make([]func(Envelope), 0, len(b.subscribers[evt.SessionID])+len(b.subscribers["*"]))
+			handlers = append(handlers, b.subscribers[evt.SessionID]...)
+			handlers = append(handlers, b.subscribers["*"]...)
 			b.mu.RUnlock()
+
+			for _, handler := range handlers {
+				handler(evt.Envelope)
+			}
 		}
 	}
 }

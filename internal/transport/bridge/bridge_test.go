@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"testing"
 	"time"
 
@@ -47,8 +46,8 @@ func TestChannelBridge_WildcardSubscriber(t *testing.T) {
 		received <- env.SessionID
 	}))
 
-	b.Publish(context.Background(), "sess-1", Envelope{Type: "event", SessionID: "sess-1", Timestamp: time.Now().UTC()})
-	b.Publish(context.Background(), "sess-2", Envelope{Type: "event", SessionID: "sess-2", Timestamp: time.Now().UTC()})
+	require.NoError(t, b.Publish(context.Background(), "sess-1", Envelope{Type: "event", SessionID: "sess-1", Timestamp: time.Now().UTC()}))
+	require.NoError(t, b.Publish(context.Background(), "sess-2", Envelope{Type: "event", SessionID: "sess-2", Timestamp: time.Now().UTC()}))
 
 	sessions := make(map[string]bool)
 	for range 2 {
@@ -68,21 +67,20 @@ func TestChannelBridge_SessionIsolation(t *testing.T) {
 	b := NewChannelBridge(10)
 	defer b.Close()
 
-	sess1Count := 0
-	var mu sync.Mutex
+	received := make(chan struct{}, 1)
 	require.NoError(t, b.Subscribe(context.Background(), "sess-1", func(_ Envelope) {
-		mu.Lock()
-		sess1Count++
-		mu.Unlock()
+		received <- struct{}{}
 	}))
 
-	b.Publish(context.Background(), "sess-2", Envelope{Type: "event", Timestamp: time.Now().UTC()})
-	// Give dispatch time to process.
-	time.Sleep(50 * time.Millisecond)
+	require.NoError(t, b.Publish(context.Background(), "sess-2", Envelope{Type: "event", Timestamp: time.Now().UTC()}))
 
-	mu.Lock()
-	assert.Equal(t, 0, sess1Count)
-	mu.Unlock()
+	// Verify no delivery to sess-1 subscriber.
+	select {
+	case <-received:
+		t.Fatal("sess-1 subscriber should not receive sess-2 event")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: no message received.
+	}
 }
 
 func TestChannelBridge_Close(t *testing.T) {
@@ -111,7 +109,7 @@ func TestChannelBridge_MultipleSubscribers(t *testing.T) {
 		}))
 	}
 
-	b.Publish(context.Background(), "s", Envelope{Type: "event", Timestamp: time.Now().UTC()})
+	require.NoError(t, b.Publish(context.Background(), "s", Envelope{Type: "event", Timestamp: time.Now().UTC()}))
 
 	total := 0
 	for range 2 {

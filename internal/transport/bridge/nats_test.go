@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -84,16 +85,7 @@ func matchSubject(pattern, subject string) bool {
 }
 
 func splitDot(s string) []string {
-	var parts []string
-	start := 0
-	for i := range len(s) {
-		if s[i] == '.' {
-			parts = append(parts, s[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
+	return strings.Split(s, ".")
 }
 
 func TestNATSBridge_Publish(t *testing.T) {
@@ -197,8 +189,8 @@ func TestNATSBridge_WildcardSubscribe(t *testing.T) {
 		received <- env
 	}))
 
-	b.Publish(context.Background(), "sess-1", Envelope{Type: "e1", SessionID: "sess-1", Timestamp: time.Now().UTC()})
-	b.Publish(context.Background(), "sess-2", Envelope{Type: "e2", SessionID: "sess-2", Timestamp: time.Now().UTC()})
+	require.NoError(t, b.Publish(context.Background(), "sess-1", Envelope{Type: "e1", SessionID: "sess-1", Timestamp: time.Now().UTC()}))
+	require.NoError(t, b.Publish(context.Background(), "sess-2", Envelope{Type: "e2", SessionID: "sess-2", Timestamp: time.Now().UTC()}))
 
 	types := make(map[string]bool)
 	for range 2 {

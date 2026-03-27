@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
@@ -34,7 +35,7 @@ type StaticTokenAuth struct {
 
 // Validate implements Authenticator — checks that token matches.
 func (a StaticTokenAuth) Validate(token string) (AuthClaims, error) {
-	if token != a.Token {
+	if subtle.ConstantTimeCompare([]byte(token), []byte(a.Token)) != 1 {
 		return AuthClaims{}, ErrUnauthorized
 	}
 	return AuthClaims{Subject: "user"}, nil

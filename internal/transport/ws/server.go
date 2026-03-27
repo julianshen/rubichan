@@ -75,9 +75,11 @@ func (s *Server) Serve(ln net.Listener) error {
 }
 
 // Shutdown gracefully shuts down the server.
+// It stops accepting new connections first, then closes the hub.
 func (s *Server) Shutdown(ctx context.Context) error {
+	err := s.httpServer.Shutdown(ctx)
 	s.hub.Close()
-	return s.httpServer.Shutdown(ctx)
+	return err
 }
 
 // handleWebSocket upgrades HTTP to WebSocket and starts client pumps.

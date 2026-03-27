@@ -207,12 +207,18 @@ func (h *Hub) broadcastToSession(ss *SessionState, env Envelope) {
 	// Buffer for reconnection.
 	ss.Buffer.Push(BufferEntry{Seq: env.Seq, Payload: data})
 
-	// Send to connected clients.
+	// Snapshot clients under lock, then send outside lock to avoid
+	// holding the lock during I/O (c.Send may call c.close on slow clients).
 	ss.mu.Lock()
+	clients := make([]*Client, 0, len(ss.Clients))
 	for c := range ss.Clients {
-		c.Send(data)
+		clients = append(clients, c)
 	}
 	ss.mu.Unlock()
+
+	for _, c := range clients {
+		c.Send(data)
+	}
 
 	// Snapshot bridges under lock, then publish outside lock.
 	h.mu.RLock()
@@ -308,24 +314,45 @@ func (h *Hub) SessionEmitter(sessionID string) session.EventSink {
 	})
 }
 
+// sessionIDKey is the context key for passing session IDs to Hub.Request.
+type sessionIDKey struct{}
+
+// ContextWithSessionID returns a new context carrying the given session ID.
+// Pass this context to Agent.Turn so that Hub.Request can route UI requests
+// to the correct session.
+func ContextWithSessionID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, sessionIDKey{}, id)
+}
+
 // Request implements agentsdk.UIRequestHandler — forwards UIRequest to WebSocket
 // clients and blocks until a UIResponse arrives.
+// The context must carry a session ID (via ContextWithSessionID) so the request
+// is routed to the correct session. Falls back to first session with clients
+// only when a single session exists.
 func (h *Hub) Request(ctx context.Context, req agentsdk.UIRequest) (agentsdk.UIResponse, error) {
-	// Find which session this request belongs to by checking all sessions
-	// for the agent that initiated it. In practice, the caller knows the session.
-	// We use the request ID to correlate.
+	// Try to extract session ID from context.
+	if id, ok := ctx.Value(sessionIDKey{}).(string); ok {
+		ss, found := h.GetSession(id)
+		if !found {
+			return agentsdk.UIResponse{}, fmt.Errorf("session %q not found", id)
+		}
+		return h.requestFromSession(ctx, ss, req)
+	}
+
+	// Fallback: find the single session with connected clients.
 	h.mu.RLock()
 	var targetSession *SessionState
 	for _, ss := range h.sessions {
-		// Use first session with connected clients as the target.
-		// In a real deployment, the session context would carry the session ID.
 		ss.mu.Lock()
-		if len(ss.Clients) > 0 {
-			targetSession = ss
-		}
+		hasClients := len(ss.Clients) > 0
 		ss.mu.Unlock()
-		if targetSession != nil {
-			break
+		if hasClients {
+			if targetSession != nil {
+				// Multiple sessions with clients — ambiguous.
+				h.mu.RUnlock()
+				return agentsdk.UIResponse{}, fmt.Errorf("multiple sessions active; use ContextWithSessionID to specify target")
+			}
+			targetSession = ss
 		}
 	}
 	h.mu.RUnlock()
@@ -433,7 +460,7 @@ func (h *Hub) handleUserMessage(c *Client, env Envelope) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ContextWithSessionID(context.Background(), ss.ID))
 	ss.mu.Lock()
 	if ss.cancel != nil {
 		ss.cancel() // cancel any in-progress turn
@@ -492,7 +519,7 @@ func (h *Hub) handleSessionCreate(c *Client, env Envelope) {
 	}
 
 	id := "ws-" + uuid.NewString()
-	ss, err := h.CreateSession(context.Background(), id, payload, 1000)
+	ss, err := h.CreateSession(context.Background(), id, payload, 0)
 	if err != nil {
 		h.sendError(c, "create_failed", err.Error())
 		return
@@ -537,13 +564,21 @@ func (h *Hub) handleSessionResume(c *Client, env Envelope) {
 
 func (h *Hub) handleSessionList(c *Client) {
 	sessions := h.ListSessions()
-	payload, _ := json.Marshal(sessions)
+	payload, err := json.Marshal(sessions)
+	if err != nil {
+		h.sendError(c, "marshal_error", "failed to serialize session list")
+		return
+	}
 	env := Envelope{
 		Type:      TypeSessionListResult,
 		Timestamp: time.Now().UTC(),
 		Payload:   payload,
 	}
-	data, _ := json.Marshal(env)
+	data, err := json.Marshal(env)
+	if err != nil {
+		h.sendError(c, "marshal_error", "failed to serialize envelope")
+		return
+	}
 	c.Send(data)
 }
 

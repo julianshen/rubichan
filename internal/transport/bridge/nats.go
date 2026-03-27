@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 )
 
@@ -74,15 +75,12 @@ func (b *NATSBridge) Subscribe(_ context.Context, sessionID string, handler func
 	default:
 	}
 
-	subjectPattern := sessionID
-	if sessionID == "*" {
-		subjectPattern = "*"
-	}
-	subject := fmt.Sprintf("%s.%s.events.>", b.subjectPrefix, subjectPattern)
+	subject := fmt.Sprintf("%s.%s.events.>", b.subjectPrefix, sessionID)
 
-	return b.conn.Subscribe(subject, func(_ string, data []byte) {
+	return b.conn.Subscribe(subject, func(subj string, data []byte) {
 		var env Envelope
 		if err := json.Unmarshal(data, &env); err != nil {
+			log.Printf("bridge: NATS unmarshal error on %s: %v", subj, err)
 			return
 		}
 		handler(env)
