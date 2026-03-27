@@ -129,7 +129,7 @@ func TestServer_SessionCreate_And_List(t *testing.T) {
 	// List sessions.
 	writeEnvelope(t, conn, Envelope{Type: TypeSessionList, Timestamp: time.Now().UTC()})
 	env = readEnvelope(t, conn)
-	assert.Equal(t, TypeSessionInfo, env.Type)
+	assert.Equal(t, TypeSessionListResult, env.Type)
 }
 
 func TestServer_SessionResume_WithReplay(t *testing.T) {

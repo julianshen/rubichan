@@ -18,13 +18,14 @@ type Envelope struct {
 
 // Downstream message types (server → client).
 const (
-	TypeEvent       = "event"
-	TypeTurnEvent   = "turn_event"
-	TypeUIRequest   = "ui_request"
-	TypeUIUpdate    = "ui_update"
-	TypeSessionInfo = "session_info"
-	TypeError       = "error"
-	TypePong        = "pong"
+	TypeEvent             = "event"
+	TypeTurnEvent         = "turn_event"
+	TypeUIRequest         = "ui_request"
+	TypeUIUpdate          = "ui_update"
+	TypeSessionInfo       = "session_info"
+	TypeError             = "error"
+	TypeSessionListResult = "session_list_result"
+	TypePong              = "pong"
 )
 
 // Upstream message types (client → server).

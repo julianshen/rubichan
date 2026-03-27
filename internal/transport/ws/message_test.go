@@ -158,6 +158,7 @@ func TestMessageTypeConstants(t *testing.T) {
 	assert.Equal(t, "ui_update", TypeUIUpdate)
 	assert.Equal(t, "session_info", TypeSessionInfo)
 	assert.Equal(t, "error", TypeError)
+	assert.Equal(t, "session_list_result", TypeSessionListResult)
 	assert.Equal(t, "pong", TypePong)
 
 	// Verify upstream types.

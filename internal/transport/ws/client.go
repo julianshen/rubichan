@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gobwas/ws"
@@ -17,6 +16,7 @@ const (
 	writeWait = 10 * time.Second
 
 	// pongWait is the maximum duration to wait for a pong response.
+	// readPump sets a read deadline based on this value.
 	pongWait = 60 * time.Second
 
 	// pingPeriod is the interval between pings. Must be less than pongWait.
@@ -31,8 +31,8 @@ type Client struct {
 	hub    *Hub
 	conn   net.Conn
 	send   chan []byte
+	done   chan struct{} // signals shutdown to Send callers
 	claims AuthClaims
-	closed atomic.Bool
 	once   sync.Once
 }
 
@@ -42,18 +42,24 @@ func newClient(hub *Hub, conn net.Conn, claims AuthClaims) *Client {
 		hub:    hub,
 		conn:   conn,
 		send:   make(chan []byte, sendBufferSize),
+		done:   make(chan struct{}),
 		claims: claims,
 	}
 }
 
-// Send enqueues a message for delivery. Returns false if the client is closed.
+// Send enqueues a message for delivery. Returns false if the client is closed
+// or the send buffer is full (slow client).
 func (c *Client) Send(data []byte) bool {
-	if c.closed.Load() {
+	select {
+	case <-c.done:
 		return false
+	default:
 	}
 	select {
 	case c.send <- data:
 		return true
+	case <-c.done:
+		return false
 	default:
 		// Buffer full — close the slow client.
 		c.close()
@@ -64,8 +70,7 @@ func (c *Client) Send(data []byte) bool {
 // close shuts down the client connection. Safe to call multiple times.
 func (c *Client) close() {
 	c.once.Do(func() {
-		c.closed.Store(true)
-		close(c.send)
+		close(c.done)
 		c.conn.Close()
 	})
 }
@@ -78,11 +83,15 @@ func (c *Client) readPump() {
 		c.close()
 	}()
 
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	for {
 		msg, op, err := wsutil.ReadClientData(c.conn)
 		if err != nil {
 			return
 		}
+		// Extend read deadline on any received data (acts as keep-alive).
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+
 		if op != ws.OpText {
 			continue
 		}
@@ -118,15 +127,14 @@ func (c *Client) writePump() {
 
 	for {
 		select {
-		case msg, ok := <-c.send:
-			if !ok {
-				// Channel closed.
-				return
-			}
+		case msg := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := wsutil.WriteServerMessage(c.conn, ws.OpText, msg); err != nil {
 				return
 			}
+
+		case <-c.done:
+			return
 
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))

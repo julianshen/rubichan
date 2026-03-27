@@ -42,10 +42,13 @@ func NewServer(cfg ServerConfig) *Server {
 		hub:  hub,
 		auth: cfg.Auth,
 		httpServer: &http.Server{
-			Addr:         cfg.Addr,
-			Handler:      mux,
-			ReadTimeout:  15 * time.Second,
-			WriteTimeout: 15 * time.Second,
+			Addr:        cfg.Addr,
+			Handler:     mux,
+			ReadTimeout: 15 * time.Second,
+			// WriteTimeout must be 0 for WebSocket — the HTTP-level timeout
+			// applies to the entire connection lifetime after headers are sent.
+			// Per-message deadlines are set in writePump via SetWriteDeadline.
+			WriteTimeout: 0,
 			IdleTimeout:  120 * time.Second,
 		},
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/internal/transport/bridge"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -172,16 +173,20 @@ func TestHub_Close(t *testing.T) {
 	assert.True(t, closed)
 }
 
-// mockBridge implements EventBridge for testing.
+// mockBridge implements bridge.EventBridge for testing.
 type mockBridge struct {
-	publishFn func(ctx context.Context, sessionID string, env Envelope) error
+	publishFn func(ctx context.Context, sessionID string, env bridge.Envelope) error
 	closeFn   func() error
 }
 
-func (b *mockBridge) Publish(ctx context.Context, sessionID string, env Envelope) error {
+func (b *mockBridge) Publish(ctx context.Context, sessionID string, env bridge.Envelope) error {
 	if b.publishFn != nil {
 		return b.publishFn(ctx, sessionID, env)
 	}
+	return nil
+}
+
+func (b *mockBridge) Subscribe(_ context.Context, _ string, _ func(bridge.Envelope)) error {
 	return nil
 }
 
@@ -196,9 +201,9 @@ func TestHub_Bridge_ReceivesEvents(t *testing.T) {
 	srv, addr := startTestServer(t, NoopAuth{})
 	hub := srv.Hub()
 
-	received := make(chan Envelope, 10)
+	received := make(chan bridge.Envelope, 10)
 	hub.AddBridge(&mockBridge{
-		publishFn: func(_ context.Context, _ string, env Envelope) error {
+		publishFn: func(_ context.Context, _ string, env bridge.Envelope) error {
 			received <- env
 			return nil
 		},
@@ -220,9 +225,9 @@ func TestHub_Bridge_ReceivesEvents(t *testing.T) {
 
 	// Bridge should have received the event.
 	select {
-	case env := <-received:
-		assert.Equal(t, TypeTurnEvent, env.Type)
-		assert.Equal(t, "bridge-test", env.SessionID)
+	case benv := <-received:
+		assert.Equal(t, TypeTurnEvent, benv.Type)
+		assert.Equal(t, "bridge-test", benv.SessionID)
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for bridge event")
 	}

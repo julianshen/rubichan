@@ -4,13 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/internal/transport/bridge"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
+
+func logBridgeError(sessionID, eventType string, err error) {
+	log.Printf("ws: bridge publish error: session=%s type=%s err=%v", sessionID, eventType, err)
+}
 
 // AgentFactory creates a new agent for a session.
 type AgentFactory func(sessionID string, opts SessionCreatePayload) (*agentsdk.Agent, error)
@@ -18,9 +25,10 @@ type AgentFactory func(sessionID string, opts SessionCreatePayload) (*agentsdk.A
 // Hub manages WebSocket clients and routes agent events to them.
 // It implements session.EventSink and agentsdk.UIRequestHandler.
 type Hub struct {
-	sessions map[string]*SessionState
-	clients  map[*Client]*SessionState
-	bridges  []EventBridge
+	sessions  map[string]*SessionState
+	clients   map[*Client]*SessionState
+	bridges   []EventBridge
+	bufferCap int
 
 	agentFactory AgentFactory
 
@@ -39,11 +47,9 @@ type SessionState struct {
 	mu      sync.Mutex
 }
 
-// EventBridge receives agent events and forwards them to an external system.
-type EventBridge interface {
-	Publish(ctx context.Context, sessionID string, env Envelope) error
-	Close() error
-}
+// EventBridge is an alias for bridge.EventBridge.
+// Bridges registered with the Hub receive all session events.
+type EventBridge = bridge.EventBridge
 
 // HubConfig configures the Hub.
 type HubConfig struct {
@@ -59,6 +65,7 @@ func NewHub(cfg HubConfig) *Hub {
 	return &Hub{
 		sessions:     make(map[string]*SessionState),
 		clients:      make(map[*Client]*SessionState),
+		bufferCap:    cfg.ReconnectBufferSize,
 		agentFactory: cfg.AgentFactory,
 	}
 }
@@ -108,6 +115,9 @@ func (h *Hub) unregisterClient(c *Client) {
 // CreateSession creates a new agent session.
 func (h *Hub) CreateSession(ctx context.Context, id string, opts SessionCreatePayload, bufferSize int) (*SessionState, error) {
 	if bufferSize <= 0 {
+		bufferSize = h.bufferCap
+	}
+	if bufferSize <= 0 {
 		bufferSize = 1000
 	}
 
@@ -143,6 +153,34 @@ func (h *Hub) GetSession(id string) (*SessionState, bool) {
 	return ss, ok
 }
 
+// RemoveSession removes a session and disconnects all its clients.
+func (h *Hub) RemoveSession(id string) {
+	h.mu.Lock()
+	ss, ok := h.sessions[id]
+	if !ok {
+		h.mu.Unlock()
+		return
+	}
+	delete(h.sessions, id)
+
+	// Remove client→session mappings.
+	ss.mu.Lock()
+	for c := range ss.Clients {
+		delete(h.clients, c)
+		c.close()
+	}
+	ss.mu.Unlock()
+	h.mu.Unlock()
+
+	// Cancel any in-progress turn.
+	ss.mu.Lock()
+	if ss.cancel != nil {
+		ss.cancel()
+		ss.cancel = nil
+	}
+	ss.mu.Unlock()
+}
+
 // ListSessions returns all session IDs and their statuses.
 func (h *Hub) ListSessions() []SessionInfoPayload {
 	h.mu.RLock()
@@ -159,6 +197,7 @@ func (h *Hub) ListSessions() []SessionInfoPayload {
 }
 
 // broadcastToSession sends an envelope to all clients of a session and to bridges.
+// The caller must NOT hold h.mu — this method acquires h.mu.RLock internally.
 func (h *Hub) broadcastToSession(ss *SessionState, env Envelope) {
 	data, err := json.Marshal(env)
 	if err != nil {
@@ -175,12 +214,25 @@ func (h *Hub) broadcastToSession(ss *SessionState, env Envelope) {
 	}
 	ss.mu.Unlock()
 
-	// Publish to bridges.
+	// Snapshot bridges under lock, then publish outside lock.
 	h.mu.RLock()
-	bridges := h.bridges
+	bridges := make([]EventBridge, len(h.bridges))
+	copy(bridges, h.bridges)
 	h.mu.RUnlock()
+
+	bridgeEnv := bridge.Envelope{
+		Type:      env.Type,
+		SessionID: env.SessionID,
+		Seq:       env.Seq,
+		Timestamp: env.Timestamp,
+		RequestID: env.RequestID,
+		Payload:   env.Payload,
+	}
 	for _, b := range bridges {
-		b.Publish(context.Background(), ss.ID, env)
+		if err := b.Publish(context.Background(), ss.ID, bridgeEnv); err != nil {
+			// Log bridge errors rather than silently dropping them.
+			logBridgeError(ss.ID, env.Type, err)
+		}
 	}
 }
 
@@ -211,10 +263,16 @@ func (h *Hub) Emit(evt session.Event) {
 		return
 	}
 
+	// Snapshot sessions under lock, then broadcast outside lock to avoid
+	// nested lock acquisition (broadcastToSession also acquires h.mu.RLock).
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-
+	sessions := make([]*SessionState, 0, len(h.sessions))
 	for _, ss := range h.sessions {
+		sessions = append(sessions, ss)
+	}
+	h.mu.RUnlock()
+
+	for _, ss := range sessions {
 		seq := ss.seq.Add(1)
 		env := Envelope{
 			Type:      TypeEvent,
@@ -377,6 +435,9 @@ func (h *Hub) handleUserMessage(c *Client, env Envelope) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ss.mu.Lock()
+	if ss.cancel != nil {
+		ss.cancel() // cancel any in-progress turn
+	}
 	ss.cancel = cancel
 	ss.mu.Unlock()
 
@@ -430,7 +491,7 @@ func (h *Hub) handleSessionCreate(c *Client, env Envelope) {
 		return
 	}
 
-	id := fmt.Sprintf("ws-%d", time.Now().UnixNano())
+	id := "ws-" + uuid.NewString()
 	ss, err := h.CreateSession(context.Background(), id, payload, 1000)
 	if err != nil {
 		h.sendError(c, "create_failed", err.Error())
@@ -478,7 +539,7 @@ func (h *Hub) handleSessionList(c *Client) {
 	sessions := h.ListSessions()
 	payload, _ := json.Marshal(sessions)
 	env := Envelope{
-		Type:      TypeSessionInfo,
+		Type:      TypeSessionListResult,
 		Timestamp: time.Now().UTC(),
 		Payload:   payload,
 	}
