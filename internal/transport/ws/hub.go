@@ -709,6 +709,7 @@ func marshalTurnEvent(evt agentsdk.TurnEvent) (json.RawMessage, error) {
 }
 
 // Close shuts down all sessions, bridges, and client connections.
+// Safe to call multiple times.
 func (h *Hub) Close() error {
 	h.mu.Lock()
 
@@ -733,6 +734,10 @@ func (h *Hub) Close() error {
 	for c := range h.clients {
 		clientsToClose = append(clientsToClose, c)
 	}
+
+	// Clear maps so late-arriving goroutines see empty state.
+	clear(h.sessions)
+	clear(h.clients)
 	h.mu.Unlock()
 
 	for _, c := range clientsToClose {

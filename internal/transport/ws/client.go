@@ -105,6 +105,9 @@ func (c *Client) readPump() {
 			return
 		}
 		if hdr.OpCode.IsControl() {
+			// Passing reader as the io.Reader is safe: NextFrame positioned it
+			// at the control frame payload, and the handler reads exactly
+			// hdr.Length bytes before returning.
 			if err := reader.OnIntermediate(hdr, reader); err != nil {
 				return
 			}
