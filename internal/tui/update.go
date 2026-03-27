@@ -64,6 +64,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = wsm.Height
 		m.refreshRenderers()
 		m.reflowViewport()
+		if inputWidth := m.width - inputPromptWidth; inputWidth > 0 {
+			m.input.SetWidth(inputWidth)
+		}
 	}
 
 	// Generic overlay delegation: route all messages to the active overlay.
@@ -98,9 +101,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.refreshRenderers()
 		m.reflowViewport()
-		// Subtract 2 for the "❯ " prompt prefix so the textarea
-		// fills the remaining terminal width.
-		if inputWidth := m.width - 2; inputWidth > 0 {
+		if inputWidth := m.width - inputPromptWidth; inputWidth > 0 {
 			m.input.SetWidth(inputWidth)
 		}
 		if m.completion != nil {

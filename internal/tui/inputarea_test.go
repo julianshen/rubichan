@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -105,4 +106,20 @@ func TestInputAreaAutoGrow_SingleLineStaysAtMin(t *testing.T) {
 	ia.SetValue("just one line")
 	ia.autoGrow()
 	assert.Equal(t, inputMinHeight, ia.Height(), "single-line content should stay at inputMinHeight")
+}
+
+func TestInputAreaSetWidth(t *testing.T) {
+	t.Parallel()
+	ia := NewInputArea()
+	ia.Init()
+
+	// Default textarea width is 40; after SetWidth the rendered view should
+	// reflect the new width (120 columns).
+	ia.SetWidth(120)
+	view := ia.View()
+	// The bubbles textarea pads each line to the configured width, so the
+	// rendered output should be at least 120 characters wide on the first line.
+	firstLine := strings.SplitN(view, "\n", 2)[0]
+	assert.GreaterOrEqual(t, len(firstLine), 120,
+		"rendered line should be at least as wide as the configured width")
 }

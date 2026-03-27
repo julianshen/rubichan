@@ -134,7 +134,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		cmdRegistry = commands.NewRegistry()
 	}
 	ia := NewInputArea()
-	ia.SetWidth(78) // 80 - 2 for the "❯ " prompt prefix
+	ia.SetWidth(80 - inputPromptWidth)
 
 	vp := viewport.New(80, 20)
 

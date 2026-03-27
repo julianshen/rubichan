@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	inputMinHeight = 3
-	inputMaxHeight = 8
+	inputMinHeight   = 3
+	inputMaxHeight   = 8
+	inputPromptWidth = 2 // width of the "❯ " prompt prefix
 )
 
 // InputArea wraps a bubbles textarea.Model for multi-line input.
