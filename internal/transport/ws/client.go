@@ -2,7 +2,8 @@ package ws
 
 import (
 	"encoding/json"
-	"fmt"
+	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -62,6 +63,7 @@ func (c *Client) Send(data []byte) bool {
 		return false
 	default:
 		// Buffer full — close the slow client.
+		log.Printf("ws: closing slow client: send buffer full (capacity=%d)", sendBufferSize)
 		c.close()
 		return false
 	}
@@ -84,15 +86,39 @@ func (c *Client) readPump() {
 	}()
 
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+
+	// Use a custom reader so pong frames (handled internally by gobwas/ws)
+	// still reset the read deadline. Without this, idle-but-alive clients
+	// that only send pong responses would be disconnected after pongWait.
+	reader := wsutil.NewReader(c.conn, ws.StateServerSide)
+	controlHandler := wsutil.ControlFrameHandler(c.conn, ws.StateServerSide)
+	reader.OnIntermediate = func(hdr ws.Header, r io.Reader) error {
+		if hdr.OpCode == ws.OpPong {
+			c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		}
+		return controlHandler(hdr, r)
+	}
+
 	for {
-		msg, op, err := wsutil.ReadClientData(c.conn)
+		hdr, err := reader.NextFrame()
 		if err != nil {
 			return
 		}
-		// Extend read deadline on any received data (acts as keep-alive).
+		if hdr.OpCode.IsControl() {
+			if err := reader.OnIntermediate(hdr, reader); err != nil {
+				return
+			}
+			continue
+		}
+		msg, err := io.ReadAll(reader)
+		if err != nil {
+			return
+		}
+
+		// Extend read deadline on any received data frame.
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 
-		if op != ws.OpText {
+		if hdr.OpCode != ws.OpText {
 			continue
 		}
 
@@ -100,7 +126,7 @@ func (c *Client) readPump() {
 		if err := json.Unmarshal(msg, &env); err != nil {
 			errPayload, _ := json.Marshal(ErrorPayload{
 				Code:    "invalid_json",
-				Message: fmt.Sprintf("failed to parse message: %v", err),
+				Message: "invalid JSON message",
 			})
 			errEnv := Envelope{
 				Type:      TypeError,

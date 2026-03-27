@@ -49,7 +49,11 @@ Endpoints:
 func runServe() error {
 	var auth ws.Authenticator
 	if serveToken != "" {
-		auth = ws.StaticTokenAuth{Token: serveToken}
+		var err error
+		auth, err = ws.NewStaticTokenAuth(serveToken)
+		if err != nil {
+			return fmt.Errorf("configure auth: %w", err)
+		}
 	} else {
 		auth = ws.NoopAuth{}
 	}

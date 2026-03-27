@@ -14,6 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mustStaticAuth creates a StaticTokenAuth for testing, failing the test on error.
+func mustStaticAuth(t *testing.T, token string) StaticTokenAuth {
+	t.Helper()
+	auth, err := NewStaticTokenAuth(token)
+	require.NoError(t, err)
+	return auth
+}
+
 // startTestServer creates a server on a random port and returns the address.
 func startTestServer(t *testing.T, auth Authenticator) (*Server, string) {
 	t.Helper()
@@ -89,7 +97,7 @@ func TestServer_WebSocketConnect_NoopAuth(t *testing.T) {
 }
 
 func TestServer_WebSocketConnect_StaticAuth_Success(t *testing.T) {
-	_, addr := startTestServer(t, StaticTokenAuth{Token: "secret"})
+	_, addr := startTestServer(t, mustStaticAuth(t, "secret"))
 	conn := dialWS(t, addr, "secret")
 
 	writeEnvelope(t, conn, Envelope{Type: TypePing, Timestamp: time.Now().UTC()})
@@ -98,7 +106,7 @@ func TestServer_WebSocketConnect_StaticAuth_Success(t *testing.T) {
 }
 
 func TestServer_WebSocketConnect_StaticAuth_Failure(t *testing.T) {
-	_, addr := startTestServer(t, StaticTokenAuth{Token: "secret"})
+	_, addr := startTestServer(t, mustStaticAuth(t, "secret"))
 
 	url := "ws://" + addr + "/ws?token=wrong"
 	_, _, _, err := ws.Dial(context.Background(), url)
@@ -227,14 +235,22 @@ func TestServer_UserMessage_NoSession(t *testing.T) {
 }
 
 func TestServer_Cancel_NoSession(t *testing.T) {
-	// Cancel on a client with no session should not panic.
+	// Cancel on a client with no session should return an error.
 	_, addr := startTestServer(t, NoopAuth{})
 	conn := dialWS(t, addr, "")
 
 	writeEnvelope(t, conn, Envelope{Type: TypeCancel, Timestamp: time.Now().UTC()})
 
-	// Send ping to verify connection is still alive.
-	writeEnvelope(t, conn, Envelope{Type: TypePing, Timestamp: time.Now().UTC()})
+	// Should receive a no_session error.
 	env := readEnvelope(t, conn)
+	assert.Equal(t, TypeError, env.Type)
+
+	var errP ErrorPayload
+	require.NoError(t, env.ParsePayload(&errP))
+	assert.Equal(t, "no_session", errP.Code)
+
+	// Connection should still be alive after the error.
+	writeEnvelope(t, conn, Envelope{Type: TypePing, Timestamp: time.Now().UTC()})
+	env = readEnvelope(t, conn)
 	assert.Equal(t, TypePong, env.Type)
 }

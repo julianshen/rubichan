@@ -59,7 +59,8 @@ func NewChannelBridge(bufferSize int) *ChannelBridge {
 }
 
 // Publish sends an event to the bridge.
-func (b *ChannelBridge) Publish(_ context.Context, sessionID string, env Envelope) error {
+// Blocks until the event is enqueued, the bridge is closed, or the context is cancelled.
+func (b *ChannelBridge) Publish(ctx context.Context, sessionID string, env Envelope) error {
 	select {
 	case <-b.closed:
 		return ErrBridgeClosed
@@ -70,6 +71,8 @@ func (b *ChannelBridge) Publish(_ context.Context, sessionID string, env Envelop
 		return ErrBridgeClosed
 	case b.events <- publishedEvent{SessionID: sessionID, Envelope: env}:
 		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

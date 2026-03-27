@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -95,6 +96,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Upgrade connection.
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
 	if err != nil {
+		log.Printf("ws: upgrade failed: remote=%s err=%v", r.RemoteAddr, err)
 		return
 	}
 

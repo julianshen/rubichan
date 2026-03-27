@@ -17,22 +17,30 @@ func TestNoopAuth_Validate(t *testing.T) {
 }
 
 func TestStaticTokenAuth_Validate_Success(t *testing.T) {
-	auth := StaticTokenAuth{Token: "secret-123"}
+	auth, err := NewStaticTokenAuth("secret-123")
+	require.NoError(t, err)
 	claims, err := auth.Validate("secret-123")
 	require.NoError(t, err)
 	assert.Equal(t, "user", claims.Subject)
 }
 
 func TestStaticTokenAuth_Validate_Failure(t *testing.T) {
-	auth := StaticTokenAuth{Token: "secret-123"}
-	_, err := auth.Validate("wrong-token")
+	auth, err := NewStaticTokenAuth("secret-123")
+	require.NoError(t, err)
+	_, err = auth.Validate("wrong-token")
 	assert.ErrorIs(t, err, ErrUnauthorized)
 }
 
 func TestStaticTokenAuth_Validate_EmptyToken(t *testing.T) {
-	auth := StaticTokenAuth{Token: "secret-123"}
-	_, err := auth.Validate("")
+	auth, err := NewStaticTokenAuth("secret-123")
+	require.NoError(t, err)
+	_, err = auth.Validate("")
 	assert.ErrorIs(t, err, ErrUnauthorized)
+}
+
+func TestNewStaticTokenAuth_EmptyTokenRejected(t *testing.T) {
+	_, err := NewStaticTokenAuth("")
+	assert.Error(t, err)
 }
 
 func TestTokenFromRequest_AuthorizationHeader(t *testing.T) {

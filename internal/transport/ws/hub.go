@@ -163,22 +163,27 @@ func (h *Hub) RemoveSession(id string) {
 	}
 	delete(h.sessions, id)
 
-	// Remove client→session mappings.
+	// Collect clients to close and remove mappings, but don't close
+	// connections while holding h.mu — readPump's deferred unregisterClient
+	// needs h.mu and would block, creating a fragile lock interaction.
 	ss.mu.Lock()
+	clientsToClose := make([]*Client, 0, len(ss.Clients))
 	for c := range ss.Clients {
 		delete(h.clients, c)
-		c.close()
+		clientsToClose = append(clientsToClose, c)
 	}
-	ss.mu.Unlock()
-	h.mu.Unlock()
-
-	// Cancel any in-progress turn.
-	ss.mu.Lock()
+	// Cancel any in-progress turn while still holding ss.mu to avoid TOCTOU.
 	if ss.cancel != nil {
 		ss.cancel()
 		ss.cancel = nil
 	}
 	ss.mu.Unlock()
+	h.mu.Unlock()
+
+	// Close client connections outside all locks.
+	for _, c := range clientsToClose {
+		c.close()
+	}
 }
 
 // ListSessions returns all session IDs and their statuses.
@@ -201,6 +206,7 @@ func (h *Hub) ListSessions() []SessionInfoPayload {
 func (h *Hub) broadcastToSession(ss *SessionState, env Envelope) {
 	data, err := json.Marshal(env)
 	if err != nil {
+		log.Printf("ws: failed to marshal broadcast envelope: session=%s type=%s err=%v", ss.ID, env.Type, err)
 		return
 	}
 
@@ -247,6 +253,7 @@ func (h *Hub) BroadcastTurnEvent(ss *SessionState, evt agentsdk.TurnEvent) {
 	seq := ss.seq.Add(1)
 	payload, err := marshalTurnEvent(evt)
 	if err != nil {
+		log.Printf("ws: failed to marshal turn event: session=%s type=%s err=%v", ss.ID, evt.Type, err)
 		return
 	}
 	env := Envelope{
@@ -266,6 +273,7 @@ func (h *Hub) Emit(evt session.Event) {
 	// In practice, the session layer sets this up per-session.
 	payload, err := json.Marshal(evt)
 	if err != nil {
+		log.Printf("ws: failed to marshal session event: type=%s err=%v", evt.Type, err)
 		return
 	}
 
@@ -296,10 +304,12 @@ func (h *Hub) SessionEmitter(sessionID string) session.EventSink {
 	return session.SinkFunc(func(evt session.Event) {
 		ss, ok := h.GetSession(sessionID)
 		if !ok {
+			log.Printf("ws: SessionEmitter: session %q not found, dropping event", sessionID)
 			return
 		}
 		payload, err := json.Marshal(evt)
 		if err != nil {
+			log.Printf("ws: SessionEmitter: marshal error for session %q: %v", sessionID, err)
 			return
 		}
 		seq := ss.seq.Add(1)
@@ -340,22 +350,27 @@ func (h *Hub) Request(ctx context.Context, req agentsdk.UIRequest) (agentsdk.UIR
 	}
 
 	// Fallback: find the single session with connected clients.
+	// Snapshot sessions under h.mu.RLock, then check client counts outside
+	// to avoid nested lock acquisition (h.mu -> ss.mu).
 	h.mu.RLock()
-	var targetSession *SessionState
+	allSessions := make([]*SessionState, 0, len(h.sessions))
 	for _, ss := range h.sessions {
+		allSessions = append(allSessions, ss)
+	}
+	h.mu.RUnlock()
+
+	var targetSession *SessionState
+	for _, ss := range allSessions {
 		ss.mu.Lock()
 		hasClients := len(ss.Clients) > 0
 		ss.mu.Unlock()
 		if hasClients {
 			if targetSession != nil {
-				// Multiple sessions with clients — ambiguous.
-				h.mu.RUnlock()
 				return agentsdk.UIResponse{}, fmt.Errorf("multiple sessions active; use ContextWithSessionID to specify target")
 			}
 			targetSession = ss
 		}
 	}
-	h.mu.RUnlock()
 
 	if targetSession == nil {
 		return agentsdk.UIResponse{}, fmt.Errorf("no connected clients for UI request")
@@ -503,11 +518,14 @@ func (h *Hub) handleUIResponse(c *Client, env Envelope) {
 	ch, ok := ss.uiWait[resp.RequestID]
 	ss.mu.Unlock()
 
-	if ok {
-		select {
-		case ch <- resp:
-		default:
-		}
+	if !ok {
+		log.Printf("ws: received UIResponse for unknown request: id=%s", resp.RequestID)
+		return
+	}
+	select {
+	case ch <- resp:
+	default:
+		log.Printf("ws: duplicate UIResponse for request: id=%s (ignoring)", resp.RequestID)
 	}
 }
 
@@ -588,6 +606,7 @@ func (h *Hub) handleCancel(c *Client, _ Envelope) {
 	h.mu.RUnlock()
 
 	if ss == nil {
+		h.sendError(c, "no_session", "cannot cancel: not attached to a session")
 		return
 	}
 
@@ -604,7 +623,11 @@ func (h *Hub) handlePing(c *Client) {
 		Type:      TypePong,
 		Timestamp: time.Now().UTC(),
 	}
-	data, _ := json.Marshal(env)
+	data, err := json.Marshal(env)
+	if err != nil {
+		log.Printf("ws: handlePing: marshal failed: %v", err)
+		return
+	}
 	c.Send(data)
 }
 
@@ -615,6 +638,7 @@ func (h *Hub) sendError(c *Client, code, message string) {
 func (h *Hub) sendEnvelope(c *Client, msgType, sessionID string, payload any) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
+		log.Printf("ws: sendEnvelope: marshal payload failed: type=%s err=%v", msgType, err)
 		return
 	}
 	env := Envelope{
@@ -625,6 +649,7 @@ func (h *Hub) sendEnvelope(c *Client, msgType, sessionID string, payload any) {
 	}
 	data, err := json.Marshal(env)
 	if err != nil {
+		log.Printf("ws: sendEnvelope: marshal envelope failed: type=%s err=%v", msgType, err)
 		return
 	}
 	c.Send(data)
@@ -683,17 +708,34 @@ func marshalTurnEvent(evt agentsdk.TurnEvent) (json.RawMessage, error) {
 	return json.Marshal(w)
 }
 
-// Close shuts down all bridges.
+// Close shuts down all sessions, bridges, and client connections.
 func (h *Hub) Close() error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
+	// Cancel all active sessions.
+	for _, ss := range h.sessions {
+		ss.mu.Lock()
+		if ss.cancel != nil {
+			ss.cancel()
+			ss.cancel = nil
+		}
+		ss.mu.Unlock()
+	}
+
+	// Close bridges.
 	for _, b := range h.bridges {
 		b.Close()
 	}
 	h.bridges = nil
 
+	// Collect clients to close, then close outside lock.
+	clientsToClose := make([]*Client, 0, len(h.clients))
 	for c := range h.clients {
+		clientsToClose = append(clientsToClose, c)
+	}
+	h.mu.Unlock()
+
+	for _, c := range clientsToClose {
 		c.close()
 	}
 	return nil

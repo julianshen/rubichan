@@ -30,12 +30,21 @@ func (NoopAuth) Validate(_ string) (AuthClaims, error) {
 
 // StaticTokenAuth validates connections against a pre-shared token.
 type StaticTokenAuth struct {
-	Token string
+	token string
+}
+
+// NewStaticTokenAuth creates a StaticTokenAuth that validates against the given token.
+// Returns an error if token is empty (an empty token would match missing tokens).
+func NewStaticTokenAuth(token string) (StaticTokenAuth, error) {
+	if token == "" {
+		return StaticTokenAuth{}, errors.New("ws: token must not be empty")
+	}
+	return StaticTokenAuth{token: token}, nil
 }
 
 // Validate implements Authenticator — checks that token matches.
 func (a StaticTokenAuth) Validate(token string) (AuthClaims, error) {
-	if subtle.ConstantTimeCompare([]byte(token), []byte(a.Token)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(token), []byte(a.token)) != 1 {
 		return AuthClaims{}, ErrUnauthorized
 	}
 	return AuthClaims{Subject: "user"}, nil
