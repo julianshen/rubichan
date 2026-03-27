@@ -3,6 +3,7 @@ package shell
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,8 +13,9 @@ import (
 
 // TurnEvent represents a streaming event from the agent.
 type TurnEvent struct {
-	Type string // "text_delta", "tool_call", "tool_result", "done", "error"
-	Text string
+	Type     string // "text_delta", "tool_call", "tool_result", "done", "error"
+	Text     string
+	ToolName string // populated for "tool_call" events
 }
 
 // AgentTurnFunc executes a single agent turn and streams events.
@@ -22,34 +24,41 @@ type AgentTurnFunc func(ctx context.Context, userMessage string) (<-chan TurnEve
 // ShellExecFunc executes a shell command and returns stdout, stderr, and exit code.
 type ShellExecFunc func(ctx context.Context, command string, workDir string) (stdout string, stderr string, exitCode int, err error)
 
+// SlashCommandFunc handles a slash command. Returns output text, whether to quit, and error.
+type SlashCommandFunc func(ctx context.Context, name string, args []string) (output string, quit bool, err error)
+
+// ErrExit is the sentinel error indicating normal exit from the shell.
+var ErrExit = errors.New("exit")
+
 // ShellHost runs the shell mode REPL loop.
 type ShellHost struct {
-	classifier   *InputClassifier
-	history      *CommandHistory
-	context      *ContextTracker
-	prompt       *PromptRenderer
-	agentTurn    AgentTurnFunc
-	shellExec    ShellExecFunc
-	workDir      string
-	env          map[string]string
-	stdin        io.Reader
-	stdout       io.Writer
-	stderr       io.Writer
-	gitBranchFn  func(string) string // returns git branch for a directory
+	classifier      *InputClassifier
+	history         *CommandHistory
+	ctxTracker      *ContextTracker
+	prompt          *PromptRenderer
+	agentTurn       AgentTurnFunc
+	shellExec       ShellExecFunc
+	slashCommandFn  SlashCommandFunc
+	workDir         string
+	stdin           io.Reader
+	stdout          io.Writer
+	stderr          io.Writer
+	gitBranchFn     func(string) string // returns git branch for a directory
 }
 
 // ShellHostConfig configures the shell host.
 type ShellHostConfig struct {
-	WorkDir      string
-	HomeDir      string
-	AgentTurn    AgentTurnFunc
-	ShellExec    ShellExecFunc
-	Executables  map[string]bool
-	MaxHistory   int
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
-	GitBranchFn  func(string) string
+	WorkDir        string
+	HomeDir        string
+	AgentTurn      AgentTurnFunc
+	ShellExec      ShellExecFunc
+	SlashCommandFn SlashCommandFunc
+	Executables    map[string]bool
+	MaxHistory     int
+	Stdin          io.Reader
+	Stdout         io.Writer
+	Stderr         io.Writer
+	GitBranchFn    func(string) string
 }
 
 // NewShellHost creates a new shell host with the given configuration.
@@ -71,18 +80,18 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 	}
 
 	return &ShellHost{
-		classifier:  NewInputClassifier(cfg.Executables),
-		history:     NewCommandHistory(cfg.MaxHistory),
-		context:     NewContextTracker(4096),
-		prompt:      NewPromptRenderer(cfg.HomeDir),
-		agentTurn:   cfg.AgentTurn,
-		shellExec:   cfg.ShellExec,
-		workDir:     cfg.WorkDir,
-		env:         make(map[string]string),
-		stdin:       cfg.Stdin,
-		stdout:      cfg.Stdout,
-		stderr:      cfg.Stderr,
-		gitBranchFn: cfg.GitBranchFn,
+		classifier:     NewInputClassifier(cfg.Executables),
+		history:        NewCommandHistory(cfg.MaxHistory),
+		ctxTracker:     NewContextTracker(4096),
+		prompt:         NewPromptRenderer(cfg.HomeDir),
+		agentTurn:      cfg.AgentTurn,
+		shellExec:      cfg.ShellExec,
+		slashCommandFn: cfg.SlashCommandFn,
+		workDir:        cfg.WorkDir,
+		stdin:          cfg.Stdin,
+		stdout:         cfg.Stdout,
+		stderr:         cfg.Stderr,
+		gitBranchFn:    cfg.GitBranchFn,
 	}
 }
 
@@ -133,7 +142,9 @@ func (h *ShellHost) Run(ctx context.Context) error {
 			h.handleLLMQuery(ctx, line)
 
 		case ClassSlashCommand:
-			h.handleSlashCommand(input)
+			if quit := h.handleSlashCommand(ctx, input); quit {
+				return ErrExit
+			}
 		}
 	}
 }
@@ -141,17 +152,12 @@ func (h *ShellHost) Run(ctx context.Context) error {
 func (h *ShellHost) handleBuiltin(input ClassifiedInput) error {
 	switch input.Command {
 	case "exit", "quit":
-		return errExit
+		return ErrExit
 	case "cd":
 		return h.handleCD(input.Args)
-	case "export":
-		h.handleExport(input.Args)
 	}
 	return nil
 }
-
-// errExit is a sentinel error indicating normal exit.
-var errExit = fmt.Errorf("exit")
 
 func (h *ShellHost) handleCD(args []string) error {
 	if len(args) == 0 {
@@ -173,16 +179,6 @@ func (h *ShellHost) handleCD(args []string) error {
 
 	h.workDir = target
 	return nil
-}
-
-func (h *ShellHost) handleExport(args []string) {
-	for _, arg := range args {
-		if idx := strings.IndexByte(arg, '='); idx > 0 {
-			key := arg[:idx]
-			val := arg[idx+1:]
-			h.env[key] = val
-		}
-	}
 }
 
 func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInput) {
@@ -217,7 +213,7 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 	if stderr != "" {
 		combined += stderr
 	}
-	h.context.Record(input.Command, combined, exitCode)
+	h.ctxTracker.Record(input.Command, combined, exitCode)
 }
 
 func (h *ShellHost) handleLLMQuery(ctx context.Context, query string) {
@@ -230,10 +226,10 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, query string) {
 
 	// Build the message with optional context from last shell command
 	message := query
-	ctxMsg := h.context.ContextMessage()
+	ctxMsg := h.ctxTracker.ContextMessage()
 	if ctxMsg != "" {
 		message = ctxMsg + "\n\nUser query: " + query
-		h.context.Clear()
+		h.ctxTracker.Clear()
 	}
 
 	events, err := h.agentTurn(ctx, message)
@@ -246,6 +242,12 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, query string) {
 		switch event.Type {
 		case "text_delta":
 			fmt.Fprint(h.stdout, event.Text)
+		case "tool_call":
+			fmt.Fprintf(h.stderr, "[Running: %s]\n", event.ToolName)
+		case "tool_result":
+			if event.Text != "" {
+				fmt.Fprintf(h.stderr, "[Result: %s]\n", truncateForDisplay(event.Text, 200))
+			}
 		case "done":
 			fmt.Fprintln(h.stdout)
 		case "error":
@@ -254,8 +256,28 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, query string) {
 	}
 }
 
-func (h *ShellHost) handleSlashCommand(input ClassifiedInput) {
-	// Slash commands are delegated to the command registry.
-	// For now, print that the command was received.
-	fmt.Fprintf(h.stdout, "/%s %s\n", input.Command, strings.Join(input.Args, " "))
+func (h *ShellHost) handleSlashCommand(ctx context.Context, input ClassifiedInput) (quit bool) {
+	if h.slashCommandFn == nil {
+		fmt.Fprintf(h.stderr, "command not available: /%s\n", input.Command)
+		return false
+	}
+
+	output, quit, err := h.slashCommandFn(ctx, input.Command, input.Args)
+	if err != nil {
+		fmt.Fprintf(h.stderr, "error: %v\n", err)
+		return false
+	}
+	if output != "" {
+		fmt.Fprintln(h.stdout, output)
+	}
+	return quit
+}
+
+// truncateForDisplay truncates a string to maxLen, adding ellipsis if needed.
+func truncateForDisplay(s string, maxLen int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

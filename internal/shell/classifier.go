@@ -36,10 +36,9 @@ func NewInputClassifier(knownExecutables map[string]bool) *InputClassifier {
 }
 
 var builtins = map[string]bool{
-	"cd":     true,
-	"export": true,
-	"exit":   true,
-	"quit":   true,
+	"cd":   true,
+	"exit": true,
+	"quit": true,
 }
 
 var questionWords = map[string]bool{

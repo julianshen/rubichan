@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/shell"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -43,10 +46,12 @@ func runShell() error {
 		return err
 	}
 
-	cwd, err := os.Getwd()
+	// Set up effective working directory (creates worktree if --worktree is set).
+	cwd, _, wtCleanup, err := setupWorkingDir(cfg)
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return fmt.Errorf("worktree setup: %w", err)
 	}
+	defer wtCleanup()
 
 	// Create provider.
 	p, err := provider.NewProvider(cfg)
@@ -75,6 +80,18 @@ func runShell() error {
 	opts = appendPersonaOptions(opts, cwd)
 	opts = append(opts, agent.WithMode("shell"))
 
+	// Wire conversation persistence.
+	cfgDir, err := configDir()
+	if err != nil {
+		return err
+	}
+	s, err := openStore(cfgDir)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+	opts = append(opts, agent.WithStore(s))
+
 	// Handle --resume flag.
 	if resumeFlag != "" {
 		opts = append(opts, agent.WithResumeSession(resumeFlag))
@@ -90,7 +107,7 @@ func runShell() error {
 			agent.NewCompositeApprovalChecker(agent.AlwaysAutoApprove{}),
 		))
 	} else {
-		approvalFunc = makeShellApprovalFunc()
+		approvalFunc = makeShellApprovalFunc(os.Stderr)
 	}
 
 	// Create skill runtime.
@@ -106,8 +123,32 @@ func runShell() error {
 		opts = append(opts, agent.WithSkillRuntime(rt))
 	}
 
+	// Create command registry and register built-in slash commands.
+	cmdRegistry := commands.NewRegistry()
+	for _, cmd := range []commands.SlashCommand{
+		commands.NewQuitCommand(),
+		commands.NewExitCommand(),
+		commands.NewHelpCommand(cmdRegistry),
+	} {
+		if err := cmdRegistry.Register(cmd); err != nil {
+			return fmt.Errorf("register built-in command %q: %w", cmd.Name(), err)
+		}
+	}
+
+	// Wire command registry into skill runtime.
+	if rt != nil {
+		rt.SetCommandRegistry(cmdRegistry)
+	}
+
 	// Create agent.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
+
+	// Register model command (needs the agent instance).
+	if err := cmdRegistry.Register(commands.NewModelCommand(func(name string) {
+		a.SetModel(name)
+	})); err != nil {
+		return fmt.Errorf("register built-in command %q: %w", "model", err)
+	}
 
 	// Scan PATH for known executables.
 	executables := shell.ScanPATH()
@@ -121,42 +162,49 @@ func runShell() error {
 		return branch
 	}
 
-	// Build shell exec function using the registry's shell tool.
-	shellExec := makeShellExecFunc(registry)
-
-	// Build agent turn function.
-	agentTurn := makeAgentTurnFunc(a)
-
 	homeDir, _ := os.UserHomeDir()
 
 	host := shell.NewShellHost(shell.ShellHostConfig{
-		WorkDir:     cwd,
-		HomeDir:     homeDir,
-		AgentTurn:   agentTurn,
-		ShellExec:   shellExec,
-		Executables: executables,
-		Stdin:       os.Stdin,
-		Stdout:      os.Stdout,
-		Stderr:      os.Stderr,
-		GitBranchFn: gitBranchFn,
+		WorkDir:        cwd,
+		HomeDir:        homeDir,
+		AgentTurn:      makeAgentTurnFunc(a),
+		ShellExec:      makeShellExecFunc(registry),
+		SlashCommandFn: makeSlashCommandFunc(cmdRegistry),
+		Executables:    executables,
+		Stdin:          os.Stdin,
+		Stdout:         os.Stdout,
+		Stderr:         os.Stderr,
+		GitBranchFn:    gitBranchFn,
 	})
 
 	err = host.Run(ctx)
-	if err != nil && err.Error() == "exit" {
-		return nil // Normal exit
+	if errors.Is(err, shell.ErrExit) {
+		return nil
 	}
 	return err
 }
 
 // makeShellApprovalFunc creates an inline yes/no approval prompt for shell mode.
-func makeShellApprovalFunc() agent.ApprovalFunc {
+// It writes prompts to the given writer (stderr) to avoid conflicting with
+// the shell host's stdin scanner.
+func makeShellApprovalFunc(promptWriter *os.File) agent.ApprovalFunc {
 	return func(_ context.Context, toolName string, _ json.RawMessage) (bool, error) {
-		fmt.Fprintf(os.Stderr, "[Approve %s?] (y/n): ", toolName)
-		var response string
-		if _, err := fmt.Scanln(&response); err != nil {
-			return false, nil
+		fmt.Fprintf(promptWriter, "[Approve %s?] (y/n): ", toolName)
+		buf := make([]byte, 64)
+		n, err := promptWriter.Read(buf) // read from tty via stderr's fd
+		if err != nil {
+			// Fallback: read a single byte from /dev/tty directly
+			tty, ttyErr := os.Open("/dev/tty")
+			if ttyErr != nil {
+				return false, nil
+			}
+			defer tty.Close()
+			n, err = tty.Read(buf)
+			if err != nil {
+				return false, nil
+			}
 		}
-		response = strings.TrimSpace(strings.ToLower(response))
+		response := strings.TrimSpace(strings.ToLower(string(buf[:n])))
 		return response == "y" || response == "yes", nil
 	}
 }
@@ -207,6 +255,18 @@ func makeAgentTurnFunc(a *agent.Agent) shell.AgentTurnFunc {
 				switch event.Type {
 				case "text_delta":
 					ch <- shell.TurnEvent{Type: "text_delta", Text: event.Text}
+				case "tool_call":
+					toolName := ""
+					if event.ToolCall != nil {
+						toolName = event.ToolCall.Name
+					}
+					ch <- shell.TurnEvent{Type: "tool_call", ToolName: toolName}
+				case "tool_result":
+					text := ""
+					if event.ToolResult != nil {
+						text = event.ToolResult.Content
+					}
+					ch <- shell.TurnEvent{Type: "tool_result", Text: text}
 				case "done":
 					ch <- shell.TurnEvent{Type: "done"}
 				case "error":
@@ -221,4 +281,35 @@ func makeAgentTurnFunc(a *agent.Agent) shell.AgentTurnFunc {
 
 		return ch, nil
 	}
+}
+
+// makeSlashCommandFunc wraps the commands.Registry into a shell.SlashCommandFunc.
+func makeSlashCommandFunc(registry *commands.Registry) shell.SlashCommandFunc {
+	return func(ctx context.Context, name string, args []string) (string, bool, error) {
+		cmd, ok := registry.Get(name)
+		if !ok {
+			return fmt.Sprintf("unknown command: /%s", name), false, nil
+		}
+
+		result, err := cmd.Execute(ctx, args)
+		if err != nil {
+			return "", false, err
+		}
+
+		quit := result.Action == commands.ActionQuit
+		return result.Output, quit, nil
+	}
+}
+
+// shellConfigDir returns the path for shell-mode-specific config like history.
+func shellConfigDir() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
+	shellDir := filepath.Join(dir, "shell")
+	if err := os.MkdirAll(shellDir, 0o755); err != nil {
+		return "", err
+	}
+	return shellDir, nil
 }

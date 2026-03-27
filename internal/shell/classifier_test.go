@@ -61,7 +61,6 @@ func TestClassify_BuiltinCommand(t *testing.T) {
 		args    []string
 	}{
 		{"cd src/", "cd", []string{"src/"}},
-		{"export FOO=bar", "export", []string{"FOO=bar"}},
 		{"exit", "exit", nil},
 		{"quit", "quit", nil},
 	}

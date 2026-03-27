@@ -18,16 +18,6 @@ func mockShellExec(stdout, stderr string, exitCode int) ShellExecFunc {
 	}
 }
 
-func mockAgentTurn(response string) AgentTurnFunc {
-	return func(_ context.Context, msg string) (<-chan TurnEvent, error) {
-		ch := make(chan TurnEvent, 2)
-		ch <- TurnEvent{Type: "text_delta", Text: response}
-		ch <- TurnEvent{Type: "done"}
-		close(ch)
-		return ch, nil
-	}
-}
-
 func newTestHost(input string, shellExec ShellExecFunc, agentTurn AgentTurnFunc) (*ShellHost, *bytes.Buffer, *bytes.Buffer) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -94,7 +84,7 @@ func TestShellHost_BuiltinCDChangesWorkDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(subDir, 0o755))
 
 	var capturedDir string
-	exec := func(_ context.Context, cmd string, workDir string) (string, string, int, error) {
+	exec := func(_ context.Context, _ string, workDir string) (string, string, int, error) {
 		capturedDir = workDir
 		return "", "", 0, nil
 	}
@@ -120,30 +110,18 @@ func TestShellHost_BuiltinCDInvalidPath(t *testing.T) {
 	assert.Equal(t, "/project", host.workDir) // unchanged
 }
 
-func TestShellHost_BuiltinExport(t *testing.T) {
-	t.Parallel()
-
-	host, _, _ := newTestHost("export FOO=bar\n", nil, nil)
-	err := host.Run(context.Background())
-	assert.NoError(t, err)
-
-	assert.Equal(t, "bar", host.env["FOO"])
-}
-
 func TestShellHost_ExitTerminates(t *testing.T) {
 	t.Parallel()
 
-	// After exit, we shouldn't see any more prompts
 	host, _, _ := newTestHost("exit\necho should not run\n", mockShellExec("", "", 0), nil)
 	err := host.Run(context.Background())
 
-	assert.ErrorIs(t, err, errExit)
+	assert.ErrorIs(t, err, ErrExit)
 }
 
 func TestShellHost_EOFTerminates(t *testing.T) {
 	t.Parallel()
 
-	// Empty reader = immediate EOF
 	host, _, _ := newTestHost("", nil, nil)
 	err := host.Run(context.Background())
 
@@ -153,12 +131,10 @@ func TestShellHost_EOFTerminates(t *testing.T) {
 func TestShellHost_EmptyInputRendersNewPrompt(t *testing.T) {
 	t.Parallel()
 
-	// Two empty lines then EOF
 	host, stdout, _ := newTestHost("\n\n", nil, nil)
 	err := host.Run(context.Background())
 	assert.NoError(t, err)
 
-	// Should have rendered the prompt 3 times (2 empty + 1 before EOF fails)
 	promptCount := strings.Count(stdout.String(), "ai$ ")
 	assert.Equal(t, 3, promptCount)
 }
@@ -178,12 +154,10 @@ func TestShellHost_ContextInjectionAfterShellCommand(t *testing.T) {
 		return ch, nil
 	}
 
-	// First a shell command (go test), then an LLM query
 	host, _, _ := newTestHost("go test ./...\nwhy did that fail?\n", exec, agent)
 	err := host.Run(context.Background())
 	assert.NoError(t, err)
 
-	// The LLM query should contain context about the previous command
 	assert.Contains(t, capturedMsg, "go test ./...")
 	assert.Contains(t, capturedMsg, "exit code 1")
 	assert.Contains(t, capturedMsg, "FAIL: TestFoo")
@@ -193,11 +167,78 @@ func TestShellHost_ContextInjectionAfterShellCommand(t *testing.T) {
 func TestShellHost_SlashCommandDelegation(t *testing.T) {
 	t.Parallel()
 
-	host, stdout, _ := newTestHost("/model claude-sonnet-4-5\n", nil, nil)
+	var capturedName string
+	var capturedArgs []string
+	slashFn := func(_ context.Context, name string, args []string) (string, bool, error) {
+		capturedName = name
+		capturedArgs = args
+		return "model switched", false, nil
+	}
+
+	stdout := &bytes.Buffer{}
+	host := NewShellHost(ShellHostConfig{
+		WorkDir:        "/project",
+		HomeDir:        "/home/user",
+		Executables:    map[string]bool{},
+		SlashCommandFn: slashFn,
+		Stdin:          strings.NewReader("/model claude-sonnet-4-5\n"),
+		Stdout:         stdout,
+		Stderr:         &bytes.Buffer{},
+		GitBranchFn:    func(string) string { return "" },
+	})
+
 	err := host.Run(context.Background())
 	assert.NoError(t, err)
 
-	assert.Contains(t, stdout.String(), "/model claude-sonnet-4-5")
+	assert.Equal(t, "model", capturedName)
+	assert.Equal(t, []string{"claude-sonnet-4-5"}, capturedArgs)
+	assert.Contains(t, stdout.String(), "model switched")
+}
+
+func TestShellHost_SlashCommandQuit(t *testing.T) {
+	t.Parallel()
+
+	slashFn := func(_ context.Context, name string, _ []string) (string, bool, error) {
+		if name == "quit" {
+			return "", true, nil
+		}
+		return "", false, nil
+	}
+
+	host := NewShellHost(ShellHostConfig{
+		WorkDir:        "/project",
+		HomeDir:        "/home/user",
+		Executables:    map[string]bool{},
+		SlashCommandFn: slashFn,
+		Stdin:          strings.NewReader("/quit\n"),
+		Stdout:         &bytes.Buffer{},
+		Stderr:         &bytes.Buffer{},
+		GitBranchFn:    func(string) string { return "" },
+	})
+
+	err := host.Run(context.Background())
+	assert.ErrorIs(t, err, ErrExit)
+}
+
+func TestShellHost_ToolCallEvents(t *testing.T) {
+	t.Parallel()
+
+	agent := func(_ context.Context, _ string) (<-chan TurnEvent, error) {
+		ch := make(chan TurnEvent, 4)
+		ch <- TurnEvent{Type: "tool_call", ToolName: "shell"}
+		ch <- TurnEvent{Type: "tool_result", Text: "command output here"}
+		ch <- TurnEvent{Type: "text_delta", Text: "Done."}
+		ch <- TurnEvent{Type: "done"}
+		close(ch)
+		return ch, nil
+	}
+
+	host, _, stderr := newTestHost("fix the build\n", nil, agent)
+	err := host.Run(context.Background())
+	assert.NoError(t, err)
+
+	assert.Contains(t, stderr.String(), "[Running: shell]")
+	assert.Contains(t, stderr.String(), "[Result: command output here]")
 }
 
 func TestShellHost_Mode(t *testing.T) {
@@ -205,4 +246,16 @@ func TestShellHost_Mode(t *testing.T) {
 
 	host, _, _ := newTestHost("", nil, nil)
 	assert.Equal(t, "shell", host.Mode())
+}
+
+func TestTruncateForDisplay(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "short", truncateForDisplay("short", 200))
+	assert.Equal(t, "line1 line2", truncateForDisplay("line1\nline2", 200))
+
+	long := strings.Repeat("x", 300)
+	result := truncateForDisplay(long, 200)
+	assert.Len(t, result, 203) // 200 + "..."
+	assert.True(t, strings.HasSuffix(result, "..."))
 }
