@@ -196,15 +196,15 @@ func makeShellApprovalFunc(promptWriter *os.File) agent.ApprovalFunc {
 		buf := make([]byte, 64)
 		n, err := promptWriter.Read(buf) // read from tty via stderr's fd
 		if err != nil {
-			// Fallback: read a single byte from /dev/tty directly
+			// Fallback: read from /dev/tty directly
 			tty, ttyErr := os.Open("/dev/tty")
 			if ttyErr != nil {
-				return false, nil
+				return false, fmt.Errorf("no terminal available for approval prompt: %w", ttyErr)
 			}
 			defer tty.Close()
 			n, err = tty.Read(buf)
 			if err != nil {
-				return false, nil
+				return false, fmt.Errorf("reading approval response: %w", err)
 			}
 		}
 		response := strings.TrimSpace(strings.ToLower(string(buf[:n])))

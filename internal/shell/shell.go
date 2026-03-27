@@ -103,6 +103,7 @@ func (h *ShellHost) Mode() string {
 // Run starts the REPL loop. It blocks until EOF, exit, or context cancellation.
 func (h *ShellHost) Run(ctx context.Context) error {
 	scanner := bufio.NewScanner(h.stdin)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for {
 		select {
@@ -118,6 +119,9 @@ func (h *ShellHost) Run(ctx context.Context) error {
 
 		// Read input
 		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("reading shell input: %w", err)
+			}
 			// EOF (Ctrl-D)
 			fmt.Fprintln(h.stdout)
 			return nil
@@ -139,7 +143,7 @@ func (h *ShellHost) Run(ctx context.Context) error {
 			h.handleShellCommand(ctx, input)
 
 		case ClassLLMQuery:
-			h.handleLLMQuery(ctx, line)
+			h.handleLLMQuery(ctx, input)
 
 		case ClassSlashCommand:
 			if quit := h.handleSlashCommand(ctx, input); quit {
@@ -216,7 +220,13 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 	h.ctxTracker.Record(input.Command, combined, exitCode)
 }
 
-func (h *ShellHost) handleLLMQuery(ctx context.Context, query string) {
+func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
+	// Strip force prefix (?) from the query text sent to the LLM.
+	query := strings.TrimSpace(input.Raw)
+	if strings.HasPrefix(query, "?") {
+		query = strings.TrimSpace(query[1:])
+	}
+
 	h.history.Add(query)
 
 	if h.agentTurn == nil {
@@ -229,13 +239,17 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, query string) {
 	ctxMsg := h.ctxTracker.ContextMessage()
 	if ctxMsg != "" {
 		message = ctxMsg + "\n\nUser query: " + query
-		h.ctxTracker.Clear()
 	}
 
 	events, err := h.agentTurn(ctx, message)
 	if err != nil {
 		fmt.Fprintf(h.stderr, "error: %v\n", err)
 		return
+	}
+
+	// Clear context only after successful turn initiation
+	if ctxMsg != "" {
+		h.ctxTracker.Clear()
 	}
 
 	for event := range events {
