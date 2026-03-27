@@ -17,6 +17,9 @@ type ContextTracker struct {
 
 // NewContextTracker creates a context tracker with the given maximum output size.
 func NewContextTracker(maxOutputSize int) *ContextTracker {
+	if maxOutputSize < 0 {
+		maxOutputSize = 0
+	}
 	return &ContextTracker{maxOutputSize: maxOutputSize}
 }
 

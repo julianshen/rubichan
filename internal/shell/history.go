@@ -14,6 +14,9 @@ type CommandHistory struct {
 
 // NewCommandHistory creates a history with the given maximum size.
 func NewCommandHistory(maxSize int) *CommandHistory {
+	if maxSize < 0 {
+		maxSize = 0
+	}
 	return &CommandHistory{
 		maxSize:  maxSize,
 		position: -1,

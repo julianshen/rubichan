@@ -24,7 +24,7 @@ func TestClassify_ForceLLMPrefix(t *testing.T) {
 	result := c.Classify("?what does this Makefile do")
 
 	assert.Equal(t, ClassLLMQuery, result.Classification)
-	assert.Equal(t, "what does this Makefile do", result.Raw)
+	assert.Equal(t, "?what does this Makefile do", result.Raw)
 }
 
 func TestClassify_SlashCommand(t *testing.T) {
@@ -145,6 +145,15 @@ func TestScanPATH(t *testing.T) {
 	// These should exist on any Unix system
 	assert.True(t, executables["ls"], "ls should be found in PATH")
 	assert.True(t, executables["sh"], "sh should be found in PATH")
+}
+
+func TestClassify_LoneSlash(t *testing.T) {
+	t.Parallel()
+	c := NewInputClassifier(map[string]bool{})
+
+	result := c.Classify("/")
+	assert.Equal(t, ClassEmpty, result.Classification)
+	assert.Equal(t, "/", result.Raw)
 }
 
 func TestClassify_EnvPrefixWithKnownExecutable(t *testing.T) {

@@ -96,16 +96,18 @@ func (c *InputClassifier) Classify(input string) ClassifiedInput {
 
 	// Force LLM prefix: ?
 	if strings.HasPrefix(trimmed, "?") {
-		query := strings.TrimSpace(trimmed[1:])
 		return ClassifiedInput{
 			Classification: ClassLLMQuery,
-			Raw:            query,
+			Raw:            input,
 		}
 	}
 
 	// Slash command
 	if strings.HasPrefix(trimmed, "/") {
 		parts := strings.Fields(trimmed[1:])
+		if len(parts) == 0 {
+			return ClassifiedInput{Classification: ClassEmpty, Raw: input}
+		}
 		var args []string
 		if len(parts) > 1 {
 			args = parts[1:]

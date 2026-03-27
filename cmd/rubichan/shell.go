@@ -162,7 +162,10 @@ func runShell() error {
 		return branch
 	}
 
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not determine home directory: %v\n", err)
+	}
 
 	host := shell.NewShellHost(shell.ShellHostConfig{
 		WorkDir:        cwd,
