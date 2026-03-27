@@ -45,7 +45,6 @@ import (
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
 	"github.com/julianshen/rubichan/internal/skills/builtin/codereview"
 	"github.com/julianshen/rubichan/internal/skills/builtin/frontenddesign"
-	"github.com/julianshen/rubichan/internal/skills/builtin/superpowers"
 	"github.com/julianshen/rubichan/internal/skills/builtin/uiuxpromax"
 	"github.com/julianshen/rubichan/internal/skills/goplugin"
 	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
@@ -575,7 +574,7 @@ func (*noopPromptBackend) Unload() error                                  { retu
 
 // createSkillRuntime creates and configures a skill runtime with built-in
 // prompt skills and any explicitly requested skills from --skills flag.
-// Built-in skills (superpowers, frontend-design, apple-platform-guide) are
+// Built-in skills (frontend-design, apple-platform-guide) are
 // always registered and auto-activate based on mode triggers.
 //
 // The mode parameter is set in TriggerContext to enable mode-based activation
@@ -733,7 +732,6 @@ func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provide
 }
 
 func registerBuiltinSkillPrompts(loader *skills.Loader, configDir string) error {
-	superpowers.Register(loader)
 	frontenddesign.Register(loader)
 	codereview.Register(loader)
 	appledev.RegisterPrompt(loader)
