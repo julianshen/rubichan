@@ -568,6 +568,9 @@ func (h *Hub) handleSessionResume(c *Client, env Envelope) {
 
 	// Snapshot buffered events BEFORE registering the client, so live
 	// broadcasts cannot enqueue newer events ahead of replayed entries.
+	// Note: a narrow race remains — events broadcast between snapshot and
+	// registerClient are missed (not in snapshot, client not yet registered).
+	// Fully closing this requires atomic snapshot+register under ss.mu.
 	entries := ss.Buffer.Since(payload.LastSeq)
 	if payload.LastSeq > 0 && len(entries) == 0 && ss.Buffer.Len() > 0 && ss.Buffer.OldestSeq() > payload.LastSeq {
 		h.sendError(c, "gap_too_large", "reconnect buffer does not contain events since requested sequence")

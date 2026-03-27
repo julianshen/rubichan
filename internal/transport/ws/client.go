@@ -102,6 +102,9 @@ func (c *Client) readPump() {
 			c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		}
 		// Drain the frame payload without writing a response.
+		// Note: RFC 6455 §5.5.1 requires echoing Close frames, but doing so
+		// from readPump would race with writePump. The deferred c.close()
+		// forcibly closes the TCP connection, which clients handle gracefully.
 		// Close frames cause readPump to return on the next read error.
 		_, err := io.Copy(io.Discard, r)
 		return err
