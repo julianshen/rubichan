@@ -559,8 +559,23 @@ func (h *Hub) handleSessionResume(c *Client, env Envelope) {
 		return
 	}
 
-	ss, err := h.registerClient(c, payload.SessionID)
-	if err != nil {
+	// Look up session first without registering the client.
+	ss, ok := h.GetSession(payload.SessionID)
+	if !ok {
+		h.sendError(c, "resume_failed", fmt.Sprintf("session %q not found", payload.SessionID))
+		return
+	}
+
+	// Snapshot buffered events BEFORE registering the client, so live
+	// broadcasts cannot enqueue newer events ahead of replayed entries.
+	entries := ss.Buffer.Since(payload.LastSeq)
+	if payload.LastSeq > 0 && len(entries) == 0 && ss.Buffer.Len() > 0 && ss.Buffer.OldestSeq() > payload.LastSeq {
+		h.sendError(c, "gap_too_large", "reconnect buffer does not contain events since requested sequence")
+		return
+	}
+
+	// Now register the client (makes it eligible for live broadcasts).
+	if _, err := h.registerClient(c, payload.SessionID); err != nil {
 		h.sendError(c, "resume_failed", err.Error())
 		return
 	}
@@ -569,12 +584,8 @@ func (h *Hub) handleSessionResume(c *Client, env Envelope) {
 	info := SessionInfoPayload{SessionID: ss.ID, Status: "active"}
 	h.sendEnvelope(c, TypeSessionInfo, ss.ID, info)
 
-	// Replay buffered events since last_seq.
-	entries := ss.Buffer.Since(payload.LastSeq)
-	if payload.LastSeq > 0 && len(entries) == 0 && ss.Buffer.Len() > 0 && ss.Buffer.OldestSeq() > payload.LastSeq {
-		h.sendError(c, "gap_too_large", "reconnect buffer does not contain events since requested sequence")
-		return
-	}
+	// Replay buffered events. These are already in c.send before any
+	// live broadcast can arrive (registerClient happened after snapshot).
 	for _, entry := range entries {
 		c.Send(entry.Payload)
 	}

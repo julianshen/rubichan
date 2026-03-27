@@ -12,7 +12,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/provider"
 	ws "github.com/julianshen/rubichan/internal/transport/ws"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 var (
@@ -58,9 +61,28 @@ func runServe() error {
 		auth = ws.NoopAuth{}
 	}
 
+	// Load config and create provider for the agent factory.
+	cfg, err := config.Load("")
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	llm, err := provider.NewProvider(cfg)
+	if err != nil {
+		return fmt.Errorf("create provider: %w", err)
+	}
+
+	agentFactory := func(sessionID string, opts ws.SessionCreatePayload) (*agentsdk.Agent, error) {
+		agentOpts := []agentsdk.Option{}
+		if opts.SystemPrompt != "" {
+			agentOpts = append(agentOpts, agentsdk.WithSystemPrompt(opts.SystemPrompt))
+		}
+		return agentsdk.NewAgent(llm, agentOpts...), nil
+	}
+
 	srv := ws.NewServer(ws.ServerConfig{
-		Addr: serveAddr,
-		Auth: auth,
+		Addr:         serveAddr,
+		Auth:         auth,
+		AgentFactory: agentFactory,
 	})
 
 	ln, err := net.Listen("tcp", serveAddr)

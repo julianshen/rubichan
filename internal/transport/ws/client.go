@@ -87,16 +87,24 @@ func (c *Client) readPump() {
 
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 
-	// Use a custom reader so pong frames (handled internally by gobwas/ws)
-	// still reset the read deadline. Without this, idle-but-alive clients
-	// that only send pong responses would be disconnected after pongWait.
+	// maxMessageSize limits inbound frames to prevent OOM from oversized payloads.
+	const maxMessageSize = 1 << 20 // 1 MiB
+
+	// Use a custom reader to intercept control frames. We do NOT use
+	// wsutil.ControlFrameHandler here because it writes responses (close frames)
+	// back to c.conn, which would race with writePump's concurrent writes.
+	// Instead, readPump only reads; all writes go through writePump via c.send.
 	reader := wsutil.NewReader(c.conn, ws.StateServerSide)
-	controlHandler := wsutil.ControlFrameHandler(c.conn, ws.StateServerSide)
+	reader.MaxFrameSize = maxMessageSize
 	reader.OnIntermediate = func(hdr ws.Header, r io.Reader) error {
+		// Reset deadline on any control frame (pong keeps connection alive).
 		if hdr.OpCode == ws.OpPong {
 			c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		}
-		return controlHandler(hdr, r)
+		// Drain the frame payload without writing a response.
+		// Close frames cause readPump to return on the next read error.
+		_, err := io.Copy(io.Discard, r)
+		return err
 	}
 
 	for {
@@ -105,9 +113,6 @@ func (c *Client) readPump() {
 			return
 		}
 		if hdr.OpCode.IsControl() {
-			// Passing reader as the io.Reader is safe: NextFrame positioned it
-			// at the control frame payload, and the handler reads exactly
-			// hdr.Length bytes before returning.
 			if err := reader.OnIntermediate(hdr, reader); err != nil {
 				return
 			}
