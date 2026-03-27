@@ -90,6 +90,11 @@ func (ia *InputArea) autoGrow() {
 	}
 }
 
+// SetWidth sets the textarea width in columns.
+func (ia *InputArea) SetWidth(w int) {
+	ia.textarea.SetWidth(w)
+}
+
 // Height returns the current textarea height in rows.
 func (ia *InputArea) Height() int {
 	return ia.textarea.Height()
