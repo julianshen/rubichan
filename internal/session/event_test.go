@@ -53,10 +53,12 @@ func TestNewJSONLSinkEmitsOneLinePerEvent(t *testing.T) {
 
 	sink.Emit(NewVerificationSnapshotEvent("Verification snapshot:\n- verdict: passed\n- reason: ok"))
 
-	out := strings.TrimSpace(buf.String())
-	assert.Contains(t, out, `"type":"verification_snapshot"`)
-	assert.Contains(t, out, `"verdict":"passed"`)
-	assert.Contains(t, out, `"reason":"ok"`)
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 1, "JSONL sink must emit exactly one line per event")
+	assert.Contains(t, lines[0], `"type":"verification_snapshot"`)
+	assert.Contains(t, lines[0], `"verdict":"passed"`)
+	assert.Contains(t, lines[0], `"reason":"ok"`)
 }
 
 func TestNewTurnAndToolEvents(t *testing.T) {
