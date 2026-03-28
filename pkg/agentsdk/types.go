@@ -26,14 +26,14 @@ type ModelCapabilities struct {
 
 // CompletionRequest represents a request to an LLM for completion.
 type CompletionRequest struct {
-	Model            string             `json:"model"`
-	System           string             `json:"system,omitempty"`
-	Messages         []Message          `json:"messages"`
-	Tools            []ToolDef          `json:"tools,omitempty"`
-	MaxTokens        int                `json:"max_tokens"`
-	Temperature      *float64           `json:"temperature,omitempty"`
-	CacheBreakpoints []int              `json:"cache_breakpoints,omitempty"` // byte offsets in System for cache hints
-	Capabilities     ModelCapabilities  `json:"capabilities,omitempty"`
+	Model            string            `json:"model"`
+	System           string            `json:"system,omitempty"`
+	Messages         []Message         `json:"messages"`
+	Tools            []ToolDef         `json:"tools,omitempty"`
+	MaxTokens        int               `json:"max_tokens"`
+	Temperature      *float64          `json:"temperature,omitempty"`
+	CacheBreakpoints []int             `json:"cache_breakpoints,omitempty"` // byte offsets in System for cache hints
+	Capabilities     ModelCapabilities `json:"capabilities,omitempty"`
 }
 
 // Message represents a single message in a conversation.

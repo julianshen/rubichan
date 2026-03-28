@@ -203,8 +203,8 @@ func TestIsSmallModel(t *testing.T) {
 		"phi-mini",
 		"model-tiny",
 		"model-small",
-		"LLAMA-7B",         // case insensitive
-		"qwen2.5:7b",       // colon-separated tag
+		"LLAMA-7B",                   // case insensitive
+		"qwen2.5:7b",                 // colon-separated tag
 		"nvidia/nemotron-nano-9b-v2", // multi-part name
 	}
 	for _, m := range smallCases {
