@@ -1054,6 +1054,18 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			systemPrompt = systemPrompt + "\n\n" + toolHint
 		}
 
+		// Branch on native tool use capability: models without native support
+		// receive tool definitions rendered as text in the system prompt instead.
+		useNativeTools := a.capabilities.SupportsNativeToolUse
+		var reqTools []provider.ToolDef
+		if useNativeTools {
+			reqTools = activeTools
+		} else {
+			// Render tools into system prompt as text for non-native models.
+			toolPrompt := tools.RenderToolsAsText(activeTools)
+			systemPrompt = systemPrompt + "\n\n" + toolPrompt
+		}
+
 		// Measure component-level token usage before the LLM call.
 		// Skill prompt fragments are included in systemPrompt via PromptBuilder
 		// but tracked separately for budget visibility.
@@ -1069,7 +1081,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			Model:            a.model,
 			System:           systemPrompt,
 			Messages:         a.conversation.Messages(),
-			Tools:            activeTools,
+			Tools:            reqTools,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,
 		}
@@ -1168,6 +1180,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
+		// Capture accumulated text before finalizing, for text-based tool extraction.
+		accumulatedText := currentTextBuf
+
 		// Finalize any remaining text or tool
 		finalizeText()
 		finalizeTool()
@@ -1176,6 +1191,21 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		if streamErr {
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
+		}
+
+		// For non-native models, parse <tool_use> XML blocks from the text response
+		// and inject them into pendingTools so the normal execution path handles them.
+		if !useNativeTools && len(pendingTools) == 0 && accumulatedText != "" {
+			textCalls := extractTextToolCalls(accumulatedText)
+			for _, tc := range textCalls {
+				pendingTools = append(pendingTools, tc)
+				blocks = append(blocks, provider.ContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: tc.Input,
+				})
+			}
 		}
 
 		// Add assistant message with accumulated blocks
@@ -1230,6 +1260,21 @@ func hasTextContent(blocks []provider.ContentBlock) bool {
 		}
 	}
 	return false
+}
+
+// extractTextToolCalls converts parsed text-based tool calls into ToolUseBlocks
+// with auto-generated IDs, enabling non-native models to use the same execution path.
+func extractTextToolCalls(text string) []provider.ToolUseBlock {
+	parsed := tools.ParseTextToolCalls(text)
+	blocks := make([]provider.ToolUseBlock, len(parsed))
+	for i, tc := range parsed {
+		blocks[i] = provider.ToolUseBlock{
+			ID:    fmt.Sprintf("text_call_%d", i+1),
+			Name:  tc.Name,
+			Input: tc.Input,
+		}
+	}
+	return blocks
 }
 
 func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {

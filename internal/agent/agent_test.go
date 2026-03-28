@@ -3114,3 +3114,32 @@ func TestAgentContextBudget(t *testing.T) {
 		assert.GreaterOrEqual(t, result.BeforeTokens, 0)
 	})
 }
+
+func TestExtractTextToolCalls(t *testing.T) {
+	text := "I'll read that.\n\n<tool_use>\n<name>file</name>\n<input>{\"path\": \"main.go\", \"operation\": \"read\"}</input>\n</tool_use>"
+	calls := extractTextToolCalls(text)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1, got %d", len(calls))
+	}
+	if calls[0].Name != "file" {
+		t.Errorf("name = %q", calls[0].Name)
+	}
+	if calls[0].ID == "" {
+		t.Error("expected auto-generated ID")
+	}
+}
+
+func TestExtractTextToolCalls_MultipleBlocks(t *testing.T) {
+	text := "<tool_use>\n<name>tool_a</name>\n<input>{\"x\": 1}</input>\n</tool_use>\n<tool_use>\n<name>tool_b</name>\n<input>{\"y\": 2}</input>\n</tool_use>"
+	calls := extractTextToolCalls(text)
+	require.Len(t, calls, 2)
+	assert.Equal(t, "tool_a", calls[0].Name)
+	assert.Equal(t, "text_call_1", calls[0].ID)
+	assert.Equal(t, "tool_b", calls[1].Name)
+	assert.Equal(t, "text_call_2", calls[1].ID)
+}
+
+func TestExtractTextToolCalls_NoBlocks(t *testing.T) {
+	calls := extractTextToolCalls("Just a plain text response with no tool calls.")
+	assert.Empty(t, calls)
+}
