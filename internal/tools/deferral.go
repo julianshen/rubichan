@@ -101,15 +101,14 @@ func truncateToFirstSentence(s string) string {
 			if end == len(s) || s[end] == ' ' {
 				sentence := s[:end]
 				if len(sentence) > maxDescriptionLen {
-					return sentence[:maxDescriptionLen]
+					return sentence[:maxDescriptionLen] + "..."
 				}
 				return sentence
 			}
 		}
 	}
-	// No sentence boundary found — truncate at maxDescriptionLen.
 	if len(s) > maxDescriptionLen {
-		return s[:maxDescriptionLen]
+		return s[:maxDescriptionLen] + "..."
 	}
 	return s
 }

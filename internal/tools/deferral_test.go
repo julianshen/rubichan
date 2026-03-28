@@ -115,19 +115,19 @@ func TestToolSummaryWithDeferredTools(t *testing.T) {
 func TestToolSummaryTruncatesLongDescriptions(t *testing.T) {
 	dm := NewDeferralManager(0.10)
 
-	longDesc := "This is a very long description that goes on and on past one hundred and twenty characters without stopping early. More words here."
+	longDesc := "This is a very long description that goes on and on past one hundred and twenty characters without stopping early and never has a sentence boundary anywhere in sight"
 	activeTools := []provider.ToolDef{
 		{Name: "verbose-tool", Description: longDesc, InputSchema: []byte(`{}`)},
 	}
 
 	summary := dm.ToolSummary(activeTools)
 
-	// The description in the summary must be at most 120 chars.
+	// The description should be truncated with "..." when it exceeds 120 chars.
 	for _, line := range strings.Split(summary, "\n") {
 		if strings.Contains(line, "**verbose-tool**") {
-			// Extract description part after ": "
 			parts := strings.SplitN(line, ": ", 2)
-			assert.LessOrEqual(t, len(parts[1]), 120)
+			assert.LessOrEqual(t, len(parts[1]), 123) // 120 + "..."
+			assert.True(t, strings.HasSuffix(parts[1], "..."), "truncated descriptions should end with ellipsis")
 		}
 	}
 }

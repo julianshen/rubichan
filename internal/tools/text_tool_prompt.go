@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -115,19 +117,17 @@ func extractParams(schema json.RawMessage) ([]paramInfo, bool) {
 	return params, true
 }
 
-// sortParamInfos sorts params alphabetically by name (required first, then optional).
+// sortParamInfos sorts required params first, then alphabetically by name.
 func sortParamInfos(params []paramInfo) {
-	for i := 1; i < len(params); i++ {
-		for j := i; j > 0; j-- {
-			a, b := params[j-1], params[j]
-			if (!a.required && b.required) ||
-				(a.required == b.required && a.name > b.name) {
-				params[j-1], params[j] = params[j], params[j-1]
-			} else {
-				break
+	slices.SortFunc(params, func(a, b paramInfo) int {
+		if a.required != b.required {
+			if a.required {
+				return -1
 			}
+			return 1
 		}
-	}
+		return cmp.Compare(a.name, b.name)
+	})
 }
 
 // ParseTextToolCalls parses <tool_use> XML blocks from a model's text response
