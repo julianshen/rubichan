@@ -326,6 +326,13 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
 		scratchpad:   NewScratchpad(),
+		// Default to native tool use — callers opt into text-based fallback
+		// via WithCapabilities when the model doesn't support tool_use.
+		capabilities: provider.ModelCapabilities{
+			SupportsNativeToolUse: true,
+			SupportsStreaming:     true,
+			SupportsSystemPrompt:  true,
+		},
 	}
 	for _, opt := range opts {
 		opt(a)
