@@ -83,6 +83,36 @@ func selectSafeBaseline(allTools []provider.ToolDef) []provider.ToolDef {
 	return selected
 }
 
+// ApplyMaxToolCount trims tools to fit within maxCount, always preserving core
+// tools (CategoryCore) and tool_search. Non-core tools are trimmed from the end
+// of the slice. Returns tools unchanged when maxCount <= 0 or len(tools) <= maxCount.
+func ApplyMaxToolCount(tools []provider.ToolDef, maxCount int) []provider.ToolDef {
+	if maxCount <= 0 || len(tools) <= maxCount {
+		return tools
+	}
+
+	// Separate core/tool_search from non-core, preserving original order.
+	var core, nonCore []provider.ToolDef
+	for _, t := range tools {
+		if Categorize(t.Name) == CategoryCore || t.Name == "tool_search" {
+			core = append(core, t)
+		} else {
+			nonCore = append(nonCore, t)
+		}
+	}
+
+	// Core tools are always kept; trim non-core from the end to fit budget.
+	nonCoreSlots := maxCount - len(core)
+	if nonCoreSlots < 0 {
+		nonCoreSlots = 0
+	}
+	if nonCoreSlots < len(nonCore) {
+		nonCore = nonCore[:nonCoreSlots]
+	}
+
+	return append(core, nonCore...)
+}
+
 // collectRecentText extracts text from the last few messages for keyword matching.
 func (ts *ToolSelector) collectRecentText(messages []provider.Message) string {
 	var sb strings.Builder

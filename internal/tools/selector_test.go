@@ -176,3 +176,72 @@ func TestSelectorGenericPromptsDoNotExposeSensitiveCategories(t *testing.T) {
 	assert.NotContains(t, names, "mcp-github")
 	assert.NotContains(t, names, "git_status")
 }
+
+// Tests for ApplyMaxToolCount
+
+func TestApplyMaxToolCountZeroOrNegative(t *testing.T) {
+	tools := allTestTools()
+
+	// maxCount <= 0 means no limit — return unchanged
+	assert.Equal(t, tools, ApplyMaxToolCount(tools, 0))
+	assert.Equal(t, tools, ApplyMaxToolCount(tools, -1))
+}
+
+func TestApplyMaxToolCountWithinLimit(t *testing.T) {
+	tools := allTestTools()
+
+	// maxCount >= len(tools) — return unchanged
+	assert.Equal(t, tools, ApplyMaxToolCount(tools, len(tools)))
+	assert.Equal(t, tools, ApplyMaxToolCount(tools, len(tools)+5))
+}
+
+func TestApplyMaxToolCountPreservesCoreAndToolSearch(t *testing.T) {
+	// allTestTools has 11 tools: shell, file, process, tool_search (core+search), then 7 non-core
+	// Limit to exactly 4 (the core set) — must include shell, file, process, tool_search
+	all := allTestTools()
+	result := ApplyMaxToolCount(all, 4)
+	names := toolNames(result)
+
+	assert.Len(t, result, 4)
+	assert.Contains(t, names, "shell")
+	assert.Contains(t, names, "file")
+	assert.Contains(t, names, "process")
+	assert.Contains(t, names, "tool_search")
+}
+
+func TestApplyMaxToolCountTrimsNonCoreFromEnd(t *testing.T) {
+	// allTestTools: shell, file, process, tool_search, search, git_status, http_get, browser_open, xcode_build, xcode_discover, mcp-github
+	// Limit to 6 — keeps core 4 + first 2 non-core
+	all := allTestTools()
+	result := ApplyMaxToolCount(all, 6)
+	names := toolNames(result)
+
+	assert.Len(t, result, 6)
+	// Core always present
+	assert.Contains(t, names, "shell")
+	assert.Contains(t, names, "file")
+	assert.Contains(t, names, "process")
+	assert.Contains(t, names, "tool_search")
+	// First 2 non-core (search, git_status) kept; rest trimmed
+	assert.Contains(t, names, "search")
+	assert.Contains(t, names, "git_status")
+	assert.NotContains(t, names, "http_get")
+	assert.NotContains(t, names, "xcode_build")
+	assert.NotContains(t, names, "mcp-github")
+}
+
+func TestApplyMaxToolCountMaxLessThanCoreCount(t *testing.T) {
+	// If maxCount < number of core tools, all core tools are still returned (never drop core).
+	all := allTestTools()
+	result := ApplyMaxToolCount(all, 2)
+	names := toolNames(result)
+
+	// Core tools are always preserved even if they exceed maxCount
+	assert.Contains(t, names, "shell")
+	assert.Contains(t, names, "file")
+	assert.Contains(t, names, "process")
+	assert.Contains(t, names, "tool_search")
+	// No non-core tools
+	assert.NotContains(t, names, "search")
+	assert.NotContains(t, names, "git_status")
+}
