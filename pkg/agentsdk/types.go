@@ -4,15 +4,36 @@ package agentsdk
 
 import "encoding/json"
 
+// ModelCapabilities describes the per-model capability flags used to tune
+// tool dispatch, prompt construction, and agent loop behavior.
+type ModelCapabilities struct {
+	// SupportsNativeToolUse indicates the model can process a tools[] API parameter.
+	SupportsNativeToolUse bool
+	// SupportsStreaming indicates the model supports token-level streaming.
+	SupportsStreaming bool
+	// SupportsSystemPrompt indicates the model accepts a system prompt.
+	SupportsSystemPrompt bool
+	// NeedsToolDiscoveryHint indicates the system prompt should include a
+	// tool inventory section to guide tool selection.
+	NeedsToolDiscoveryHint bool
+	// MaxToolCount is the maximum number of tools to send to the model.
+	// 0 means unlimited.
+	MaxToolCount int
+	// PreferBatchEdits indicates the model works better with a batch-edit
+	// tool rather than individual per-file edit calls.
+	PreferBatchEdits bool
+}
+
 // CompletionRequest represents a request to an LLM for completion.
 type CompletionRequest struct {
-	Model            string    `json:"model"`
-	System           string    `json:"system,omitempty"`
-	Messages         []Message `json:"messages"`
-	Tools            []ToolDef `json:"tools,omitempty"`
-	MaxTokens        int       `json:"max_tokens"`
-	Temperature      *float64  `json:"temperature,omitempty"`
-	CacheBreakpoints []int     `json:"cache_breakpoints,omitempty"` // byte offsets in System for cache hints
+	Model            string             `json:"model"`
+	System           string             `json:"system,omitempty"`
+	Messages         []Message          `json:"messages"`
+	Tools            []ToolDef          `json:"tools,omitempty"`
+	MaxTokens        int                `json:"max_tokens"`
+	Temperature      *float64           `json:"temperature,omitempty"`
+	CacheBreakpoints []int              `json:"cache_breakpoints,omitempty"` // byte offsets in System for cache hints
+	Capabilities     ModelCapabilities  `json:"capabilities,omitempty"`
 }
 
 // Message represents a single message in a conversation.

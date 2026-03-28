@@ -3,27 +3,14 @@ package provider
 import (
 	"regexp"
 	"strings"
+
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
-// ModelCapabilities describes the per-model capability flags used to tune
-// tool dispatch, prompt construction, and agent loop behavior.
-type ModelCapabilities struct {
-	// SupportsNativeToolUse indicates the model can process a tools[] API parameter.
-	SupportsNativeToolUse bool
-	// SupportsStreaming indicates the model supports token-level streaming.
-	SupportsStreaming bool
-	// SupportsSystemPrompt indicates the model accepts a system prompt.
-	SupportsSystemPrompt bool
-	// NeedsToolDiscoveryHint indicates the system prompt should include a
-	// tool inventory section to guide tool selection.
-	NeedsToolDiscoveryHint bool
-	// MaxToolCount is the maximum number of tools to send to the model.
-	// 0 means unlimited.
-	MaxToolCount int
-	// PreferBatchEdits indicates the model works better with a batch-edit
-	// tool rather than individual per-file edit calls.
-	PreferBatchEdits bool
-}
+// ModelCapabilities is an alias for the canonical agentsdk.ModelCapabilities.
+// All provider code uses provider.ModelCapabilities; the canonical definition
+// lives in pkg/agentsdk/.
+type ModelCapabilities = agentsdk.ModelCapabilities
 
 // DetectCapabilities returns the ModelCapabilities for the given provider and
 // model. providerName is the configured provider identifier (e.g. "anthropic",

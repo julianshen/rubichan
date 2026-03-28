@@ -158,6 +158,13 @@ func WithWorkingDir(dir string) AgentOption {
 	return func(a *Agent) { a.workingDir = dir }
 }
 
+// WithCapabilities sets the model capability flags on the agent. These flags
+// are threaded into CompletionRequests to tune tool dispatch and prompt
+// construction for different model families.
+func WithCapabilities(caps provider.ModelCapabilities) AgentOption {
+	return func(a *Agent) { a.capabilities = caps }
+}
+
 // WorkingDir returns the agent's effective working directory.
 // The value is frozen at construction time and never changes.
 func (a *Agent) WorkingDir() string {
@@ -299,6 +306,7 @@ type Agent struct {
 	userHookRunner   *hooks.UserHookRunner
 	turnNumber       atomic.Int32
 	rateLimiter      *SharedRateLimiter
+	capabilities     provider.ModelCapabilities
 }
 
 const maxUIRequestInputBytes = 2048
