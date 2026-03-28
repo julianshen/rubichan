@@ -13,7 +13,7 @@ import (
 
 // TestTextFallback_RenderAndParse_RoundTrip verifies that tools rendered via
 // RenderToolsAsText produce a format whose XML blocks ParseTextToolCalls can
-// understand, and that extractTextToolCalls wraps those results correctly.
+// parse, returning ToolUseBlocks with auto-generated IDs.
 func TestTextFallback_RenderAndParse_RoundTrip(t *testing.T) {
 	toolDefs := []provider.ToolDef{
 		{
@@ -44,18 +44,14 @@ func TestTextFallback_RenderAndParse_RoundTrip(t *testing.T) {
 	calls := tools.ParseTextToolCalls(modelResponse)
 	require.Len(t, calls, 1)
 	assert.Equal(t, "shell", calls[0].Name)
-
-	blocks := extractTextToolCalls(modelResponse)
-	require.Len(t, blocks, 1)
-	assert.True(t, strings.HasPrefix(blocks[0].ID, "text_call_"), "ID should start with text_call_, got %q", blocks[0].ID)
-	assert.Equal(t, "shell", blocks[0].Name)
+	assert.True(t, strings.HasPrefix(calls[0].ID, "text_call_"), "ID should start with text_call_")
 }
 
 // TestTextFallback_NoToolCallsInResponse verifies that plain text without any
 // XML tool-call blocks produces an empty result.
 func TestTextFallback_NoToolCallsInResponse(t *testing.T) {
 	text := "Here's the answer: the code looks correct, no changes needed."
-	calls := extractTextToolCalls(text)
+	calls := tools.ParseTextToolCalls(text)
 	assert.Empty(t, calls)
 }
 
@@ -72,7 +68,7 @@ func TestTextFallback_MultipleToolCalls(t *testing.T) {
 <input>{"command": "npm run build"}</input>
 </tool_use>`
 
-	blocks := extractTextToolCalls(text)
+	blocks := tools.ParseTextToolCalls(text)
 	require.Len(t, blocks, 2)
 	assert.Equal(t, "file", blocks[0].Name)
 	assert.Equal(t, "shell", blocks[1].Name)

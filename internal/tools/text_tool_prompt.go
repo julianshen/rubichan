@@ -9,15 +9,12 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
-// TextToolCall represents a parsed tool call from a model's text response.
-type TextToolCall struct {
-	Name  string
-	Input json.RawMessage
-}
-
-// toolCallRegex matches <tool_use> XML blocks with dotall semantics.
+// toolCallRegex matches <tool_use> XML blocks. The input content is captured
+// lazily up to the first </input> that is immediately followed (modulo
+// whitespace) by </tool_use>. This handles both multiple sequential blocks
+// and JSON payloads that don't contain the exact sequence "</input>\s*</tool_use>".
 var toolCallRegex = regexp.MustCompile(
-	`(?s)<tool_use>\s*<name>\s*(\S+?)\s*</name>\s*<input>\s*(.*?)\s*</input>\s*</tool_use>`,
+	`(?s)<tool_use>\s*<name>\s*(\S+?)\s*</name>\s*<input>\s*(.*?)</input>\s*</tool_use>`,
 )
 
 // RenderToolsAsText renders tool definitions as a human-readable system prompt
@@ -45,8 +42,8 @@ func RenderToolsAsText(tools []provider.ToolDef) string {
 			sb.WriteString("\n")
 		}
 
-		params := extractParams(tool.InputSchema)
-		if len(params) > 0 {
+		params, ok := extractParams(tool.InputSchema)
+		if ok && len(params) > 0 {
 			sb.WriteString("\n**Parameters:**\n")
 			for _, p := range params {
 				line := fmt.Sprintf("- `%s` (%s)", p.name, p.typ)
@@ -59,6 +56,12 @@ func RenderToolsAsText(tools []provider.ToolDef) string {
 				sb.WriteString(line)
 				sb.WriteString("\n")
 			}
+		} else if !ok && len(tool.InputSchema) > 0 {
+			// Schema exists but could not be parsed into parameters.
+			// Render the raw schema so the model still has some guidance.
+			sb.WriteString("\n**Input schema:** `")
+			sb.Write(tool.InputSchema)
+			sb.WriteString("`\n")
 		}
 	}
 
@@ -74,10 +77,11 @@ type paramInfo struct {
 }
 
 // extractParams extracts parameter info from a JSON Schema object.
-// Returns an empty slice if the schema is nil or unparseable.
-func extractParams(schema json.RawMessage) []paramInfo {
-	if schema == nil {
-		return nil
+// Returns (nil, true) for nil/empty schemas, (params, true) on success,
+// and (nil, false) when the schema cannot be parsed.
+func extractParams(schema json.RawMessage) ([]paramInfo, bool) {
+	if len(schema) == 0 {
+		return nil, true
 	}
 
 	var s struct {
@@ -88,7 +92,7 @@ func extractParams(schema json.RawMessage) []paramInfo {
 		Required []string `json:"required"`
 	}
 	if err := json.Unmarshal(schema, &s); err != nil {
-		return nil
+		return nil, false
 	}
 
 	requiredSet := make(map[string]bool, len(s.Required))
@@ -108,12 +112,11 @@ func extractParams(schema json.RawMessage) []paramInfo {
 
 	sortParamInfos(params)
 
-	return params
+	return params, true
 }
 
 // sortParamInfos sorts params alphabetically by name (required first, then optional).
 func sortParamInfos(params []paramInfo) {
-	// Simple insertion sort — param counts are tiny.
 	for i := 1; i < len(params); i++ {
 		for j := i; j > 0; j-- {
 			a, b := params[j-1], params[j]
@@ -127,22 +130,34 @@ func sortParamInfos(params []paramInfo) {
 	}
 }
 
-// ParseTextToolCalls parses <tool_use> XML blocks from a model's text response.
-// It uses regex rather than an XML parser because the block format is fixed and
-// well-known. Malformed JSON inside <input> is still captured so the agent can
-// report the error rather than silently dropping the call.
+// ParseTextToolCalls parses <tool_use> XML blocks from a model's text response
+// and returns them as ToolUseBlocks with auto-generated IDs. It uses regex
+// rather than an XML parser because the block format is fixed and well-known.
+// Malformed JSON inside <input> is still captured so the agent can report the
+// error rather than silently dropping the call.
 //
 // Returns an empty (non-nil) slice when no tool calls are found.
-func ParseTextToolCalls(text string) []TextToolCall {
+func ParseTextToolCalls(text string) []provider.ToolUseBlock {
 	matches := toolCallRegex.FindAllStringSubmatch(text, -1)
-	calls := make([]TextToolCall, 0, len(matches))
-	for _, m := range matches {
+	calls := make([]provider.ToolUseBlock, 0, len(matches))
+	for i, m := range matches {
 		name := strings.TrimSpace(m[1])
 		rawInput := strings.TrimSpace(m[2])
-		calls = append(calls, TextToolCall{
+		if rawInput == "" {
+			rawInput = "{}"
+		}
+		calls = append(calls, provider.ToolUseBlock{
+			ID:    fmt.Sprintf("text_call_%d", i+1),
 			Name:  name,
 			Input: json.RawMessage(rawInput),
 		})
 	}
 	return calls
+}
+
+// StripToolUseXML removes <tool_use>...</tool_use> blocks from text, returning
+// the remaining content. Used to clean up conversation history so models don't
+// see their own XML format echoed back.
+func StripToolUseXML(text string) string {
+	return toolCallRegex.ReplaceAllString(text, "")
 }

@@ -1202,9 +1202,18 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// For non-native models, parse <tool_use> XML blocks from the text response
 		// and inject them into pendingTools so the normal execution path handles them.
 		if !useNativeTools && len(pendingTools) == 0 && accumulatedText != "" {
-			textCalls := extractTextToolCalls(accumulatedText)
+			textCalls := tools.ParseTextToolCalls(accumulatedText)
 			if len(textCalls) == 0 && strings.Contains(accumulatedText, "<tool_use>") {
 				a.logger.Warn("model attempted tool call in text but XML parsing found no valid blocks")
+			}
+			if len(textCalls) > 0 {
+				// Strip <tool_use> XML from the text block so the model
+				// doesn't see its own XML format echoed back on the next turn.
+				for i := range blocks {
+					if blocks[i].Type == "text" {
+						blocks[i].Text = strings.TrimSpace(tools.StripToolUseXML(blocks[i].Text))
+					}
+				}
 			}
 			for _, tc := range textCalls {
 				pendingTools = append(pendingTools, tc)
@@ -1271,20 +1280,6 @@ func hasTextContent(blocks []provider.ContentBlock) bool {
 	return false
 }
 
-// extractTextToolCalls converts parsed text-based tool calls into ToolUseBlocks
-// with auto-generated IDs, enabling non-native models to use the same execution path.
-func extractTextToolCalls(text string) []provider.ToolUseBlock {
-	parsed := tools.ParseTextToolCalls(text)
-	blocks := make([]provider.ToolUseBlock, len(parsed))
-	for i, tc := range parsed {
-		blocks[i] = provider.ToolUseBlock{
-			ID:    fmt.Sprintf("text_call_%d", i+1),
-			Name:  tc.Name,
-			Input: tc.Input,
-		}
-	}
-	return blocks
-}
 
 func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {
 	var b strings.Builder
