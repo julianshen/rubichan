@@ -12,20 +12,30 @@ import (
 // lives in pkg/agentsdk/.
 type ModelCapabilities = agentsdk.ModelCapabilities
 
+// DefaultCapabilities returns ModelCapabilities with safe defaults.
+// This forwards to agentsdk.DefaultCapabilities for convenience.
+func DefaultCapabilities() ModelCapabilities {
+	return agentsdk.DefaultCapabilities()
+}
+
 // DetectCapabilities returns the ModelCapabilities for the given provider and
 // model. providerName is the configured provider identifier (e.g. "anthropic",
 // "ollama", "openrouter"). modelID is the model identifier string passed to
-// the API.
+// the API. An empty providerName is treated as an OpenAI-compatible provider.
 func DetectCapabilities(providerName, modelID string) ModelCapabilities {
+	var caps ModelCapabilities
 	switch providerName {
 	case "anthropic":
-		return detectAnthropicCapabilities(modelID)
+		caps = detectAnthropicCapabilities(modelID)
 	case "ollama":
-		return detectOllamaCapabilities(modelID)
+		caps = detectOllamaCapabilities(modelID)
 	default:
-		// All other providers use the OpenAI-compatible path.
-		return detectOpenAICompatCapabilities(modelID)
+		caps = detectOpenAICompatCapabilities(modelID)
 	}
+	if caps.MaxToolCount < 0 {
+		caps.MaxToolCount = 0
+	}
+	return caps
 }
 
 // detectAnthropicCapabilities returns capabilities for Anthropic models.
@@ -33,10 +43,7 @@ func DetectCapabilities(providerName, modelID string) ModelCapabilities {
 // Haiku models are given a tool-discovery hint and a MaxToolCount of 12 to
 // compensate for their reduced context window and instruction-following depth.
 func detectAnthropicCapabilities(modelID string) ModelCapabilities {
-	caps := ModelCapabilities{
-		SupportsNativeToolUse: true,
-		SupportsSystemPrompt:  true,
-	}
+	caps := agentsdk.DefaultCapabilities()
 	if strings.Contains(strings.ToLower(modelID), "haiku") {
 		caps.NeedsToolDiscoveryHint = true
 		caps.MaxToolCount = 12
@@ -49,11 +56,8 @@ func detectAnthropicCapabilities(modelID string) ModelCapabilities {
 // hint. Small models (<=14B parameters) are given a lower tool cap to reduce
 // context pressure.
 func detectOllamaCapabilities(modelID string) ModelCapabilities {
-	caps := ModelCapabilities{
-		SupportsNativeToolUse:  true,
-		SupportsSystemPrompt:   true,
-		NeedsToolDiscoveryHint: true,
-	}
+	caps := agentsdk.DefaultCapabilities()
+	caps.NeedsToolDiscoveryHint = true
 	if isSmallModel(modelID) {
 		caps.MaxToolCount = 8
 	} else {
@@ -77,10 +81,7 @@ var knownWeakerFamilies = []string{"qwen", "llama", "gemma", "mistral", "deepsee
 // and, when small, a reduced tool count. Completely unknown models default to
 // NeedsToolDiscoveryHint=true as an optimistic safe default.
 func detectOpenAICompatCapabilities(modelID string) ModelCapabilities {
-	caps := ModelCapabilities{
-		SupportsNativeToolUse: true,
-		SupportsSystemPrompt:  true,
-	}
+	caps := agentsdk.DefaultCapabilities()
 
 	lower := strings.ToLower(modelID)
 
@@ -113,7 +114,7 @@ func detectOpenAICompatCapabilities(modelID string) ModelCapabilities {
 // trigger on "2b". Keyword indicators (nano, mini, tiny, small) are matched
 // as whole words.
 var smallModelRe = regexp.MustCompile(
-	`(?i)(?:^|[^0-9])(?:1\.5b|3\.5b|1b|2b|3b|4b|7b|8b|9b|13b|14b)(?:[^0-9]|$)` +
+	`(?i)(?:^|[^0-9])(?:1\.5b|3\.5b|1b|2b|3b|4b|7b|8b|9b|10b|11b|12b|13b|14b)(?:[^0-9]|$)` +
 		`|(?i)\b(?:nano|mini|tiny|small)\b`,
 )
 

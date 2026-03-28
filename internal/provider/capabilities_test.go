@@ -70,6 +70,13 @@ func TestDetectCapabilities_Ollama(t *testing.T) {
 		}
 	})
 
+	t.Run("12b model is small", func(t *testing.T) {
+		caps := DetectCapabilities("ollama", "phi-3-medium:12b")
+		if caps.MaxToolCount != 8 {
+			t.Errorf("expected MaxToolCount=8 for 12b model, got %d", caps.MaxToolCount)
+		}
+	})
+
 	t.Run("large ollama model gets MaxToolCount=15", func(t *testing.T) {
 		caps := DetectCapabilities("ollama", "llama3.1:70b")
 		if caps.MaxToolCount != 15 {
@@ -192,10 +199,14 @@ func TestIsSmallModel(t *testing.T) {
 		"model-7b",
 		"model-8b",
 		"model-9b",
+		"model-10b",
+		"model-11b",
+		"model-12b",
 		"model-13b",
 		"model-14b",
 		"model-1.5b",
 		"model-3.5b",
+		"phi-3-medium-12b-instruct",
 		"gemma-nano",
 		"phi-mini",
 		"model-tiny",
@@ -218,6 +229,9 @@ func TestIsSmallModel(t *testing.T) {
 		"mixtral-8x22b",
 		"gpt-4o",
 		"claude-3-5-sonnet",
+		"model-22b",
+		"model-27b",
+		"model-32b",
 	}
 	for _, m := range largeCases {
 		t.Run(m, func(t *testing.T) {
@@ -225,5 +239,32 @@ func TestIsSmallModel(t *testing.T) {
 				t.Errorf("expected isSmallModel(%q)=false", m)
 			}
 		})
+	}
+}
+
+func TestDefaultCapabilities(t *testing.T) {
+	caps := DefaultCapabilities()
+	if !caps.SupportsNativeToolUse {
+		t.Error("default should have SupportsNativeToolUse=true")
+	}
+	if !caps.SupportsSystemPrompt {
+		t.Error("default should have SupportsSystemPrompt=true")
+	}
+	if caps.NeedsToolDiscoveryHint {
+		t.Error("default should have NeedsToolDiscoveryHint=false")
+	}
+	if caps.MaxToolCount != 0 {
+		t.Errorf("default should have MaxToolCount=0, got %d", caps.MaxToolCount)
+	}
+}
+
+func TestDetectCapabilitiesEmptyProvider(t *testing.T) {
+	// Empty provider falls through to OpenAI-compat path with optimistic defaults.
+	caps := DetectCapabilities("", "some-model")
+	if !caps.SupportsNativeToolUse {
+		t.Error("empty provider should still default to SupportsNativeToolUse=true")
+	}
+	if !caps.NeedsToolDiscoveryHint {
+		t.Error("empty provider with unknown model should get NeedsToolDiscoveryHint=true")
 	}
 }

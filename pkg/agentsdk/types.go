@@ -6,6 +6,15 @@ import "encoding/json"
 
 // ModelCapabilities describes the per-model capability flags used to tune
 // tool dispatch, prompt construction, and agent loop behavior.
+//
+// When SupportsNativeToolUse is false, the agent renders tool definitions as
+// text in the system prompt and parses XML <tool_use> blocks from the model's
+// response. In that mode MaxToolCount still limits which tools are rendered,
+// but NeedsToolDiscoveryHint has no additional effect since all rendered tools
+// are already described in the prompt.
+//
+// Use DefaultCapabilities to obtain a safe starting point; the zero value
+// disables all capabilities, which is almost never desired.
 type ModelCapabilities struct {
 	// SupportsNativeToolUse indicates the model can process a tools[] API parameter.
 	SupportsNativeToolUse bool
@@ -15,8 +24,19 @@ type ModelCapabilities struct {
 	// tool inventory section to guide tool selection.
 	NeedsToolDiscoveryHint bool
 	// MaxToolCount is the maximum number of tools to send to the model.
-	// 0 means unlimited.
+	// 0 means unlimited. Negative values are treated as 0.
 	MaxToolCount int
+}
+
+// DefaultCapabilities returns ModelCapabilities with the safe defaults:
+// native tool use and system prompts enabled, no tool count limit.
+// Use DetectCapabilities for model-specific tuning; this function provides
+// the base that DetectCapabilities and the Agent constructor both start from.
+func DefaultCapabilities() ModelCapabilities {
+	return ModelCapabilities{
+		SupportsNativeToolUse: true,
+		SupportsSystemPrompt:  true,
+	}
 }
 
 // CompletionRequest represents a request to an LLM for completion.

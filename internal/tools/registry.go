@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -205,6 +206,8 @@ func (r *Registry) RegisterDefaultAliases() {
 		{"tool_process", "process"},
 	}
 	for _, a := range aliases {
-		_ = r.RegisterAlias(a[0], a[1])
+		if err := r.RegisterAlias(a[0], a[1]); err != nil {
+			log.Printf("warning: alias %q -> %q: %v", a[0], a[1], err)
+		}
 	}
 }

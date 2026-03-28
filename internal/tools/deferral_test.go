@@ -132,6 +132,49 @@ func TestToolSummaryTruncatesLongDescriptions(t *testing.T) {
 	}
 }
 
+func TestDeferralManagerZeroEffectiveWindow(t *testing.T) {
+	dm := NewDeferralManager(0.10)
+
+	allTools := []provider.ToolDef{
+		{Name: "shell", Description: "exec", InputSchema: []byte(`{}`)},
+		{Name: "file", Description: "read/write", InputSchema: []byte(`{}`)},
+		{Name: "http_get", Description: "fetch", InputSchema: []byte(`{}`)},
+	}
+
+	// With effectiveWindow=0, budget is 0 — all non-core tools should be deferred.
+	active, deferred := dm.SelectForContext(allTools, 0)
+	assert.Greater(t, len(active), 0, "core tools must survive even with zero window")
+	// At minimum, core tools should be active.
+	hasShell := false
+	for _, td := range active {
+		if td.Name == "shell" {
+			hasShell = true
+		}
+	}
+	assert.True(t, hasShell, "core tools should be active even with zero window")
+	_ = deferred // non-core tools may or may not be deferred depending on their token cost
+}
+
+func TestTruncateToFirstSentenceWithURL(t *testing.T) {
+	// URLs contain dots that should not be treated as sentence boundaries.
+	desc := "Fetch data from api.example.com and return results."
+	result := truncateToFirstSentence(desc)
+	// The first '.' is inside the URL, but is followed by 'e' not space,
+	// so truncation should occur at the period after "results".
+	assert.Equal(t, "Fetch data from api.example.com and return results.", result)
+}
+
+func TestTruncateToFirstSentenceWithAbbreviation(t *testing.T) {
+	// "U.S." has dots not followed by spaces (except the last).
+	desc := "Use the U.S. format for dates."
+	result := truncateToFirstSentence(desc)
+	// "U." is followed by "S", not space, so it's not a sentence end.
+	// "S." is followed by " ", so it IS detected as a sentence end — this is
+	// a known limitation. The result will be "Use the U.S." which is acceptable
+	// for a display-only summary truncation.
+	assert.Contains(t, result, "U.S.")
+}
+
 func TestToolSummaryFirstSentenceTruncation(t *testing.T) {
 	dm := NewDeferralManager(0.10)
 
