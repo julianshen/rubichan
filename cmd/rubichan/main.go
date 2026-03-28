@@ -1206,7 +1206,7 @@ func runInteractive() error {
 	diffTracker := tools.NewDiffTracker()
 	allowed := parseToolsFlag(toolsFlag)
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: detectModelCapabilities(cfg),
+		ModelCapabilities: provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model),
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -1226,6 +1226,8 @@ func runInteractive() error {
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
 	opts = appendWorkingDirOption(opts, cwd)
+	caps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
+	opts = append(opts, agent.WithCapabilities(caps))
 	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
 	}
@@ -1652,7 +1654,7 @@ func runHeadless() error {
 	allowed := parseToolsFlag(toolsFlag)
 	headlessDiffTracker := tools.NewDiffTracker()
 	headlessToolsCfg := ToolsConfig{
-		ModelCapabilities: detectModelCapabilities(cfg),
+		ModelCapabilities: provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model),
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -1673,6 +1675,8 @@ func runHeadless() error {
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
 	opts = appendWorkingDirOption(opts, cwd)
+	headlessCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
+	opts = append(opts, agent.WithCapabilities(headlessCaps))
 	if err := wireAppleDev(cwd, registry, headlessToolsCfg); err != nil {
 		return err
 	}
@@ -2103,11 +2107,6 @@ func parseToolsFlag(s string) map[string]bool {
 	return m
 }
 
-// ModelCapabilities describes tool-related capabilities of the active model.
-type ModelCapabilities struct {
-	SupportsToolUse bool
-}
-
 // UserToolPrefs captures user-level tool preferences from config/runtime.
 type UserToolPrefs struct {
 	Enabled  map[string]bool
@@ -2129,7 +2128,7 @@ type ProjectContext struct {
 // 4) Project context constraints
 // 5) CLI whitelist overrides
 type ToolsConfig struct {
-	ModelCapabilities ModelCapabilities
+	ModelCapabilities provider.ModelCapabilities
 	UserPreferences   UserToolPrefs
 	ProjectContext    ProjectContext
 	FeatureFlags      map[string]bool
@@ -2140,33 +2139,9 @@ type ToolsConfig struct {
 	HeadlessMode bool
 }
 
-// detectModelCapabilities derives tool-related model capability flags from
-// runtime config/provider metadata.
-func detectModelCapabilities(cfg *config.Config) ModelCapabilities {
-	if cfg == nil {
-		return ModelCapabilities{SupportsToolUse: false}
-	}
-
-	switch cfg.Provider.Default {
-	case "anthropic", "ollama":
-		return ModelCapabilities{SupportsToolUse: true}
-	default:
-		// OpenAI-compatible providers are configured by name under
-		// provider.openai_compatible. If the default provider matches one of
-		// those configured entries, treat it as tool-capable.
-		for _, oc := range cfg.Provider.OpenAI {
-			if oc.Name == cfg.Provider.Default {
-				return ModelCapabilities{SupportsToolUse: true}
-			}
-		}
-		// Unknown provider type: treat as not tool-capable.
-		return ModelCapabilities{SupportsToolUse: false}
-	}
-}
-
 // ShouldEnable returns true if a tool should be registered.
 func (tc ToolsConfig) ShouldEnable(name string) bool {
-	if !tc.ModelCapabilities.SupportsToolUse {
+	if !tc.ModelCapabilities.SupportsNativeToolUse {
 		return false
 	}
 

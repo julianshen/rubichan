@@ -11,6 +11,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/output"
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
@@ -47,7 +48,7 @@ func TestParseToolsFlagWithSpaces(t *testing.T) {
 
 func TestToolsConfigShouldEnableDefaultsToTrue(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 	}
 	assert.True(t, tc.ShouldEnable("file"))
 	assert.True(t, tc.ShouldEnable("shell"))
@@ -55,7 +56,7 @@ func TestToolsConfigShouldEnableDefaultsToTrue(t *testing.T) {
 
 func TestToolsConfigShouldEnableWithCLIOverrides(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides:      map[string]bool{"file": true},
 	}
 	assert.True(t, tc.ShouldEnable("file"))
@@ -64,14 +65,14 @@ func TestToolsConfigShouldEnableWithCLIOverrides(t *testing.T) {
 
 func TestToolsConfigShouldEnableRespectsModelCapability(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: false},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: false},
 	}
 	assert.False(t, tc.ShouldEnable("file"))
 }
 
 func TestToolsConfigShouldEnableRespectsUserPrefs(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		UserPreferences: UserToolPrefs{
 			Disabled: map[string]bool{"shell": true},
 			Enabled:  map[string]bool{"file": true, "shell": true},
@@ -84,7 +85,7 @@ func TestToolsConfigShouldEnableRespectsUserPrefs(t *testing.T) {
 
 func TestToolsConfigShouldEnableRespectsAppleProjectContext(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: false,
 			AppleSkillRequested:  false,
@@ -107,7 +108,7 @@ func TestToolsConfigShouldEnableRespectsAppleProjectContext(t *testing.T) {
 
 func TestToolsConfigShouldEnableRespectsFeatureFlags(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		FeatureFlags:      map[string]bool{"tools.shell": false},
 	}
 	assert.False(t, tc.ShouldEnable("shell"))
@@ -116,7 +117,7 @@ func TestToolsConfigShouldEnableRespectsFeatureFlags(t *testing.T) {
 
 func TestToolsConfigShouldEnableHeadlessDenyByDefault(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		HeadlessMode:      true,
 	}
 	// No CLIOverrides → all tools denied in headless mode.
@@ -127,7 +128,7 @@ func TestToolsConfigShouldEnableHeadlessDenyByDefault(t *testing.T) {
 
 func TestToolsConfigShouldEnableHeadlessWithExplicitAllowlist(t *testing.T) {
 	tc := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		HeadlessMode:      true,
 		CLIOverrides:      map[string]bool{"file": true, "search": true},
 	}
@@ -189,23 +190,18 @@ func TestIsAppleOnlyTool(t *testing.T) {
 }
 
 func TestDetectModelCapabilities(t *testing.T) {
-	assert.False(t, detectModelCapabilities(nil).SupportsToolUse)
-
+	// anthropic default is tool-capable
 	cfg := config.DefaultConfig()
-	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
+	assert.True(t, provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model).SupportsNativeToolUse)
 
-	cfg.Provider.Default = "ollama"
-	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
+	// ollama is tool-capable
+	assert.True(t, provider.DetectCapabilities("ollama", "").SupportsNativeToolUse)
 
-	cfg.Provider.Default = "openrouter"
-	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
-		{Name: "openrouter"},
-	}
-	assert.True(t, detectModelCapabilities(cfg).SupportsToolUse)
+	// OpenAI-compatible providers (e.g. openrouter) are tool-capable
+	assert.True(t, provider.DetectCapabilities("openrouter", "gpt-4o").SupportsNativeToolUse)
 
-	cfg.Provider.Default = "unknown-provider"
-	cfg.Provider.OpenAI = nil
-	assert.False(t, detectModelCapabilities(cfg).SupportsToolUse)
+	// Unknown provider falls through to OpenAI-compat path and is tool-capable
+	assert.True(t, provider.DetectCapabilities("unknown-provider", "").SupportsNativeToolUse)
 }
 
 func TestParseSkillsFlagEmpty(t *testing.T) {
