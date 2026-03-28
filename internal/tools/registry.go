@@ -182,6 +182,8 @@ func (r *Registry) RegisterDefaultAliases() {
 		{"bash", "shell"},
 		{"terminal", "shell"},
 		{"exec", "shell"},
+		{"tool_shell", "shell"},
+		{"execute_command", "shell"},
 
 		// File tool aliases — common in other agent frameworks.
 		{"write_file", "file"},
@@ -190,6 +192,7 @@ func (r *Registry) RegisterDefaultAliases() {
 		{"file_read", "file"},
 		{"edit_file", "file"},
 		{"create_file", "file"},
+		{"tool_file", "file"},
 
 		// Search tool aliases.
 		{"grep", "search"},
@@ -199,6 +202,7 @@ func (r *Registry) RegisterDefaultAliases() {
 		// Process tool aliases.
 		{"process_manager", "process"},
 		{"bg_process", "process"},
+		{"tool_process", "process"},
 	}
 	for _, a := range aliases {
 		_ = r.RegisterAlias(a[0], a[1])
