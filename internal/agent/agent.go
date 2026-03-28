@@ -1044,6 +1044,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		budget := a.context.Budget()
 		activeTools, _ := a.deferral.SelectForContext(allToolDefs, budget.EffectiveWindow())
 
+		if a.capabilities.MaxToolCount > 0 {
+			activeTools = tools.ApplyMaxToolCount(activeTools, a.capabilities.MaxToolCount)
+		}
+
+		// Append tool discovery hint for models that benefit from explicit guidance.
+		if a.capabilities.NeedsToolDiscoveryHint {
+			toolHint := a.deferral.ToolSummary(activeTools)
+			systemPrompt = systemPrompt + "\n\n" + toolHint
+		}
+
 		// Measure component-level token usage before the LLM call.
 		// Skill prompt fragments are included in systemPrompt via PromptBuilder
 		// but tracked separately for budget visibility.

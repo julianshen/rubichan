@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -68,4 +69,99 @@ func TestDeferralManagerSearch(t *testing.T) {
 	results := dm.Search("xcode")
 	assert.Equal(t, 1, len(results), "should find the deferred xcode tool")
 	assert.Equal(t, "mcp-xcode-build", results[0].Name)
+}
+
+func TestToolSummaryNoDeferredTools(t *testing.T) {
+	dm := NewDeferralManager(0.10)
+
+	activeTools := []provider.ToolDef{
+		{Name: "shell", Description: "Execute shell commands.", InputSchema: []byte(`{}`)},
+		{Name: "file", Description: "Read or write files.", InputSchema: []byte(`{}`)},
+	}
+
+	summary := dm.ToolSummary(activeTools)
+
+	assert.Contains(t, summary, "## Available Tools")
+	assert.Contains(t, summary, "**shell**: Execute shell commands.")
+	assert.Contains(t, summary, "**file**: Read or write files.")
+	// No deferred tools — the hint paragraph must not appear.
+	assert.NotContains(t, summary, "Additional tools are available")
+}
+
+func TestToolSummaryWithDeferredTools(t *testing.T) {
+	dm := NewDeferralManager(0.10)
+
+	bigSchema := make([]byte, 2000)
+	for i := range bigSchema {
+		bigSchema[i] = 'a'
+	}
+
+	allTools := []provider.ToolDef{
+		{Name: "shell", Description: "Execute shell commands.", InputSchema: []byte(`{}`)},
+		{Name: "mcp-http", Description: "Fetch HTTP resources.", InputSchema: bigSchema},
+	}
+
+	activeTools, _ := dm.SelectForContext(allTools, 1000)
+
+	summary := dm.ToolSummary(activeTools)
+
+	assert.Contains(t, summary, "## Available Tools")
+	assert.Contains(t, summary, "**shell**: Execute shell commands.")
+	// Deferred tools trigger the hint paragraph.
+	assert.Contains(t, summary, "Additional tools are available but not shown")
+	assert.Contains(t, summary, "tool_search")
+}
+
+func TestToolSummaryTruncatesLongDescriptions(t *testing.T) {
+	dm := NewDeferralManager(0.10)
+
+	longDesc := "This is a very long description that goes on and on past one hundred and twenty characters without stopping early. More words here."
+	activeTools := []provider.ToolDef{
+		{Name: "verbose-tool", Description: longDesc, InputSchema: []byte(`{}`)},
+	}
+
+	summary := dm.ToolSummary(activeTools)
+
+	// The description in the summary must be at most 120 chars.
+	for _, line := range strings.Split(summary, "\n") {
+		if strings.Contains(line, "**verbose-tool**") {
+			// Extract description part after ": "
+			parts := strings.SplitN(line, ": ", 2)
+			assert.LessOrEqual(t, len(parts[1]), 120)
+		}
+	}
+}
+
+func TestToolSummaryFirstSentenceTruncation(t *testing.T) {
+	dm := NewDeferralManager(0.10)
+
+	// Description with multiple sentences — only first should appear.
+	desc := "Execute shell commands. Be careful with side effects."
+	activeTools := []provider.ToolDef{
+		{Name: "shell", Description: desc, InputSchema: []byte(`{}`)},
+	}
+
+	summary := dm.ToolSummary(activeTools)
+
+	assert.Contains(t, summary, "Execute shell commands.")
+	assert.NotContains(t, summary, "Be careful with side effects.")
+}
+
+func TestTruncateToFirstSentence(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Simple sentence.", "Simple sentence."},
+		{"First sentence. Second sentence.", "First sentence."},
+		{"No punctuation here", "No punctuation here"},
+		{"Short!", "Short!"},
+		{"Question? Answer.", "Question?"},
+		{"", ""},
+	}
+
+	for _, tc := range tests {
+		got := truncateToFirstSentence(tc.input)
+		assert.Equal(t, tc.expected, got, "input: %q", tc.input)
+	}
 }

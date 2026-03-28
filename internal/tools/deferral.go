@@ -1,10 +1,13 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
 )
+
+const maxDescriptionLen = 120
 
 // DeferralManager holds back tool descriptions that exceed a context budget
 // threshold. Deferred tools are discoverable via the Search method.
@@ -84,4 +87,47 @@ func (dm *DeferralManager) Search(query string) []provider.ToolDef {
 // DeferredCount returns the number of currently deferred tools.
 func (dm *DeferralManager) DeferredCount() int {
 	return len(dm.deferredTools)
+}
+
+// truncateToFirstSentence returns the first sentence of s, truncated to maxDescriptionLen.
+// A sentence ends at the first '.', '!', or '?' followed by a space or end of string.
+func truncateToFirstSentence(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	for i, ch := range s {
+		if ch == '.' || ch == '!' || ch == '?' {
+			end := i + 1
+			if end == len(s) || s[end] == ' ' {
+				sentence := s[:end]
+				if len(sentence) > maxDescriptionLen {
+					return sentence[:maxDescriptionLen]
+				}
+				return sentence
+			}
+		}
+	}
+	// No sentence boundary found — truncate at maxDescriptionLen.
+	if len(s) > maxDescriptionLen {
+		return s[:maxDescriptionLen]
+	}
+	return s
+}
+
+// ToolSummary generates a human-readable summary of active tools for injection
+// into the system prompt. The "Additional tools" paragraph is only included
+// when there are deferred tools.
+func (dm *DeferralManager) ToolSummary(activeTools []provider.ToolDef) string {
+	var sb strings.Builder
+	sb.WriteString("## Available Tools\n\nYou have these tools available:\n")
+	for _, td := range activeTools {
+		desc := truncateToFirstSentence(td.Description)
+		fmt.Fprintf(&sb, "- **%s**: %s\n", td.Name, desc)
+	}
+	if dm.DeferredCount() > 0 {
+		sb.WriteString("\nAdditional tools are available but not shown to save context. ")
+		sb.WriteString("Use the **tool_search** tool with a keyword query to discover them. ")
+		sb.WriteString(`For example: tool_search({"query": "http"}) to find HTTP tools.`)
+	}
+	return sb.String()
 }
