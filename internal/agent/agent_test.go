@@ -3114,3 +3114,4 @@ func TestAgentContextBudget(t *testing.T) {
 		assert.GreaterOrEqual(t, result.BeforeTokens, 0)
 	})
 }
+

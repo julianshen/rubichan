@@ -73,14 +73,49 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 	return selected
 }
 
+// isAlwaysIncluded reports whether a tool should always be exposed regardless
+// of context filtering or budget trimming.
+func isAlwaysIncluded(name string) bool {
+	return Categorize(name) == CategoryCore || name == "tool_search"
+}
+
 func selectSafeBaseline(allTools []provider.ToolDef) []provider.ToolDef {
 	var selected []provider.ToolDef
 	for _, tool := range allTools {
-		if Categorize(tool.Name) == CategoryCore || tool.Name == "tool_search" {
+		if isAlwaysIncluded(tool.Name) {
 			selected = append(selected, tool)
 		}
 	}
 	return selected
+}
+
+// ApplyMaxToolCount trims tools to fit within maxCount, always preserving core
+// tools (CategoryCore) and tool_search. Non-core tools are trimmed from the end
+// of the slice. Returns tools unchanged when maxCount <= 0 or len(tools) <= maxCount.
+func ApplyMaxToolCount(tools []provider.ToolDef, maxCount int) []provider.ToolDef {
+	if maxCount <= 0 || len(tools) <= maxCount {
+		return tools
+	}
+
+	var core, nonCore []provider.ToolDef
+	for _, t := range tools {
+		if isAlwaysIncluded(t.Name) {
+			core = append(core, t)
+		} else {
+			nonCore = append(nonCore, t)
+		}
+	}
+
+	// Core tools are always kept; trim non-core from the end to fit budget.
+	nonCoreSlots := maxCount - len(core)
+	if nonCoreSlots < 0 {
+		nonCoreSlots = 0
+	}
+	if nonCoreSlots < len(nonCore) {
+		nonCore = nonCore[:nonCoreSlots]
+	}
+
+	return append(core, nonCore...)
 }
 
 // collectRecentText extracts text from the last few messages for keyword matching.

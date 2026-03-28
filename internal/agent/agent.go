@@ -158,6 +158,13 @@ func WithWorkingDir(dir string) AgentOption {
 	return func(a *Agent) { a.workingDir = dir }
 }
 
+// WithCapabilities sets the model capability flags on the agent. These flags
+// are threaded into CompletionRequests to tune tool dispatch and prompt
+// construction for different model families.
+func WithCapabilities(caps provider.ModelCapabilities) AgentOption {
+	return func(a *Agent) { a.capabilities = caps }
+}
+
 // WorkingDir returns the agent's effective working directory.
 // The value is frozen at construction time and never changes.
 func (a *Agent) WorkingDir() string {
@@ -299,6 +306,7 @@ type Agent struct {
 	userHookRunner   *hooks.UserHookRunner
 	turnNumber       atomic.Int32
 	rateLimiter      *SharedRateLimiter
+	capabilities     provider.ModelCapabilities
 }
 
 const maxUIRequestInputBytes = 2048
@@ -318,6 +326,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
 		scratchpad:   NewScratchpad(),
+		capabilities: agentsdk.DefaultCapabilities(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -1036,6 +1045,28 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		budget := a.context.Budget()
 		activeTools, _ := a.deferral.SelectForContext(allToolDefs, budget.EffectiveWindow())
 
+		if a.capabilities.MaxToolCount > 0 {
+			activeTools = tools.ApplyMaxToolCount(activeTools, a.capabilities.MaxToolCount)
+		}
+
+		// Append tool discovery hint for models that benefit from explicit guidance.
+		if a.capabilities.NeedsToolDiscoveryHint {
+			toolHint := a.deferral.ToolSummary(activeTools)
+			systemPrompt = systemPrompt + "\n\n" + toolHint
+		}
+
+		// Branch on native tool use capability: models without native support
+		// receive tool definitions rendered as text in the system prompt instead.
+		useNativeTools := a.capabilities.SupportsNativeToolUse
+		var reqTools []provider.ToolDef
+		if useNativeTools {
+			reqTools = activeTools
+		} else {
+			// Render tools into system prompt as text for non-native models.
+			toolPrompt := tools.RenderToolsAsText(activeTools)
+			systemPrompt = systemPrompt + "\n\n" + toolPrompt
+		}
+
 		// Measure component-level token usage before the LLM call.
 		// Skill prompt fragments are included in systemPrompt via PromptBuilder
 		// but tracked separately for budget visibility.
@@ -1051,7 +1082,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			Model:            a.model,
 			System:           systemPrompt,
 			Messages:         a.conversation.Messages(),
-			Tools:            activeTools,
+			Tools:            reqTools,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,
 		}
@@ -1150,6 +1181,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
+		// Capture accumulated text before finalizing, for text-based tool extraction.
+		accumulatedText := currentTextBuf
+
 		// Finalize any remaining text or tool
 		finalizeText()
 		finalizeTool()
@@ -1158,6 +1192,33 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		if streamErr {
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
+		}
+
+		// For non-native models, parse <tool_use> XML blocks from the text response
+		// and inject them into pendingTools so the normal execution path handles them.
+		if !useNativeTools && len(pendingTools) == 0 && accumulatedText != "" {
+			textCalls := tools.ParseTextToolCalls(accumulatedText)
+			if len(textCalls) == 0 && strings.Contains(accumulatedText, "<tool_use>") {
+				a.logger.Warn("model attempted tool call in text but XML parsing found no valid blocks")
+			}
+			if len(textCalls) > 0 {
+				// Strip <tool_use> XML from the text block so the model
+				// doesn't see its own XML format echoed back on the next turn.
+				for i := range blocks {
+					if blocks[i].Type == "text" {
+						blocks[i].Text = strings.TrimSpace(tools.StripToolUseXML(blocks[i].Text))
+					}
+				}
+			}
+			for _, tc := range textCalls {
+				pendingTools = append(pendingTools, tc)
+				blocks = append(blocks, provider.ContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: tc.Input,
+				})
+			}
 		}
 
 		// Add assistant message with accumulated blocks
@@ -1213,6 +1274,7 @@ func hasTextContent(blocks []provider.ContentBlock) bool {
 	}
 	return false
 }
+
 
 func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {
 	var b strings.Builder

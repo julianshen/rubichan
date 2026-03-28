@@ -643,7 +643,9 @@ func TestAgentTurnEvaluatesKeywordTriggersForToolContributions(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	a := New(cp, agentReg, autoApprove, cfg, WithSkillRuntime(rt), WithMode("interactive"))
+	// Use native tool use so that tools appear in req.Tools (not rendered as text).
+	nativeCaps := provider.ModelCapabilities{SupportsNativeToolUse: true}
+	a := New(cp, agentReg, autoApprove, cfg, WithSkillRuntime(rt), WithMode("interactive"), WithCapabilities(nativeCaps))
 
 	ch, err := a.Turn(context.Background(), "hello there")
 	require.NoError(t, err)
