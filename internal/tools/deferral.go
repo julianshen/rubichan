@@ -124,7 +124,7 @@ func (dm *DeferralManager) ToolSummary(activeTools []provider.ToolDef) string {
 		desc := truncateToFirstSentence(td.Description)
 		fmt.Fprintf(&sb, "- **%s**: %s\n", td.Name, desc)
 	}
-	if dm.DeferredCount() > 0 {
+	if len(dm.deferredTools) > 0 {
 		sb.WriteString("\nAdditional tools are available but not shown to save context. ")
 		sb.WriteString("Use the **tool_search** tool with a keyword query to discover them. ")
 		sb.WriteString(`For example: tool_search({"query": "http"}) to find HTTP tools.`)

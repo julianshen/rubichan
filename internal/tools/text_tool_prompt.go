@@ -106,7 +106,6 @@ func extractParams(schema json.RawMessage) []paramInfo {
 		})
 	}
 
-	// Sort deterministically by name so output is stable.
 	sortParamInfos(params)
 
 	return params
@@ -118,7 +117,6 @@ func sortParamInfos(params []paramInfo) {
 	for i := 1; i < len(params); i++ {
 		for j := i; j > 0; j-- {
 			a, b := params[j-1], params[j]
-			// Required before optional; within same required-ness, alphabetical.
 			if (!a.required && b.required) ||
 				(a.required == b.required && a.name > b.name) {
 				params[j-1], params[j] = params[j], params[j-1]

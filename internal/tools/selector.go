@@ -73,10 +73,16 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 	return selected
 }
 
+// isAlwaysIncluded reports whether a tool should always be exposed regardless
+// of context filtering or budget trimming.
+func isAlwaysIncluded(name string) bool {
+	return Categorize(name) == CategoryCore || name == "tool_search"
+}
+
 func selectSafeBaseline(allTools []provider.ToolDef) []provider.ToolDef {
 	var selected []provider.ToolDef
 	for _, tool := range allTools {
-		if Categorize(tool.Name) == CategoryCore || tool.Name == "tool_search" {
+		if isAlwaysIncluded(tool.Name) {
 			selected = append(selected, tool)
 		}
 	}
@@ -91,10 +97,9 @@ func ApplyMaxToolCount(tools []provider.ToolDef, maxCount int) []provider.ToolDe
 		return tools
 	}
 
-	// Separate core/tool_search from non-core, preserving original order.
 	var core, nonCore []provider.ToolDef
 	for _, t := range tools {
-		if Categorize(t.Name) == CategoryCore || t.Name == "tool_search" {
+		if isAlwaysIncluded(t.Name) {
 			core = append(core, t)
 		} else {
 			nonCore = append(nonCore, t)
