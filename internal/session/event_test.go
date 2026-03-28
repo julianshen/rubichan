@@ -161,6 +161,77 @@ func (errWriter) Write(_ []byte) (int, error) {
 	return 0, io.ErrClosedPipe
 }
 
+func TestMultiSinkBroadcastsToAllSinks(t *testing.T) {
+	var a, b []EventType
+	sinkA := SinkFunc(func(evt Event) { a = append(a, evt.Type) })
+	sinkB := SinkFunc(func(evt Event) { b = append(b, evt.Type) })
+
+	multi := MultiSink{sinkA, sinkB}
+	multi.Emit(NewTurnStartedEvent("hello", "model"))
+
+	require.Len(t, a, 1)
+	require.Len(t, b, 1)
+	assert.Equal(t, EventTypeTurnStarted, a[0])
+	assert.Equal(t, EventTypeTurnStarted, b[0])
+}
+
+func TestMultiSinkSkipsNilEntries(t *testing.T) {
+	var called bool
+	sink := SinkFunc(func(evt Event) { called = true })
+
+	multi := MultiSink{nil, sink, nil}
+	multi.Emit(NewAssistantFinalEvent("ok"))
+
+	assert.True(t, called, "non-nil sink should still receive the event")
+}
+
+func TestSinkFuncNilDoesNotPanic(t *testing.T) {
+	var sink SinkFunc // nil function
+	assert.NotPanics(t, func() {
+		sink.Emit(NewTurnStartedEvent("prompt", "model"))
+	})
+}
+
+func TestNewJSONLSinkNilWriterReturnsNoOp(t *testing.T) {
+	sink := NewJSONLSink(nil)
+	assert.NotPanics(t, func() {
+		sink.Emit(NewTurnStartedEvent("prompt", "model"))
+	})
+}
+
+func TestNewLogSinkNilLoggerUsesDefault(t *testing.T) {
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	defer log.SetOutput(oldWriter)
+	defer log.SetFlags(oldFlags)
+
+	sink := NewLogSink(nil)
+	sink.Emit(NewTurnStartedEvent("prompt", "model"))
+
+	assert.Contains(t, logs.String(), "session event:")
+	assert.Contains(t, logs.String(), `"type":"turn_started"`)
+}
+
+func TestNormalizeToolInputEdgeCases(t *testing.T) {
+	// Empty input
+	evt := NewToolCallEvent("1", "tool", nil)
+	assert.Nil(t, evt.ToolCall.Input)
+	assert.Empty(t, evt.ToolCall.RawInput)
+
+	// Whitespace-only input
+	evt2 := NewToolCallEvent("2", "tool", json.RawMessage("   "))
+	assert.Nil(t, evt2.ToolCall.Input)
+	assert.Empty(t, evt2.ToolCall.RawInput)
+
+	// Valid JSON
+	evt3 := NewToolCallEvent("3", "tool", json.RawMessage(`{"a":1}`))
+	assert.JSONEq(t, `{"a":1}`, string(evt3.ToolCall.Input))
+	assert.Empty(t, evt3.ToolCall.RawInput)
+}
+
 func sprintf(format string, args ...any) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.TrimSpace(fmt.Sprintf(format, args...)), "\n", " "))
 }
