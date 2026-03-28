@@ -35,7 +35,6 @@ func DetectCapabilities(providerName, modelID string) ModelCapabilities {
 func detectAnthropicCapabilities(modelID string) ModelCapabilities {
 	caps := ModelCapabilities{
 		SupportsNativeToolUse: true,
-		SupportsStreaming:     true,
 		SupportsSystemPrompt:  true,
 	}
 	if strings.Contains(strings.ToLower(modelID), "haiku") {
@@ -52,7 +51,6 @@ func detectAnthropicCapabilities(modelID string) ModelCapabilities {
 func detectOllamaCapabilities(modelID string) ModelCapabilities {
 	caps := ModelCapabilities{
 		SupportsNativeToolUse:  true,
-		SupportsStreaming:      true,
 		SupportsSystemPrompt:   true,
 		NeedsToolDiscoveryHint: true,
 	}
@@ -81,7 +79,6 @@ var knownWeakerFamilies = []string{"qwen", "llama", "gemma", "mistral", "deepsee
 func detectOpenAICompatCapabilities(modelID string) ModelCapabilities {
 	caps := ModelCapabilities{
 		SupportsNativeToolUse: true,
-		SupportsStreaming:     true,
 		SupportsSystemPrompt:  true,
 	}
 
@@ -124,5 +121,5 @@ var smallModelRe = regexp.MustCompile(
 // parameters) based on common size-indicator tokens in the name.
 // Matching is case-insensitive.
 func isSmallModel(modelID string) bool {
-	return smallModelRe.MatchString(strings.ToLower(modelID))
+	return smallModelRe.MatchString(modelID)
 }

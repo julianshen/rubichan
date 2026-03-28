@@ -63,11 +63,13 @@ func TestToolsConfigShouldEnableWithCLIOverrides(t *testing.T) {
 	assert.False(t, tc.ShouldEnable("shell"))
 }
 
-func TestToolsConfigShouldEnableRespectsModelCapability(t *testing.T) {
+func TestToolsConfigShouldEnableRegistersToolsForTextFallback(t *testing.T) {
+	// Tools must be registered even when SupportsNativeToolUse is false,
+	// because the text-based fallback still needs them in the registry for dispatch.
 	tc := ToolsConfig{
 		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: false},
 	}
-	assert.False(t, tc.ShouldEnable("file"))
+	assert.True(t, tc.ShouldEnable("file"))
 }
 
 func TestToolsConfigShouldEnableRespectsUserPrefs(t *testing.T) {

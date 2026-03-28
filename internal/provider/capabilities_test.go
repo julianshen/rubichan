@@ -10,9 +10,6 @@ func TestDetectCapabilities_Anthropic(t *testing.T) {
 		if !caps.SupportsNativeToolUse {
 			t.Error("expected SupportsNativeToolUse=true")
 		}
-		if !caps.SupportsStreaming {
-			t.Error("expected SupportsStreaming=true")
-		}
 		if !caps.SupportsSystemPrompt {
 			t.Error("expected SupportsSystemPrompt=true")
 		}

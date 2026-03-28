@@ -9,8 +9,6 @@ import "encoding/json"
 type ModelCapabilities struct {
 	// SupportsNativeToolUse indicates the model can process a tools[] API parameter.
 	SupportsNativeToolUse bool
-	// SupportsStreaming indicates the model supports token-level streaming.
-	SupportsStreaming bool
 	// SupportsSystemPrompt indicates the model accepts a system prompt.
 	SupportsSystemPrompt bool
 	// NeedsToolDiscoveryHint indicates the system prompt should include a
@@ -19,9 +17,6 @@ type ModelCapabilities struct {
 	// MaxToolCount is the maximum number of tools to send to the model.
 	// 0 means unlimited.
 	MaxToolCount int
-	// PreferBatchEdits indicates the model works better with a batch-edit
-	// tool rather than individual per-file edit calls.
-	PreferBatchEdits bool
 }
 
 // CompletionRequest represents a request to an LLM for completion.

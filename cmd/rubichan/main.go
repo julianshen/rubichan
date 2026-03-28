@@ -1205,8 +1205,9 @@ func runInteractive() error {
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
 	allowed := parseToolsFlag(toolsFlag)
+	modelCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model),
+		ModelCapabilities: modelCaps,
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -1226,8 +1227,7 @@ func runInteractive() error {
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
 	opts = appendWorkingDirOption(opts, cwd)
-	caps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
-	opts = append(opts, agent.WithCapabilities(caps))
+	opts = append(opts, agent.WithCapabilities(modelCaps))
 	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
 	}
@@ -1653,8 +1653,9 @@ func runHeadless() error {
 	registry := tools.NewRegistry()
 	allowed := parseToolsFlag(toolsFlag)
 	headlessDiffTracker := tools.NewDiffTracker()
+	headlessCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
 	headlessToolsCfg := ToolsConfig{
-		ModelCapabilities: provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model),
+		ModelCapabilities: headlessCaps,
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -1675,7 +1676,6 @@ func runHeadless() error {
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
 	opts = appendWorkingDirOption(opts, cwd)
-	headlessCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
 	opts = append(opts, agent.WithCapabilities(headlessCaps))
 	if err := wireAppleDev(cwd, registry, headlessToolsCfg); err != nil {
 		return err
@@ -2139,12 +2139,10 @@ type ToolsConfig struct {
 	HeadlessMode bool
 }
 
-// ShouldEnable returns true if a tool should be registered.
+// ShouldEnable returns true if a tool should be registered. Tools are always
+// registered regardless of SupportsNativeToolUse — the agent loop handles
+// the distinction between native tool_use and text-based XML fallback.
 func (tc ToolsConfig) ShouldEnable(name string) bool {
-	if !tc.ModelCapabilities.SupportsNativeToolUse {
-		return false
-	}
-
 	if tc.FeatureFlags != nil {
 		if enabled, ok := tc.FeatureFlags["tools."+name]; ok && !enabled {
 			return false

@@ -49,12 +49,12 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		want     bool
 	}{
 		{
-			name: "model does not support tools",
+			name: "non-native model still registers tools for text-based fallback",
 			tc: ToolsConfig{
 				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: false},
 			},
 			toolName: "file",
-			want:     false,
+			want:     true,
 		},
 		{
 			name: "headless with no overrides denies all",

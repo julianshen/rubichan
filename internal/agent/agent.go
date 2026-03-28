@@ -330,7 +330,6 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		// via WithCapabilities when the model doesn't support tool_use.
 		capabilities: provider.ModelCapabilities{
 			SupportsNativeToolUse: true,
-			SupportsStreaming:     true,
 			SupportsSystemPrompt:  true,
 		},
 	}
@@ -1204,6 +1203,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// and inject them into pendingTools so the normal execution path handles them.
 		if !useNativeTools && len(pendingTools) == 0 && accumulatedText != "" {
 			textCalls := extractTextToolCalls(accumulatedText)
+			if len(textCalls) == 0 && strings.Contains(accumulatedText, "<tool_use>") {
+				a.logger.Warn("model attempted tool call in text but XML parsing found no valid blocks")
+			}
 			for _, tc := range textCalls {
 				pendingTools = append(pendingTools, tc)
 				blocks = append(blocks, provider.ContentBlock{

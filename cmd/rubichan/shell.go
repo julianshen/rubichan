@@ -62,8 +62,9 @@ func runShell() error {
 	// Create tool registry.
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
+	shellCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model),
+		ModelCapabilities: shellCaps,
 	}
 	coreResult, err := registerCoreTools(cwd, registry, cfg, toolsCfg, diffTracker, 120*time.Second)
 	if err != nil {
@@ -79,7 +80,6 @@ func runShell() error {
 	opts = appendWorkingDirOption(opts, cwd)
 	opts = appendPersonaOptions(opts, cwd)
 	opts = append(opts, agent.WithMode("shell"))
-	shellCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
 	opts = append(opts, agent.WithCapabilities(shellCaps))
 
 	// Wire conversation persistence.
