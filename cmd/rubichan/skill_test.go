@@ -1655,3 +1655,98 @@ func TestSkillListerAdapterDeactivateNotActive(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not active")
 }
+
+func TestParseInstallSource(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   installSource
+	}{
+		{
+			name:  "git URL without ref",
+			input: "git:https://github.com/user/skill.git",
+			want:  installSource{Type: "git", URL: "https://github.com/user/skill.git", Ref: ""},
+		},
+		{
+			name:  "git URL with ref",
+			input: "git:https://github.com/user/skill.git@v1.0",
+			want:  installSource{Type: "git", URL: "https://github.com/user/skill.git", Ref: "v1.0"},
+		},
+		{
+			name:  "github shorthand without ref",
+			input: "github:user/skill",
+			want:  installSource{Type: "github", URL: "https://github.com/user/skill.git", Ref: ""},
+		},
+		{
+			name:  "github shorthand with ref",
+			input: "github:user/skill@v2.0",
+			want:  installSource{Type: "github", URL: "https://github.com/user/skill.git", Ref: "v2.0"},
+		},
+		{
+			name:  "npm package without version",
+			input: "npm:pkg-name",
+			want:  installSource{Type: "npm", URL: "pkg-name", Ref: ""},
+		},
+		{
+			name:  "npm package with version",
+			input: "npm:pkg-name@1.0",
+			want:  installSource{Type: "npm", URL: "pkg-name", Ref: "1.0"},
+		},
+		{
+			name:  "relative local path",
+			input: "./local",
+			want:  installSource{Type: "local", URL: "./local", Ref: ""},
+		},
+		{
+			name:  "absolute local path",
+			input: "/abs/path",
+			want:  installSource{Type: "local", URL: "/abs/path", Ref: ""},
+		},
+		{
+			name:  "registry name without version",
+			input: "myskill",
+			want:  installSource{Type: "registry", URL: "myskill", Ref: ""},
+		},
+		{
+			name:  "registry name with version",
+			input: "myskill@1.2.3",
+			want:  installSource{Type: "registry", URL: "myskill@1.2.3", Ref: ""},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseInstallSource(tc.input)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestInstallFromNpm_NonexistentPackage verifies that installing a nonexistent
+// npm package fails. If npm is not installed the error reports that npm is
+// missing; if npm is installed it reports an npm error for the unknown package.
+func TestInstallFromNpm_NonexistentPackage(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{
+		"install",
+		"npm:@rubichan-does-not-exist/no-such-package-xyz-99999",
+		"--store", dbPath,
+		"--skills-dir", skillsDir,
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+
+	// Accept either: npm not on PATH, or npm reported an error for the package.
+	msg := err.Error()
+	isNpmMissing := strings.Contains(msg, "npm not found")
+	isNpmError := strings.Contains(msg, "npm pack failed")
+	assert.True(t, isNpmMissing || isNpmError,
+		"expected 'npm not found' or 'npm pack failed' but got: %s", msg)
+}

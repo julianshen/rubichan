@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -678,6 +679,71 @@ func isLocalPath(source string) bool {
 	return strings.Contains(source, "/") || strings.HasPrefix(source, ".")
 }
 
+// installSource describes a resolved install source after parsing the user's
+// argument.
+type installSource struct {
+	// Type is one of "local", "git", "github", "npm", "registry".
+	Type string
+	// URL is the path, git URL, npm package name, or registry name.
+	URL string
+	// Ref is the version, tag, or branch to check out (empty = default/latest).
+	Ref string
+}
+
+// splitAtRef splits a string at the last '@' that is not part of a git SSH
+// prefix (e.g. "git@github.com"). It returns (base, ref); if there is no
+// qualifying '@', ref is empty.
+func splitAtRef(s string) (base, ref string) {
+	idx := strings.LastIndex(s, "@")
+	if idx <= 0 {
+		return s, ""
+	}
+	// Skip the leading "git@" SSH-style prefix: if the segment before '@'
+	// starts with "git" and is the very beginning of the string, it is not a
+	// ref separator.
+	if idx == 3 && strings.HasPrefix(s, "git@") {
+		return s, ""
+	}
+	return s[:idx], s[idx+1:]
+}
+
+// parseInstallSource resolves a raw source argument into an installSource.
+//
+// Resolution rules:
+//   - "git:<url>"          → Type="git",      URL=url
+//   - "git:<url>@<ref>"    → Type="git",      URL=url,  Ref=ref
+//   - "github:<user/repo>" → Type="github",   URL="https://github.com/<user/repo>.git"
+//   - "github:<u/r>@<ref>" → Type="github",   URL=...,  Ref=ref
+//   - "npm:<pkg>"          → Type="npm",       URL=pkg
+//   - "npm:<pkg>@<ver>"    → Type="npm",       URL=pkg,  Ref=ver
+//   - "./rel" or "/abs"    → Type="local",     URL=source
+//   - "name" or "name@ver" → Type="registry"
+func parseInstallSource(source string) installSource {
+	switch {
+	case strings.HasPrefix(source, "git:"):
+		rest := source[len("git:"):]
+		base, ref := splitAtRef(rest)
+		return installSource{Type: "git", URL: base, Ref: ref}
+
+	case strings.HasPrefix(source, "github:"):
+		rest := source[len("github:"):]
+		base, ref := splitAtRef(rest)
+		url := "https://github.com/" + base + ".git"
+		return installSource{Type: "github", URL: url, Ref: ref}
+
+	case strings.HasPrefix(source, "npm:"):
+		rest := source[len("npm:"):]
+		base, ref := splitAtRef(rest)
+		return installSource{Type: "npm", URL: base, Ref: ref}
+
+	case strings.HasPrefix(source, "./") || strings.HasPrefix(source, "/"):
+		return installSource{Type: "local", URL: source}
+
+	default:
+		return installSource{Type: "registry", URL: source}
+	}
+}
+
 // parseNameVersion splits "name@version" into (name, version). If no '@' is
 // present, version defaults to "latest".
 func parseNameVersion(source string) (name, version string) {
@@ -802,10 +868,17 @@ specific version; otherwise "latest" is used.`,
 				return err
 			}
 
-			if isLocalPath(source) {
-				return installFromLocal(cmd, source, skillsDir, storePath)
+			src := parseInstallSource(source)
+			switch src.Type {
+			case "local":
+				return installFromLocal(cmd, src.URL, skillsDir, storePath)
+			case "git", "github":
+				return installFromGit(cmd, src, skillsDir, storePath)
+			case "npm":
+				return installFromNpm(cmd, src, skillsDir, storePath)
+			default:
+				return installFromRegistry(cmd, source, skillsDir, storePath)
 			}
-			return installFromRegistry(cmd, source, skillsDir, storePath)
 		},
 	}
 	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
@@ -847,6 +920,161 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Installed skill %q (v%s) from local path\n", manifest.Name, manifest.Version)
+	return nil
+}
+
+// installFromGit clones a git repository to a temporary directory, validates
+// its SKILL.yaml, copies it to skillsDir, and records install state.
+func installFromGit(cmd *cobra.Command, src installSource, skillsDir, storePath string) error {
+	tmpDir, err := os.MkdirTemp("", "rubichan-git-install-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	gitArgs := []string{"clone", "--depth", "1"}
+	if src.Ref != "" {
+		gitArgs = append(gitArgs, "--branch", src.Ref)
+	}
+	gitArgs = append(gitArgs, src.URL, tmpDir)
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	gitCmd := exec.CommandContext(ctx, "git", gitArgs...)
+	if out, err := gitCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clone failed: %w\n%s", err, out)
+	}
+
+	manifest, _, _, err := loadSkillManifest(tmpDir)
+	if err != nil {
+		return fmt.Errorf("invalid skill manifest in cloned repo: %w", err)
+	}
+
+	dest := filepath.Join(skillsDir, manifest.Name)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("creating skill directory: %w", err)
+	}
+
+	if err := copyDir(tmpDir, dest); err != nil {
+		return fmt.Errorf("copying skill: %w", err)
+	}
+
+	s, err := store.NewStore(storePath)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+
+	tags := strings.Join(manifest.Tags, ",")
+	if err := s.SaveSkillState(store.SkillInstallState{
+		Name:       manifest.Name,
+		Version:    manifest.Version,
+		Source:     dest,
+		SourceType: src.Type,
+		SourceURL:  src.URL,
+		SourceRef:  src.Ref,
+		Category:   manifest.Category,
+		Tags:       tags,
+	}); err != nil {
+		return fmt.Errorf("saving skill state: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Installed skill %q (v%s) from %s\n", manifest.Name, manifest.Version, src.URL)
+	return nil
+}
+
+// installFromNpm downloads an npm package as a tarball, extracts it, and
+// installs the skill it contains. npm packs into a "package/" subdirectory
+// inside the tarball, so SKILL.yaml is found at package/SKILL.yaml.
+func installFromNpm(cmd *cobra.Command, src installSource, skillsDir, storePath string) error {
+	if _, err := exec.LookPath("npm"); err != nil {
+		return fmt.Errorf("npm not found — install Node.js to use npm: sources")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "rubichan-npm-install-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Build the package argument: "pkg" or "pkg@version".
+	pkgArg := src.URL
+	if src.Ref != "" {
+		pkgArg = src.URL + "@" + src.Ref
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	packCmd := exec.CommandContext(ctx, "npm", "pack", pkgArg, "--pack-destination", tmpDir)
+	if out, err := packCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("npm pack failed: %w\n%s", err, out)
+	}
+
+	// Find the downloaded tarball.
+	tarballs, err := filepath.Glob(filepath.Join(tmpDir, "*.tgz"))
+	if err != nil {
+		return fmt.Errorf("searching for tarball: %w", err)
+	}
+	if len(tarballs) == 0 {
+		return fmt.Errorf("npm pack produced no .tgz file in %s", tmpDir)
+	}
+	tarball := tarballs[0]
+
+	// Extract the tarball.
+	extractDir := filepath.Join(tmpDir, "extracted")
+	if err := os.MkdirAll(extractDir, 0o755); err != nil {
+		return fmt.Errorf("creating extract dir: %w", err)
+	}
+
+	tarCmd := exec.CommandContext(ctx, "tar", "xzf", tarball, "-C", extractDir)
+	if out, err := tarCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tar extraction failed: %w\n%s", err, out)
+	}
+
+	// npm pack puts files in a "package/" subdirectory.
+	skillDir := filepath.Join(extractDir, "package")
+
+	manifest, _, _, err := loadSkillManifest(skillDir)
+	if err != nil {
+		return fmt.Errorf("invalid skill manifest in npm package: %w", err)
+	}
+
+	dest := filepath.Join(skillsDir, manifest.Name)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("creating skill directory: %w", err)
+	}
+
+	if err := copyDir(skillDir, dest); err != nil {
+		return fmt.Errorf("copying skill: %w", err)
+	}
+
+	s, err := store.NewStore(storePath)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+
+	tags := strings.Join(manifest.Tags, ",")
+	if err := s.SaveSkillState(store.SkillInstallState{
+		Name:       manifest.Name,
+		Version:    manifest.Version,
+		Source:     dest,
+		SourceType: "npm",
+		SourceURL:  src.URL,
+		SourceRef:  src.Ref,
+		Category:   manifest.Category,
+		Tags:       tags,
+	}); err != nil {
+		return fmt.Errorf("saving skill state: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Installed skill %q (v%s) from npm package %s\n", manifest.Name, manifest.Version, pkgArg)
 	return nil
 }
 
