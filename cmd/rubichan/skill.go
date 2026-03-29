@@ -128,10 +128,14 @@ func listInstalledSkills(cmd *cobra.Command) error {
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tVERSION\tSOURCE\tINSTALLED")
+	fmt.Fprintln(w, "NAME\tVERSION\tCATEGORY\tSOURCE\tINSTALLED")
 	for _, st := range states {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-			st.Name, st.Version, st.Source,
+		category := st.Category
+		if category == "" {
+			category = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			st.Name, st.Version, category, st.Source,
 			st.InstalledAt.Format(time.RFC3339),
 		)
 	}
@@ -231,6 +235,28 @@ func skillInfoCmd() *cobra.Command {
 					perms[i] = string(p)
 				}
 				fmt.Fprintf(out, "Permissions: %s\n", strings.Join(perms, ", "))
+			}
+
+			if manifest.Category != "" {
+				fmt.Fprintf(out, "Category:    %s\n", manifest.Category)
+			}
+			if len(manifest.Tags) > 0 {
+				fmt.Fprintf(out, "Tags:        %s\n", strings.Join(manifest.Tags, ", "))
+			}
+
+			// Components summary: count Tools, Agents, and Commands arrays.
+			var componentParts []string
+			if n := len(manifest.Tools); n > 0 {
+				componentParts = append(componentParts, fmt.Sprintf("%d tool%s", n, pluralS(n)))
+			}
+			if n := len(manifest.Agents); n > 0 {
+				componentParts = append(componentParts, fmt.Sprintf("%d agent%s", n, pluralS(n)))
+			}
+			if n := len(manifest.Commands); n > 0 {
+				componentParts = append(componentParts, fmt.Sprintf("%d command%s", n, pluralS(n)))
+			}
+			if len(componentParts) > 0 {
+				fmt.Fprintf(out, "Components:  %s\n", strings.Join(componentParts, ", "))
 			}
 
 			if manifest.Implementation.Backend != "" {
@@ -617,6 +643,14 @@ func containsPromptType(types []skills.SkillType) bool {
 		}
 	}
 	return false
+}
+
+// pluralS returns "s" when n != 1, and "" otherwise.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func detectLanguages(files []string) []string {

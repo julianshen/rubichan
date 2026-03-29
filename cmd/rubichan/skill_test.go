@@ -1750,3 +1750,98 @@ func TestInstallFromNpm_NonexistentPackage(t *testing.T) {
 	assert.True(t, isNpmMissing || isNpmError,
 		"expected 'npm not found' or 'npm pack failed' but got: %s", msg)
 }
+
+// ---------------------------------------------------------------------------
+// Task 5: Enhanced skill list (CATEGORY column) and skill info (Category/Tags/Components)
+// ---------------------------------------------------------------------------
+
+func TestSkillListCategoryColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "code-review",
+		Version:  "1.0.0",
+		Source:   "registry",
+		Category: "development",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:    "formatter",
+		Version: "2.1.0",
+		Source:  "git",
+		// Category intentionally empty to verify "-" placeholder.
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"list", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "CATEGORY")
+	assert.Contains(t, output, "development")
+	assert.Contains(t, output, "-") // placeholder for missing category
+}
+
+func TestSkillInfoCategoryTagsComponents(t *testing.T) {
+	skillDir := filepath.Join(t.TempDir(), "skills", "multi-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+
+	manifest := `name: multi-skill
+version: 1.0.0
+description: "A skill with category, tags, and components"
+types:
+  - tool
+category: development
+tags:
+  - code-review
+  - golang
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+tools:
+  - name: lint
+    description: Run linter
+  - name: format
+    description: Run formatter
+agents:
+  - name: review-agent
+    description: Code review agent
+commands:
+  - name: review
+    description: Run review
+  - name: check
+    description: Run check
+  - name: fix
+    description: Run fix
+`
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.yaml"), []byte(manifest), 0o644))
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:    "multi-skill",
+		Version: "1.0.0",
+		Source:  skillDir,
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"info", "multi-skill", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "Category:    development")
+	assert.Contains(t, output, "Tags:        code-review, golang")
+	assert.Contains(t, output, "2 tools")
+	assert.Contains(t, output, "1 agent")
+	assert.Contains(t, output, "3 commands")
+}
