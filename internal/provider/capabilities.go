@@ -66,46 +66,94 @@ func detectOllamaCapabilities(modelID string) ModelCapabilities {
 	return caps
 }
 
-// knownStrongFamilies are OpenAI-compatible model families with reliable
-// tool-use that do not need a discovery hint.
-var knownStrongFamilies = []string{"gpt-4", "gpt-5", "claude", "o1", "o3"}
+// modelProfile defines per-family capability tuning.
+type modelProfile struct {
+	// keywords matched against the lowercase model ID.
+	keywords []string
+	// hint enables NeedsToolDiscoveryHint.
+	hint bool
+	// smallLimit is MaxToolCount for small models (0 = no limit).
+	smallLimit int
+	// largeLimit is MaxToolCount for large models (0 = no limit).
+	largeLimit int
+}
 
-// knownWeakerFamilies are open-weight families that benefit from a
-// tool-discovery hint in the system prompt.
-var knownWeakerFamilies = []string{"qwen", "llama", "gemma", "mistral", "deepseek"}
+// strongProfiles are model families with reliable tool-use that need no hints.
+// GPT-5 family: all variants (5, 5.1–5.4, codex, pro, mini, nano) support
+// native tool_use. Nano/mini are smaller but still strong tool users.
+var strongProfiles = []modelProfile{
+	{keywords: []string{"gpt-4", "gpt-5", "o1", "o3"}},
+	{keywords: []string{"claude"}},
+	// Gemini 2.5+ and 3.x are strong tool users with large context windows.
+	{keywords: []string{"gemini-2.5", "gemini-3", "gemini-3.1"}},
+	// Kimi K2/K2.5: strong coding models with native tool_use and parallel_tool_calls.
+	{keywords: []string{"kimi"}},
+}
+
+// hintedProfiles are model families that support native tool_use but benefit
+// from a discovery hint in the system prompt to improve tool selection.
+var hintedProfiles = []modelProfile{
+	// Qwen 3.5: supports tool_use but struggled with tool discovery in testing.
+	// Large MoE variants (397B) work but need guidance; small variants need fewer tools.
+	{keywords: []string{"qwen"}, hint: true, smallLimit: 8},
+	// GLM 5/5-turbo (Zhipu AI): supports tool_use and structured_outputs.
+	// Strong reasoning but less tested with complex tool schemas.
+	{keywords: []string{"glm-5", "glm5"}, hint: true, largeLimit: 15},
+	// GLM 4.x: older generation, more conservative limits.
+	{keywords: []string{"glm-4", "glm4"}, hint: true, smallLimit: 8, largeLimit: 12},
+	// MiniMax M1/M2.x: supports tool_use. M1 is 1M context reasoning model.
+	// M2.x series are capable but benefit from tool guidance.
+	{keywords: []string{"minimax"}, hint: true, largeLimit: 15},
+	// Gemini 2.0 and earlier: decent tool use but less reliable than 2.5+.
+	{keywords: []string{"gemini-2.0", "gemini-1"}, hint: true},
+	// Open-weight families that benefit from guidance.
+	{keywords: []string{"llama"}, hint: true, smallLimit: 8},
+	{keywords: []string{"gemma"}, hint: true, smallLimit: 8},
+	{keywords: []string{"mistral"}, hint: true, smallLimit: 8},
+	{keywords: []string{"deepseek"}, hint: true, smallLimit: 8},
+}
 
 // detectOpenAICompatCapabilities returns capabilities for OpenAI-compatible
-// providers (OpenRouter, self-hosted, etc.). GPT-4/5 and Claude routing
-// through an OpenAI-compat endpoint get full capabilities. Open-weight
-// families (Qwen, Llama, Gemma, Mistral, DeepSeek) get a tool-discovery hint
-// and, when small, a reduced tool count. Completely unknown models default to
-// NeedsToolDiscoveryHint=true as an optimistic safe default.
+// providers (OpenRouter, self-hosted, etc.). Models are matched against known
+// profiles by family. Unknown models get NeedsToolDiscoveryHint=true as a
+// safe optimistic default.
 func detectOpenAICompatCapabilities(modelID string) ModelCapabilities {
 	caps := agentsdk.DefaultCapabilities()
-
 	lower := strings.ToLower(modelID)
 
-	for _, family := range knownStrongFamilies {
-		if strings.Contains(lower, family) {
-			// Strong model — no additional hints needed.
+	// Check strong profiles first — these get full capabilities with no hints.
+	for _, p := range strongProfiles {
+		if matchesAnyKeyword(lower, p.keywords) {
 			return caps
 		}
 	}
 
-	for _, family := range knownWeakerFamilies {
-		if strings.Contains(lower, family) {
-			caps.NeedsToolDiscoveryHint = true
-			if isSmallModel(modelID) {
-				caps.MaxToolCount = 8
+	// Check hinted profiles — these need various levels of guidance.
+	for _, p := range hintedProfiles {
+		if matchesAnyKeyword(lower, p.keywords) {
+			caps.NeedsToolDiscoveryHint = p.hint
+			small := isSmallModel(modelID)
+			if small && p.smallLimit > 0 {
+				caps.MaxToolCount = p.smallLimit
+			} else if !small && p.largeLimit > 0 {
+				caps.MaxToolCount = p.largeLimit
 			}
 			return caps
 		}
 	}
 
-	// Unknown model: optimistic defaults — assume tool use works but include
-	// the discovery hint to maximise reliability.
+	// Unknown model: optimistic defaults with discovery hint.
 	caps.NeedsToolDiscoveryHint = true
 	return caps
+}
+
+func matchesAnyKeyword(lower string, keywords []string) bool {
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // smallModelRe matches size indicators that identify models with <=14B
