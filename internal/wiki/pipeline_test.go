@@ -191,6 +191,42 @@ func TestRunPipelineCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestRunCallsSpecializedAnalysisStage(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {}\n")
+	gitAdd(t, dir, "main.go")
+
+	outDir := t.TempDir()
+
+	var stages []string
+	llm := &mockLLMCompleter{
+		responses: map[string]string{
+			"root": "Summary: Main module\nKeyTypes: none\nPatterns: none\nConcerns: none",
+		},
+	}
+
+	cfg := Config{
+		Dir:         dir,
+		OutputDir:   outDir,
+		Format:      "raw-md",
+		DiagramFmt:  "mermaid",
+		Concurrency: 1,
+		ProgressFunc: func(stage string, current, total int) {
+			stages = append(stages, stage)
+		},
+	}
+
+	p := parser.NewParser()
+	err := Run(context.Background(), cfg, llm, p)
+	require.NoError(t, err)
+
+	assert.Contains(t, stages, "analyzing")
+	assert.Contains(t, stages, "specialized-analysis")
+	assert.Contains(t, stages, "assembling")
+	assert.Contains(t, stages, "rendering")
+}
+
 func TestRunPipelineIntegration(t *testing.T) {
 	// Full integration test: create a multi-file project, run pipeline,
 	// verify the complete output structure.

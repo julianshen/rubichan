@@ -68,19 +68,41 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 		return err
 	}
 
-	// Stage 3: Analyze
+	// Stage 3: Analyze (base pass)
 	cfg.progress("analyzing", 0, len(chunks), fmt.Sprintf("wiki: analyzing %d chunks...", len(chunks)))
 	concurrency := cfg.Concurrency
 	if concurrency <= 0 {
 		concurrency = 5
 	}
 	analyzerCfg := AnalyzerConfig{Concurrency: concurrency}
-	analysis, err := Analyze(ctx, chunks, llm, analyzerCfg)
+	analysis, err := AnalyzeBase(ctx, chunks, llm, analyzerCfg)
 	if err != nil {
 		if isContextCancellation(err) {
 			return err
 		}
 		return fmt.Errorf("analyze: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Stage 3b: Specialized analyzers
+	cfg.progress("specialized-analysis", 0, 0, "wiki: running specialized analyzers...")
+	specializedAnalyzers := []SpecializedAnalyzer{
+		NewSuggestionAnalyzer(llm),
+	}
+	analyzerInput := AnalyzerInput{
+		Chunks:         chunks,
+		Files:          files,
+		ModuleAnalyses: analysis.Modules,
+		Architecture:   analysis.Architecture,
+	}
+	extraDocs, extraDiagrams, err := RunSpecializedAnalyzers(ctx, specializedAnalyzers, analyzerInput)
+	if err != nil {
+		if isContextCancellation(err) {
+			return err
+		}
+		return fmt.Errorf("specialized analyzers: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -105,10 +127,12 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 
 	// Stage 5: Assemble
 	cfg.progress("assembling", 0, 0, "wiki: assembling documents...")
+	diagrams = append(diagrams, extraDiagrams...)
 	documents, err := Assemble(analysis, diagrams, nil, cfg.SecurityFindings)
 	if err != nil {
 		return fmt.Errorf("assemble: %w", err)
 	}
+	documents = append(documents, extraDocs...)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
