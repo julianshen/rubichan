@@ -114,6 +114,11 @@ var (
 	uploadSARIFFlag bool
 	annotationsFlag bool
 
+	wikiFlag            bool
+	wikiOutFlag         string
+	wikiFormatFlag      string
+	wikiConcurrencyFlag int
+
 	activeSessionLogMu   sync.RWMutex
 	activeSessionLogPath string
 )
@@ -515,6 +520,10 @@ func main() {
 	rootCmd.PersistentFlags().IntVar(&prNumberFlag, "pr", 0, "explicit PR/MR number (overrides auto-detection)")
 	rootCmd.PersistentFlags().BoolVar(&uploadSARIFFlag, "upload-sarif", false, "upload SARIF to GitHub Code Scanning")
 	rootCmd.PersistentFlags().BoolVar(&annotationsFlag, "annotations", false, "emit GitHub Actions workflow annotations")
+	rootCmd.PersistentFlags().BoolVar(&wikiFlag, "wiki", false, "run wiki generation (implies --headless, --approve-cwd)")
+	rootCmd.PersistentFlags().StringVar(&wikiOutFlag, "wiki-out", "docs/wiki", "output directory for wiki files")
+	rootCmd.PersistentFlags().StringVar(&wikiFormatFlag, "wiki-format", "raw-md", "wiki output format: raw-md, hugo, docusaurus")
+	rootCmd.PersistentFlags().IntVar(&wikiConcurrencyFlag, "wiki-concurrency", 5, "max parallel LLM calls for wiki generation")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",

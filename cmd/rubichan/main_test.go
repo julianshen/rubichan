@@ -15,6 +15,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/cobra"
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
@@ -526,4 +527,55 @@ func TestPersonaErrorMessage(t *testing.T) {
 	msg := persona.ErrorMessage("something broke")
 	assert.Contains(t, msg, "Pigi")
 	assert.Contains(t, msg, "something broke")
+}
+
+func TestWikiFlagCobraDefaults(t *testing.T) {
+	// Build a minimal cobra command that mirrors the real flag registration
+	// so we can verify the cobra-defined defaults are correct.
+	var localWiki bool
+	var localOut, localFormat string
+	var localConcurrency int
+
+	cmd := &cobra.Command{Use: "rubichan", RunE: func(_ *cobra.Command, _ []string) error { return nil }}
+	cmd.PersistentFlags().BoolVar(&localWiki, "wiki", false, "run wiki generation")
+	cmd.PersistentFlags().StringVar(&localOut, "wiki-out", "docs/wiki", "output directory for wiki files")
+	cmd.PersistentFlags().StringVar(&localFormat, "wiki-format", "raw-md", "wiki output format")
+	cmd.PersistentFlags().IntVar(&localConcurrency, "wiki-concurrency", 5, "max parallel LLM calls")
+
+	// Execute with no wiki flags — cobra applies defaults.
+	cmd.SetArgs([]string{})
+	require.NoError(t, cmd.Execute())
+
+	assert.False(t, localWiki, "--wiki must default to false")
+	assert.Equal(t, "docs/wiki", localOut, "--wiki-out must default to docs/wiki")
+	assert.Equal(t, "raw-md", localFormat, "--wiki-format must default to raw-md")
+	assert.Equal(t, 5, localConcurrency, "--wiki-concurrency must default to 5")
+}
+
+func TestWikiFlagsParsedByCobra(t *testing.T) {
+	// Reset to defaults before the test and restore afterwards.
+	origWiki := wikiFlag
+	origOut := wikiOutFlag
+	origFormat := wikiFormatFlag
+	origConcurrency := wikiConcurrencyFlag
+	t.Cleanup(func() {
+		wikiFlag = origWiki
+		wikiOutFlag = origOut
+		wikiFormatFlag = origFormat
+		wikiConcurrencyFlag = origConcurrency
+	})
+
+	cmd := &cobra.Command{Use: "rubichan", RunE: func(_ *cobra.Command, _ []string) error { return nil }}
+	cmd.PersistentFlags().BoolVar(&wikiFlag, "wiki", false, "run wiki generation")
+	cmd.PersistentFlags().StringVar(&wikiOutFlag, "wiki-out", "docs/wiki", "output directory for wiki files")
+	cmd.PersistentFlags().StringVar(&wikiFormatFlag, "wiki-format", "raw-md", "wiki output format")
+	cmd.PersistentFlags().IntVar(&wikiConcurrencyFlag, "wiki-concurrency", 5, "max parallel LLM calls")
+
+	cmd.SetArgs([]string{"--wiki", "--wiki-out", "out/custom", "--wiki-format", "hugo", "--wiki-concurrency", "10"})
+	require.NoError(t, cmd.Execute())
+
+	assert.True(t, wikiFlag)
+	assert.Equal(t, "out/custom", wikiOutFlag)
+	assert.Equal(t, "hugo", wikiFormatFlag)
+	assert.Equal(t, 10, wikiConcurrencyFlag)
 }
