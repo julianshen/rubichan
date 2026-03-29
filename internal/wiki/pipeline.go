@@ -3,6 +3,7 @@ package wiki
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -208,10 +209,11 @@ func readExistingDocs(outputDir string) map[string]string {
 		return docs
 	}
 	_ = filepath.Walk(outputDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			log.Printf("wiki: warning reading %s: %v", path, err)
 			return nil
 		}
-		if filepath.Ext(path) != ".md" {
+		if info.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 		rel, err := filepath.Rel(outputDir, path)
@@ -220,6 +222,7 @@ func readExistingDocs(outputDir string) map[string]string {
 		}
 		content, err := os.ReadFile(path)
 		if err != nil {
+			log.Printf("wiki: warning reading %s: %v", path, err)
 			return nil
 		}
 		docs[rel] = string(content)
