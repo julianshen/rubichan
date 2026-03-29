@@ -315,6 +315,15 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					result.IsError,
 				))
 
+				// Inject into conversation so the LLM sees it on subsequent turns.
+				if m.agent != nil {
+					contextMsg := fmt.Sprintf("[User ran shell command]\n$ %s\n[Output]\n%s", shellCmd, result.Output)
+					if result.IsError {
+						contextMsg += fmt.Sprintf("\n[Exit code: %d]", result.ExitCode)
+					}
+					m.agent.InjectUserContext(contextMsg)
+				}
+
 				m.setContentAndAutoScroll()
 				return m, nil
 			}
