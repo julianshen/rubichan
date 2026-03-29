@@ -427,6 +427,69 @@ implementation:
 	assert.Empty(t, m.Implementation.Entrypoint)
 }
 
+func TestManifestCategoryValid(t *testing.T) {
+	for _, cat := range []string{"development", "productivity", "learning", "security", "testing"} {
+		cat := cat
+		t.Run(cat, func(t *testing.T) {
+			data := []byte(`
+name: my-skill
+version: 1.0.0
+description: "A skill with a valid category"
+types:
+  - prompt
+category: ` + cat + `
+`)
+			m, err := ParseManifest(data)
+			require.NoError(t, err)
+			assert.Equal(t, cat, m.Category)
+		})
+	}
+}
+
+func TestManifestCategoryInvalid(t *testing.T) {
+	data := []byte(`
+name: my-skill
+version: 1.0.0
+description: "A skill with an invalid category"
+types:
+  - prompt
+category: entertainment
+`)
+	_, err := ParseManifest(data)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid category")
+}
+
+func TestManifestCategoryEmpty(t *testing.T) {
+	data := []byte(`
+name: my-skill
+version: 1.0.0
+description: "A skill without a category"
+types:
+  - prompt
+`)
+	m, err := ParseManifest(data)
+	require.NoError(t, err)
+	assert.Equal(t, "", m.Category)
+}
+
+func TestManifestTagsParsed(t *testing.T) {
+	data := []byte(`
+name: my-skill
+version: 1.0.0
+description: "A skill with tags"
+types:
+  - prompt
+tags:
+  - kubernetes
+  - cloud
+  - devops
+`)
+	m, err := ParseManifest(data)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"kubernetes", "cloud", "devops"}, m.Tags)
+}
+
 func TestManifestWithAgentDefs(t *testing.T) {
 	yamlData := `
 name: k8s-tools

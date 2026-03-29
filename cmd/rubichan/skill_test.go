@@ -1655,3 +1655,447 @@ func TestSkillListerAdapterDeactivateNotActive(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not active")
 }
+
+func TestParseInstallSource(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   installSource
+	}{
+		{
+			name:  "git URL without ref",
+			input: "git:https://github.com/user/skill.git",
+			want:  installSource{Type: "git", URL: "https://github.com/user/skill.git", Ref: ""},
+		},
+		{
+			name:  "git URL with ref",
+			input: "git:https://github.com/user/skill.git@v1.0",
+			want:  installSource{Type: "git", URL: "https://github.com/user/skill.git", Ref: "v1.0"},
+		},
+		{
+			name:  "github shorthand without ref",
+			input: "github:user/skill",
+			want:  installSource{Type: "github", URL: "https://github.com/user/skill.git", Ref: ""},
+		},
+		{
+			name:  "github shorthand with ref",
+			input: "github:user/skill@v2.0",
+			want:  installSource{Type: "github", URL: "https://github.com/user/skill.git", Ref: "v2.0"},
+		},
+		{
+			name:  "npm package without version",
+			input: "npm:pkg-name",
+			want:  installSource{Type: "npm", URL: "pkg-name", Ref: ""},
+		},
+		{
+			name:  "npm package with version",
+			input: "npm:pkg-name@1.0",
+			want:  installSource{Type: "npm", URL: "pkg-name", Ref: "1.0"},
+		},
+		{
+			name:  "relative local path",
+			input: "./local",
+			want:  installSource{Type: "local", URL: "./local", Ref: ""},
+		},
+		{
+			name:  "absolute local path",
+			input: "/abs/path",
+			want:  installSource{Type: "local", URL: "/abs/path", Ref: ""},
+		},
+		{
+			name:  "registry name without version",
+			input: "myskill",
+			want:  installSource{Type: "registry", URL: "myskill", Ref: ""},
+		},
+		{
+			name:  "registry name with version",
+			input: "myskill@1.2.3",
+			want:  installSource{Type: "registry", URL: "myskill@1.2.3", Ref: ""},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseInstallSource(tc.input)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestInstallFromNpm_NonexistentPackage verifies that installing a nonexistent
+// npm package fails. If npm is not installed the error reports that npm is
+// missing; if npm is installed it reports an npm error for the unknown package.
+func TestInstallFromNpm_NonexistentPackage(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{
+		"install",
+		"npm:@rubichan-does-not-exist/no-such-package-xyz-99999",
+		"--store", dbPath,
+		"--skills-dir", skillsDir,
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+
+	// Accept either: npm not on PATH, or npm reported an error for the package.
+	msg := err.Error()
+	isNpmMissing := strings.Contains(msg, "npm not found")
+	isNpmError := strings.Contains(msg, "npm pack failed")
+	assert.True(t, isNpmMissing || isNpmError,
+		"expected 'npm not found' or 'npm pack failed' but got: %s", msg)
+}
+
+// ---------------------------------------------------------------------------
+// Task 5: Enhanced skill list (CATEGORY column) and skill info (Category/Tags/Components)
+// ---------------------------------------------------------------------------
+
+func TestSkillListCategoryColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "code-review",
+		Version:  "1.0.0",
+		Source:   "registry",
+		Category: "development",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:    "formatter",
+		Version: "2.1.0",
+		Source:  "git",
+		// Category intentionally empty to verify "-" placeholder.
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"list", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "CATEGORY")
+	assert.Contains(t, output, "development")
+	assert.Contains(t, output, "-") // placeholder for missing category
+}
+
+func TestSkillInfoCategoryTagsComponents(t *testing.T) {
+	skillDir := filepath.Join(t.TempDir(), "skills", "multi-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+
+	manifest := `name: multi-skill
+version: 1.0.0
+description: "A skill with category, tags, and components"
+types:
+  - tool
+category: development
+tags:
+  - code-review
+  - golang
+implementation:
+  backend: starlark
+  entrypoint: skill.star
+tools:
+  - name: lint
+    description: Run linter
+  - name: format
+    description: Run formatter
+agents:
+  - name: review-agent
+    description: Code review agent
+commands:
+  - name: review
+    description: Run review
+  - name: check
+    description: Run check
+  - name: fix
+    description: Run fix
+`
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.yaml"), []byte(manifest), 0o644))
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:    "multi-skill",
+		Version: "1.0.0",
+		Source:  skillDir,
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"info", "multi-skill", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "Category:    development")
+	assert.Contains(t, output, "Tags:        code-review, golang")
+	assert.Contains(t, output, "2 tools")
+	assert.Contains(t, output, "1 agent")
+	assert.Contains(t, output, "3 commands")
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: skill search --category and --tag filters, local search
+// ---------------------------------------------------------------------------
+
+func TestSkillSearchLocalResults(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "go-linter",
+		Version:  "1.0.0",
+		Source:   "git",
+		Category: "development",
+		Tags:     "golang,lint",
+	}))
+	s.Close()
+
+	// Registry returns empty results.
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"search", "go", "--store", dbPath, "--registry", srv.URL})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "go-linter")
+	assert.Contains(t, output, "[installed]")
+}
+
+func TestMatchesSearch(t *testing.T) {
+	st := store.SkillInstallState{
+		Name:     "go-linter",
+		Version:  "1.0.0",
+		Category: "development",
+		Tags:     "golang,lint,code-quality",
+	}
+
+	// Query match on name.
+	assert.True(t, matchesSearch(st, "go", "", ""))
+	// Query match on tags.
+	assert.True(t, matchesSearch(st, "lint", "", ""))
+	// Query no match.
+	assert.False(t, matchesSearch(st, "python", "", ""))
+
+	// Category filter match (case-insensitive).
+	assert.True(t, matchesSearch(st, "", "Development", ""))
+	assert.True(t, matchesSearch(st, "", "development", ""))
+	// Category filter no match.
+	assert.False(t, matchesSearch(st, "", "testing", ""))
+
+	// Tag filter match.
+	assert.True(t, matchesSearch(st, "", "", "lint"))
+	assert.True(t, matchesSearch(st, "", "", "golang"))
+	// Tag filter no match.
+	assert.False(t, matchesSearch(st, "", "", "typescript"))
+
+	// Combined filters.
+	assert.True(t, matchesSearch(st, "go", "development", "golang"))
+	assert.False(t, matchesSearch(st, "go", "testing", "golang"))
+}
+
+func TestSkillSearchCategoryFilter(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "go-linter",
+		Version:  "1.0.0",
+		Source:   "git",
+		Category: "development",
+		Tags:     "golang",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "doc-writer",
+		Version:  "0.1.0",
+		Source:   "git",
+		Category: "documentation",
+		Tags:     "docs",
+	}))
+	s.Close()
+
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"search", "linter", "--category", "development", "--store", dbPath, "--registry", srv.URL})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "go-linter")
+	assert.NotContains(t, output, "doc-writer")
+}
+
+// ---------------------------------------------------------------------------
+// Task 7: skill update command
+// ---------------------------------------------------------------------------
+
+func TestSkillUpdateCommandRegistered(t *testing.T) {
+	// Verify the update subcommand is registered under skill.
+	root := skillCmd()
+	found := false
+	for _, sub := range root.Commands() {
+		if sub.Name() == "update" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected 'update' subcommand to be registered in skillCmd")
+}
+
+func TestSkillUpdateLocalSkipMessage(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:       "my-local",
+		Version:    "1.0.0",
+		Source:     "/some/path",
+		SourceType: "local",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "my-local", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, buf.String(), "reinstall manually")
+}
+
+func TestSkillUpdateRegistrySkipMessage(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:       "pinned-skill",
+		Version:    "1.2.3",
+		Source:     "/skills/pinned-skill",
+		SourceType: "registry",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "pinned-skill", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, buf.String(), "up to date")
+}
+
+func TestSkillUpdateGitDryRun(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:       "git-skill",
+		Version:    "1.0.0",
+		Source:     "/skills/git-skill",
+		SourceType: "git",
+		SourceURL:  "https://example.com/skill.git",
+		SourceRef:  "v1.0.0",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "git-skill", "--dry-run", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "[dry-run]")
+	assert.Contains(t, output, "git-skill")
+}
+
+func TestSkillUpdateAllDryRun(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name: "local-one", Version: "1.0.0", SourceType: "local",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name: "git-one", Version: "1.0.0", SourceType: "git",
+		SourceURL: "https://example.com/git-one.git",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name: "npm-one", Version: "1.0.0", SourceType: "npm",
+		SourceURL: "@scope/npm-one",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "--all", "--dry-run", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	// local → skip message
+	assert.Contains(t, output, "reinstall manually")
+	// git → dry-run message
+	assert.Contains(t, output, "[dry-run]")
+	assert.Contains(t, output, "git-one")
+	// npm → dry-run message
+	assert.Contains(t, output, "@scope/npm-one")
+}
+
+func TestSkillUpdateNoArgsNoAll(t *testing.T) {
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"update"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--all")
+}
+
+func TestSkillUpdateUnknownSkill(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"update", "no-such-skill", "--store", dbPath})
+
+	err = cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not installed")
+}

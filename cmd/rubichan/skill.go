@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -46,6 +47,7 @@ func skillCmd() *cobra.Command {
 	cmd.AddCommand(skillLintCmd())
 	cmd.AddCommand(skillDevCmd())
 	cmd.AddCommand(skillPermissionsCmd())
+	cmd.AddCommand(skillUpdateCmd())
 
 	return cmd
 }
@@ -127,10 +129,14 @@ func listInstalledSkills(cmd *cobra.Command) error {
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tVERSION\tSOURCE\tINSTALLED")
+	fmt.Fprintln(w, "NAME\tVERSION\tCATEGORY\tSOURCE\tINSTALLED")
 	for _, st := range states {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-			st.Name, st.Version, st.Source,
+		category := st.Category
+		if category == "" {
+			category = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			st.Name, st.Version, category, st.Source,
 			st.InstalledAt.Format(time.RFC3339),
 		)
 	}
@@ -232,6 +238,28 @@ func skillInfoCmd() *cobra.Command {
 				fmt.Fprintf(out, "Permissions: %s\n", strings.Join(perms, ", "))
 			}
 
+			if manifest.Category != "" {
+				fmt.Fprintf(out, "Category:    %s\n", manifest.Category)
+			}
+			if len(manifest.Tags) > 0 {
+				fmt.Fprintf(out, "Tags:        %s\n", strings.Join(manifest.Tags, ", "))
+			}
+
+			// Components summary: count Tools, Agents, and Commands arrays.
+			var componentParts []string
+			if n := len(manifest.Tools); n > 0 {
+				componentParts = append(componentParts, fmt.Sprintf("%d tool%s", n, pluralS(n)))
+			}
+			if n := len(manifest.Agents); n > 0 {
+				componentParts = append(componentParts, fmt.Sprintf("%d agent%s", n, pluralS(n)))
+			}
+			if n := len(manifest.Commands); n > 0 {
+				componentParts = append(componentParts, fmt.Sprintf("%d command%s", n, pluralS(n)))
+			}
+			if len(componentParts) > 0 {
+				fmt.Fprintf(out, "Components:  %s\n", strings.Join(componentParts, ", "))
+			}
+
 			if manifest.Implementation.Backend != "" {
 				fmt.Fprintf(out, "Backend:     %s\n", manifest.Implementation.Backend)
 			}
@@ -251,7 +279,7 @@ func skillSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search the skill registry",
-		Long:  "Search for skills in the remote registry by keyword.",
+		Long:  "Search for skills in the remote registry by keyword. Also searches locally installed skills.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
@@ -261,6 +289,14 @@ func skillSearchCmd() *cobra.Command {
 				registryURL = defaultRegistryURL
 			}
 
+			category, _ := cmd.Flags().GetString("category")
+			tag, _ := cmd.Flags().GetString("tag")
+
+			storePath, err := resolveStorePath(cmd)
+			if err != nil {
+				return err
+			}
+
 			client := skills.NewRegistryClient(registryURL, nil, 0)
 
 			ctx := cmd.Context()
@@ -268,26 +304,107 @@ func skillSearchCmd() *cobra.Command {
 				ctx = context.Background()
 			}
 
-			results, err := client.Search(ctx, query)
+			// Search remote registry.
+			remoteResults, err := client.Search(ctx, query)
 			if err != nil {
 				return fmt.Errorf("searching registry: %w", err)
 			}
 
-			if len(results) == 0 {
+			// Search local store.
+			s, err := store.NewStore(storePath)
+			if err != nil {
+				return fmt.Errorf("opening store: %w", err)
+			}
+			defer s.Close()
+
+			localStates, err := s.ListAllSkillStates()
+			if err != nil {
+				return fmt.Errorf("listing local skills: %w", err)
+			}
+
+			// Build a set of locally installed names for deduplication annotation.
+			installedNames := make(map[string]bool, len(localStates))
+			for _, st := range localStates {
+				installedNames[st.Name] = true
+			}
+
+			// Collect matching local results first.
+			var localMatches []store.SkillInstallState
+			for _, st := range localStates {
+				if matchesSearch(st, query, category, tag) {
+					localMatches = append(localMatches, st)
+				}
+			}
+
+			// Collect matching remote results.
+			// Remote results don't carry category or tag metadata, so skip them
+			// when either filter is set (they cannot satisfy the filter).
+			var remoteMatches []skills.RegistrySearchResult
+			if category == "" && tag == "" {
+				remoteMatches = remoteResults
+			}
+
+			if len(localMatches) == 0 && len(remoteMatches) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No results found.")
 				return nil
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION")
-			for _, r := range results {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, r.Version, r.Description)
+			fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION\tSTATUS")
+
+			for _, st := range localMatches {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", st.Name, st.Version, "", "[installed]")
 			}
+
+			for _, r := range remoteMatches {
+				installed := ""
+				if installedNames[r.Name] {
+					installed = "[installed]"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Name, r.Version, r.Description, installed)
+			}
+
 			return w.Flush()
 		},
 	}
 	cmd.Flags().String("registry", "", "registry URL (default: "+defaultRegistryURL+")")
+	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
+	cmd.Flags().String("category", "", "filter by category (case-insensitive)")
+	cmd.Flags().String("tag", "", "filter by tag")
 	return cmd
+}
+
+// matchesSearch reports whether the installed skill state matches the given
+// search query, category filter, and tag filter.
+//
+// All non-empty filters must match simultaneously:
+//   - category: case-insensitive equality against st.Category
+//   - tag: checks if st.Tags (comma-separated) contains the tag
+//   - query: substring match against name and the comma-separated tags string
+func matchesSearch(st store.SkillInstallState, query, category, tag string) bool {
+	if category != "" && !strings.EqualFold(st.Category, category) {
+		return false
+	}
+	if tag != "" {
+		tagFound := false
+		for _, t := range strings.Split(st.Tags, ",") {
+			if strings.EqualFold(strings.TrimSpace(t), tag) {
+				tagFound = true
+				break
+			}
+		}
+		if !tagFound {
+			return false
+		}
+	}
+	if query != "" {
+		nameMatch := strings.Contains(strings.ToLower(st.Name), strings.ToLower(query))
+		tagsMatch := strings.Contains(strings.ToLower(st.Tags), strings.ToLower(query))
+		if !nameMatch && !tagsMatch {
+			return false
+		}
+	}
+	return true
 }
 
 func skillWhyCmd() *cobra.Command {
@@ -618,6 +735,14 @@ func containsPromptType(types []skills.SkillType) bool {
 	return false
 }
 
+// pluralS returns "s" when n != 1, and "" otherwise.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 func detectLanguages(files []string) []string {
 	seen := map[string]bool{}
 	var langs []string
@@ -676,6 +801,71 @@ func resolveSkillsDir(cmd *cobra.Command) (string, error) {
 // (contains a slash or starts with '.').
 func isLocalPath(source string) bool {
 	return strings.Contains(source, "/") || strings.HasPrefix(source, ".")
+}
+
+// installSource describes a resolved install source after parsing the user's
+// argument.
+type installSource struct {
+	// Type is one of "local", "git", "github", "npm", "registry".
+	Type string
+	// URL is the path, git URL, npm package name, or registry name.
+	URL string
+	// Ref is the version, tag, or branch to check out (empty = default/latest).
+	Ref string
+}
+
+// splitAtRef splits a string at the last '@' that is not part of a git SSH
+// prefix (e.g. "git@github.com"). It returns (base, ref); if there is no
+// qualifying '@', ref is empty.
+func splitAtRef(s string) (base, ref string) {
+	idx := strings.LastIndex(s, "@")
+	if idx <= 0 {
+		return s, ""
+	}
+	// Skip the leading "git@" SSH-style prefix: if the segment before '@'
+	// starts with "git" and is the very beginning of the string, it is not a
+	// ref separator.
+	if idx == 3 && strings.HasPrefix(s, "git@") {
+		return s, ""
+	}
+	return s[:idx], s[idx+1:]
+}
+
+// parseInstallSource resolves a raw source argument into an installSource.
+//
+// Resolution rules:
+//   - "git:<url>"          → Type="git",      URL=url
+//   - "git:<url>@<ref>"    → Type="git",      URL=url,  Ref=ref
+//   - "github:<user/repo>" → Type="github",   URL="https://github.com/<user/repo>.git"
+//   - "github:<u/r>@<ref>" → Type="github",   URL=...,  Ref=ref
+//   - "npm:<pkg>"          → Type="npm",       URL=pkg
+//   - "npm:<pkg>@<ver>"    → Type="npm",       URL=pkg,  Ref=ver
+//   - "./rel" or "/abs"    → Type="local",     URL=source
+//   - "name" or "name@ver" → Type="registry"
+func parseInstallSource(source string) installSource {
+	switch {
+	case strings.HasPrefix(source, "git:"):
+		rest := source[len("git:"):]
+		base, ref := splitAtRef(rest)
+		return installSource{Type: "git", URL: base, Ref: ref}
+
+	case strings.HasPrefix(source, "github:"):
+		rest := source[len("github:"):]
+		base, ref := splitAtRef(rest)
+		url := "https://github.com/" + base + ".git"
+		return installSource{Type: "github", URL: url, Ref: ref}
+
+	case strings.HasPrefix(source, "npm:"):
+		rest := source[len("npm:"):]
+		base, ref := splitAtRef(rest)
+		return installSource{Type: "npm", URL: base, Ref: ref}
+
+	case strings.HasPrefix(source, "./") || strings.HasPrefix(source, "/"):
+		return installSource{Type: "local", URL: source}
+
+	default:
+		return installSource{Type: "registry", URL: source}
+	}
 }
 
 // parseNameVersion splits "name@version" into (name, version). If no '@' is
@@ -802,10 +992,17 @@ specific version; otherwise "latest" is used.`,
 				return err
 			}
 
-			if isLocalPath(source) {
-				return installFromLocal(cmd, source, skillsDir, storePath)
+			src := parseInstallSource(source)
+			switch src.Type {
+			case "local":
+				return installFromLocal(cmd, src.URL, skillsDir, storePath)
+			case "git", "github":
+				return installFromGit(cmd, src, skillsDir, storePath)
+			case "npm":
+				return installFromNpm(cmd, src, skillsDir, storePath)
+			default:
+				return installFromRegistry(cmd, source, skillsDir, storePath)
 			}
-			return installFromRegistry(cmd, source, skillsDir, storePath)
 		},
 	}
 	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
@@ -814,8 +1011,25 @@ specific version; otherwise "latest" is used.`,
 	return cmd
 }
 
-// installFromLocal copies a skill from a local directory, validates its
-// manifest, and saves install state to the store.
+// saveInstallState persists skill metadata to the store after a successful install.
+func saveInstallState(storePath string, manifest *skills.SkillManifest, dest, sourceType, sourceURL, sourceRef string) error {
+	s, err := store.NewStore(storePath)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+	return s.SaveSkillState(store.SkillInstallState{
+		Name:       manifest.Name,
+		Version:    manifest.Version,
+		Source:     dest,
+		SourceType: sourceType,
+		SourceURL:  sourceURL,
+		SourceRef:  sourceRef,
+		Category:   manifest.Category,
+		Tags:       strings.Join(manifest.Tags, ","),
+	})
+}
+
 func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) error {
 	manifest, _, _, err := loadSkillManifest(source)
 	if err != nil {
@@ -831,22 +1045,161 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 		return fmt.Errorf("copying skill: %w", err)
 	}
 
-	// Save state to store.
-	s, err := store.NewStore(storePath)
-	if err != nil {
-		return fmt.Errorf("opening store: %w", err)
-	}
-	defer s.Close()
-
-	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:    manifest.Name,
-		Version: manifest.Version,
-		Source:  dest,
-	}); err != nil {
+	if err := saveInstallState(storePath, manifest, dest, "local", source, ""); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Installed skill %q (v%s) from local path\n", manifest.Name, manifest.Version)
+	return nil
+}
+
+// installFromGit clones a git repository to a temporary directory, validates
+// its SKILL.yaml, copies it to skillsDir, and records install state.
+// validateGitURL ensures the URL uses a safe transport scheme.
+// Rejects ext::, relative paths, and other git transport helpers
+// that could execute arbitrary commands.
+func validateGitURL(u string) error {
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "ssh://") || strings.HasPrefix(lower, "git@") {
+		return nil
+	}
+	return fmt.Errorf("git URL must use https://, http://, ssh://, or git@ scheme: %q", u)
+}
+
+func installFromGit(cmd *cobra.Command, src installSource, skillsDir, storePath string) error {
+	if err := validateGitURL(src.URL); err != nil {
+		return err
+	}
+
+	tmpDir, err := os.MkdirTemp("", "rubichan-git-install-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	gitArgs := []string{"clone", "--depth", "1"}
+	if src.Ref != "" {
+		gitArgs = append(gitArgs, "--branch", src.Ref)
+	}
+	gitArgs = append(gitArgs, src.URL, tmpDir)
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	gitCmd := exec.CommandContext(ctx, "git", gitArgs...)
+	if out, err := gitCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clone failed: %w\n%s", err, out)
+	}
+
+	manifest, _, _, err := loadSkillManifest(tmpDir)
+	if err != nil {
+		return fmt.Errorf("invalid skill manifest in cloned repo: %w", err)
+	}
+
+	dest := filepath.Join(skillsDir, manifest.Name)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("creating skill directory: %w", err)
+	}
+
+	if err := copyDir(tmpDir, dest); err != nil {
+		return fmt.Errorf("copying skill: %w", err)
+	}
+	// Remove .git to avoid leaking credentials embedded in remote URLs
+	// and to save disk space.
+	os.RemoveAll(filepath.Join(dest, ".git"))
+
+	if err := saveInstallState(storePath, manifest, dest, src.Type, src.URL, src.Ref); err != nil {
+		return fmt.Errorf("saving skill state: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Installed skill %q (v%s) from %s\n", manifest.Name, manifest.Version, src.URL)
+	return nil
+}
+
+// installFromNpm downloads an npm package as a tarball, extracts it, and
+// installs the skill it contains. npm packs into a "package/" subdirectory
+// inside the tarball, so SKILL.yaml is found at package/SKILL.yaml.
+// npmPackageNameRe matches valid npm package names (scoped or unscoped).
+// Rejects file:, link:, and other specifiers that could access the local filesystem.
+var npmPackageNameRe = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
+
+func installFromNpm(cmd *cobra.Command, src installSource, skillsDir, storePath string) error {
+	if !npmPackageNameRe.MatchString(src.URL) {
+		return fmt.Errorf("invalid npm package name %q: must be a valid registry package name", src.URL)
+	}
+
+	if _, err := exec.LookPath("npm"); err != nil {
+		return fmt.Errorf("npm not found — install Node.js to use npm: sources")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "rubichan-npm-install-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Build the package argument: "pkg" or "pkg@version".
+	pkgArg := src.URL
+	if src.Ref != "" {
+		pkgArg = src.URL + "@" + src.Ref
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	packCmd := exec.CommandContext(ctx, "npm", "pack", pkgArg, "--pack-destination", tmpDir)
+	if out, err := packCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("npm pack failed: %w\n%s", err, out)
+	}
+
+	// Find the downloaded tarball.
+	tarballs, err := filepath.Glob(filepath.Join(tmpDir, "*.tgz"))
+	if err != nil {
+		return fmt.Errorf("searching for tarball: %w", err)
+	}
+	if len(tarballs) == 0 {
+		return fmt.Errorf("npm pack produced no .tgz file in %s", tmpDir)
+	}
+	tarball := tarballs[0]
+
+	// Extract the tarball.
+	extractDir := filepath.Join(tmpDir, "extracted")
+	if err := os.MkdirAll(extractDir, 0o755); err != nil {
+		return fmt.Errorf("creating extract dir: %w", err)
+	}
+
+	tarCmd := exec.CommandContext(ctx, "tar", "xzf", tarball, "-C", extractDir)
+	if out, err := tarCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tar extraction failed: %w\n%s", err, out)
+	}
+
+	// npm pack puts files in a "package/" subdirectory.
+	skillDir := filepath.Join(extractDir, "package")
+
+	manifest, _, _, err := loadSkillManifest(skillDir)
+	if err != nil {
+		return fmt.Errorf("invalid skill manifest in npm package: %w", err)
+	}
+
+	dest := filepath.Join(skillsDir, manifest.Name)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("creating skill directory: %w", err)
+	}
+
+	if err := copyDir(skillDir, dest); err != nil {
+		return fmt.Errorf("copying skill: %w", err)
+	}
+
+	if err := saveInstallState(storePath, manifest, dest, "npm", src.URL, src.Ref); err != nil {
+		return fmt.Errorf("saving skill state: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Installed skill %q (v%s) from npm package %s\n", manifest.Name, manifest.Version, pkgArg)
 	return nil
 }
 
@@ -965,17 +1318,7 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	}
 
 	// Save state to store.
-	s, err := store.NewStore(storePath)
-	if err != nil {
-		return fmt.Errorf("opening store: %w", err)
-	}
-	defer s.Close()
-
-	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:    manifest.Name,
-		Version: manifest.Version,
-		Source:  dest,
-	}); err != nil {
+	if err := saveInstallState(storePath, manifest, dest, "registry", "", ""); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
 
@@ -1033,6 +1376,119 @@ func skillRemoveCmd() *cobra.Command {
 	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
 	cmd.Flags().String("skills-dir", "", "directory where skills are installed (default: ~/.config/rubichan/skills/)")
 	return cmd
+}
+
+// skillUpdateCmd returns a command that updates one or all installed skills.
+func skillUpdateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update [name]",
+		Short: "Update an installed skill to the latest version",
+		Long: `Update a skill by re-fetching it from its original source.
+
+Use --all to update every installed skill. Use --dry-run to preview what would change without applying.
+
+Update behaviour per source type:
+  local    → skipped (reinstall manually from the local path)
+  git/github → re-clone and reinstall
+  npm      → re-install from npm (latest)
+  registry → already at pinned version; skipped`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			all, _ := cmd.Flags().GetBool("all")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+			if len(args) == 0 && !all {
+				return fmt.Errorf("specify a skill name or use --all")
+			}
+
+			storePath, err := resolveStorePath(cmd)
+			if err != nil {
+				return err
+			}
+			skillsDir, err := resolveSkillsDir(cmd)
+			if err != nil {
+				return err
+			}
+
+			s, err := store.NewStore(storePath)
+			if err != nil {
+				return fmt.Errorf("opening store: %w", err)
+			}
+			defer s.Close()
+
+			var targets []store.SkillInstallState
+			if all {
+				targets, err = s.ListAllSkillStates()
+				if err != nil {
+					return fmt.Errorf("listing skills: %w", err)
+				}
+			} else {
+				st, err := s.GetSkillState(args[0])
+				if err != nil {
+					return fmt.Errorf("looking up skill: %w", err)
+				}
+				if st == nil {
+					return fmt.Errorf("skill %q is not installed", args[0])
+				}
+				targets = []store.SkillInstallState{*st}
+			}
+
+			for _, st := range targets {
+				if err := updateOneSkill(cmd, st, skillsDir, storePath, dryRun); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Bool("all", false, "update all installed skills")
+	cmd.Flags().Bool("dry-run", false, "show what would change without applying")
+	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
+	cmd.Flags().String("skills-dir", "", "directory where skills are installed (default: ~/.config/rubichan/skills/)")
+	return cmd
+}
+
+// updateOneSkill updates a single skill according to its source type.
+func updateOneSkill(cmd *cobra.Command, st store.SkillInstallState, skillsDir, storePath string, dryRun bool) error {
+	out := cmd.OutOrStdout()
+
+	switch st.SourceType {
+	case "local", "":
+		fmt.Fprintf(out, "Skipping %q: installed from local path — reinstall manually\n", st.Name)
+		return nil
+
+	case "registry":
+		fmt.Fprintf(out, "Skipping %q: up to date (registry-pinned)\n", st.Name)
+		return nil
+
+	case "git", "github":
+		if dryRun {
+			fmt.Fprintf(out, "[dry-run] Would re-clone %q from %s\n", st.Name, st.SourceURL)
+			return nil
+		}
+		src := installSource{
+			Type: st.SourceType,
+			URL:  st.SourceURL,
+			Ref:  st.SourceRef,
+		}
+		return installFromGit(cmd, src, skillsDir, storePath)
+
+	case "npm":
+		if dryRun {
+			fmt.Fprintf(out, "[dry-run] Would re-install npm package %q\n", st.SourceURL)
+			return nil
+		}
+		src := installSource{
+			Type: "npm",
+			URL:  st.SourceURL,
+			Ref:  "", // empty ref = latest
+		}
+		return installFromNpm(cmd, src, skillsDir, storePath)
+
+	default:
+		fmt.Fprintf(out, "Skipping %q: unknown source type %q\n", st.Name, st.SourceType)
+		return nil
+	}
 }
 
 func skillAddCmd() *cobra.Command {
