@@ -152,7 +152,18 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*
 		return nil, err
 	}
 
-	// Stage 6: Render
+	// Stage 6: Change history — read existing docs, diff, append changelog entries.
+	cfg.progress("changelog", 0, len(documents), "wiki: applying change history...")
+	existing := readExistingDocs(cfg.OutputDir)
+	documents, err = ApplyChangelog(ctx, existing, documents, llm)
+	if err != nil {
+		return nil, fmt.Errorf("changelog: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Stage 7: Render
 	cfg.progress("rendering", 0, len(documents), fmt.Sprintf("wiki: rendering %d documents to %s...", len(documents), cfg.OutputDir))
 	if err := Render(documents, RendererConfig{Format: cfg.Format, OutputDir: cfg.OutputDir}); err != nil {
 		return nil, fmt.Errorf("render: %w", err)
@@ -174,5 +185,45 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*
 		Diagrams:   len(diagrams),
 		DurationMs: time.Since(start).Milliseconds(),
 	}
+	// Count new vs updated vs unchanged based on existing docs.
+	for _, doc := range documents {
+		if _, existed := existing[doc.Path]; !existed {
+			result.NewDocuments++
+		} else {
+			result.UpdatedDocs++
+		}
+	}
+	result.UnchangedDocs = len(existing) - result.UpdatedDocs
+	if result.UnchangedDocs < 0 {
+		result.UnchangedDocs = 0
+	}
 	return result, nil
+}
+
+// readExistingDocs reads all .md files from the output directory into a
+// path→content map for change history comparison.
+func readExistingDocs(outputDir string) map[string]string {
+	docs := make(map[string]string)
+	if outputDir == "" {
+		return docs
+	}
+	_ = filepath.Walk(outputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".md" {
+			return nil
+		}
+		rel, err := filepath.Rel(outputDir, path)
+		if err != nil {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		docs[rel] = string(content)
+		return nil
+	})
+	return docs
 }
