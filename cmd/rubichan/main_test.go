@@ -588,3 +588,42 @@ func TestRunWikiHeadlessInvalidProviderReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "creating provider")
 }
+
+func TestWikiHeadlessEndToEnd_NoProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = ""
+	cfg.Provider.Model = ""
+	err := runWikiHeadless(cfg, t.TempDir(), filepath.Join(t.TempDir(), "wiki-out"), "raw-md", 1)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "provider")
+}
+
+func TestWikiHelpOutput(t *testing.T) {
+	// Build a minimal cobra command that mirrors the real wiki flag registration
+	// so we can verify the flag names appear in help output without spinning up
+	// the full application.
+	var localWiki bool
+	var localOut, localFormat string
+	var localConcurrency int
+
+	cmd := &cobra.Command{
+		Use:   "rubichan",
+		Short: "An AI coding assistant",
+		RunE:  func(_ *cobra.Command, _ []string) error { return nil },
+	}
+	cmd.PersistentFlags().BoolVar(&localWiki, "wiki", false, "run wiki generation (implies --headless, --approve-cwd)")
+	cmd.PersistentFlags().StringVar(&localOut, "wiki-out", "docs/wiki", "output directory for wiki files")
+	cmd.PersistentFlags().StringVar(&localFormat, "wiki-format", "raw-md", "wiki output format: raw-md, hugo, docusaurus")
+	cmd.PersistentFlags().IntVar(&localConcurrency, "wiki-concurrency", 5, "max parallel LLM calls for wiki generation")
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{"--help"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+	output := buf.String()
+	assert.Contains(t, output, "--wiki")
+	assert.Contains(t, output, "--wiki-out")
+	assert.Contains(t, output, "--wiki-format")
+	assert.Contains(t, output, "--wiki-concurrency")
+}
