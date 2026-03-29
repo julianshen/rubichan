@@ -259,7 +259,7 @@ func TestCollapsibleToolResult_ShellIcon(t *testing.T) {
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.Contains(t, result, "$ ")
+	assert.Contains(t, result, "❯ ")
 	assert.Contains(t, result, "▶")
 }
 
@@ -268,17 +268,17 @@ func TestCollapsibleToolResult_FileIcon(t *testing.T) {
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "file_read",
-		Args:      `path="main.go"`,
+		Args:      `{"path":"main.go"}`,
 		Content:   "package main",
 		LineCount: 1,
 		ToolType:  ToolTypeFile,
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.Contains(t, result, "~ ")
+	assert.Contains(t, result, "◇ ")
 }
 
-func TestCollapsibleToolResult_DefaultNoIcon(t *testing.T) {
+func TestCollapsibleToolResult_DefaultIcon(t *testing.T) {
 	r := NewToolBoxRenderer(60)
 	cr := &CollapsibleToolResult{
 		ID:        1,
@@ -290,32 +290,30 @@ func TestCollapsibleToolResult_DefaultNoIcon(t *testing.T) {
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.NotContains(t, result, "$ ")
-	assert.NotContains(t, result, "~ ")
-	assert.NotContains(t, result, "? ")
+	assert.Contains(t, result, "• ")
 }
 
-func TestCollapsibleToolResult_ShellStatusOk(t *testing.T) {
+func TestCollapsibleToolResult_StatusOk(t *testing.T) {
 	r := NewToolBoxRenderer(60)
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "shell",
-		Args:      `command="ls"`,
+		Args:      `{"command":"ls"}`,
 		Content:   "file1\nfile2",
 		LineCount: 2,
 		ToolType:  ToolTypeShell,
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.Contains(t, result, "[ok]")
+	assert.Contains(t, result, "✓")
 }
 
-func TestCollapsibleToolResult_ShellStatusError(t *testing.T) {
+func TestCollapsibleToolResult_StatusError(t *testing.T) {
 	r := NewToolBoxRenderer(60)
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "shell",
-		Args:      `command="make"`,
+		Args:      `{"command":"make"}`,
 		Content:   "error: build failed",
 		LineCount: 1,
 		ToolType:  ToolTypeShell,
@@ -323,15 +321,15 @@ func TestCollapsibleToolResult_ShellStatusError(t *testing.T) {
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.Contains(t, result, "[error]")
+	assert.Contains(t, result, "✗")
 }
 
-func TestCollapsibleToolResult_ShellStatusWithTruncation(t *testing.T) {
+func TestCollapsibleToolResult_StatusWithTruncation(t *testing.T) {
 	r := NewToolBoxRenderer(60)
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "shell",
-		Args:      `command="find /"`,
+		Args:      `{"command":"find /"}`,
 		Content:   strings.Repeat("line\n", 50),
 		LineCount: 50,
 		ToolType:  ToolTypeShell,
@@ -340,23 +338,23 @@ func TestCollapsibleToolResult_ShellStatusWithTruncation(t *testing.T) {
 	}
 	result := cr.Render(r)
 	assert.Contains(t, result, "50 lines (20 shown)")
-	assert.Contains(t, result, "[error]")
+	assert.Contains(t, result, "✗")
 }
 
-func TestCollapsibleToolResult_NoStatusForNonShell(t *testing.T) {
+func TestCollapsibleToolResult_StatusForAllToolTypes(t *testing.T) {
 	r := NewToolBoxRenderer(60)
+	// All tool types now show status, not just shell.
 	cr := &CollapsibleToolResult{
 		ID:        1,
 		Name:      "file_read",
-		Args:      `path="a.go"`,
+		Args:      `{"path":"a.go"}`,
 		Content:   "content",
 		LineCount: 1,
 		ToolType:  ToolTypeFile,
 		Collapsed: true,
 	}
 	result := cr.Render(r)
-	assert.NotContains(t, result, "[ok]")
-	assert.NotContains(t, result, "[error]")
+	assert.Contains(t, result, "✓")
 }
 
 func TestCollapsibleToolResult_FullyExpanded(t *testing.T) {

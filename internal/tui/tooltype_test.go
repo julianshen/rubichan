@@ -17,8 +17,17 @@ func TestClassifyTool(t *testing.T) {
 		{"search", "search", ToolTypeSearch},
 		{"process", "process", ToolTypeProcess},
 		{"task", "task", ToolTypeSubagent},
+		{"list_tasks", "list_tasks", ToolTypeSubagent},
+		{"git tool", "git_status", ToolTypeGit},
+		{"git diff", "git_diff", ToolTypeGit},
+		{"http tool", "http_get", ToolTypeNet},
+		{"browser tool", "browser_open", ToolTypeNet},
+		{"lsp tool", "lsp_hover", ToolTypeLSP},
+		{"xcode tool", "xcode_build", ToolTypePlatform},
+		{"swift tool", "swift_package", ToolTypePlatform},
+		{"mcp dash tool", "mcp-server-tool", ToolTypeMCP},
+		{"mcp underscore tool", "mcp_fetch", ToolTypeMCP},
 		{"unknown tool", "custom_tool", ToolTypeDefault},
-		{"git tool", "git_status", ToolTypeDefault},
 		{"notes tool", "notes", ToolTypeDefault},
 	}
 	for _, tt := range tests {
@@ -34,12 +43,17 @@ func TestToolTypeIcon(t *testing.T) {
 		tt   ToolType
 		want string
 	}{
-		{"shell", ToolTypeShell, "$ "},
-		{"file", ToolTypeFile, "~ "},
-		{"search", ToolTypeSearch, "? "},
-		{"process", ToolTypeProcess, "* "},
-		{"subagent", ToolTypeSubagent, "> "},
-		{"default", ToolTypeDefault, ""},
+		{"shell", ToolTypeShell, "❯ "},
+		{"file", ToolTypeFile, "◇ "},
+		{"search", ToolTypeSearch, "⊘ "},
+		{"process", ToolTypeProcess, "⊕ "},
+		{"subagent", ToolTypeSubagent, "◈ "},
+		{"git", ToolTypeGit, "⎇ "},
+		{"net", ToolTypeNet, "⇄ "},
+		{"lsp", ToolTypeLSP, "◉ "},
+		{"platform", ToolTypePlatform, "⌘ "},
+		{"mcp", ToolTypeMCP, "⬡ "},
+		{"default", ToolTypeDefault, "• "},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

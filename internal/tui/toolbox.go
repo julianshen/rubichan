@@ -9,7 +9,6 @@ import (
 
 const maxToolResultLines = 20
 
-// Diff colorization styles use the centralized pink theme.
 var (
 	diffAddedStyle   = styleDiffAdded
 	diffRemovedStyle = styleDiffRemoved
@@ -39,9 +38,10 @@ func NewToolBoxRenderer(width int) *ToolBoxRenderer {
 	}
 }
 
-// RenderToolCall renders a tool invocation header box.
+// RenderToolCall renders a tool invocation header box with formatted arguments.
 func (r *ToolBoxRenderer) RenderToolCall(name, args string) string {
-	header := fmt.Sprintf("─ %s(%s) ", name, args)
+	formatted := formatToolArgs(name, args)
+	header := fmt.Sprintf("─ %s %s ", ClassifyTool(name).Icon()+name, formatted)
 	return r.normalBox.Render(header) + "\n"
 }
 
@@ -104,11 +104,12 @@ type CollapsibleToolResult struct {
 func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	lineLabel := c.lineLabel()
 	icon := c.ToolType.Icon()
+	formatted := formatToolArgs(c.Name, c.Args)
 	if c.Collapsed {
-		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s%s(%s)", icon, c.Name, c.Args)) +
+		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s%s %s", icon, c.Name, formatted)) +
 			styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	}
-	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s(%s)", icon, c.Name, c.Args)) +
+	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s %s", icon, c.Name, formatted)) +
 		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	if c.FullyExpanded {
 		return header + r.RenderToolResultFull(c.Content, c.IsError)
@@ -116,30 +117,23 @@ func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	return header + r.RenderToolResult(c.Content, c.IsError)
 }
 
-// lineLabel returns a human-friendly line count label.
-// When content exceeds maxToolResultLines, it shows "N lines (20 shown)"
-// unless FullyExpanded is true. For shell tools, appends [ok] or [error].
+// lineLabel returns a human-friendly line count label with status indicator.
 func (c *CollapsibleToolResult) lineLabel() string {
-	label := ""
-	if c.LineCount == 0 {
+	var label string
+	switch {
+	case c.LineCount == 0:
 		label = "empty"
-	} else if c.LineCount > maxToolResultLines {
-		if c.FullyExpanded {
-			label = fmt.Sprintf("%d lines", c.LineCount)
-		} else {
-			label = fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
-		}
-	} else if c.LineCount == 1 {
+	case c.LineCount > maxToolResultLines && !c.FullyExpanded:
+		label = fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
+	case c.LineCount == 1:
 		label = "1 line"
-	} else {
+	default:
 		label = fmt.Sprintf("%d lines", c.LineCount)
 	}
-	if c.ToolType == ToolTypeShell {
-		if c.IsError {
-			label += " [error]"
-		} else {
-			label += " [ok]"
-		}
+	if c.IsError {
+		label += " ✗"
+	} else {
+		label += " ✓"
 	}
 	return label
 }

@@ -2029,7 +2029,9 @@ func TestModelHandleTurnEventTextDeltaPreservesToolBoxes(t *testing.T) {
 
 	content := m.content.String()
 	assert.Contains(t, content, "Hello there")
-	assert.Contains(t, content, "shell({\"command\":\"ls\"})")
+	// Tool call header now shows formatted args with icon.
+	assert.Contains(t, content, "❯ shell")
+	assert.Contains(t, content, "ls")
 }
 
 func TestModelWikiOverlayRoutesMessages(t *testing.T) {
