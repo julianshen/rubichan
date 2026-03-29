@@ -241,6 +241,14 @@ func TestDetectCapabilities_TargetModels(t *testing.T) {
 		}
 	})
 
+	// Gemini 2.0 Flash: hinted (decent but less reliable than 2.5+).
+	t.Run("gemini-2.0-flash is hinted", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "google/gemini-2.0-flash-001")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("Gemini 2.0 Flash should get discovery hint")
+		}
+	})
+
 	// GLM 5: hinted, large model gets MaxToolCount=15.
 	t.Run("glm-5 gets hint and tool limit", func(t *testing.T) {
 		caps := DetectCapabilities("openrouter", "z-ai/glm-5")

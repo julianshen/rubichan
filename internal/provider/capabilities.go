@@ -104,8 +104,8 @@ var hintedProfiles = []modelProfile{
 	// MiniMax M1/M2.x: supports tool_use. M1 is 1M context reasoning model.
 	// M2.x series are capable but benefit from tool guidance.
 	{keywords: []string{"minimax"}, hint: true, largeLimit: 15},
-	// Gemini 2.0 and earlier: decent tool use but benefits from hints.
-	{keywords: []string{"gemini-2.0", "gemini-1"}}, // no hint — handled by strong
+	// Gemini 2.0 and earlier: decent tool use but less reliable than 2.5+.
+	{keywords: []string{"gemini-2.0", "gemini-1"}, hint: true},
 	// Open-weight families that benefit from guidance.
 	{keywords: []string{"llama"}, hint: true, smallLimit: 8},
 	{keywords: []string{"gemma"}, hint: true, smallLimit: 8},
