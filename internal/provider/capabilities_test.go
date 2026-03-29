@@ -190,6 +190,123 @@ func TestDetectCapabilities_OpenAI(t *testing.T) {
 	})
 }
 
+func TestDetectCapabilities_TargetModels(t *testing.T) {
+	// Gemini 3.1 Pro: strong model, no hints needed.
+	t.Run("gemini-3.1-pro is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "google/gemini-3.1-pro-preview")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("Gemini 3.1 Pro should not need discovery hint")
+		}
+		if caps.MaxToolCount != 0 {
+			t.Errorf("Gemini 3.1 Pro should have unlimited tools, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// Gemini 2.5 Pro: also strong.
+	t.Run("gemini-2.5-pro is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "google/gemini-2.5-pro")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("Gemini 2.5 Pro should not need discovery hint")
+		}
+	})
+
+	// GLM 5: hinted, large model gets MaxToolCount=15.
+	t.Run("glm-5 gets hint and tool limit", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "z-ai/glm-5")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 5 should get discovery hint")
+		}
+		if caps.MaxToolCount != 15 {
+			t.Errorf("GLM 5 should get MaxToolCount=15, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// GLM 5 Turbo: same profile as GLM 5.
+	t.Run("glm-5-turbo gets hint and tool limit", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "z-ai/glm-5-turbo")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 5 Turbo should get discovery hint")
+		}
+		if caps.MaxToolCount != 15 {
+			t.Errorf("GLM 5 Turbo should get MaxToolCount=15, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// Claude Opus 4.6 via OpenRouter: strong, no hints.
+	t.Run("claude-opus-4.6 via openrouter is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "anthropic/claude-opus-4.6")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("Claude Opus 4.6 should not need discovery hint")
+		}
+		if caps.MaxToolCount != 0 {
+			t.Errorf("Claude Opus 4.6 should have unlimited tools, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// Qwen 3.5 397B: hinted, no small-model limit.
+	t.Run("qwen-3.5-397b gets hint but no small limit", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "qwen/qwen3.5-397b-a17b")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("Qwen 3.5 397B should get discovery hint")
+		}
+		if caps.MaxToolCount != 0 {
+			t.Errorf("Qwen 3.5 397B should have unlimited tools, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// Qwen 3.5 9B: hinted + small model limit.
+	t.Run("qwen-3.5-9b gets hint and small limit", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "qwen/qwen3.5-9b")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("Qwen 3.5 9B should get discovery hint")
+		}
+		if caps.MaxToolCount != 8 {
+			t.Errorf("Qwen 3.5 9B should get MaxToolCount=8, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// Kimi K2.5: strong model, no hints.
+	t.Run("kimi-k2.5 is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "moonshotai/kimi-k2.5")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("Kimi K2.5 should not need discovery hint")
+		}
+		if caps.MaxToolCount != 0 {
+			t.Errorf("Kimi K2.5 should have unlimited tools, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// Kimi K2: also strong.
+	t.Run("kimi-k2 is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "moonshotai/kimi-k2")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("Kimi K2 should not need discovery hint")
+		}
+	})
+
+	// MiniMax M2.7: hinted, large limit.
+	t.Run("minimax-m2.7 gets hint and tool limit", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "minimax/minimax-m2.7")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("MiniMax M2.7 should get discovery hint")
+		}
+		if caps.MaxToolCount != 15 {
+			t.Errorf("MiniMax M2.7 should get MaxToolCount=15, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// MiniMax M1: hinted, reasoning model with 1M context.
+	t.Run("minimax-m1 gets hint and tool limit", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "minimax/minimax-m1")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("MiniMax M1 should get discovery hint")
+		}
+		if caps.MaxToolCount != 15 {
+			t.Errorf("MiniMax M1 should get MaxToolCount=15, got %d", caps.MaxToolCount)
+		}
+	})
+}
+
 func TestIsSmallModel(t *testing.T) {
 	smallCases := []string{
 		"model-1b",
