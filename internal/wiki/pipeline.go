@@ -183,11 +183,13 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*
 		format = "raw-md"
 	}
 	result := &WikiResult{
-		OutputDir:  cfg.OutputDir,
-		Format:     format,
-		Documents:  len(documents),
-		Diagrams:   len(diagrams),
-		DurationMs: time.Since(start).Milliseconds(),
+		OutputDir:     cfg.OutputDir,
+		Format:        format,
+		Documents:     len(documents),
+		Diagrams:      len(diagrams),
+		DurationMs:    time.Since(start).Milliseconds(),
+		APISurfaces:   uniqueAPIKinds(apiPatterns),
+		SecurityDepth: securityDocsProduced(documents),
 	}
 	// Count new vs updated vs unchanged based on existing docs.
 	for _, doc := range documents {
@@ -195,9 +197,9 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*
 		if !existed {
 			result.NewDocuments++
 		} else if strings.TrimSpace(doc.Content) != strings.TrimSpace(oldContent) {
-			result.UpdatedDocs++
+			result.UpdatedDocuments++
 		} else {
-			result.UnchangedDocs++
+			result.UnchangedDocuments++
 		}
 	}
 	return result, nil
@@ -232,4 +234,31 @@ func readExistingDocs(outputDir string) map[string]string {
 		return nil
 	})
 	return docs
+}
+
+func uniqueAPIKinds(patterns []APIPattern) []string {
+	seen := map[string]bool{}
+	var kinds []string
+	for _, p := range patterns {
+		if !seen[p.Kind] {
+			seen[p.Kind] = true
+			kinds = append(kinds, p.Kind)
+		}
+	}
+	return kinds
+}
+
+func securityDocsProduced(docs []Document) []string {
+	mapping := map[string]string{
+		"security/auth-and-access.md": "auth",
+		"security/threat-model.md":    "stride",
+		"security/data-flow.md":       "compliance",
+	}
+	var depth []string
+	for _, doc := range docs {
+		if label, ok := mapping[doc.Path]; ok {
+			depth = append(depth, label)
+		}
+	}
+	return depth
 }

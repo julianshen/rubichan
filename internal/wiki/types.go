@@ -59,9 +59,9 @@ type WikiResult struct {
 	OutputDir     string   `json:"output_dir"`
 	Format        string   `json:"format"`
 	Documents     int      `json:"documents"`
-	NewDocuments  int      `json:"new_documents"`
-	UpdatedDocs   int      `json:"updated_documents"`
-	UnchangedDocs int      `json:"unchanged_documents"`
+	NewDocuments       int      `json:"new_documents"`
+	UpdatedDocuments   int      `json:"updated_documents"`
+	UnchangedDocuments int      `json:"unchanged_documents"`
 	Diagrams      int      `json:"diagrams"`
 	DurationMs    int64    `json:"duration_ms"`
 	APISurfaces   []string `json:"api_surfaces,omitempty"`
