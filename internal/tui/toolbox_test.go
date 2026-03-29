@@ -19,14 +19,14 @@ func TestRenderToolCall(t *testing.T) {
 
 func TestRenderToolResult(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	result := r.RenderToolResult("package main\n\nfunc main() {}", false)
+	result := r.RenderToolResult("package main\n\nfunc main() {}", false, "file")
 	assert.Contains(t, result, "main")
 	assert.Contains(t, result, "\u256d")
 }
 
 func TestRenderToolResultError(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	result := r.RenderToolResult("command not found", true)
+	result := r.RenderToolResult("command not found", true, "shell")
 	assert.Contains(t, result, "command not found")
 }
 
@@ -36,7 +36,7 @@ func TestRenderToolResultTruncation(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		longContent += "line content here\n"
 	}
-	result := r.RenderToolResult(longContent, false)
+	result := r.RenderToolResult(longContent, false, "shell")
 	assert.Contains(t, result, "more lines")
 }
 
@@ -57,13 +57,13 @@ func TestRenderToolResultExactlyMaxLines(t *testing.T) {
 		lines[i] = "line"
 	}
 	content := strings.Join(lines, "\n")
-	result := r.RenderToolResult(content, false)
+	result := r.RenderToolResult(content, false, "file")
 	assert.NotContains(t, result, "more lines")
 }
 
 func TestRenderToolResultEmptyContent(t *testing.T) {
 	r := NewToolBoxRenderer(60)
-	result := r.RenderToolResult("", false)
+	result := r.RenderToolResult("", false, "")
 	assert.Contains(t, result, "\u256d")
 }
 

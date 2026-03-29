@@ -55,7 +55,8 @@ func (r *ToolBoxRenderer) renderInBox(content string, isError bool) string {
 }
 
 // RenderToolResult renders a tool result in a bordered box, truncating to maxToolResultLines.
-func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string {
+// The toolName is used to aid content-type detection for syntax highlighting.
+func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool, toolName string) string {
 	lines := strings.Split(content, "\n")
 	truncated := 0
 	if len(lines) > maxToolResultLines {
@@ -63,7 +64,7 @@ func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string 
 		lines = lines[:maxToolResultLines]
 	}
 
-	display := ColorizeDiffLines(strings.Join(lines, "\n"))
+	display := ColorizeContent(strings.Join(lines, "\n"), toolName)
 	if truncated > 0 {
 		display += fmt.Sprintf("\n[%d more lines — Ctrl+E to expand]", truncated)
 	}
@@ -71,8 +72,8 @@ func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string 
 }
 
 // RenderToolResultFull renders a tool result without truncation.
-func (r *ToolBoxRenderer) RenderToolResultFull(content string, isError bool) string {
-	return r.renderInBox(ColorizeDiffLines(content), isError)
+func (r *ToolBoxRenderer) RenderToolResultFull(content string, isError bool, toolName string) string {
+	return r.renderInBox(ColorizeContent(content, toolName), isError)
 }
 
 // RenderToolProgress renders streaming tool progress output.
@@ -112,9 +113,9 @@ func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s %s", icon, c.Name, formatted)) +
 		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	if c.FullyExpanded {
-		return header + r.RenderToolResultFull(c.Content, c.IsError)
+		return header + r.RenderToolResultFull(c.Content, c.IsError, c.Name)
 	}
-	return header + r.RenderToolResult(c.Content, c.IsError)
+	return header + r.RenderToolResult(c.Content, c.IsError, c.Name)
 }
 
 // lineLabel returns a human-friendly line count label with status indicator.
