@@ -139,6 +139,121 @@ func TestAnalyzeModuleFailureContinues(t *testing.T) {
 	assert.Equal(t, "good", result.Modules[0].Module)
 }
 
+func TestAnalyzeBase_ProducesModulesAndArchitecture(t *testing.T) {
+	chunks := []Chunk{
+		{
+			Module: "internal/auth",
+			Files:  []ScannedFile{{Path: "auth.go", Language: "go", Module: "internal/auth"}},
+			Source: []byte("package auth\n\nfunc Authenticate() bool { return true }\n"),
+		},
+	}
+
+	llm := &mockLLMCompleter{
+		responses: map[string]string{
+			"internal/auth": "Summary: Auth module\nKeyTypes: AuthHandler\nPatterns: token-based\nConcerns: none",
+			"architecture":  "Architecture: Simple layered\nKeyAbstractions: AuthHandler",
+			"improvements":  "Use OAuth2\nAdd rate limiting",
+		},
+	}
+
+	result, err := AnalyzeBase(context.Background(), chunks, llm, DefaultAnalyzerConfig())
+	require.NoError(t, err)
+	require.Len(t, result.Modules, 1)
+	assert.Equal(t, "internal/auth", result.Modules[0].Module)
+	assert.NotEmpty(t, result.Architecture)
+	// Suggestions must be nil/empty — AnalyzeBase does not run generateSuggestions.
+	assert.Empty(t, result.Suggestions)
+}
+
+func TestRunSpecializedAnalyzers_Concurrent(t *testing.T) {
+	docs1 := []Document{{Path: "a1.md", Title: "A1", Content: "content1"}}
+	diags1 := []Diagram{{Title: "D1", Type: "architecture", Content: "graph TD"}}
+	docs2 := []Document{{Path: "a2.md", Title: "A2", Content: "content2"}}
+	diags2 := []Diagram{{Title: "D2", Type: "sequence", Content: "sequenceDiagram"}}
+
+	analyzers := []SpecializedAnalyzer{
+		newFuncAnalyzer("a1", docs1, diags1, nil),
+		newFuncAnalyzer("a2", docs2, diags2, nil),
+	}
+
+	input := AnalyzerInput{Architecture: "test arch"}
+	docs, diags, err := RunSpecializedAnalyzers(context.Background(), analyzers, input)
+	require.NoError(t, err)
+	assert.Len(t, docs, 2)
+	assert.Len(t, diags, 2)
+
+	// Verify both analyzers contributed.
+	paths := map[string]bool{}
+	for _, d := range docs {
+		paths[d.Path] = true
+	}
+	assert.True(t, paths["a1.md"])
+	assert.True(t, paths["a2.md"])
+}
+
+func TestRunSpecializedAnalyzers_NonFatalError(t *testing.T) {
+	docs1 := []Document{{Path: "ok.md", Title: "OK", Content: "fine"}}
+	analyzers := []SpecializedAnalyzer{
+		newFuncAnalyzer("good", docs1, nil, nil),
+		newFuncAnalyzer("bad", nil, nil, fmt.Errorf("analyzer failed")),
+	}
+
+	input := AnalyzerInput{Architecture: "test arch"}
+	docs, diags, err := RunSpecializedAnalyzers(context.Background(), analyzers, input)
+	require.NoError(t, err)
+	assert.Len(t, docs, 1)
+	assert.Equal(t, "ok.md", docs[0].Path)
+	assert.Empty(t, diags)
+}
+
+func TestAnalyze_CompatWrapper(t *testing.T) {
+	chunks := []Chunk{
+		{
+			Module: "internal/service",
+			Files:  []ScannedFile{{Path: "svc.go", Language: "go", Module: "internal/service"}},
+			Source: []byte("package service\n\nfunc Serve() {}\n"),
+		},
+	}
+
+	llm := &mockLLMCompleter{
+		responses: map[string]string{
+			"internal/service": "Summary: Service layer\nKeyTypes: Service\nPatterns: none\nConcerns: none",
+			"Architecture":     "Architecture: Single-layer\nKeyAbstractions: Service",
+			"improvements":     "Refactor to microservices\nAdd tracing",
+		},
+	}
+
+	result, err := Analyze(context.Background(), chunks, llm, DefaultAnalyzerConfig())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Modules, 1)
+	assert.NotEmpty(t, result.Architecture)
+	// Backward compat: Analyze() must still populate Suggestions.
+	assert.NotNil(t, result.Suggestions)
+}
+
+// newFuncAnalyzer creates a SpecializedAnalyzer whose Analyze method returns the
+// given docs/diags/err. Used for in-test stub construction without package-level types.
+func newFuncAnalyzer(name string, docs []Document, diags []Diagram, analyzeErr error) SpecializedAnalyzer {
+	return &funcAnalyzer{analyzeName: name, docs: docs, diags: diags, err: analyzeErr}
+}
+
+type funcAnalyzer struct {
+	analyzeName string
+	docs        []Document
+	diags       []Diagram
+	err         error
+}
+
+func (f *funcAnalyzer) Name() string { return f.analyzeName }
+
+func (f *funcAnalyzer) Analyze(_ context.Context, _ AnalyzerInput) (*AnalyzerOutput, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &AnalyzerOutput{Documents: f.docs, Diagrams: f.diags}, nil
+}
+
 func TestAnalyzeCancellationReturnsContextErrorWithoutWarnings(t *testing.T) {
 	chunks := []Chunk{
 		{Module: "mod/a", Files: []ScannedFile{{Path: "a.go", Module: "mod/a"}}, Source: []byte("package a")},

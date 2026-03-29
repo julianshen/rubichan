@@ -66,11 +66,11 @@ List each suggestion on its own line, one per line.`))
 
 // ---------- analysis ----------
 
-// Analyze runs a three-pass LLM analysis over the given chunks.
-// Pass 1: concurrent per-module summarization.
-// Pass 2: cross-cutting architecture synthesis.
-// Pass 3: improvement suggestions.
-func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg AnalyzerConfig) (*AnalysisResult, error) {
+// AnalyzeBase runs passes 1 and 2 only: per-module summarization and architecture
+// synthesis. The returned AnalysisResult has Modules, Architecture, and
+// KeyAbstractions populated; Suggestions is intentionally left nil.
+// Use RunSpecializedAnalyzers to dispatch additional analysis passes.
+func AnalyzeBase(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg AnalyzerConfig) (*AnalysisResult, error) {
 	if len(chunks) == 0 {
 		return &AnalysisResult{}, nil
 	}
@@ -81,7 +81,7 @@ func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg Analyzer
 		return nil, err
 	}
 
-	// Build concatenated summaries for passes 2 and 3.
+	// Build concatenated summaries for pass 2.
 	summariesText := buildSummariesText(modules)
 
 	// Pass 2: architecture synthesis.
@@ -90,18 +90,100 @@ func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg Analyzer
 		return nil, err
 	}
 
-	// Pass 3: suggestions.
-	suggestions, err := generateSuggestions(ctx, architecture, summariesText, llm)
-	if err != nil {
-		return nil, err
-	}
-
 	return &AnalysisResult{
 		Modules:         modules,
 		Architecture:    architecture,
 		KeyAbstractions: keyAbstractions,
-		Suggestions:     suggestions,
 	}, nil
+}
+
+// RunSpecializedAnalyzers dispatches all provided analyzers concurrently and
+// merges their Documents and Diagrams. A failing analyzer is non-fatal: its
+// error is logged and the remaining results are still returned.
+func RunSpecializedAnalyzers(ctx context.Context, analyzers []SpecializedAnalyzer, input AnalyzerInput) ([]Document, []Diagram, error) {
+	var (
+		mu    sync.Mutex
+		docs  []Document
+		diags []Diagram
+		wg    sync.WaitGroup
+	)
+
+	for _, a := range analyzers {
+		a := a // capture loop variable
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := a.Analyze(ctx, input)
+			if err != nil {
+				log.Printf("WARNING: specialized analyzer %q failed: %v", a.Name(), err)
+				return
+			}
+			mu.Lock()
+			docs = append(docs, out.Documents...)
+			diags = append(diags, out.Diagrams...)
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+
+	if ctx.Err() != nil {
+		return docs, diags, ctx.Err()
+	}
+
+	// Sort for deterministic output across runs.
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
+	sort.Slice(diags, func(i, j int) bool { return diags[i].Title < diags[j].Title })
+
+	return docs, diags, nil
+}
+
+// Analyze runs a three-pass LLM analysis over the given chunks.
+// Pass 1: concurrent per-module summarization.
+// Pass 2: cross-cutting architecture synthesis.
+// Pass 3: improvement suggestions (via SuggestionAnalyzer).
+//
+// This is a compatibility wrapper. New callers should prefer AnalyzeBase +
+// RunSpecializedAnalyzers to control which analyzers run.
+func Analyze(ctx context.Context, chunks []Chunk, llm LLMCompleter, cfg AnalyzerConfig) (*AnalysisResult, error) {
+	result, err := AnalyzeBase(ctx, chunks, llm, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	input := AnalyzerInput{
+		Chunks:         chunks,
+		ModuleAnalyses: result.Modules,
+		Architecture:   result.Architecture,
+	}
+
+	suggester := NewSuggestionAnalyzer(llm)
+	docs, _, err := RunSpecializedAnalyzers(ctx, []SpecializedAnalyzer{suggester}, input)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract suggestion lines from the document produced by SuggestionAnalyzer.
+	result.Suggestions = extractSuggestionsFromDocs(docs)
+	return result, nil
+}
+
+// extractSuggestionsFromDocs reconstructs the []string suggestions from the
+// Document that SuggestionAnalyzer emits. Each non-empty, non-heading line is
+// treated as one suggestion, preserving backward compatibility with callers
+// that expect result.Suggestions to be a string slice.
+func extractSuggestionsFromDocs(docs []Document) []string {
+	var suggestions []string
+	for _, doc := range docs {
+		for _, line := range strings.Split(doc.Content, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			suggestions = append(suggestions, line)
+		}
+	}
+	return suggestions
 }
 
 // analyzeModules runs pass 1: concurrent per-module summarization.
@@ -249,45 +331,4 @@ func parseArchitectureResponse(response string) (architecture, keyAbstractions s
 	}
 
 	return architecture, keyAbstractions
-}
-
-// generateSuggestions runs pass 3: improvement suggestions.
-// On non-context LLM failure, it returns nil instead of failing the pipeline.
-// Context cancellation errors are propagated to the caller.
-func generateSuggestions(ctx context.Context, architecture, summaries string, llm LLMCompleter) ([]string, error) {
-	var buf bytes.Buffer
-	err := suggestionsTmpl.Execute(&buf, struct {
-		Architecture string
-		Summaries    string
-	}{
-		Architecture: architecture,
-		Summaries:    summaries,
-	})
-	if err != nil {
-		log.Printf("WARNING: suggestions prompt rendering failed: %v", err)
-		return nil, nil
-	}
-
-	response, err := llm.Complete(ctx, buf.String())
-	if err != nil {
-		if isContextCancellation(err) {
-			return nil, err
-		}
-		log.Printf("WARNING: suggestions generation failed: %v", err)
-		return nil, nil
-	}
-
-	return parseSuggestions(response), nil
-}
-
-// parseSuggestions splits the LLM response into individual suggestion lines.
-func parseSuggestions(response string) []string {
-	var suggestions []string
-	for _, line := range strings.Split(response, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			suggestions = append(suggestions, line)
-		}
-	}
-	return suggestions
 }
