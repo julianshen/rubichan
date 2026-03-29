@@ -140,7 +140,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, provider.FormatAPIError(resp.StatusCode, respBody)
 	}
 
 	ch := make(chan provider.StreamEvent)
