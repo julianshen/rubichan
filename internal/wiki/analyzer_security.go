@@ -122,6 +122,9 @@ func (a *SecurityAnalyzer) runSubPrompt(
 	}
 
 	resp = strings.TrimSpace(resp)
+	if resp == "" {
+		return nil, nil, fmt.Errorf("empty LLM response for %s", docPath)
+	}
 
 	doc := &Document{
 		Path:    docPath,

@@ -53,7 +53,7 @@ func init() {
 		{
 			language:     "go",
 			kind:         "http",
-			pattern:      `\.(Get|Post|Put|Delete|Patch|Options|Head)\s*\(\s*"([^"]+)"\s*,\s*(\w+)`,
+			pattern:      `\.(?i:(Get|Post|Put|Delete|Patch|Options|Head))\s*\(\s*"([^"]+)"\s*,\s*(\w+)`,
 			methodGroup:  1,
 			pathGroup:    2,
 			handlerGroup: 3,

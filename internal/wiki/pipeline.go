@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/parser"
@@ -64,7 +65,9 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*
 
 	// Stage 2: Scan API patterns
 	cfg.progress("scanning-api", 0, len(files), fmt.Sprintf("wiki: scanning API patterns in %d files...", len(files)))
-	apiPatterns := ScanAPIPatterns(files, os.ReadFile)
+	apiPatterns := ScanAPIPatterns(files, func(path string) ([]byte, error) {
+		return os.ReadFile(filepath.Join(cfg.Dir, path))
+	})
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -188,15 +191,14 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*
 	}
 	// Count new vs updated vs unchanged based on existing docs.
 	for _, doc := range documents {
-		if _, existed := existing[doc.Path]; !existed {
+		oldContent, existed := existing[doc.Path]
+		if !existed {
 			result.NewDocuments++
-		} else {
+		} else if strings.TrimSpace(doc.Content) != strings.TrimSpace(oldContent) {
 			result.UpdatedDocs++
+		} else {
+			result.UnchangedDocs++
 		}
-	}
-	result.UnchangedDocs = len(existing) - result.UpdatedDocs
-	if result.UnchangedDocs < 0 {
-		result.UnchangedDocs = 0
 	}
 	return result, nil
 }
@@ -220,6 +222,7 @@ func readExistingDocs(outputDir string) map[string]string {
 		if err != nil {
 			return nil
 		}
+		rel = filepath.ToSlash(rel)
 		content, err := os.ReadFile(path)
 		if err != nil {
 			log.Printf("wiki: warning reading %s: %v", path, err)

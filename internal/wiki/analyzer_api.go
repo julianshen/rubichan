@@ -58,11 +58,11 @@ func (a *APIAnalyzer) Analyze(ctx context.Context, input AnalyzerInput) (*Analyz
 		byKind[p.Kind] = append(byKind[p.Kind], p)
 	}
 
-	// Build the overview index listing which API surfaces were detected.
-	indexDoc := buildAPIIndexDoc(byKind)
-	docs := []Document{indexDoc}
+	var docs []Document
 
 	// For each known group with patterns, ask the LLM for structured docs.
+	// Track which kinds succeeded so the overview only links to them.
+	succeededKinds := make(map[string]bool)
 	for _, grp := range apiGroups {
 		patterns, ok := byKind[grp.kind]
 		if !ok || len(patterns) == 0 {
@@ -77,8 +77,14 @@ func (a *APIAnalyzer) Analyze(ctx context.Context, input AnalyzerInput) (*Analyz
 			// Non-fatal: skip this kind on LLM error.
 			continue
 		}
+		succeededKinds[grp.kind] = true
 		docs = append(docs, doc)
 	}
+
+	// Build the overview index AFTER generating per-kind docs, only linking
+	// to kinds that actually produced output.
+	indexDoc := buildAPIIndexDoc(byKind, succeededKinds)
+	docs = append([]Document{indexDoc}, docs...)
 
 	return &AnalyzerOutput{Documents: docs}, nil
 }
@@ -115,7 +121,9 @@ func (a *APIAnalyzer) generateKindDoc(ctx context.Context, grp apiGroupConfig, p
 }
 
 // buildAPIIndexDoc produces the api/_index.md overview document.
-func buildAPIIndexDoc(byKind map[string][]APIPattern) Document {
+// succeededKinds indicates which kinds actually produced per-kind docs;
+// only those get hyperlinks in the overview.
+func buildAPIIndexDoc(byKind map[string][]APIPattern, succeededKinds map[string]bool) Document {
 	var sb strings.Builder
 	sb.WriteString("# API Overview\n\n")
 	sb.WriteString("The following API surfaces were detected in this codebase:\n\n")
@@ -125,8 +133,13 @@ func buildAPIIndexDoc(byKind map[string][]APIPattern) Document {
 		if !ok || len(patterns) == 0 {
 			continue
 		}
-		fmt.Fprintf(&sb, "- **%s** — %d pattern(s) detected → [%s](%s)\n",
-			grp.title, len(patterns), grp.title, grp.path)
+		if succeededKinds[grp.kind] {
+			fmt.Fprintf(&sb, "- **%s** — %d pattern(s) detected → [%s](%s)\n",
+				grp.title, len(patterns), grp.title, grp.path)
+		} else {
+			fmt.Fprintf(&sb, "- **%s** — %d pattern(s) detected\n",
+				grp.title, len(patterns))
+		}
 	}
 
 	// Include any unrecognized kinds not in the standard list.

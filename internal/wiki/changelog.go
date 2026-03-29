@@ -6,12 +6,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 const (
-	changelogMarker     = "## Change History"
-	maxChangelogEntries = 50
-	maxLinesForDiff     = 500
+	changelogMarker        = "## Change History"
+	maxChangelogEntries    = 50
+	maxLinesForDiff        = 500
+	defaultChangelogConc   = 5
 )
 
 // ApplyChangelog compares each new document against existing content and
@@ -72,13 +75,14 @@ func ApplyChangelog(ctx context.Context, existing map[string]string, newDocs []D
 		return results, nil
 	}
 
-	// Second pass: concurrent LLM summarization for changed docs.
+	// Second pass: concurrent LLM summarization for changed docs, bounded by semaphore.
 	type result struct {
 		idx     int
 		summary string
 	}
 	summaries := make([]result, len(pending))
 
+	sem := semaphore.NewWeighted(int64(defaultChangelogConc))
 	var wg sync.WaitGroup
 	for j, w := range pending {
 		j, w := j, w
@@ -89,6 +93,12 @@ func ApplyChangelog(ctx context.Context, existing map[string]string, newDocs []D
 				summaries[j] = result{idx: w.idx, summary: "Content updated"}
 				return
 			}
+			// Acquire semaphore slot; bail on context cancellation.
+			if err := sem.Acquire(ctx, 1); err != nil {
+				summaries[j] = result{idx: w.idx, summary: "Content updated"}
+				return
+			}
+			defer sem.Release(1)
 			prompt := buildChangelogPrompt(w.oldBody, w.newBody)
 			summary, err := llm.Complete(ctx, prompt)
 			if err != nil || strings.TrimSpace(summary) == "" {
@@ -123,14 +133,22 @@ func ApplyChangelog(ctx context.Context, existing map[string]string, newDocs []D
 }
 
 // extractChangelog splits content into the main body and the changelog section.
-// The changelog section starts at the first line that equals "## Change History".
+// The changelog section starts at the first line that begins with "## Change History".
 // The body includes everything up to (and including) the newline before the marker.
+// Only matches the marker when it appears at the start of a line (not inside code blocks).
 func extractChangelog(content string) (body, changelog string) {
-	idx := strings.Index(content, changelogMarker)
+	// Check if content starts with the marker.
+	if strings.HasPrefix(content, changelogMarker) {
+		return "", content
+	}
+	// Look for the marker at the start of a line.
+	needle := "\n" + changelogMarker
+	idx := strings.Index(content, needle)
 	if idx < 0 {
 		return content, ""
 	}
-	return content[:idx], content[idx:]
+	// Include the newline before the marker in the body.
+	return content[:idx+1], content[idx+1:]
 }
 
 // appendChangelogEntry adds a new dated entry to an existing changelog string.

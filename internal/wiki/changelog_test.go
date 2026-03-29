@@ -3,6 +3,7 @@ package wiki
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -255,9 +256,9 @@ func TestApplyChangelog_MaxEntries(t *testing.T) {
 // zeroPad pads a small int to two digits (01..50).
 func zeroPad(n int) string {
 	if n < 10 {
-		return "0" + strings.TrimSpace(strings.Repeat("0", 1)) + string(rune('0'+n))
+		return fmt.Sprintf("%02d", n)
 	}
-	return string([]byte{byte('0' + n/10), byte('0' + n%10)})
+	return fmt.Sprintf("%02d", n)
 }
 
 // countChangelogEntries counts lines starting with "- **" in the changelog.

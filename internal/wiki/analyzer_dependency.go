@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,9 @@ func (a *DependencyAnalyzer) Name() string { return "dependencies" }
 // to infer architectural decisions. Returns empty output when no manifests exist
 // or when the LLM call fails (non-fatal). Context cancellation is propagated.
 func (a *DependencyAnalyzer) Analyze(ctx context.Context, input AnalyzerInput) (*AnalyzerOutput, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	manifests := a.readManifests()
 	if len(manifests) == 0 {
 		return &AnalyzerOutput{}, nil
@@ -97,7 +101,8 @@ func (a *DependencyAnalyzer) readManifests() []manifestEntry {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue // unreadable — skip silently
+			log.Printf("wiki: warning reading manifest %s: %v", name, err)
+			continue
 		}
 		entries = append(entries, manifestEntry{Name: name, Content: string(data)})
 	}
