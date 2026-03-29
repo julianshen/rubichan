@@ -96,10 +96,14 @@ var hintedProfiles = []modelProfile{
 	// Qwen 3.5: supports tool_use but struggled with tool discovery in testing.
 	// Large MoE variants (397B) work but need guidance; small variants need fewer tools.
 	{keywords: []string{"qwen"}, hint: true, smallLimit: 8},
-	// GLM 5/5-turbo (Zhipu AI): supports tool_use and structured_outputs.
-	// Strong reasoning but less tested with complex tool schemas.
-	{keywords: []string{"glm-5", "glm5"}, hint: true, largeLimit: 15},
-	// GLM 4.x: older generation, more conservative limits.
+	// GLM (Zhipu AI / z-ai): profiles ordered most-specific first.
+	// GLM-5: flagship model, supports tools + reasoning + structured_outputs.
+	{keywords: []string{"glm-5", "glm5"}, hint: false},
+	// GLM-4.7/4.6: strong models with 200K+ context, reasoning, structured_outputs.
+	{keywords: []string{"glm-4.7", "glm-4.6"}, hint: false},
+	// GLM-4.5: capable mid-gen model, benefits from light guidance.
+	{keywords: []string{"glm-4.5"}, hint: true},
+	// GLM-4-32b and older 4.x: smaller/older, more conservative limits.
 	{keywords: []string{"glm-4", "glm4"}, hint: true, smallLimit: 8, largeLimit: 12},
 	// MiniMax M1/M2.x: supports tool_use. M1 is 1M context reasoning model.
 	// M2.x series are capable but benefit from tool guidance.
