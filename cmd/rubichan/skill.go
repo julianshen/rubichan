@@ -1055,7 +1055,23 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 
 // installFromGit clones a git repository to a temporary directory, validates
 // its SKILL.yaml, copies it to skillsDir, and records install state.
+// validateGitURL ensures the URL uses a safe transport scheme.
+// Rejects ext::, relative paths, and other git transport helpers
+// that could execute arbitrary commands.
+func validateGitURL(u string) error {
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "ssh://") || strings.HasPrefix(lower, "git@") {
+		return nil
+	}
+	return fmt.Errorf("git URL must use https://, http://, ssh://, or git@ scheme: %q", u)
+}
+
 func installFromGit(cmd *cobra.Command, src installSource, skillsDir, storePath string) error {
+	if err := validateGitURL(src.URL); err != nil {
+		return err
+	}
+
 	tmpDir, err := os.MkdirTemp("", "rubichan-git-install-*")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
@@ -1091,6 +1107,9 @@ func installFromGit(cmd *cobra.Command, src installSource, skillsDir, storePath 
 	if err := copyDir(tmpDir, dest); err != nil {
 		return fmt.Errorf("copying skill: %w", err)
 	}
+	// Remove .git to avoid leaking credentials embedded in remote URLs
+	// and to save disk space.
+	os.RemoveAll(filepath.Join(dest, ".git"))
 
 	if err := saveInstallState(storePath, manifest, dest, src.Type, src.URL, src.Ref); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
@@ -1103,7 +1122,15 @@ func installFromGit(cmd *cobra.Command, src installSource, skillsDir, storePath 
 // installFromNpm downloads an npm package as a tarball, extracts it, and
 // installs the skill it contains. npm packs into a "package/" subdirectory
 // inside the tarball, so SKILL.yaml is found at package/SKILL.yaml.
+// npmPackageNameRe matches valid npm package names (scoped or unscoped).
+// Rejects file:, link:, and other specifiers that could access the local filesystem.
+var npmPackageNameRe = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
+
 func installFromNpm(cmd *cobra.Command, src installSource, skillsDir, storePath string) error {
+	if !npmPackageNameRe.MatchString(src.URL) {
+		return fmt.Errorf("invalid npm package name %q: must be a valid registry package name", src.URL)
+	}
+
 	if _, err := exec.LookPath("npm"); err != nil {
 		return fmt.Errorf("npm not found — install Node.js to use npm: sources")
 	}
