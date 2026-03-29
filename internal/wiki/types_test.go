@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"context"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/parser"
@@ -213,4 +214,57 @@ func TestSkillWikiSection_DiagramsHoldsDiagramSlice(t *testing.T) {
 		assert.Equal(t, diagrams[i].Type, d.Type)
 		assert.Equal(t, diagrams[i].Content, d.Content)
 	}
+}
+
+// stubAnalyzer satisfies SpecializedAnalyzer for interface compliance tests.
+type stubAnalyzer struct{}
+
+func (s *stubAnalyzer) Name() string { return "stub" }
+
+func (s *stubAnalyzer) Analyze(_ context.Context, _ AnalyzerInput) (*AnalyzerOutput, error) {
+	return &AnalyzerOutput{}, nil
+}
+
+func TestSpecializedAnalyzerInterface(t *testing.T) {
+	var a SpecializedAnalyzer = &stubAnalyzer{}
+	assert.Equal(t, "stub", a.Name())
+
+	out, err := a.Analyze(context.Background(), AnalyzerInput{})
+	assert.NoError(t, err)
+	assert.NotNil(t, out)
+}
+
+func TestAnalyzerInputFields(t *testing.T) {
+	input := AnalyzerInput{
+		Chunks:         []Chunk{{Module: "mod"}},
+		Files:          []ScannedFile{{Path: "main.go"}},
+		ModuleAnalyses: []ModuleAnalysis{{Module: "mod", Summary: "summary"}},
+		Architecture:   "hexagonal",
+		ExistingDocs:   map[string]string{"docs/index.md": "content"},
+	}
+
+	assert.Len(t, input.Chunks, 1)
+	assert.Equal(t, "mod", input.Chunks[0].Module)
+	assert.Len(t, input.Files, 1)
+	assert.Equal(t, "main.go", input.Files[0].Path)
+	assert.Len(t, input.ModuleAnalyses, 1)
+	assert.Equal(t, "mod", input.ModuleAnalyses[0].Module)
+	assert.Equal(t, "hexagonal", input.Architecture)
+	assert.Equal(t, "content", input.ExistingDocs["docs/index.md"])
+}
+
+func TestAnalyzerOutputCanHoldDocumentsAndDiagrams(t *testing.T) {
+	out := AnalyzerOutput{
+		Documents: []Document{
+			{Path: "docs/api.md", Title: "API", Content: "# API"},
+		},
+		Diagrams: []Diagram{
+			{Title: "Arch", Type: "architecture", Content: "graph TD"},
+		},
+	}
+
+	assert.Len(t, out.Documents, 1)
+	assert.Equal(t, "docs/api.md", out.Documents[0].Path)
+	assert.Len(t, out.Diagrams, 1)
+	assert.Equal(t, "architecture", out.Diagrams[0].Type)
 }

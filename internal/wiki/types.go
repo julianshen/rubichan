@@ -1,6 +1,10 @@
 package wiki
 
-import "github.com/julianshen/rubichan/internal/parser"
+import (
+	"context"
+
+	"github.com/julianshen/rubichan/internal/parser"
+)
 
 // ScannedFile represents a source file discovered by the scanner stage.
 type ScannedFile struct {
@@ -55,5 +59,26 @@ type SkillWikiSection struct {
 	SkillName string
 	Title     string
 	Content   string
+	Diagrams  []Diagram
+}
+
+// SpecializedAnalyzer produces documents and diagrams for a specific domain.
+type SpecializedAnalyzer interface {
+	Name() string
+	Analyze(ctx context.Context, input AnalyzerInput) (*AnalyzerOutput, error)
+}
+
+// AnalyzerInput provides shared context from the base analysis pass.
+type AnalyzerInput struct {
+	Chunks         []Chunk
+	Files          []ScannedFile
+	ModuleAnalyses []ModuleAnalysis
+	Architecture   string
+	ExistingDocs   map[string]string // path → content (for change history)
+}
+
+// AnalyzerOutput holds documents and diagrams from a specialized analyzer.
+type AnalyzerOutput struct {
+	Documents []Document
 	Diagrams  []Diagram
 }
