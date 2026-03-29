@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -330,6 +331,166 @@ func TestAssembleWithNoSecurityFindings(t *testing.T) {
 	}
 	require.NotNil(t, secDoc2, "security/overview.md should exist")
 	assert.Contains(t, secDoc2.Content, "Security analysis pending...")
+}
+
+func TestModulePageIncludesTestingSection(t *testing.T) {
+	analysis := &AnalysisResult{
+		Modules: []ModuleAnalysis{
+			{Module: "internal/foo", Summary: "Foo module"},
+			{Module: "internal/bar", Summary: "Bar module"},
+		},
+	}
+
+	// internal/foo has a test file; internal/bar does not.
+	files := []ScannedFile{
+		{Path: "internal/foo/foo.go", Module: "internal/foo"},
+		{Path: "internal/foo/foo_test.go", Module: "internal/foo"},
+		{Path: "internal/bar/bar.go", Module: "internal/bar"},
+	}
+
+	docs, err := Assemble(analysis, nil, nil, nil, files)
+	require.NoError(t, err)
+
+	fooPath := "modules/" + sanitizeID("internal/foo") + ".md"
+	barPath := "modules/" + sanitizeID("internal/bar") + ".md"
+
+	var fooDoc, barDoc *Document
+	for i := range docs {
+		switch docs[i].Path {
+		case fooPath:
+			fooDoc = &docs[i]
+		case barPath:
+			barDoc = &docs[i]
+		}
+	}
+
+	require.NotNil(t, fooDoc, "foo module page should exist")
+	assert.Contains(t, fooDoc.Content, "## Testing")
+	assert.Contains(t, fooDoc.Content, "Test files detected")
+
+	require.NotNil(t, barDoc, "bar module page should exist")
+	assert.Contains(t, barDoc.Content, "## Testing")
+	assert.Contains(t, barDoc.Content, "No test files detected")
+}
+
+func TestModulePageIncludesPublicInterface(t *testing.T) {
+	analysis := &AnalysisResult{
+		Modules: []ModuleAnalysis{
+			{Module: "internal/mymod", Summary: "My module"},
+		},
+	}
+
+	files := []ScannedFile{
+		{
+			Path:   "internal/mymod/mymod.go",
+			Module: "internal/mymod",
+			Functions: []parser.FunctionDef{
+				{Name: "ExportedFunc"},
+				{Name: "unexportedFunc"},
+				{Name: "AnotherExported"},
+			},
+		},
+	}
+
+	docs, err := Assemble(analysis, nil, nil, nil, files)
+	require.NoError(t, err)
+
+	modPath := "modules/" + sanitizeID("internal/mymod") + ".md"
+	var modDoc *Document
+	for i := range docs {
+		if docs[i].Path == modPath {
+			modDoc = &docs[i]
+			break
+		}
+	}
+
+	require.NotNil(t, modDoc, "module page should exist")
+	assert.Contains(t, modDoc.Content, "## Public Interface")
+	assert.Contains(t, modDoc.Content, "`ExportedFunc`")
+	assert.Contains(t, modDoc.Content, "`AnotherExported`")
+	assert.NotContains(t, modDoc.Content, "`unexportedFunc`")
+}
+
+func TestModulePageNoPublicInterfaceSectionWhenAllUnexported(t *testing.T) {
+	analysis := &AnalysisResult{
+		Modules: []ModuleAnalysis{
+			{Module: "internal/internal", Summary: "Internal only"},
+		},
+	}
+
+	files := []ScannedFile{
+		{
+			Path:   "internal/internal/impl.go",
+			Module: "internal/internal",
+			Functions: []parser.FunctionDef{
+				{Name: "doSomething"},
+				{Name: "helper"},
+			},
+		},
+	}
+
+	docs, err := Assemble(analysis, nil, nil, nil, files)
+	require.NoError(t, err)
+
+	modPath := "modules/" + sanitizeID("internal/internal") + ".md"
+	var modDoc *Document
+	for i := range docs {
+		if docs[i].Path == modPath {
+			modDoc = &docs[i]
+			break
+		}
+	}
+
+	require.NotNil(t, modDoc, "module page should exist")
+	assert.NotContains(t, modDoc.Content, "## Public Interface")
+}
+
+func TestHasTestFiles(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []ScannedFile
+		want  bool
+	}{
+		{"go test file (suffix)", []ScannedFile{{Path: "pkg/foo_test.go"}}, true},
+		{"ts test file (suffix)", []ScannedFile{{Path: "src/foo.test.ts"}}, true},
+		{"ts spec file (suffix)", []ScannedFile{{Path: "src/foo.spec.ts"}}, true},
+		{"py test file (prefix)", []ScannedFile{{Path: "tests/test_foo.py"}}, true},
+		{"go test file (prefix)", []ScannedFile{{Path: "internal/test_helper.go"}}, true},
+		{"no test files", []ScannedFile{{Path: "pkg/foo.go"}, {Path: "src/bar.ts"}}, false},
+		{"empty", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hasTestFiles(tt.files))
+		})
+	}
+}
+
+func TestExportedFunctions(t *testing.T) {
+	files := []ScannedFile{
+		{
+			Functions: []parser.FunctionDef{
+				{Name: "PublicA"},
+				{Name: "privateB"},
+				{Name: "PublicC"},
+			},
+		},
+		{
+			Functions: []parser.FunctionDef{
+				{Name: "PublicA"}, // duplicate — should appear only once
+				{Name: "PublicD"},
+			},
+		},
+	}
+	got := exportedFunctions(files)
+	assert.Equal(t, []string{"PublicA", "PublicC", "PublicD"}, got)
+}
+
+func TestIsExported(t *testing.T) {
+	assert.True(t, isExported("Foo"))
+	assert.True(t, isExported("FooBar"))
+	assert.False(t, isExported("foo"))
+	assert.False(t, isExported(""))
 }
 
 func TestSanitizeMarkdown(t *testing.T) {
