@@ -249,25 +249,68 @@ func TestDetectCapabilities_TargetModels(t *testing.T) {
 		}
 	})
 
-	// GLM 5: hinted, large model gets MaxToolCount=15.
-	t.Run("glm-5 gets hint and tool limit", func(t *testing.T) {
+	// GLM 5: strong, no hints needed.
+	t.Run("glm-5 is strong", func(t *testing.T) {
 		caps := DetectCapabilities("openrouter", "z-ai/glm-5")
-		if !caps.NeedsToolDiscoveryHint {
-			t.Error("GLM 5 should get discovery hint")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 5 should not need discovery hint")
 		}
-		if caps.MaxToolCount != 15 {
-			t.Errorf("GLM 5 should get MaxToolCount=15, got %d", caps.MaxToolCount)
+		if caps.MaxToolCount != 0 {
+			t.Errorf("GLM 5 should have unlimited tools, got %d", caps.MaxToolCount)
 		}
 	})
 
-	// GLM 5 Turbo: same profile as GLM 5.
-	t.Run("glm-5-turbo gets hint and tool limit", func(t *testing.T) {
+	// GLM 5 Turbo: same strong profile.
+	t.Run("glm-5-turbo is strong", func(t *testing.T) {
 		caps := DetectCapabilities("openrouter", "z-ai/glm-5-turbo")
-		if !caps.NeedsToolDiscoveryHint {
-			t.Error("GLM 5 Turbo should get discovery hint")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 5 Turbo should not need discovery hint")
 		}
-		if caps.MaxToolCount != 15 {
-			t.Errorf("GLM 5 Turbo should get MaxToolCount=15, got %d", caps.MaxToolCount)
+	})
+
+	// GLM 4.7: strong (200K context, reasoning, structured_outputs).
+	t.Run("glm-4.7 is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "z-ai/glm-4.7")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 4.7 should not need discovery hint")
+		}
+		if caps.MaxToolCount != 0 {
+			t.Errorf("GLM 4.7 should have unlimited tools, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// GLM 4.7 Flash: also strong.
+	t.Run("glm-4.7-flash is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "z-ai/glm-4.7-flash")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 4.7 Flash should not need discovery hint")
+		}
+	})
+
+	// GLM 4.6: strong (200K context, reasoning).
+	t.Run("glm-4.6 is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "z-ai/glm-4.6")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 4.6 should not need discovery hint")
+		}
+	})
+
+	// GLM 4.5: lightly hinted.
+	t.Run("glm-4.5 is hinted", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "z-ai/glm-4.5")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 4.5 should get discovery hint")
+		}
+		if caps.MaxToolCount != 0 {
+			t.Errorf("GLM 4.5 should have unlimited tools, got %d", caps.MaxToolCount)
+		}
+	})
+
+	// GLM 4-32b: small model, conservative.
+	t.Run("glm-4-32b gets small limit", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "z-ai/glm-4-32b")
+		if !caps.NeedsToolDiscoveryHint {
+			t.Error("GLM 4-32b should get discovery hint")
 		}
 	})
 
