@@ -113,6 +113,37 @@ func TestDetectCapabilities_OpenAI(t *testing.T) {
 		}
 	})
 
+	t.Run("gpt-5.4-pro is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "openai/gpt-5.4-pro")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("expected NeedsToolDiscoveryHint=false for gpt-5.4-pro")
+		}
+		if caps.MaxToolCount != 0 {
+			t.Errorf("expected unlimited tools, got %d", caps.MaxToolCount)
+		}
+	})
+
+	t.Run("gpt-5-codex is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "openai/gpt-5-codex")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("expected NeedsToolDiscoveryHint=false for gpt-5-codex")
+		}
+	})
+
+	t.Run("gpt-5-nano is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "openai/gpt-5-nano")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("expected NeedsToolDiscoveryHint=false for gpt-5-nano")
+		}
+	})
+
+	t.Run("gpt-5.1-codex-mini is strong", func(t *testing.T) {
+		caps := DetectCapabilities("openrouter", "openai/gpt-5.1-codex-mini")
+		if caps.NeedsToolDiscoveryHint {
+			t.Error("expected NeedsToolDiscoveryHint=false for gpt-5.1-codex-mini")
+		}
+	})
+
 	t.Run("claude via openai compat gets full capabilities", func(t *testing.T) {
 		caps := DetectCapabilities("openrouter", "anthropic/claude-3-5-sonnet")
 		if caps.NeedsToolDiscoveryHint {

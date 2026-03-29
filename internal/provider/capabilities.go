@@ -79,6 +79,8 @@ type modelProfile struct {
 }
 
 // strongProfiles are model families with reliable tool-use that need no hints.
+// GPT-5 family: all variants (5, 5.1–5.4, codex, pro, mini, nano) support
+// native tool_use. Nano/mini are smaller but still strong tool users.
 var strongProfiles = []modelProfile{
 	{keywords: []string{"gpt-4", "gpt-5", "o1", "o3"}},
 	{keywords: []string{"claude"}},
