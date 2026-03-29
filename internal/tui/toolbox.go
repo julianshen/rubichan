@@ -180,26 +180,10 @@ func isDiffContent(content string) bool {
 }
 
 // ColorizeDiffLines applies green/red/cyan coloring to unified diff lines.
-// If the content does not appear to be a diff (no @@ hunk headers), it is
-// returned unchanged to avoid false positives.
+// Delegates to ColorizeContent for the actual colorization.
 func ColorizeDiffLines(content string) string {
 	if content == "" || !isDiffContent(content) {
 		return content
 	}
-
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		switch {
-		case strings.HasPrefix(line, "@@ "):
-			lines[i] = diffHunkStyle.Render(line)
-		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
-			// File headers — leave unstyled (or could style bold)
-			continue
-		case strings.HasPrefix(line, "+"):
-			lines[i] = diffAddedStyle.Render(line)
-		case strings.HasPrefix(line, "-"):
-			lines[i] = diffRemovedStyle.Render(line)
-		}
-	}
-	return strings.Join(lines, "\n")
+	return colorizeDiffContent(content)
 }

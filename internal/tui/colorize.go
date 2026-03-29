@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
@@ -10,17 +11,27 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Syntax styles for non-diff content types.
 var (
-	styleJSONKey    = lipgloss.NewStyle().Foreground(colorInfo)
-	styleJSONString = lipgloss.NewStyle().Foreground(colorSuccess)
-	styleJSONNumber = lipgloss.NewStyle().Foreground(colorWarning)
-	styleXMLTag     = lipgloss.NewStyle().Foreground(colorInfo)
-	styleXMLAttr    = lipgloss.NewStyle().Foreground(colorWarning)
-	styleMDHeading  = lipgloss.NewStyle().Bold(true).Foreground(colorPrimaryLight)
-	styleMDCode     = lipgloss.NewStyle().Foreground(colorSuccess)
-	styleMDBold     = lipgloss.NewStyle().Bold(true)
+	styleMDHeading = lipgloss.NewStyle().Bold(true).Foreground(colorPrimaryLight)
+	styleMDCode    = lipgloss.NewStyle().Foreground(colorSuccess)
+	styleMDBold    = lipgloss.NewStyle().Bold(true)
 )
+
+// Cached Chroma resources — looked up once, reused across renders.
+var (
+	chromaStyle     *chroma.Style
+	chromaFormatter chroma.Formatter
+	chromaLexerMu   sync.Mutex
+	chromaLexerCache = map[string]chroma.Lexer{}
+)
+
+func init() {
+	chromaStyle = styles.Get("monokai")
+	if chromaStyle == nil {
+		chromaStyle = styles.Fallback
+	}
+	chromaFormatter = formatters.Get("terminal256")
+}
 
 // ColorizeContent applies syntax-aware colorization to tool result content.
 // It detects the content type and applies appropriate styling:
@@ -177,21 +188,15 @@ func colorizeDiffContent(content string) string {
 }
 
 // colorizeWithChroma uses the Chroma library for syntax highlighting.
+// Lexers are cached per language to avoid repeated lookups.
 // Falls back to plain text on any error.
 func colorizeWithChroma(content, language string) string {
-	lexer := lexers.Get(language)
-	if lexer == nil {
+	if chromaFormatter == nil {
 		return content
 	}
-	lexer = chroma.Coalesce(lexer)
 
-	style := styles.Get("monokai")
-	if style == nil {
-		style = styles.Fallback
-	}
-
-	formatter := formatters.Get("terminal256")
-	if formatter == nil {
+	lexer := getCachedLexer(language)
+	if lexer == nil {
 		return content
 	}
 
@@ -201,8 +206,25 @@ func colorizeWithChroma(content, language string) string {
 	}
 
 	var buf strings.Builder
-	if err := formatter.Format(&buf, style, iterator); err != nil {
+	if err := chromaFormatter.Format(&buf, chromaStyle, iterator); err != nil {
 		return content
 	}
 	return buf.String()
+}
+
+func getCachedLexer(language string) chroma.Lexer {
+	chromaLexerMu.Lock()
+	defer chromaLexerMu.Unlock()
+
+	if l, ok := chromaLexerCache[language]; ok {
+		return l
+	}
+	l := lexers.Get(language)
+	if l == nil {
+		chromaLexerCache[language] = nil
+		return nil
+	}
+	l = chroma.Coalesce(l)
+	chromaLexerCache[language] = l
+	return l
 }
