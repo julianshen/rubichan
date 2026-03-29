@@ -47,6 +47,7 @@ func skillCmd() *cobra.Command {
 	cmd.AddCommand(skillLintCmd())
 	cmd.AddCommand(skillDevCmd())
 	cmd.AddCommand(skillPermissionsCmd())
+	cmd.AddCommand(skillUpdateCmd())
 
 	return cmd
 }
@@ -1384,6 +1385,119 @@ func skillRemoveCmd() *cobra.Command {
 	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
 	cmd.Flags().String("skills-dir", "", "directory where skills are installed (default: ~/.config/rubichan/skills/)")
 	return cmd
+}
+
+// skillUpdateCmd returns a command that updates one or all installed skills.
+func skillUpdateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update [name]",
+		Short: "Update an installed skill to the latest version",
+		Long: `Update a skill by re-fetching it from its original source.
+
+Use --all to update every installed skill. Use --dry-run to preview what would change without applying.
+
+Update behaviour per source type:
+  local    → skipped (reinstall manually from the local path)
+  git/github → re-clone and reinstall
+  npm      → re-install from npm (latest)
+  registry → already at pinned version; skipped`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			all, _ := cmd.Flags().GetBool("all")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+			if len(args) == 0 && !all {
+				return fmt.Errorf("specify a skill name or use --all")
+			}
+
+			storePath, err := resolveStorePath(cmd)
+			if err != nil {
+				return err
+			}
+			skillsDir, err := resolveSkillsDir(cmd)
+			if err != nil {
+				return err
+			}
+
+			s, err := store.NewStore(storePath)
+			if err != nil {
+				return fmt.Errorf("opening store: %w", err)
+			}
+			defer s.Close()
+
+			var targets []store.SkillInstallState
+			if all {
+				targets, err = s.ListAllSkillStates()
+				if err != nil {
+					return fmt.Errorf("listing skills: %w", err)
+				}
+			} else {
+				st, err := s.GetSkillState(args[0])
+				if err != nil {
+					return fmt.Errorf("looking up skill: %w", err)
+				}
+				if st == nil {
+					return fmt.Errorf("skill %q is not installed", args[0])
+				}
+				targets = []store.SkillInstallState{*st}
+			}
+
+			for _, st := range targets {
+				if err := updateOneSkill(cmd, st, skillsDir, storePath, dryRun); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Bool("all", false, "update all installed skills")
+	cmd.Flags().Bool("dry-run", false, "show what would change without applying")
+	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
+	cmd.Flags().String("skills-dir", "", "directory where skills are installed (default: ~/.config/rubichan/skills/)")
+	return cmd
+}
+
+// updateOneSkill updates a single skill according to its source type.
+func updateOneSkill(cmd *cobra.Command, st store.SkillInstallState, skillsDir, storePath string, dryRun bool) error {
+	out := cmd.OutOrStdout()
+
+	switch st.SourceType {
+	case "local", "":
+		fmt.Fprintf(out, "Skipping %q: installed from local path — reinstall manually\n", st.Name)
+		return nil
+
+	case "registry":
+		fmt.Fprintf(out, "Skipping %q: up to date (registry-pinned)\n", st.Name)
+		return nil
+
+	case "git", "github":
+		if dryRun {
+			fmt.Fprintf(out, "[dry-run] Would re-clone %q from %s\n", st.Name, st.SourceURL)
+			return nil
+		}
+		src := installSource{
+			Type: st.SourceType,
+			URL:  st.SourceURL,
+			Ref:  st.SourceRef,
+		}
+		return installFromGit(cmd, src, skillsDir, storePath)
+
+	case "npm":
+		if dryRun {
+			fmt.Fprintf(out, "[dry-run] Would re-install npm package %q\n", st.SourceURL)
+			return nil
+		}
+		src := installSource{
+			Type: "npm",
+			URL:  st.SourceURL,
+			Ref:  "", // empty ref = latest
+		}
+		return installFromNpm(cmd, src, skillsDir, storePath)
+
+	default:
+		fmt.Fprintf(out, "Skipping %q: unknown source type %q\n", st.Name, st.SourceType)
+		return nil
+	}
 }
 
 func skillAddCmd() *cobra.Command {

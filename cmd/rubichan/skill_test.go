@@ -1951,3 +1951,151 @@ func TestSkillSearchCategoryFilter(t *testing.T) {
 	assert.Contains(t, output, "go-linter")
 	assert.NotContains(t, output, "doc-writer")
 }
+
+// ---------------------------------------------------------------------------
+// Task 7: skill update command
+// ---------------------------------------------------------------------------
+
+func TestSkillUpdateCommandRegistered(t *testing.T) {
+	// Verify the update subcommand is registered under skill.
+	root := skillCmd()
+	found := false
+	for _, sub := range root.Commands() {
+		if sub.Name() == "update" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected 'update' subcommand to be registered in skillCmd")
+}
+
+func TestSkillUpdateLocalSkipMessage(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:       "my-local",
+		Version:    "1.0.0",
+		Source:     "/some/path",
+		SourceType: "local",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "my-local", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, buf.String(), "reinstall manually")
+}
+
+func TestSkillUpdateRegistrySkipMessage(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:       "pinned-skill",
+		Version:    "1.2.3",
+		Source:     "/skills/pinned-skill",
+		SourceType: "registry",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "pinned-skill", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, buf.String(), "up to date")
+}
+
+func TestSkillUpdateGitDryRun(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:       "git-skill",
+		Version:    "1.0.0",
+		Source:     "/skills/git-skill",
+		SourceType: "git",
+		SourceURL:  "https://example.com/skill.git",
+		SourceRef:  "v1.0.0",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "git-skill", "--dry-run", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "[dry-run]")
+	assert.Contains(t, output, "git-skill")
+}
+
+func TestSkillUpdateAllDryRun(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name: "local-one", Version: "1.0.0", SourceType: "local",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name: "git-one", Version: "1.0.0", SourceType: "git",
+		SourceURL: "https://example.com/git-one.git",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name: "npm-one", Version: "1.0.0", SourceType: "npm",
+		SourceURL: "@scope/npm-one",
+	}))
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"update", "--all", "--dry-run", "--store", dbPath})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	// local → skip message
+	assert.Contains(t, output, "reinstall manually")
+	// git → dry-run message
+	assert.Contains(t, output, "[dry-run]")
+	assert.Contains(t, output, "git-one")
+	// npm → dry-run message
+	assert.Contains(t, output, "@scope/npm-one")
+}
+
+func TestSkillUpdateNoArgsNoAll(t *testing.T) {
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"update"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--all")
+}
+
+func TestSkillUpdateUnknownSkill(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	s.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"update", "no-such-skill", "--store", dbPath})
+
+	err = cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not installed")
+}
