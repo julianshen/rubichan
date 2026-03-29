@@ -628,6 +628,14 @@ func (a *Agent) ClearConversation() {
 	a.conversation.Clear()
 }
 
+// InjectUserContext adds a user message to the conversation without starting
+// a turn. Used for shell escape output so the LLM sees it on subsequent turns.
+func (a *Agent) InjectUserContext(text string) {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	a.conversation.AddUser(text)
+}
+
 // ScratchpadAccess returns the agent's scratchpad for external use (e.g., by NotesTool).
 func (a *Agent) ScratchpadAccess() ScratchpadAccess {
 	return a.scratchpad
