@@ -286,6 +286,42 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// Shell escape: "! command" runs directly and shows output as tool result.
+		if strings.HasPrefix(text, "!") {
+			shellCmd := strings.TrimSpace(text[1:])
+			if shellCmd != "" {
+				result := ExecuteShellCommand(shellCmd)
+
+				lineCount := strings.Count(result.Output, "\n") + 1
+				if result.Output == "" {
+					lineCount = 0
+				}
+				cr := CollapsibleToolResult{
+					Name:      "shell",
+					Args:      fmt.Sprintf(`{"command":"%s"}`, shellCmd),
+					Content:   result.Output,
+					LineCount: lineCount,
+					IsError:   result.IsError,
+					Collapsed: false,
+					ToolType:  ToolTypeShell,
+				}
+				m.content.AppendToolResult(cr)
+
+				// Emit session event so event logs capture the shell escape.
+				m.emitSessionEvent(session.NewToolResultEvent(
+					fmt.Sprintf("shell-escape-%d", m.content.ToolResultCount()-1),
+					"shell",
+					result.Output,
+					result.IsError,
+				))
+
+				m.setContentAndAutoScroll()
+				return m, nil
+			}
+			// Bare "!" with no command — ignore.
+			return m, nil
+		}
+
 		if strings.HasPrefix(text, "/") {
 			cmd := m.handleCommand(text)
 			return m, cmd
