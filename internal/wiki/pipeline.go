@@ -57,7 +57,14 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 		return err
 	}
 
-	// Stage 2: Chunk
+	// Stage 2: Scan API patterns
+	cfg.progress("scanning-api", 0, len(files), fmt.Sprintf("wiki: scanning API patterns in %d files...", len(files)))
+	apiPatterns := ScanAPIPatterns(files, os.ReadFile)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Stage 3: Chunk
 	cfg.progress("chunking", 0, len(files), fmt.Sprintf("wiki: chunking %d files...", len(files)))
 	reader := &osSourceReader{baseDir: cfg.Dir}
 	chunks, err := ChunkFiles(files, reader, DefaultChunkerConfig())
@@ -90,12 +97,16 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	cfg.progress("specialized-analysis", 0, 0, "wiki: running specialized analyzers...")
 	specializedAnalyzers := []SpecializedAnalyzer{
 		NewSuggestionAnalyzer(llm),
+		NewAPIAnalyzer(llm),
+		NewSecurityAnalyzer(llm),
+		NewDependencyAnalyzer(llm, cfg.Dir),
 	}
 	analyzerInput := AnalyzerInput{
 		Chunks:         chunks,
 		Files:          files,
 		ModuleAnalyses: analysis.Modules,
 		Architecture:   analysis.Architecture,
+		APIPatterns:    apiPatterns,
 	}
 	extraDocs, extraDiagrams, err := RunSpecializedAnalyzers(ctx, specializedAnalyzers, analyzerInput)
 	if err != nil {
