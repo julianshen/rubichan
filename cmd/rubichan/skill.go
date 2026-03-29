@@ -278,7 +278,7 @@ func skillSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search the skill registry",
-		Long:  "Search for skills in the remote registry by keyword.",
+		Long:  "Search for skills in the remote registry by keyword. Also searches locally installed skills.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
@@ -288,6 +288,14 @@ func skillSearchCmd() *cobra.Command {
 				registryURL = defaultRegistryURL
 			}
 
+			category, _ := cmd.Flags().GetString("category")
+			tag, _ := cmd.Flags().GetString("tag")
+
+			storePath, err := resolveStorePath(cmd)
+			if err != nil {
+				return err
+			}
+
 			client := skills.NewRegistryClient(registryURL, nil, 0)
 
 			ctx := cmd.Context()
@@ -295,26 +303,107 @@ func skillSearchCmd() *cobra.Command {
 				ctx = context.Background()
 			}
 
-			results, err := client.Search(ctx, query)
+			// Search remote registry.
+			remoteResults, err := client.Search(ctx, query)
 			if err != nil {
 				return fmt.Errorf("searching registry: %w", err)
 			}
 
-			if len(results) == 0 {
+			// Search local store.
+			s, err := store.NewStore(storePath)
+			if err != nil {
+				return fmt.Errorf("opening store: %w", err)
+			}
+			defer s.Close()
+
+			localStates, err := s.ListAllSkillStates()
+			if err != nil {
+				return fmt.Errorf("listing local skills: %w", err)
+			}
+
+			// Build a set of locally installed names for deduplication annotation.
+			installedNames := make(map[string]bool, len(localStates))
+			for _, st := range localStates {
+				installedNames[st.Name] = true
+			}
+
+			// Collect matching local results first.
+			var localMatches []store.SkillInstallState
+			for _, st := range localStates {
+				if matchesSearch(st, query, category, tag) {
+					localMatches = append(localMatches, st)
+				}
+			}
+
+			// Collect matching remote results.
+			// Remote results don't carry category or tag metadata, so skip them
+			// when either filter is set (they cannot satisfy the filter).
+			var remoteMatches []skills.RegistrySearchResult
+			if category == "" && tag == "" {
+				remoteMatches = remoteResults
+			}
+
+			if len(localMatches) == 0 && len(remoteMatches) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No results found.")
 				return nil
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION")
-			for _, r := range results {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, r.Version, r.Description)
+			fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION\tSTATUS")
+
+			for _, st := range localMatches {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", st.Name, st.Version, "", "[installed]")
 			}
+
+			for _, r := range remoteMatches {
+				installed := ""
+				if installedNames[r.Name] {
+					installed = "[installed]"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Name, r.Version, r.Description, installed)
+			}
+
 			return w.Flush()
 		},
 	}
 	cmd.Flags().String("registry", "", "registry URL (default: "+defaultRegistryURL+")")
+	cmd.Flags().String("store", "", "path to skills database (default: ~/.config/rubichan/skills.db)")
+	cmd.Flags().String("category", "", "filter by category (case-insensitive)")
+	cmd.Flags().String("tag", "", "filter by tag")
 	return cmd
+}
+
+// matchesSearch reports whether the installed skill state matches the given
+// search query, category filter, and tag filter.
+//
+// All non-empty filters must match simultaneously:
+//   - category: case-insensitive equality against st.Category
+//   - tag: checks if st.Tags (comma-separated) contains the tag
+//   - query: substring match against name and the comma-separated tags string
+func matchesSearch(st store.SkillInstallState, query, category, tag string) bool {
+	if category != "" && !strings.EqualFold(st.Category, category) {
+		return false
+	}
+	if tag != "" {
+		tagFound := false
+		for _, t := range strings.Split(st.Tags, ",") {
+			if strings.EqualFold(strings.TrimSpace(t), tag) {
+				tagFound = true
+				break
+			}
+		}
+		if !tagFound {
+			return false
+		}
+	}
+	if query != "" {
+		nameMatch := strings.Contains(strings.ToLower(st.Name), strings.ToLower(query))
+		tagsMatch := strings.Contains(strings.ToLower(st.Tags), strings.ToLower(query))
+		if !nameMatch && !tagsMatch {
+			return false
+		}
+	}
+	return true
 }
 
 func skillWhyCmd() *cobra.Command {

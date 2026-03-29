@@ -1845,3 +1845,109 @@ commands:
 	assert.Contains(t, output, "1 agent")
 	assert.Contains(t, output, "3 commands")
 }
+
+// ---------------------------------------------------------------------------
+// Task 6: skill search --category and --tag filters, local search
+// ---------------------------------------------------------------------------
+
+func TestSkillSearchLocalResults(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "go-linter",
+		Version:  "1.0.0",
+		Source:   "git",
+		Category: "development",
+		Tags:     "golang,lint",
+	}))
+	s.Close()
+
+	// Registry returns empty results.
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"search", "go", "--store", dbPath, "--registry", srv.URL})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "go-linter")
+	assert.Contains(t, output, "[installed]")
+}
+
+func TestMatchesSearch(t *testing.T) {
+	st := store.SkillInstallState{
+		Name:     "go-linter",
+		Version:  "1.0.0",
+		Category: "development",
+		Tags:     "golang,lint,code-quality",
+	}
+
+	// Query match on name.
+	assert.True(t, matchesSearch(st, "go", "", ""))
+	// Query match on tags.
+	assert.True(t, matchesSearch(st, "lint", "", ""))
+	// Query no match.
+	assert.False(t, matchesSearch(st, "python", "", ""))
+
+	// Category filter match (case-insensitive).
+	assert.True(t, matchesSearch(st, "", "Development", ""))
+	assert.True(t, matchesSearch(st, "", "development", ""))
+	// Category filter no match.
+	assert.False(t, matchesSearch(st, "", "testing", ""))
+
+	// Tag filter match.
+	assert.True(t, matchesSearch(st, "", "", "lint"))
+	assert.True(t, matchesSearch(st, "", "", "golang"))
+	// Tag filter no match.
+	assert.False(t, matchesSearch(st, "", "", "typescript"))
+
+	// Combined filters.
+	assert.True(t, matchesSearch(st, "go", "development", "golang"))
+	assert.False(t, matchesSearch(st, "go", "testing", "golang"))
+}
+
+func TestSkillSearchCategoryFilter(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.NewStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "go-linter",
+		Version:  "1.0.0",
+		Source:   "git",
+		Category: "development",
+		Tags:     "golang",
+	}))
+	require.NoError(t, s.SaveSkillState(store.SkillInstallState{
+		Name:     "doc-writer",
+		Version:  "0.1.0",
+		Source:   "git",
+		Category: "documentation",
+		Tags:     "docs",
+	}))
+	s.Close()
+
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{})
+	}))
+	defer srv.Close()
+
+	cmd := skillCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"search", "linter", "--category", "development", "--store", dbPath, "--registry", srv.URL})
+
+	require.NoError(t, cmd.Execute())
+
+	output := buf.String()
+	assert.Contains(t, output, "go-linter")
+	assert.NotContains(t, output, "doc-writer")
+}
