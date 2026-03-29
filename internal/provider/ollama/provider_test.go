@@ -95,7 +95,8 @@ func TestStreamAPIError(t *testing.T) {
 
 	_, err := p.Stream(context.Background(), req)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "500")
+	assert.Contains(t, err.Error(), "Server error")
+	assert.Contains(t, err.Error(), "model not found")
 }
 
 func TestProviderRegistration(t *testing.T) {

@@ -199,7 +199,8 @@ func TestStreamAPIError(t *testing.T) {
 
 	_, err := p.Stream(context.Background(), req)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "429")
+	assert.Contains(t, err.Error(), "Rate limited")
+	assert.Contains(t, err.Error(), "Rate limit exceeded")
 }
 
 func TestStreamContextCancellation(t *testing.T) {
