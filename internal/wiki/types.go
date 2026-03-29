@@ -74,7 +74,6 @@ type AnalyzerInput struct {
 	Files          []ScannedFile
 	ModuleAnalyses []ModuleAnalysis
 	Architecture   string
-	ExistingDocs   map[string]string // path → content (for change history)
 }
 
 // AnalyzerOutput holds documents and diagrams from a specialized analyzer.

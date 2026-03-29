@@ -43,7 +43,10 @@ func (a *SuggestionAnalyzer) Analyze(ctx context.Context, input AnalyzerInput) (
 
 	resp, err := a.llm.Complete(ctx, buf.String())
 	if err != nil {
-		return &AnalyzerOutput{}, nil // non-fatal
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return &AnalyzerOutput{}, nil // non-fatal for LLM errors
 	}
 
 	resp = strings.TrimSpace(resp)

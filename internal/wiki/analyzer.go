@@ -126,6 +126,15 @@ func RunSpecializedAnalyzers(ctx context.Context, analyzers []SpecializedAnalyze
 	}
 
 	wg.Wait()
+
+	if ctx.Err() != nil {
+		return docs, diags, ctx.Err()
+	}
+
+	// Sort for deterministic output across runs.
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
+	sort.Slice(diags, func(i, j int) bool { return diags[i].Title < diags[j].Title })
+
 	return docs, diags, nil
 }
 
@@ -323,4 +332,3 @@ func parseArchitectureResponse(response string) (architecture, keyAbstractions s
 
 	return architecture, keyAbstractions
 }
-

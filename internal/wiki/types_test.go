@@ -240,7 +240,6 @@ func TestAnalyzerInputFields(t *testing.T) {
 		Files:          []ScannedFile{{Path: "main.go"}},
 		ModuleAnalyses: []ModuleAnalysis{{Module: "mod", Summary: "summary"}},
 		Architecture:   "hexagonal",
-		ExistingDocs:   map[string]string{"docs/index.md": "content"},
 	}
 
 	assert.Len(t, input.Chunks, 1)
@@ -250,7 +249,6 @@ func TestAnalyzerInputFields(t *testing.T) {
 	assert.Len(t, input.ModuleAnalyses, 1)
 	assert.Equal(t, "mod", input.ModuleAnalyses[0].Module)
 	assert.Equal(t, "hexagonal", input.Architecture)
-	assert.Equal(t, "content", input.ExistingDocs["docs/index.md"])
 }
 
 func TestAnalyzerOutputCanHoldDocumentsAndDiagrams(t *testing.T) {
