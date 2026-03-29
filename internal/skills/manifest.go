@@ -63,6 +63,15 @@ const (
 	PermSkillInvoke Permission = "skill:invoke"
 )
 
+// validCategories contains the allowed values for SkillManifest.Category.
+var validCategories = map[string]bool{
+	"development":  true,
+	"productivity": true,
+	"learning":     true,
+	"security":     true,
+	"testing":      true,
+}
+
 var validPermissions = map[Permission]bool{
 	PermFileRead:    true,
 	PermFileWrite:   true,
@@ -123,6 +132,8 @@ type SkillManifest struct {
 	Author         string               `yaml:"author"`
 	License        string               `yaml:"license"`
 	Homepage       string               `yaml:"homepage"`
+	Category       string               `yaml:"category"`
+	Tags           []string             `yaml:"tags"`
 	Triggers       TriggerConfig        `yaml:"triggers"`
 	Permissions    []Permission         `yaml:"permissions"`
 	Dependencies   []Dependency         `yaml:"dependencies"`
@@ -289,6 +300,11 @@ func validateManifest(m *SkillManifest) error {
 		if agent.Name == "" {
 			return fmt.Errorf("manifest validation: agent name is required")
 		}
+	}
+
+	// Category (optional, but must be a known value when provided).
+	if m.Category != "" && !validCategories[m.Category] {
+		return fmt.Errorf("manifest validation: invalid category %q", m.Category)
 	}
 
 	// Backend.
