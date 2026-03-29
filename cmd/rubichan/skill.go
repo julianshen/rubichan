@@ -1036,9 +1036,12 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 	defer s.Close()
 
 	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:    manifest.Name,
-		Version: manifest.Version,
-		Source:  dest,
+		Name:       manifest.Name,
+		Version:    manifest.Version,
+		Source:     dest,
+		SourceType: "local",
+		Category:   manifest.Category,
+		Tags:       strings.Join(manifest.Tags, ","),
 	}); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
@@ -1324,9 +1327,12 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	defer s.Close()
 
 	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:    manifest.Name,
-		Version: manifest.Version,
-		Source:  dest,
+		Name:       manifest.Name,
+		Version:    manifest.Version,
+		Source:     dest,
+		SourceType: "registry",
+		Category:   manifest.Category,
+		Tags:       strings.Join(manifest.Tags, ","),
 	}); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
