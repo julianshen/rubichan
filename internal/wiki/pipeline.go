@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/security"
@@ -43,25 +44,28 @@ func (r *osSourceReader) ReadFile(path string) ([]byte, error) {
 }
 
 // Run executes the full wiki pipeline: scan -> chunk -> analyze -> diagrams -> assemble -> render.
-func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) error {
+// It returns a WikiResult summarising what was generated.
+func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*WikiResult, error) {
+	start := time.Now()
+
 	// Stage 1: Scan
 	cfg.progress("scanning", 0, 0, fmt.Sprintf("wiki: scanning %s...", cfg.Dir))
 	files, err := Scan(ctx, cfg.Dir, p)
 	if err != nil {
 		if isContextCancellation(err) {
-			return err
+			return nil, err
 		}
-		return fmt.Errorf("scan: %w", err)
+		return nil, fmt.Errorf("scan: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Stage 2: Scan API patterns
 	cfg.progress("scanning-api", 0, len(files), fmt.Sprintf("wiki: scanning API patterns in %d files...", len(files)))
 	apiPatterns := ScanAPIPatterns(files, os.ReadFile)
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Stage 3: Chunk
@@ -69,10 +73,10 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	reader := &osSourceReader{baseDir: cfg.Dir}
 	chunks, err := ChunkFiles(files, reader, DefaultChunkerConfig())
 	if err != nil {
-		return fmt.Errorf("chunk: %w", err)
+		return nil, fmt.Errorf("chunk: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Stage 3: Analyze (base pass)
@@ -85,12 +89,12 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	analysis, err := AnalyzeBase(ctx, chunks, llm, analyzerCfg)
 	if err != nil {
 		if isContextCancellation(err) {
-			return err
+			return nil, err
 		}
-		return fmt.Errorf("analyze: %w", err)
+		return nil, fmt.Errorf("analyze: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Stage 3b: Specialized analyzers
@@ -111,12 +115,12 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	extraDocs, extraDiagrams, err := RunSpecializedAnalyzers(ctx, specializedAnalyzers, analyzerInput)
 	if err != nil {
 		if isContextCancellation(err) {
-			return err
+			return nil, err
 		}
-		return fmt.Errorf("specialized analyzers: %w", err)
+		return nil, fmt.Errorf("specialized analyzers: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Stage 4: Diagrams
@@ -128,35 +132,47 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) er
 	diagrams, err := GenerateDiagrams(ctx, files, analysis, llm, DiagramConfig{Format: diagramFmt})
 	if err != nil {
 		if isContextCancellation(err) {
-			return err
+			return nil, err
 		}
-		return fmt.Errorf("diagrams: %w", err)
+		return nil, fmt.Errorf("diagrams: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Stage 5: Assemble
 	cfg.progress("assembling", 0, 0, "wiki: assembling documents...")
 	diagrams = append(diagrams, extraDiagrams...)
-	documents, err := Assemble(analysis, diagrams, nil, cfg.SecurityFindings)
+	documents, err := Assemble(analysis, diagrams, nil, cfg.SecurityFindings, files)
 	if err != nil {
-		return fmt.Errorf("assemble: %w", err)
+		return nil, fmt.Errorf("assemble: %w", err)
 	}
 	documents = append(documents, extraDocs...)
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Stage 6: Render
 	cfg.progress("rendering", 0, len(documents), fmt.Sprintf("wiki: rendering %d documents to %s...", len(documents), cfg.OutputDir))
 	if err := Render(documents, RendererConfig{Format: cfg.Format, OutputDir: cfg.OutputDir}); err != nil {
-		return fmt.Errorf("render: %w", err)
+		return nil, fmt.Errorf("render: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	cfg.progress("done", 0, 0, "wiki: done.")
-	return nil
+
+	format := cfg.Format
+	if format == "" {
+		format = "raw-md"
+	}
+	result := &WikiResult{
+		OutputDir:  cfg.OutputDir,
+		Format:     format,
+		Documents:  len(documents),
+		Diagrams:   len(diagrams),
+		DurationMs: time.Since(start).Milliseconds(),
+	}
+	return result, nil
 }

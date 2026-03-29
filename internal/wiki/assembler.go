@@ -8,15 +8,15 @@ import (
 	"github.com/julianshen/rubichan/internal/security"
 )
 
-// Assemble combines analysis results, diagrams, skill sections, and security
-// findings into a set of wiki documents. It always produces at least the
-// _index.md page.
-func Assemble(analysis *AnalysisResult, diagrams []Diagram, skillSections []SkillWikiSection, findings []security.Finding) ([]Document, error) {
+// Assemble combines analysis results, diagrams, skill sections, security
+// findings, and scanned files into a set of wiki documents. It always produces
+// at least the _index.md page.
+func Assemble(analysis *AnalysisResult, diagrams []Diagram, skillSections []SkillWikiSection, findings []security.Finding, files []ScannedFile) ([]Document, error) {
 	var docs []Document
 
 	docs = append(docs, buildIndexPage(analysis))
 	docs = append(docs, buildArchitecturePages(analysis, diagrams)...)
-	docs = append(docs, buildModulePages(analysis)...)
+	docs = append(docs, buildModulePages(analysis, files)...)
 	docs = append(docs, buildCodeStructurePage(analysis))
 	docs = append(docs, buildSecurityPage(findings))
 
@@ -119,7 +119,8 @@ func buildArchitecturePages(analysis *AnalysisResult, diagrams []Diagram) []Docu
 }
 
 // buildModulePages creates modules/_index.md and one page per module.
-func buildModulePages(analysis *AnalysisResult) []Document {
+// files is accepted for future enrichment but is not yet used.
+func buildModulePages(analysis *AnalysisResult, _ []ScannedFile) []Document {
 	if len(analysis.Modules) == 0 {
 		return nil
 	}

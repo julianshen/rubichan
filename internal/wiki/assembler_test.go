@@ -17,7 +17,7 @@ func TestAssembleCreatesIndexPage(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	var indexDoc *Document
@@ -40,7 +40,7 @@ func TestAssembleCreatesModulePages(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Find modules/_index.md
@@ -97,7 +97,7 @@ func TestAssembleIncludesDiagrams(t *testing.T) {
 		{Title: "Key Sequences", Type: "sequence", Content: "sequenceDiagram\n    A->>B: call"},
 	}
 
-	docs, err := Assemble(analysis, diagrams, nil, nil)
+	docs, err := Assemble(analysis, diagrams, nil, nil, nil)
 	require.NoError(t, err)
 
 	var archDoc *Document
@@ -151,7 +151,7 @@ func TestAssembleIncludesSkillSections(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, skillSections, nil)
+	docs, err := Assemble(analysis, nil, skillSections, nil, nil)
 	require.NoError(t, err)
 
 	expectedPath := "skill-contributed/security-analysis.md"
@@ -177,7 +177,7 @@ func TestAssembleCreatesSuggestionsPage(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	var suggestionsDoc *Document
@@ -198,7 +198,7 @@ func TestAssembleCreatesSuggestionsPage(t *testing.T) {
 func TestAssembleEmptyAnalysis(t *testing.T) {
 	analysis := &AnalysisResult{}
 
-	docs, err := Assemble(analysis, nil, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, docs, "should produce at least one document")
 
@@ -238,7 +238,7 @@ func TestAssembleModulePagesUseForwardSlashes(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	for _, doc := range docs {
@@ -272,7 +272,7 @@ func TestAssembleWithSecurityFindings(t *testing.T) {
 		},
 	}
 
-	docs, err := Assemble(analysis, nil, nil, findings)
+	docs, err := Assemble(analysis, nil, nil, findings, nil)
 	require.NoError(t, err)
 
 	var secDoc *Document
@@ -304,7 +304,7 @@ func TestAssembleWithNoSecurityFindings(t *testing.T) {
 	analysis := &AnalysisResult{}
 
 	// nil findings
-	docs, err := Assemble(analysis, nil, nil, nil)
+	docs, err := Assemble(analysis, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	var secDoc *Document
@@ -318,7 +318,7 @@ func TestAssembleWithNoSecurityFindings(t *testing.T) {
 	assert.Contains(t, secDoc.Content, "Security analysis pending...")
 
 	// empty slice findings
-	docs2, err := Assemble(analysis, nil, nil, []security.Finding{})
+	docs2, err := Assemble(analysis, nil, nil, []security.Finding{}, nil)
 	require.NoError(t, err)
 
 	var secDoc2 *Document

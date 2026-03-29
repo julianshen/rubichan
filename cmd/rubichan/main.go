@@ -2828,7 +2828,24 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 		},
 	}
 
-	return wiki.Run(context.Background(), wikiCfg, llm, par)
+	result, err := wiki.Run(context.Background(), wikiCfg, llm, par)
+	if err != nil {
+		return err
+	}
+
+	switch outputFlag {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(result); encErr != nil {
+			return fmt.Errorf("encoding wiki result: %w", encErr)
+		}
+	default:
+		fmt.Fprintf(os.Stdout, "Wiki generated: %d documents, %d diagrams — output: %s (format: %s, %.1fs)\n",
+			result.Documents, result.Diagrams, result.OutputDir, result.Format,
+			float64(result.DurationMs)/1000)
+	}
+	return nil
 }
 
 // uploadSARIFStandalone uploads SARIF without requiring --post-to-pr.
