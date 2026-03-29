@@ -19,9 +19,9 @@ var (
 
 // Cached Chroma resources — looked up once, reused across renders.
 var (
-	chromaStyle     *chroma.Style
-	chromaFormatter chroma.Formatter
-	chromaLexerMu   sync.Mutex
+	chromaStyle      *chroma.Style
+	chromaFormatter  chroma.Formatter
+	chromaLexerMu    sync.Mutex
 	chromaLexerCache = map[string]chroma.Lexer{}
 )
 
@@ -84,7 +84,9 @@ func detectContentType(content string, toolName string) string {
 	}
 
 	// Markdown: has heading lines or code fences.
-	if hasMarkdownIndicators(trimmed) {
+	// Skip markdown detection for shell results — output lines starting
+	// with # are comments, not headings.
+	if toolName != "shell" && hasMarkdownIndicators(trimmed) {
 		return "markdown"
 	}
 

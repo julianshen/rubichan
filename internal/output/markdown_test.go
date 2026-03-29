@@ -226,3 +226,78 @@ func TestMarkdownFormatterNoToolCallsSection(t *testing.T) {
 	s := string(out)
 	assert.False(t, strings.Contains(s, "Tool Calls"))
 }
+
+func TestFormatToolCallSummary_Shell(t *testing.T) {
+	tc := ToolCallLog{
+		Name:  "shell",
+		Input: json.RawMessage(`{"command": "npm run build"}`),
+	}
+	summary := formatToolCallSummary(tc)
+	assert.Equal(t, "`npm run build`", summary)
+}
+
+func TestFormatToolCallSummary_File(t *testing.T) {
+	tc := ToolCallLog{
+		Name:  "file",
+		Input: json.RawMessage(`{"operation": "read", "path": "main.go"}`),
+	}
+	summary := formatToolCallSummary(tc)
+	assert.Equal(t, "read `main.go`", summary)
+}
+
+func TestFormatToolCallSummary_FilePathOnly(t *testing.T) {
+	tc := ToolCallLog{
+		Name:  "file",
+		Input: json.RawMessage(`{"path": "src/index.ts"}`),
+	}
+	summary := formatToolCallSummary(tc)
+	assert.Equal(t, "`src/index.ts`", summary)
+}
+
+func TestFormatToolCallSummary_Search(t *testing.T) {
+	tc := ToolCallLog{
+		Name:  "search",
+		Input: json.RawMessage(`{"pattern": "TODO"}`),
+	}
+	summary := formatToolCallSummary(tc)
+	assert.Equal(t, "`TODO`", summary)
+}
+
+func TestFormatToolCallSummary_FallbackToCommonKeys(t *testing.T) {
+	tc := ToolCallLog{
+		Name:  "http_get",
+		Input: json.RawMessage(`{"url": "https://api.example.com/data"}`),
+	}
+	summary := formatToolCallSummary(tc)
+	assert.Equal(t, "`https://api.example.com/data`", summary)
+}
+
+func TestFormatToolCallSummary_EmptyInput(t *testing.T) {
+	tc := ToolCallLog{Name: "shell", Input: nil}
+	assert.Equal(t, "", formatToolCallSummary(tc))
+}
+
+func TestFormatToolCallSummary_InvalidJSON(t *testing.T) {
+	tc := ToolCallLog{Name: "shell", Input: json.RawMessage(`not json`)}
+	assert.Equal(t, "", formatToolCallSummary(tc))
+}
+
+func TestFormatToolCallSummary_NoMatchingKeys(t *testing.T) {
+	tc := ToolCallLog{
+		Name:  "custom_tool",
+		Input: json.RawMessage(`{"unknown_field": 42}`),
+	}
+	assert.Equal(t, "", formatToolCallSummary(tc))
+}
+
+func TestMdQuoteTruncation(t *testing.T) {
+	long := strings.Repeat("a", 100)
+	result := mdQuote(long)
+	assert.True(t, len(result) < 100, "should truncate long strings")
+	assert.Contains(t, result, "…")
+	assert.True(t, strings.HasPrefix(result, "`"))
+}
+
+func TestMdQuoteEmpty(t *testing.T) {
+	assert.Equal(t, "", mdQuote(""))
+}
