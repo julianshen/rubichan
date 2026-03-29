@@ -1011,8 +1011,25 @@ specific version; otherwise "latest" is used.`,
 	return cmd
 }
 
-// installFromLocal copies a skill from a local directory, validates its
-// manifest, and saves install state to the store.
+// saveInstallState persists skill metadata to the store after a successful install.
+func saveInstallState(storePath string, manifest *skills.SkillManifest, dest, sourceType, sourceURL, sourceRef string) error {
+	s, err := store.NewStore(storePath)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer s.Close()
+	return s.SaveSkillState(store.SkillInstallState{
+		Name:       manifest.Name,
+		Version:    manifest.Version,
+		Source:     dest,
+		SourceType: sourceType,
+		SourceURL:  sourceURL,
+		SourceRef:  sourceRef,
+		Category:   manifest.Category,
+		Tags:       strings.Join(manifest.Tags, ","),
+	})
+}
+
 func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) error {
 	manifest, _, _, err := loadSkillManifest(source)
 	if err != nil {
@@ -1028,21 +1045,7 @@ func installFromLocal(cmd *cobra.Command, source, skillsDir, storePath string) e
 		return fmt.Errorf("copying skill: %w", err)
 	}
 
-	// Save state to store.
-	s, err := store.NewStore(storePath)
-	if err != nil {
-		return fmt.Errorf("opening store: %w", err)
-	}
-	defer s.Close()
-
-	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:       manifest.Name,
-		Version:    manifest.Version,
-		Source:     dest,
-		SourceType: "local",
-		Category:   manifest.Category,
-		Tags:       strings.Join(manifest.Tags, ","),
-	}); err != nil {
+	if err := saveInstallState(storePath, manifest, dest, "local", source, ""); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
 
@@ -1089,23 +1092,7 @@ func installFromGit(cmd *cobra.Command, src installSource, skillsDir, storePath 
 		return fmt.Errorf("copying skill: %w", err)
 	}
 
-	s, err := store.NewStore(storePath)
-	if err != nil {
-		return fmt.Errorf("opening store: %w", err)
-	}
-	defer s.Close()
-
-	tags := strings.Join(manifest.Tags, ",")
-	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:       manifest.Name,
-		Version:    manifest.Version,
-		Source:     dest,
-		SourceType: src.Type,
-		SourceURL:  src.URL,
-		SourceRef:  src.Ref,
-		Category:   manifest.Category,
-		Tags:       tags,
-	}); err != nil {
+	if err := saveInstallState(storePath, manifest, dest, src.Type, src.URL, src.Ref); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
 
@@ -1181,23 +1168,7 @@ func installFromNpm(cmd *cobra.Command, src installSource, skillsDir, storePath 
 		return fmt.Errorf("copying skill: %w", err)
 	}
 
-	s, err := store.NewStore(storePath)
-	if err != nil {
-		return fmt.Errorf("opening store: %w", err)
-	}
-	defer s.Close()
-
-	tags := strings.Join(manifest.Tags, ",")
-	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:       manifest.Name,
-		Version:    manifest.Version,
-		Source:     dest,
-		SourceType: "npm",
-		SourceURL:  src.URL,
-		SourceRef:  src.Ref,
-		Category:   manifest.Category,
-		Tags:       tags,
-	}); err != nil {
+	if err := saveInstallState(storePath, manifest, dest, "npm", src.URL, src.Ref); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
 
@@ -1320,20 +1291,7 @@ func installFromRegistry(cmd *cobra.Command, source, skillsDir, storePath string
 	}
 
 	// Save state to store.
-	s, err := store.NewStore(storePath)
-	if err != nil {
-		return fmt.Errorf("opening store: %w", err)
-	}
-	defer s.Close()
-
-	if err := s.SaveSkillState(store.SkillInstallState{
-		Name:       manifest.Name,
-		Version:    manifest.Version,
-		Source:     dest,
-		SourceType: "registry",
-		Category:   manifest.Category,
-		Tags:       strings.Join(manifest.Tags, ","),
-	}); err != nil {
+	if err := saveInstallState(storePath, manifest, dest, "registry", "", ""); err != nil {
 		return fmt.Errorf("saving skill state: %w", err)
 	}
 
