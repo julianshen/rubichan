@@ -579,3 +579,12 @@ func TestWikiFlagsParsedByCobra(t *testing.T) {
 	assert.Equal(t, "hugo", wikiFormatFlag)
 	assert.Equal(t, 10, wikiConcurrencyFlag)
 }
+
+func TestRunWikiHeadlessInvalidProviderReturnsError(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Provider.Default = "nonexistent-provider-xyz"
+
+	err := runWikiHeadless(cfg, t.TempDir(), "docs/wiki", "raw-md", 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating provider")
+}

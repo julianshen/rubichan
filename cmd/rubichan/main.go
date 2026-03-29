@@ -30,6 +30,7 @@ import (
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
+	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/permissions"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/pipeline"
@@ -481,6 +482,17 @@ func main() {
 		Short: "An AI coding assistant",
 		Long:  "rubichan — an interactive AI coding assistant powered by LLMs.",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if wikiFlag {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("getting working directory: %w", err)
+				}
+				cfg, err := loadConfig()
+				if err != nil {
+					return err
+				}
+				return runWikiHeadless(cfg, cwd, wikiOutFlag, wikiFormatFlag, wikiConcurrencyFlag)
+			}
 			if headless {
 				return runHeadless()
 			}
@@ -2788,6 +2800,35 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 	}
 
 	return nil
+}
+
+// runWikiHeadless runs the wiki generation pipeline directly without an agent loop.
+// It creates an LLM provider, a parser, and delegates to wiki.Run, emitting
+// progress updates to stderr.
+func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency int) error {
+	p, err := provider.NewProvider(cfg)
+	if err != nil {
+		return fmt.Errorf("creating provider: %w", err)
+	}
+
+	llm := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	par := parser.NewParser()
+
+	wikiCfg := wiki.Config{
+		Dir:         cwd,
+		OutputDir:   outDir,
+		Format:      format,
+		Concurrency: concurrency,
+		ProgressFunc: func(stage string, current, total int) {
+			if total > 0 {
+				fmt.Fprintf(os.Stderr, "[%s] %d/%d\n", stage, current, total)
+			} else {
+				fmt.Fprintf(os.Stderr, "[%s]\n", stage)
+			}
+		},
+	}
+
+	return wiki.Run(context.Background(), wikiCfg, llm, par)
 }
 
 // uploadSARIFStandalone uploads SARIF without requiring --post-to-pr.
