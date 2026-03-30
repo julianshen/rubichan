@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+// LSPNotifier provides post-write diagnostic feedback from a language server.
+// Implementations should notify the server of file changes and collect any
+// resulting diagnostics (errors/warnings) to surface to the LLM.
+type LSPNotifier interface {
+	NotifyAndCollectDiagnostics(ctx context.Context, filePath string, content []byte) ([]string, error)
+}
+
 // fileInput represents the input for the file tool.
 type fileInput struct {
 	Operation string `json:"operation"`
@@ -22,6 +29,7 @@ type fileInput struct {
 type FileTool struct {
 	rootDir     string
 	diffTracker *DiffTracker
+	lspNotifier LSPNotifier
 }
 
 // NewFileTool creates a new FileTool that operates within the given root directory.
@@ -43,6 +51,12 @@ func NewFileTool(rootDir string) *FileTool {
 // SetDiffTracker attaches a DiffTracker to record file changes.
 func (f *FileTool) SetDiffTracker(dt *DiffTracker) {
 	f.diffTracker = dt
+}
+
+// SetLSPNotifier attaches an LSPNotifier that will be called after file writes
+// to collect diagnostics from the language server.
+func (f *FileTool) SetLSPNotifier(n LSPNotifier) {
+	f.lspNotifier = n
 }
 
 func (f *FileTool) Name() string {
@@ -90,7 +104,7 @@ func (f *FileTool) InputSchema() json.RawMessage {
 // ExecuteStream implements StreamingTool. It emits Begin/End events
 // around file operations. For read operations on large files, it
 // emits the content as Delta events.
-func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
+func (f *FileTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
 	var in fileInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
@@ -111,9 +125,9 @@ func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit 
 			emit(ToolEvent{Stage: EventDelta, Content: result.Content})
 		}
 	case "write":
-		result, err = f.writeFile(fullPath, in.Content)
+		result, err = f.writeFile(ctx, fullPath, in.Content)
 	case "patch":
-		result, err = f.patchFile(fullPath, in.OldString, in.NewString)
+		result, err = f.patchFile(ctx, fullPath, in.OldString, in.NewString)
 	default:
 		result = ToolResult{
 			Content: fmt.Sprintf("unknown operation: %s", in.Operation),
@@ -125,7 +139,7 @@ func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit 
 	return result, err
 }
 
-func (f *FileTool) Execute(_ context.Context, input json.RawMessage) (ToolResult, error) {
+func (f *FileTool) Execute(ctx context.Context, input json.RawMessage) (ToolResult, error) {
 	var in fileInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
@@ -140,9 +154,9 @@ func (f *FileTool) Execute(_ context.Context, input json.RawMessage) (ToolResult
 	case "read":
 		return f.readFile(fullPath)
 	case "write":
-		return f.writeFile(fullPath, in.Content)
+		return f.writeFile(ctx, fullPath, in.Content)
 	case "patch":
-		return f.patchFile(fullPath, in.OldString, in.NewString)
+		return f.patchFile(ctx, fullPath, in.OldString, in.NewString)
 	default:
 		return ToolResult{
 			Content: fmt.Sprintf("unknown operation: %s", in.Operation),
@@ -224,7 +238,7 @@ func (f *FileTool) readFile(path string) (ToolResult, error) {
 	return ToolResult{Content: string(data)}, nil
 }
 
-func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
+func (f *FileTool) writeFile(ctx context.Context, path, content string) (ToolResult, error) {
 	// Check if the file already exists to determine create vs modify.
 	_, statErr := os.Stat(path)
 	existed := statErr == nil
@@ -251,10 +265,20 @@ func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
 		})
 	}
 
-	return ToolResult{Content: fmt.Sprintf("wrote %s", relPath)}, nil
+	result := ToolResult{Content: fmt.Sprintf("wrote %s", relPath)}
+
+	// Collect LSP diagnostics after write.
+	if f.lspNotifier != nil {
+		diags, err := f.lspNotifier.NotifyAndCollectDiagnostics(ctx, path, []byte(content))
+		if err == nil && len(diags) > 0 {
+			result.Content += "\n\n\u26a0\ufe0f LSP diagnostics:\n" + strings.Join(diags, "\n")
+		}
+	}
+
+	return result, nil
 }
 
-func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, error) {
+func (f *FileTool) patchFile(ctx context.Context, path, oldString, newString string) (ToolResult, error) {
 	if oldString == "" {
 		return ToolResult{Content: "old_string must not be empty", IsError: true}, nil
 	}
@@ -289,5 +313,15 @@ func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, err
 		})
 	}
 
-	return ToolResult{Content: fmt.Sprintf("patched %s", relPath)}, nil
+	result := ToolResult{Content: fmt.Sprintf("patched %s", relPath)}
+
+	// Collect LSP diagnostics after patch.
+	if f.lspNotifier != nil {
+		diags, err := f.lspNotifier.NotifyAndCollectDiagnostics(ctx, path, []byte(patched))
+		if err == nil && len(diags) > 0 {
+			result.Content += "\n\n\u26a0\ufe0f LSP diagnostics:\n" + strings.Join(diags, "\n")
+		}
+	}
+
+	return result, nil
 }
