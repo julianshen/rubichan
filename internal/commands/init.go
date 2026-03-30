@@ -12,10 +12,11 @@ import (
 
 // ProjectInfo holds detected information about a project.
 type ProjectInfo struct {
-	Languages []string
-	BuildCmds []string
-	TestCmds  []string
-	LintCmds  []string
+	Description string   // user-provided project description
+	Languages   []string
+	BuildCmds   []string
+	TestCmds    []string
+	LintCmds    []string
 }
 
 // initCommand implements the /init slash command that generates AGENTS.md or CLAUDE.md.
@@ -23,8 +24,9 @@ type initCommand struct {
 	workDir string
 }
 
-// NewInitCommand creates a command that generates an AGENTS.md or CLAUDE.md file
-// for the current project based on detected project structure.
+// NewInitCommand creates a command that generates an AGENT.md (default),
+// AGENTS.md, or CLAUDE.md file for the current project based on detected
+// project structure and an optional user-provided description.
 func NewInitCommand(workDir string) SlashCommand {
 	return &initCommand{workDir: workDir}
 }
@@ -36,9 +38,14 @@ func (c *initCommand) Arguments() []ArgumentDef {
 	return []ArgumentDef{
 		{
 			Name:        "format",
-			Description: "Format to generate: agents (default) or claude",
+			Description: "Format: agent (default), agents, or claude",
 			Required:    false,
-			Static:      []string{"agents", "claude", "agent"},
+			Static:      []string{"agent", "agents", "claude"},
+		},
+		{
+			Name:        "description",
+			Description: "Project description to populate AGENT.md (e.g., 'Build a REST API with Go and PostgreSQL')",
+			Required:    false,
 		},
 	}
 }
@@ -48,21 +55,33 @@ func (c *initCommand) Complete(_ context.Context, _ []string) []Candidate {
 }
 
 func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) {
-	format := "agents"
+	format := "agent"
+	var description string
+
 	if len(args) > 0 {
-		format = strings.ToLower(args[0])
+		first := strings.ToLower(args[0])
+		if isFormatArg(first) {
+			format = first
+			if len(args) > 1 {
+				description = strings.Join(args[1:], " ")
+			}
+		} else {
+			// First arg is not a format — treat all args as description.
+			description = strings.Join(args, " ")
+		}
 	}
 
+	// Resolve format with prefix abbreviations.
 	var filename string
-	switch format {
-	case "agents":
+	switch {
+	case format == "agents":
 		filename = "AGENTS.md"
-	case "claude":
-		filename = "CLAUDE.md"
-	case "agent":
+	case format == "agent" || strings.HasPrefix("agent", format):
 		filename = "AGENT.md"
+	case format == "claude" || strings.HasPrefix("claude", format):
+		filename = "CLAUDE.md"
 	default:
-		return Result{}, fmt.Errorf("unknown format %q: use 'agents' or 'claude'", format)
+		return Result{}, fmt.Errorf("unknown format %q: use 'agent', 'agents', or 'claude'", format)
 	}
 
 	target := filepath.Join(c.workDir, filename)
@@ -72,7 +91,15 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 		return Result{}, fmt.Errorf("checking for existing %s: %w", filename, err)
 	}
 
+	// If creating AGENT.md and CLAUDE.md exists, convert it.
+	if filename == "AGENT.md" {
+		if converted, msg := convertFromCLAUDE(c.workDir, target); converted {
+			return Result{Output: msg}, nil
+		}
+	}
+
 	info := DetectProjectInfo(c.workDir)
+	info.Description = strings.TrimSpace(description)
 	content := GenerateContent(filename, info)
 
 	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
@@ -80,6 +107,38 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 	}
 
 	return Result{Output: fmt.Sprintf("Generated %s in project root.", filename)}, nil
+}
+
+// convertFromCLAUDE checks if CLAUDE.md exists in the work directory.
+// If so, it reads its content, replaces heading references, writes AGENT.md,
+// and removes the old CLAUDE.md. Returns (true, message) on success.
+func convertFromCLAUDE(workDir, agentTarget string) (bool, string) {
+	claudePath := filepath.Join(workDir, "CLAUDE.md")
+	content, err := os.ReadFile(claudePath)
+	if err != nil {
+		return false, ""
+	}
+
+	// Convert content: replace CLAUDE.md references with AGENT.md.
+	converted := strings.ReplaceAll(string(content), "# CLAUDE.md", "# AGENT.md")
+	converted = strings.ReplaceAll(converted, "CLAUDE.md", "AGENT.md")
+
+	if err := os.WriteFile(agentTarget, []byte(converted), 0o644); err != nil {
+		return false, ""
+	}
+
+	// Remove the old CLAUDE.md.
+	os.Remove(claudePath)
+
+	return true, "Converted CLAUDE.md → AGENT.md (existing content preserved)."
+}
+
+// isFormatArg returns true if s matches a known format name or is a
+// prefix of one. Prevents ambiguity between format args and descriptions.
+func isFormatArg(s string) bool {
+	return s == "agents" ||
+		strings.HasPrefix("agent", s) ||
+		strings.HasPrefix("claude", s)
 }
 
 // DetectProjectInfo scans the working directory for project markers.
@@ -135,7 +194,12 @@ func GenerateContent(filename string, info ProjectInfo) string {
 
 	// Project overview
 	b.WriteString("## Project Overview\n\n")
-	if len(info.Languages) > 0 {
+	if info.Description != "" {
+		b.WriteString(info.Description + "\n\n")
+		if len(info.Languages) > 0 {
+			b.WriteString(fmt.Sprintf("Tech stack: %s\n\n", strings.Join(info.Languages, ", ")))
+		}
+	} else if len(info.Languages) > 0 {
 		b.WriteString(fmt.Sprintf("This is a %s project.\n\n", strings.Join(info.Languages, " / ")))
 	} else {
 		b.WriteString("<!-- Describe what this project does and its purpose. -->\n\n")
