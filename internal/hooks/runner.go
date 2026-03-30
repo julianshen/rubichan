@@ -125,19 +125,21 @@ func (r *UserHookRunner) registerInto(reg hookRegistrar) {
 			ctx, cancel := context.WithTimeout(eventCtx, timeout)
 			defer cancel()
 
-			// Build JSON input for the hook's stdin.
-			toolName, _ := event.Data["tool_name"].(string)
-			toolInput, _ := event.Data["input"].(string)
-			hookInput := map[string]any{
-				"event":     hookCfg.Event,
-				"tool_name": toolName,
-				"input":     toolInput,
-			}
-			inputJSON, _ := json.Marshal(hookInput)
-
 			c := exec.CommandContext(ctx, "sh", "-c", cmd)
-			c.Stdin = bytes.NewReader(inputJSON)
 			c.Dir = workDir
+
+			// Pipe event data as JSON to stdin when there's tool context.
+			if len(event.Data) > 0 {
+				hookInput := map[string]any{
+					"event": hookCfg.Event,
+				}
+				for k, v := range event.Data {
+					hookInput[k] = v
+				}
+				if inputJSON, err := json.Marshal(hookInput); err == nil {
+					c.Stdin = bytes.NewReader(inputJSON)
+				}
+			}
 
 			var stdout, stderr bytes.Buffer
 			c.Stdout = &stdout
@@ -251,36 +253,22 @@ func extractPrimaryInput(toolName string, parsed map[string]any) string {
 	return ""
 }
 
-// globMatch matches a pattern against a value using filepath.Match semantics.
-// It also supports prefix matching when the pattern ends with "*" (e.g.,
-// "git *" matches "git status" even though filepath.Match treats spaces
-// literally).
+// globMatch matches a pattern against a value. Uses filepath.Match for
+// standard globs (e.g., "*.go"), plus prefix matching when the pattern
+// ends with "*" (e.g., "git *" matches "git status").
 func globMatch(pattern, value string) bool {
 	if pattern == "" {
 		return true
 	}
-	// filepath.Match handles standard glob patterns.
 	if matched, err := filepath.Match(pattern, value); err == nil && matched {
 		return true
 	}
-	// Also try matching against the base name (useful for file paths).
 	if matched, err := filepath.Match(pattern, filepath.Base(value)); err == nil && matched {
 		return true
 	}
-	// Support prefix matching: "git *" should match "git status".
-	// Split pattern on spaces and check prefix when last segment is "*".
-	if strings.HasSuffix(pattern, " *") {
-		prefix := pattern[:len(pattern)-2]
-		if strings.HasPrefix(value, prefix+" ") || value == prefix {
-			return true
-		}
-	}
-	// Support bare prefix with trailing *: "git*" matches "git status".
+	// Prefix matching: trailing "*" matches any continuation.
 	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		if strings.HasPrefix(value, prefix) {
-			return true
-		}
+		return strings.HasPrefix(value, pattern[:len(pattern)-1])
 	}
 	return false
 }
