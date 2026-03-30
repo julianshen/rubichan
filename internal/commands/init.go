@@ -12,10 +12,11 @@ import (
 
 // ProjectInfo holds detected information about a project.
 type ProjectInfo struct {
-	Languages []string
-	BuildCmds []string
-	TestCmds  []string
-	LintCmds  []string
+	Description string   // user-provided project description
+	Languages   []string
+	BuildCmds   []string
+	TestCmds    []string
+	LintCmds    []string
 }
 
 // initCommand implements the /init slash command that generates AGENTS.md or CLAUDE.md.
@@ -36,9 +37,14 @@ func (c *initCommand) Arguments() []ArgumentDef {
 	return []ArgumentDef{
 		{
 			Name:        "format",
-			Description: "Format to generate: agents (default) or claude",
+			Description: "Format: agent (default), agents, or claude",
 			Required:    false,
-			Static:      []string{"agents", "claude", "agent"},
+			Static:      []string{"agent", "agents", "claude"},
+		},
+		{
+			Name:        "description",
+			Description: "Project description to populate AGENT.md (e.g., 'Build a REST API with Go and PostgreSQL')",
+			Required:    false,
 		},
 	}
 }
@@ -49,11 +55,22 @@ func (c *initCommand) Complete(_ context.Context, _ []string) []Candidate {
 
 func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) {
 	format := "agent"
+	var description string
+
 	if len(args) > 0 {
-		format = strings.ToLower(args[0])
+		first := strings.ToLower(args[0])
+		if isFormatArg(first) {
+			format = first
+			if len(args) > 1 {
+				description = strings.Join(args[1:], " ")
+			}
+		} else {
+			// First arg is not a format — treat all args as description.
+			description = strings.Join(args, " ")
+		}
 	}
 
-	// Accept prefix abbreviations: "a" or "ag" → "agent", "c" or "cl" → "claude".
+	// Resolve format with prefix abbreviations.
 	var filename string
 	switch {
 	case format == "agents":
@@ -74,6 +91,7 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 	}
 
 	info := DetectProjectInfo(c.workDir)
+	info.Description = strings.TrimSpace(description)
 	content := GenerateContent(filename, info)
 
 	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
@@ -81,6 +99,14 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 	}
 
 	return Result{Output: fmt.Sprintf("Generated %s in project root.", filename)}, nil
+}
+
+// isFormatArg returns true if s matches a known format name or is a
+// prefix of one. Prevents ambiguity between format args and descriptions.
+func isFormatArg(s string) bool {
+	return s == "agents" ||
+		strings.HasPrefix("agent", s) ||
+		strings.HasPrefix("claude", s)
 }
 
 // DetectProjectInfo scans the working directory for project markers.
@@ -136,7 +162,12 @@ func GenerateContent(filename string, info ProjectInfo) string {
 
 	// Project overview
 	b.WriteString("## Project Overview\n\n")
-	if len(info.Languages) > 0 {
+	if info.Description != "" {
+		b.WriteString(info.Description + "\n\n")
+		if len(info.Languages) > 0 {
+			b.WriteString(fmt.Sprintf("Tech stack: %s\n\n", strings.Join(info.Languages, ", ")))
+		}
+	} else if len(info.Languages) > 0 {
 		b.WriteString(fmt.Sprintf("This is a %s project.\n\n", strings.Join(info.Languages, " / ")))
 	} else {
 		b.WriteString("<!-- Describe what this project does and its purpose. -->\n\n")
