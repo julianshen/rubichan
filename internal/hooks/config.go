@@ -14,6 +14,7 @@ type tomlHookEntry struct {
 	Event       string `toml:"event"`
 	Command     string `toml:"command"`
 	MatchTool   string `toml:"match_tool"`
+	If          string `toml:"if"`
 	Timeout     string `toml:"timeout"`
 	Description string `toml:"description"`
 }
@@ -46,6 +47,7 @@ func LoadHooksTOML(projectRoot string) ([]UserHookConfig, error) {
 		configs = append(configs, UserHookConfig{
 			Event:       entry.Event,
 			Pattern:     entry.MatchTool,
+			If:          entry.If,
 			Command:     entry.Command,
 			Description: entry.Description,
 			Timeout:     ParseHookTimeout(entry.Timeout),
