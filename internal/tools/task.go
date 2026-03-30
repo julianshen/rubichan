@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sync/atomic"
 )
 
 // TaskSpawner creates and runs child agents. Defined here to break the
@@ -84,6 +86,7 @@ type TaskTool struct {
 	depth          int
 	bgManager      BackgroundTaskManager
 	hookDispatcher TaskHookDispatcher
+	fgTaskCounter  atomic.Int64
 }
 
 // NewTaskTool creates a TaskTool that delegates to the given spawner.
@@ -177,9 +180,10 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 		bgCtx, cancel := context.WithCancel(context.Background())
 		taskID := t.bgManager.SubmitBackground(cfg.Name, cancel)
 
-		// Dispatch task created hook.
 		if t.hookDispatcher != nil {
-			_ = t.hookDispatcher.DispatchTaskCreated(ctx, taskID, ti.Prompt)
+			if err := t.hookDispatcher.DispatchTaskCreated(ctx, taskID, ti.Prompt); err != nil {
+				log.Printf("task hook: created dispatch failed for %s: %v", taskID, err)
+			}
 		}
 
 		go func() {
@@ -194,13 +198,15 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 			}
 			t.bgManager.CompleteBackground(taskID, output, spawnErr)
 
-			// Dispatch task completed hook.
 			if t.hookDispatcher != nil {
 				status := "success"
 				if spawnErr != nil {
 					status = "error"
 				}
-				_ = t.hookDispatcher.DispatchTaskCompleted(bgCtx, taskID, status, output)
+				// Use fresh context — bgCtx may be cancelled by the background manager.
+				if err := t.hookDispatcher.DispatchTaskCompleted(context.Background(), taskID, status, output); err != nil {
+					log.Printf("task hook: completed dispatch failed for %s: %v", taskID, err)
+				}
 			}
 		}()
 		return ToolResult{
@@ -208,17 +214,19 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 		}, nil
 	}
 
-	// Dispatch task created hook for foreground tasks.
-	taskID := fmt.Sprintf("fg-%s-%d", cfg.Name, t.depth)
+	taskID := fmt.Sprintf("fg-%s-%d-%d", cfg.Name, t.depth, t.fgTaskCounter.Add(1))
 	if t.hookDispatcher != nil {
-		_ = t.hookDispatcher.DispatchTaskCreated(ctx, taskID, ti.Prompt)
+		if err := t.hookDispatcher.DispatchTaskCreated(ctx, taskID, ti.Prompt); err != nil {
+			log.Printf("task hook: created dispatch failed for %s: %v", taskID, err)
+		}
 	}
 
 	result, err := t.spawner.Spawn(ctx, cfg, ti.Prompt)
 	if err != nil {
-		// Dispatch completion with error status.
 		if t.hookDispatcher != nil {
-			_ = t.hookDispatcher.DispatchTaskCompleted(ctx, taskID, "error", err.Error())
+			if hErr := t.hookDispatcher.DispatchTaskCompleted(ctx, taskID, "error", err.Error()); hErr != nil {
+				log.Printf("task hook: completed dispatch failed for %s: %v", taskID, hErr)
+			}
 		}
 		return ToolResult{Content: fmt.Sprintf("subagent failed: %v", err), IsError: true}, nil
 	}
@@ -228,13 +236,14 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 		content = fmt.Sprintf("subagent error: %v\n%s", result.Error, result.Output)
 	}
 
-	// Dispatch task completed hook.
 	if t.hookDispatcher != nil {
 		status := "success"
 		if result.Error != nil {
 			status = "error"
 		}
-		_ = t.hookDispatcher.DispatchTaskCompleted(ctx, taskID, status, result.Output)
+		if hErr := t.hookDispatcher.DispatchTaskCompleted(ctx, taskID, status, result.Output); hErr != nil {
+			log.Printf("task hook: completed dispatch failed for %s: %v", taskID, hErr)
+		}
 	}
 
 	return ToolResult{
