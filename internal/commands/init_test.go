@@ -206,6 +206,52 @@ func TestInitCommandDetectsMultipleLanguages(t *testing.T) {
 	assert.Contains(t, s, "npm")
 }
 
+// --- CLAUDE.md → AGENT.md conversion ---
+
+func TestInitCommandConvertsCLAUDEtoAGENT(t *testing.T) {
+	dir := t.TempDir()
+	claudeContent := "# CLAUDE.md\n\n## Project Overview\n\nAn existing project.\n\n## Build Commands\n\n```bash\ngo test ./...\n```\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(claudeContent), 0o644))
+
+	cmd := NewInitCommand(dir)
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "Converted CLAUDE.md")
+
+	// AGENT.md should exist with converted content.
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# AGENT.md")
+	assert.Contains(t, string(content), "An existing project.")
+	assert.Contains(t, string(content), "go test")
+
+	// CLAUDE.md should be removed.
+	_, err = os.Stat(filepath.Join(dir, "CLAUDE.md"))
+	assert.True(t, os.IsNotExist(err), "CLAUDE.md should be removed after conversion")
+}
+
+func TestInitCommandNoConversionWhenNoCLAUDE(t *testing.T) {
+	dir := t.TempDir()
+	cmd := NewInitCommand(dir)
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	// Should generate fresh AGENT.md, not mention conversion.
+	assert.Contains(t, result.Output, "Generated AGENT.md")
+	assert.NotContains(t, result.Output, "Converted")
+}
+
+func TestInitCommandNoConversionForCLAUDEFormat(t *testing.T) {
+	dir := t.TempDir()
+	// Even if CLAUDE.md exists, /init claude should not convert — it's requesting CLAUDE.md.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# CLAUDE.md\n"), 0o644))
+
+	cmd := NewInitCommand(dir)
+	_, err := cmd.Execute(context.Background(), []string{"claude"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+}
+
 // --- description support ---
 
 func TestInitCommandWithDescription(t *testing.T) {

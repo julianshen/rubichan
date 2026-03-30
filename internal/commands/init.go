@@ -91,6 +91,13 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 		return Result{}, fmt.Errorf("checking for existing %s: %w", filename, err)
 	}
 
+	// If creating AGENT.md and CLAUDE.md exists, convert it.
+	if filename == "AGENT.md" {
+		if converted, msg := convertFromCLAUDE(c.workDir, target); converted {
+			return Result{Output: msg}, nil
+		}
+	}
+
 	info := DetectProjectInfo(c.workDir)
 	info.Description = strings.TrimSpace(description)
 	content := GenerateContent(filename, info)
@@ -100,6 +107,30 @@ func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) 
 	}
 
 	return Result{Output: fmt.Sprintf("Generated %s in project root.", filename)}, nil
+}
+
+// convertFromCLAUDE checks if CLAUDE.md exists in the work directory.
+// If so, it reads its content, replaces heading references, writes AGENT.md,
+// and removes the old CLAUDE.md. Returns (true, message) on success.
+func convertFromCLAUDE(workDir, agentTarget string) (bool, string) {
+	claudePath := filepath.Join(workDir, "CLAUDE.md")
+	content, err := os.ReadFile(claudePath)
+	if err != nil {
+		return false, ""
+	}
+
+	// Convert content: replace CLAUDE.md references with AGENT.md.
+	converted := strings.ReplaceAll(string(content), "# CLAUDE.md", "# AGENT.md")
+	converted = strings.ReplaceAll(converted, "CLAUDE.md", "AGENT.md")
+
+	if err := os.WriteFile(agentTarget, []byte(converted), 0o644); err != nil {
+		return false, ""
+	}
+
+	// Remove the old CLAUDE.md.
+	os.Remove(claudePath)
+
+	return true, "Converted CLAUDE.md → AGENT.md (existing content preserved)."
 }
 
 // isFormatArg returns true if s matches a known format name or is a
