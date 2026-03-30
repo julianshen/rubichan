@@ -44,17 +44,17 @@ func TestInitCommandImplementsSlashCommand(t *testing.T) {
 
 // --- Init Command: Execute generates AGENTS.md by default ---
 
-func TestInitCommandDefaultGeneratesAgentsMD(t *testing.T) {
+func TestInitCommandDefaultGeneratesAgentMD(t *testing.T) {
 	dir := t.TempDir()
 	cmd := NewInitCommand(dir)
 
 	result, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Contains(t, result.Output, "AGENTS.md")
+	assert.Contains(t, result.Output, "AGENT.md")
 
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "# AGENTS.md")
+	assert.Contains(t, string(content), "# AGENT.md")
 }
 
 func TestInitCommandExplicitAgentsArg(t *testing.T) {
@@ -93,7 +93,7 @@ func TestInitCommandUnknownFormatReturnsError(t *testing.T) {
 
 func TestInitCommandRefusesToOverwrite(t *testing.T) {
 	dir := t.TempDir()
-	existing := filepath.Join(dir, "AGENTS.md")
+	existing := filepath.Join(dir, "AGENT.md")
 	require.NoError(t, os.WriteFile(existing, []byte("existing"), 0o644))
 
 	cmd := NewInitCommand(dir)
@@ -116,9 +116,9 @@ func TestInitCommandDetectsGoProject(t *testing.T) {
 	cmd := NewInitCommand(dir)
 	result, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Contains(t, result.Output, "AGENTS.md")
+	assert.Contains(t, result.Output, "AGENT.md")
 
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
 	require.NoError(t, err)
 	s := string(content)
 	assert.Contains(t, s, "go test")
@@ -132,9 +132,9 @@ func TestInitCommandDetectsNodeProject(t *testing.T) {
 	cmd := NewInitCommand(dir)
 	result, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Contains(t, result.Output, "AGENTS.md")
+	assert.Contains(t, result.Output, "AGENT.md")
 
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
 	require.NoError(t, err)
 	s := string(content)
 	assert.Contains(t, s, "npm")
@@ -148,7 +148,7 @@ func TestInitCommandDetectsPythonProject(t *testing.T) {
 	_, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
 
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
 	require.NoError(t, err)
 	s := string(content)
 	assert.Contains(t, s, "Python")
@@ -162,7 +162,7 @@ func TestInitCommandDetectsRustProject(t *testing.T) {
 	_, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
 
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
 	require.NoError(t, err)
 	s := string(content)
 	assert.Contains(t, s, "cargo")
@@ -174,12 +174,12 @@ func TestInitCommandEmptyProject(t *testing.T) {
 
 	result, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Contains(t, result.Output, "AGENTS.md")
+	assert.Contains(t, result.Output, "AGENT.md")
 
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
 	require.NoError(t, err)
 	// Should still generate a valid file with placeholder sections
-	assert.Contains(t, string(content), "# AGENTS.md")
+	assert.Contains(t, string(content), "# AGENT.md")
 	assert.Contains(t, string(content), "## Project Overview")
 }
 
@@ -192,7 +192,7 @@ func TestInitCommandDetectsMultipleLanguages(t *testing.T) {
 	_, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
 
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(dir, "AGENT.md"))
 	require.NoError(t, err)
 	s := string(content)
 	assert.Contains(t, s, "go")
@@ -266,12 +266,12 @@ func TestInitCommandStatErrorReturnsError(t *testing.T) {
 	file := filepath.Join(dir, "notadir")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
 
-	// workDir is a file, so filepath.Join(file, "AGENTS.md") will
+	// workDir is a file, so filepath.Join(file, "AGENT.md") will
 	// fail stat with a "not a directory" error, not ErrNotExist.
 	cmd := NewInitCommand(file)
 	_, err := cmd.Execute(context.Background(), nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "AGENTS.md")
+	assert.Contains(t, err.Error(), "AGENT.md")
 }
 
 // --- Write failure ---

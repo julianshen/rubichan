@@ -48,21 +48,22 @@ func (c *initCommand) Complete(_ context.Context, _ []string) []Candidate {
 }
 
 func (c *initCommand) Execute(_ context.Context, args []string) (Result, error) {
-	format := "agents"
+	format := "agent"
 	if len(args) > 0 {
 		format = strings.ToLower(args[0])
 	}
 
+	// Accept prefix abbreviations: "a" or "ag" → "agent", "c" or "cl" → "claude".
 	var filename string
-	switch format {
-	case "agents":
+	switch {
+	case format == "agents":
 		filename = "AGENTS.md"
-	case "claude":
-		filename = "CLAUDE.md"
-	case "agent":
+	case format == "agent" || strings.HasPrefix("agent", format):
 		filename = "AGENT.md"
+	case format == "claude" || strings.HasPrefix("claude", format):
+		filename = "CLAUDE.md"
 	default:
-		return Result{}, fmt.Errorf("unknown format %q: use 'agents' or 'claude'", format)
+		return Result{}, fmt.Errorf("unknown format %q: use 'agent', 'agents', or 'claude'", format)
 	}
 
 	target := filepath.Join(c.workDir, filename)
