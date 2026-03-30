@@ -2,6 +2,10 @@ package hooks_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -288,4 +292,88 @@ func TestIfPattern_EmptyIfRunsAlways(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.Cancel, "empty if should always match")
+}
+
+// --- Enhancement 2: stdin/stdout JSON Protocol Tests ---
+
+func TestJSONProtocol_StdinReceived(t *testing.T) {
+	dir := t.TempDir()
+	lm := skills.NewLifecycleManager()
+	// Hook reads stdin and writes it to a file so we can verify.
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "post_tool", Command: fmt.Sprintf("cat > %s/stdin_output.json", dir), Timeout: 5 * time.Second},
+	}, dir)
+	runner.RegisterIntoLM(lm)
+
+	_, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnAfterToolResult,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "shell", "input": `{"command":"ls"}`},
+	})
+	require.NoError(t, err)
+
+	// Verify the stdin file was written and contains expected JSON.
+	data, err := os.ReadFile(filepath.Join(dir, "stdin_output.json"))
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	assert.Equal(t, "post_tool", parsed["event"])
+	assert.Equal(t, "shell", parsed["tool_name"])
+}
+
+func TestJSONProtocol_BlockDecision(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_tool", Command: `echo '{"decision":"block"}'`, Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"write","path":"x.go"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "JSON block decision should cancel")
+}
+
+func TestJSONProtocol_ModifiedData(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "post_tool", Command: `echo '{"modified":{"content":"new value"}}'`, Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnAfterToolResult,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Modified)
+	assert.Equal(t, "new value", result.Modified["content"])
+}
+
+func TestJSONProtocol_BackwardCompat(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	// Hook that does not read stdin and outputs plain text (not JSON).
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "post_tool", Command: "echo 'hello plain text'", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnAfterToolResult,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "shell", "input": `{"command":"ls"}`},
+	})
+	require.NoError(t, err)
+	// Should not cancel and should not have modified data.
+	if result != nil {
+		assert.False(t, result.Cancel)
+		assert.Nil(t, result.Modified)
+	}
 }

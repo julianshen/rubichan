@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -122,16 +123,50 @@ func (r *UserHookRunner) registerInto(reg hookRegistrar) {
 			ctx, cancel := context.WithTimeout(eventCtx, timeout)
 			defer cancel()
 
+			// Build JSON input for the hook's stdin.
+			toolName, _ := event.Data["tool_name"].(string)
+			toolInput, _ := event.Data["input"].(string)
+			hookInput := map[string]any{
+				"event":     hookCfg.Event,
+				"tool_name": toolName,
+				"input":     toolInput,
+			}
+			inputJSON, _ := json.Marshal(hookInput)
+
 			c := exec.CommandContext(ctx, "sh", "-c", cmd)
+			c.Stdin = bytes.NewReader(inputJSON)
 			c.Dir = workDir
-			output, err := c.CombinedOutput()
+
+			var stdout, stderr bytes.Buffer
+			c.Stdout = &stdout
+			c.Stderr = &stderr
+
+			err := c.Run()
 
 			if err != nil && isPreEvent {
-				log.Printf("user hook %q blocked: %s (output: %s)", hookCfg.Description, err, strings.TrimSpace(string(output)))
+				combined := stdout.String() + stderr.String()
+				log.Printf("user hook %q blocked: %s (output: %s)", hookCfg.Description, err, strings.TrimSpace(combined))
 				return skills.HookResult{Cancel: true}, nil
 			}
 			if err != nil {
 				log.Printf("user hook %q failed (non-blocking): %s", hookCfg.Description, err)
+				return skills.HookResult{}, nil
+			}
+
+			// Try to parse stdout as JSON for structured hook responses.
+			output := stdout.Bytes()
+			var hookResponse struct {
+				Decision string         `json:"decision"`
+				Modified map[string]any `json:"modified"`
+				Message  string         `json:"message"`
+			}
+			if json.Unmarshal(output, &hookResponse) == nil {
+				if hookResponse.Decision == "block" {
+					return skills.HookResult{Cancel: true}, nil
+				}
+				if hookResponse.Modified != nil {
+					return skills.HookResult{Modified: hookResponse.Modified}, nil
+				}
 			}
 
 			return skills.HookResult{}, nil
