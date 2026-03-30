@@ -20,11 +20,16 @@ type ManagerNotifier struct {
 // given file and waits briefly for the server to publish diagnostics. It returns
 // formatted diagnostic lines (errors only) or nil if there are none.
 func (n *ManagerNotifier) NotifyAndCollectDiagnostics(ctx context.Context, filePath string, content []byte) ([]string, error) {
+	// Skip entirely if no language server is available for this file type.
+	if _, ok := n.Manager.Registry().LanguageForFile(filePath); !ok {
+		return nil, nil
+	}
+
 	if err := n.Manager.NotifyFileChanged(ctx, filePath, content); err != nil {
 		return nil, err
 	}
 
-	// Brief wait for server to process — diagnostics are async.
+	// Brief wait for server to publish diagnostics asynchronously.
 	delay := n.Delay
 	if delay == 0 {
 		delay = 500 * time.Millisecond
