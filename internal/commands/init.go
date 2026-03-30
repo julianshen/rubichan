@@ -24,8 +24,9 @@ type initCommand struct {
 	workDir string
 }
 
-// NewInitCommand creates a command that generates an AGENTS.md or CLAUDE.md file
-// for the current project based on detected project structure.
+// NewInitCommand creates a command that generates an AGENT.md (default),
+// AGENTS.md, or CLAUDE.md file for the current project based on detected
+// project structure and an optional user-provided description.
 func NewInitCommand(workDir string) SlashCommand {
 	return &initCommand{workDir: workDir}
 }

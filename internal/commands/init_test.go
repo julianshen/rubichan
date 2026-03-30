@@ -292,10 +292,18 @@ func TestInitCommandFormatCaseInsensitive(t *testing.T) {
 		arg      string
 		filename string
 	}{
+		// Case-insensitive exact matches.
 		{"AGENTS", "AGENTS.md"},
 		{"Claude", "CLAUDE.md"},
 		{"CLAUDE", "CLAUDE.md"},
 		{"Agents", "AGENTS.md"},
+		// Prefix abbreviations.
+		{"a", "AGENT.md"},
+		{"ag", "AGENT.md"},
+		{"age", "AGENT.md"},
+		{"c", "CLAUDE.md"},
+		{"cl", "CLAUDE.md"},
+		{"cla", "CLAUDE.md"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.arg, func(t *testing.T) {
