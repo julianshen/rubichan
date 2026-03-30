@@ -203,20 +203,20 @@ func wireSandboxProxy(cfg *config.Config, shellTool *tools.ShellTool) (cleanup f
 // Returns a cleanup function that must be deferred, or nil if LSP is disabled.
 // The cleanup function uses context.Background() because it runs during defers
 // after the caller's context is already cancelled — it always needs its full timeout.
-func wireLSPTools(cfg *config.Config, registry *tools.Registry, toolsCfg ToolsConfig, cwd string) (cleanup func(), err error) {
+func wireLSPTools(cfg *config.Config, registry *tools.Registry, toolsCfg ToolsConfig, cwd string) (mgr *lsp.Manager, cleanup func(), err error) {
 	if !cfg.LSP.IsEnabled() {
-		return nil, nil
+		return nil, nil, nil
 	}
 	lspRegistry := lsp.NewRegistry()
 	lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
 	for _, tool := range lsp.AllTools(lspManager) {
 		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {
-				return nil, fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
+				return nil, nil, fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
 			}
 		}
 	}
-	return func() {
+	return lspManager, func() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := lspManager.Shutdown(shutCtx); err != nil {
@@ -2239,8 +2239,9 @@ type coreToolsResult struct {
 func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig, diffTracker *tools.DiffTracker, shellTimeout time.Duration) (*coreToolsResult, error) {
 	result := &coreToolsResult{}
 
+	var fileTool *tools.FileTool
 	if toolsCfg.ShouldEnable("file") {
-		fileTool := tools.NewFileTool(cwd)
+		fileTool = tools.NewFileTool(cwd)
 		fileTool.SetDiffTracker(diffTracker)
 		if err := registry.Register(fileTool); err != nil {
 			return nil, fmt.Errorf("registering file tool: %w", err)
@@ -2282,10 +2283,15 @@ func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config,
 		return nil, err
 	}
 
-	if cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
+	if lspManager, cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
 		return nil, err
-	} else if cleanup != nil {
-		result.cleanups = append(result.cleanups, cleanup)
+	} else {
+		if cleanup != nil {
+			result.cleanups = append(result.cleanups, cleanup)
+		}
+		if lspManager != nil && fileTool != nil {
+			fileTool.SetLSPNotifier(&lsp.ManagerNotifier{Manager: lspManager})
+		}
 	}
 
 	return result, nil

@@ -1514,9 +1514,10 @@ func TestWireLSPTools_Disabled(t *testing.T) {
 	registry := tools.NewRegistry()
 	toolsCfg := ToolsConfig{ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true}}
 
-	cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
+	mgr, cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
 	assert.NoError(t, err)
 	assert.Nil(t, cleanup)
+	assert.Nil(t, mgr)
 }
 
 // ---------------------------------------------------------------------------
@@ -1793,7 +1794,7 @@ func TestWireLSPTools_Enabled(t *testing.T) {
 	registry := tools.NewRegistry()
 	toolsCfg := ToolsConfig{ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true}}
 
-	cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
+	_, cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
 	assert.NoError(t, err)
 	if cleanup != nil {
 		cleanup()

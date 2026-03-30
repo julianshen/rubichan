@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+// LSPNotifier provides post-write diagnostic feedback from a language server.
+// Implementations should notify the server of file changes and collect any
+// resulting diagnostics (errors/warnings) to surface to the LLM.
+type LSPNotifier interface {
+	NotifyAndCollectDiagnostics(ctx context.Context, filePath string, content []byte) ([]string, error)
+}
+
 // fileInput represents the input for the file tool.
 type fileInput struct {
 	Operation string `json:"operation"`
@@ -22,6 +29,7 @@ type fileInput struct {
 type FileTool struct {
 	rootDir     string
 	diffTracker *DiffTracker
+	lspNotifier LSPNotifier
 }
 
 // NewFileTool creates a new FileTool that operates within the given root directory.
@@ -43,6 +51,12 @@ func NewFileTool(rootDir string) *FileTool {
 // SetDiffTracker attaches a DiffTracker to record file changes.
 func (f *FileTool) SetDiffTracker(dt *DiffTracker) {
 	f.diffTracker = dt
+}
+
+// SetLSPNotifier attaches an LSPNotifier that will be called after file writes
+// to collect diagnostics from the language server.
+func (f *FileTool) SetLSPNotifier(n LSPNotifier) {
+	f.lspNotifier = n
 }
 
 func (f *FileTool) Name() string {
@@ -251,7 +265,17 @@ func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
 		})
 	}
 
-	return ToolResult{Content: fmt.Sprintf("wrote %s", relPath)}, nil
+	result := ToolResult{Content: fmt.Sprintf("wrote %s", relPath)}
+
+	// Collect LSP diagnostics after write.
+	if f.lspNotifier != nil {
+		diags, err := f.lspNotifier.NotifyAndCollectDiagnostics(context.Background(), path, []byte(content))
+		if err == nil && len(diags) > 0 {
+			result.Content += "\n\n\u26a0\ufe0f LSP diagnostics:\n" + strings.Join(diags, "\n")
+		}
+	}
+
+	return result, nil
 }
 
 func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, error) {
@@ -289,5 +313,15 @@ func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, err
 		})
 	}
 
-	return ToolResult{Content: fmt.Sprintf("patched %s", relPath)}, nil
+	result := ToolResult{Content: fmt.Sprintf("patched %s", relPath)}
+
+	// Collect LSP diagnostics after patch.
+	if f.lspNotifier != nil {
+		diags, err := f.lspNotifier.NotifyAndCollectDiagnostics(context.Background(), path, []byte(patched))
+		if err == nil && len(diags) > 0 {
+			result.Content += "\n\n\u26a0\ufe0f LSP diagnostics:\n" + strings.Join(diags, "\n")
+		}
+	}
+
+	return result, nil
 }
