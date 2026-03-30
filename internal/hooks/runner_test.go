@@ -377,3 +377,44 @@ func TestJSONProtocol_BackwardCompat(t *testing.T) {
 		assert.Nil(t, result.Modified)
 	}
 }
+
+// --- Enhancement 3: Task Lifecycle Hook Tests ---
+
+func TestTaskCreatedEventMaps(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	dir := t.TempDir()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "task_created", Command: "echo task-created", Timeout: 5 * time.Second},
+	}, dir)
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnTaskCreated,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"task_id": "bg-1", "description": "run tests"},
+	})
+	require.NoError(t, err)
+	// Task events are non-blocking, so Cancel should be false.
+	if result != nil {
+		assert.False(t, result.Cancel)
+	}
+}
+
+func TestTaskCompletedEventMaps(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	dir := t.TempDir()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "task_completed", Command: "echo task-done", Timeout: 5 * time.Second},
+	}, dir)
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnTaskCompleted,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"task_id": "bg-1", "status": "success", "result": "all passed"},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel)
+	}
+}

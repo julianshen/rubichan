@@ -69,12 +69,21 @@ type BackgroundTaskManager interface {
 	CompleteBackground(taskID string, output string, err error)
 }
 
+// TaskHookDispatcher dispatches task lifecycle hook events. This interface
+// breaks the import cycle between tools/ and skills/ so the TaskTool can
+// fire hooks without importing the skills package directly.
+type TaskHookDispatcher interface {
+	DispatchTaskCreated(ctx context.Context, taskID, description string) error
+	DispatchTaskCompleted(ctx context.Context, taskID, status, result string) error
+}
+
 // TaskTool delegates tasks to subagents via the TaskSpawner interface.
 type TaskTool struct {
-	spawner   TaskSpawner
-	agentDefs TaskAgentDefLookup
-	depth     int
-	bgManager BackgroundTaskManager
+	spawner        TaskSpawner
+	agentDefs      TaskAgentDefLookup
+	depth          int
+	bgManager      BackgroundTaskManager
+	hookDispatcher TaskHookDispatcher
 }
 
 // NewTaskTool creates a TaskTool that delegates to the given spawner.
@@ -87,15 +96,21 @@ func (t *TaskTool) SetBackgroundManager(mgr BackgroundTaskManager) {
 	t.bgManager = mgr
 }
 
+// SetHookDispatcher attaches a TaskHookDispatcher for task lifecycle events.
+func (t *TaskTool) SetHookDispatcher(hd TaskHookDispatcher) {
+	t.hookDispatcher = hd
+}
+
 // WithDepth returns a copy of the TaskTool with the given depth. This is used
 // when creating child registries to ensure nested task calls enforce correct
 // depth limits rather than reusing the parent's depth.
 func (t *TaskTool) WithDepth(depth int) *TaskTool {
 	return &TaskTool{
-		spawner:   t.spawner,
-		agentDefs: t.agentDefs,
-		depth:     depth,
-		bgManager: t.bgManager,
+		spawner:        t.spawner,
+		agentDefs:      t.agentDefs,
+		depth:          depth,
+		bgManager:      t.bgManager,
+		hookDispatcher: t.hookDispatcher,
 	}
 }
 
@@ -161,6 +176,12 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 	if ti.Background && t.bgManager != nil {
 		bgCtx, cancel := context.WithCancel(context.Background())
 		taskID := t.bgManager.SubmitBackground(cfg.Name, cancel)
+
+		// Dispatch task created hook.
+		if t.hookDispatcher != nil {
+			_ = t.hookDispatcher.DispatchTaskCreated(ctx, taskID, ti.Prompt)
+		}
+
 		go func() {
 			result, err := t.spawner.Spawn(bgCtx, cfg, ti.Prompt)
 			var output string
@@ -172,20 +193,48 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (ToolResu
 				spawnErr = result.Error
 			}
 			t.bgManager.CompleteBackground(taskID, output, spawnErr)
+
+			// Dispatch task completed hook.
+			if t.hookDispatcher != nil {
+				status := "success"
+				if spawnErr != nil {
+					status = "error"
+				}
+				_ = t.hookDispatcher.DispatchTaskCompleted(bgCtx, taskID, status, output)
+			}
 		}()
 		return ToolResult{
 			Content: fmt.Sprintf("Background task %s started (agent: %s)", taskID, cfg.Name),
 		}, nil
 	}
 
+	// Dispatch task created hook for foreground tasks.
+	taskID := fmt.Sprintf("fg-%s-%d", cfg.Name, t.depth)
+	if t.hookDispatcher != nil {
+		_ = t.hookDispatcher.DispatchTaskCreated(ctx, taskID, ti.Prompt)
+	}
+
 	result, err := t.spawner.Spawn(ctx, cfg, ti.Prompt)
 	if err != nil {
+		// Dispatch completion with error status.
+		if t.hookDispatcher != nil {
+			_ = t.hookDispatcher.DispatchTaskCompleted(ctx, taskID, "error", err.Error())
+		}
 		return ToolResult{Content: fmt.Sprintf("subagent failed: %v", err), IsError: true}, nil
 	}
 
 	content := result.Output
 	if result.Error != nil {
 		content = fmt.Sprintf("subagent error: %v\n%s", result.Error, result.Output)
+	}
+
+	// Dispatch task completed hook.
+	if t.hookDispatcher != nil {
+		status := "success"
+		if result.Error != nil {
+			status = "error"
+		}
+		_ = t.hookDispatcher.DispatchTaskCompleted(ctx, taskID, status, result.Output)
 	}
 
 	return ToolResult{

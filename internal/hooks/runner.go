@@ -19,13 +19,15 @@ const defaultTimeout = 30 * time.Second
 
 // Event name constants for user-facing hook event configuration.
 const (
-	EventPreTool      = "pre_tool"
-	EventPostTool     = "post_tool"
-	EventPreEdit      = "pre_edit"
-	EventPostEdit     = "post_edit"
-	EventPreShell     = "pre_shell"
-	EventSessionStart = "session_start"
-	EventSetup        = "setup"
+	EventPreTool       = "pre_tool"
+	EventPostTool      = "post_tool"
+	EventPreEdit       = "pre_edit"
+	EventPostEdit      = "post_edit"
+	EventPreShell      = "pre_shell"
+	EventSessionStart  = "session_start"
+	EventSetup         = "setup"
+	EventTaskCreated   = "task_created"
+	EventTaskCompleted = "task_completed"
 )
 
 // ParseHookTimeout parses a duration string, returning defaultTimeout (30s)
@@ -304,6 +306,10 @@ func mapEventToPhase(event string) (skills.HookPhase, bool, func(skills.HookEven
 		return skills.HookOnConversationStart, false, noFilter
 	case EventSetup:
 		return skills.HookOnSetup, false, noFilter
+	case EventTaskCreated:
+		return skills.HookOnTaskCreated, false, noFilter
+	case EventTaskCompleted:
+		return skills.HookOnTaskCompleted, false, noFilter
 	default:
 		return 0, false, nil
 	}

@@ -84,6 +84,10 @@ const (
 	HookOnWorktreeRemove
 	// HookOnSetup is called during project initialization (rubichan init).
 	HookOnSetup
+	// HookOnTaskCreated is called after the task tool creates a new task/subagent.
+	HookOnTaskCreated
+	// HookOnTaskCompleted is called after a task/subagent completes execution.
+	HookOnTaskCompleted
 )
 
 // String returns the human-readable name of a HookPhase.
@@ -113,6 +117,10 @@ func (h HookPhase) String() string {
 		return "OnWorktreeRemove"
 	case HookOnSetup:
 		return "OnSetup"
+	case HookOnTaskCreated:
+		return "OnTaskCreated"
+	case HookOnTaskCompleted:
+		return "OnTaskCompleted"
 	default:
 		return fmt.Sprintf("HookPhase(%d)", h)
 	}
