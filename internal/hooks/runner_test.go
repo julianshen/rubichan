@@ -214,3 +214,78 @@ func TestRunnerSetupEventMaps(t *testing.T) {
 		assert.False(t, result.Cancel)
 	}
 }
+
+// --- Enhancement 1: If Pattern Filter Tests ---
+
+func TestIfPattern_ShellMatch(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_shell", If: "Bash(git *)", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// "git status" should match "git *"
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "shell", "input": `{"command":"git status"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "git status should match Bash(git *)")
+}
+
+func TestIfPattern_ShellNoMatch(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_shell", If: "Bash(git *)", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// "npm install" should NOT match "git *"
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "shell", "input": `{"command":"npm install"}`},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel, "npm install should not match Bash(git *)")
+	}
+}
+
+func TestIfPattern_FileMatch(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_edit", If: "file(*.go)", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// Writing a .go file should match "file(*.go)"
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"write","path":"main.go"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "main.go should match file(*.go)")
+}
+
+func TestIfPattern_EmptyIfRunsAlways(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_shell", If: "", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// Empty "if" means always match
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "shell", "input": `{"command":"anything"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "empty if should always match")
+}

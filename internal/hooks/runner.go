@@ -7,6 +7,7 @@ import (
 	"log"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ func ParseHookTimeout(s string) time.Duration {
 type UserHookConfig struct {
 	Event       string
 	Pattern     string
+	If          string
 	Command     string
 	Description string
 	Timeout     time.Duration
@@ -106,6 +108,11 @@ func (r *UserHookRunner) registerInto(reg hookRegistrar) {
 				return skills.HookResult{}, nil
 			}
 
+			// If "if" pattern is set, check if tool_name + input matches.
+			if hookCfg.If != "" && !matchesIfPattern(hookCfg.If, event.Data) {
+				return skills.HookResult{}, nil // skip
+			}
+
 			cmd := expandTemplateVars(hookCfg.Command, event)
 
 			eventCtx := event.Ctx
@@ -130,6 +137,115 @@ func (r *UserHookRunner) registerInto(reg hookRegistrar) {
 			return skills.HookResult{}, nil
 		})
 	}
+}
+
+// matchesIfPattern checks whether the event data matches the hook's "if"
+// pattern. The pattern format is "ToolName(glob)" where the tool name is
+// matched against the tool_name field and the glob is matched against the
+// primary input field (command for shell, path for file). A bare glob
+// without parentheses matches against the primary input of any tool.
+func matchesIfPattern(ifPattern string, data map[string]any) bool {
+	if ifPattern == "" {
+		return true
+	}
+
+	toolName, _ := data["tool_name"].(string)
+	inputStr, _ := data["input"].(string)
+
+	var parsed map[string]any
+	if inputStr != "" {
+		_ = json.Unmarshal([]byte(inputStr), &parsed)
+	}
+
+	// Extract primary input field based on tool type.
+	primaryInput := extractPrimaryInput(toolName, parsed)
+
+	// Check for ToolName(pattern) format.
+	if idx := strings.Index(ifPattern, "("); idx >= 0 && strings.HasSuffix(ifPattern, ")") {
+		patternTool := strings.ToLower(ifPattern[:idx])
+		glob := ifPattern[idx+1 : len(ifPattern)-1]
+
+		// Map common aliases.
+		actualTool := strings.ToLower(toolName)
+		toolAliases := map[string]string{
+			"bash": "shell", "sh": "shell",
+			"file": "file", "read": "file", "write": "file",
+		}
+		if alias, ok := toolAliases[patternTool]; ok {
+			patternTool = alias
+		}
+		if alias, ok := toolAliases[actualTool]; ok {
+			actualTool = alias
+		}
+
+		if patternTool != actualTool {
+			return false
+		}
+		return globMatch(glob, primaryInput)
+	}
+
+	// Bare glob — match against primary input regardless of tool.
+	return globMatch(ifPattern, primaryInput)
+}
+
+// extractPrimaryInput returns the primary input field for a tool: command for
+// shell, path for file.
+func extractPrimaryInput(toolName string, parsed map[string]any) string {
+	if parsed == nil {
+		return ""
+	}
+	switch strings.ToLower(toolName) {
+	case "shell", "bash":
+		if cmd, ok := parsed["command"].(string); ok {
+			return cmd
+		}
+	case "file":
+		if p, ok := parsed["path"].(string); ok {
+			return p
+		}
+	}
+	// Fallback: try "command", then "path", then first string value.
+	if cmd, ok := parsed["command"].(string); ok {
+		return cmd
+	}
+	if p, ok := parsed["path"].(string); ok {
+		return p
+	}
+	return ""
+}
+
+// globMatch matches a pattern against a value using filepath.Match semantics.
+// It also supports prefix matching when the pattern ends with "*" (e.g.,
+// "git *" matches "git status" even though filepath.Match treats spaces
+// literally).
+func globMatch(pattern, value string) bool {
+	if pattern == "" {
+		return true
+	}
+	// filepath.Match handles standard glob patterns.
+	if matched, err := filepath.Match(pattern, value); err == nil && matched {
+		return true
+	}
+	// Also try matching against the base name (useful for file paths).
+	if matched, err := filepath.Match(pattern, filepath.Base(value)); err == nil && matched {
+		return true
+	}
+	// Support prefix matching: "git *" should match "git status".
+	// Split pattern on spaces and check prefix when last segment is "*".
+	if strings.HasSuffix(pattern, " *") {
+		prefix := pattern[:len(pattern)-2]
+		if strings.HasPrefix(value, prefix+" ") || value == prefix {
+			return true
+		}
+	}
+	// Support bare prefix with trailing *: "git*" matches "git status".
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // mapEventToPhase converts a user-facing event name to a HookPhase, a flag
