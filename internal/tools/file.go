@@ -244,6 +244,15 @@ func (f *FileTool) readFile(path string) (ToolResult, error) {
 	f.readHashMu.Lock()
 	prev, seen := f.readHashes[path]
 	f.readHashes[path] = hash
+	// Cap map size to prevent unbounded growth in long sessions.
+	if len(f.readHashes) > 500 {
+		for k := range f.readHashes {
+			if k != path {
+				delete(f.readHashes, k)
+				break
+			}
+		}
+	}
 	f.readHashMu.Unlock()
 
 	if seen && prev == hash {

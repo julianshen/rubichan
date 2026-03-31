@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 )
 
+// TaskCompleteName is the canonical name of the task completion tool.
+// Used by the agent loop to detect explicit completion signals.
+const TaskCompleteName = "task_complete"
+
 // CompletionSignalTool allows the LLM to explicitly declare task completion.
 // When called, the agent loop recognizes this as a stop signal.
 type CompletionSignalTool struct{}
@@ -14,7 +18,7 @@ func NewCompletionSignalTool() *CompletionSignalTool {
 	return &CompletionSignalTool{}
 }
 
-func (t *CompletionSignalTool) Name() string { return "task_complete" }
+func (t *CompletionSignalTool) Name() string { return TaskCompleteName }
 func (t *CompletionSignalTool) Description() string {
 	return "Signal that the current task is complete. Call this when you have finished all requested work and no further tool calls are needed."
 }
