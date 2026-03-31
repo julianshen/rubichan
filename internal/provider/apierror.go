@@ -11,23 +11,37 @@ import (
 // status code and raw response body. It extracts the message field from
 // known API error formats (Anthropic, OpenAI, Ollama) and provides
 // friendly descriptions for common status codes.
-func FormatAPIError(statusCode int, body []byte) error {
+//
+// For model-not-found errors (HTTP 404), the full HTTP request and
+// response details are included to aid debugging.
+func FormatAPIError(statusCode int, body []byte, httpReq *http.Request) error {
 	friendly := friendlyStatus(statusCode)
 	message := extractErrorMessage(body)
 
+	var base string
 	if message != "" {
-		return fmt.Errorf("%s: %s", friendly, message)
+		base = fmt.Sprintf("%s: %s", friendly, message)
+	} else {
+		// Fallback: include truncated raw body for debugging.
+		raw := strings.TrimSpace(string(body))
+		if len(raw) > 200 {
+			raw = raw[:200] + "..."
+		}
+		if raw != "" {
+			base = fmt.Sprintf("%s (%s)", friendly, raw)
+		} else {
+			base = friendly
+		}
 	}
 
-	// Fallback: include truncated raw body for debugging.
-	raw := strings.TrimSpace(string(body))
-	if len(raw) > 200 {
-		raw = raw[:200] + "..."
+	// For 404 errors, append HTTP details to help debug model issues.
+	if statusCode == http.StatusNotFound && httpReq != nil {
+		return fmt.Errorf("%s\n\nHTTP Request: %s %s\nHTTP Response: %d\nResponse Body:\n%s",
+			base, httpReq.Method, httpReq.URL.String(), statusCode,
+			strings.TrimSpace(string(body)))
 	}
-	if raw != "" {
-		return fmt.Errorf("%s (%s)", friendly, raw)
-	}
-	return fmt.Errorf("%s", friendly)
+
+	return fmt.Errorf("%s", base)
 }
 
 func friendlyStatus(code int) string {
