@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -70,6 +71,8 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 		return selectSafeBaseline(allTools)
 	}
 
+	// Sort deterministically by name for prompt cache stability.
+	sortToolDefs(selected)
 	return selected
 }
 
@@ -86,7 +89,17 @@ func selectSafeBaseline(allTools []provider.ToolDef) []provider.ToolDef {
 			selected = append(selected, tool)
 		}
 	}
+	// Sort deterministically by name for prompt cache stability.
+	sortToolDefs(selected)
 	return selected
+}
+
+// sortToolDefs sorts tool definitions alphabetically by name for deterministic
+// ordering, which improves prompt cache hit rates across turns.
+func sortToolDefs(defs []provider.ToolDef) {
+	sort.Slice(defs, func(i, j int) bool {
+		return defs[i].Name < defs[j].Name
+	})
 }
 
 // ApplyMaxToolCount trims tools to fit within maxCount, always preserving core
