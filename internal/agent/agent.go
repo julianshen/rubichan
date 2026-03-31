@@ -1120,6 +1120,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var streamErr bool
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
+		var thinkingBuf string
 
 		finalizeTool := func() {
 			if currentTool != nil {
@@ -1152,6 +1153,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			totalOutputTokens += event.OutputTokens
 
 			switch event.Type {
+			case "thinking_delta":
+				// Accumulate thinking text but don't emit to TUI — it's internal reasoning.
+				thinkingBuf += event.Text
+
 			case "text_delta":
 				if currentTool != nil {
 					// Accumulating tool input JSON fragments
@@ -1195,6 +1200,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Finalize any remaining text or tool
 		finalizeText()
 		finalizeTool()
+
+		// Prepend thinking block if the model produced extended thinking output.
+		if thinkingBuf != "" {
+			blocks = append([]provider.ContentBlock{{
+				Type: agentsdk.BlockTypeThinking,
+				Text: thinkingBuf,
+			}}, blocks...)
+		}
 
 		// On stream error, discard partial blocks to prevent conversation corruption
 		if streamErr {
