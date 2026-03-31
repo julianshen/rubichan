@@ -28,13 +28,7 @@ func (ct *ContextTracker) Record(command string, output string, exitCode int) {
 	ct.command = command
 	ct.exitCode = exitCode
 	ct.hasRecord = true
-
-	if len(output) > ct.maxOutputSize {
-		remaining := len(output) - ct.maxOutputSize
-		ct.output = output[:ct.maxOutputSize] + fmt.Sprintf("\n... (truncated, %d more bytes)", remaining)
-	} else {
-		ct.output = output
-	}
+	ct.output = truncateWithNotice(output, ct.maxOutputSize)
 }
 
 // LastCommand returns the last recorded command.
