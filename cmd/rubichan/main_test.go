@@ -430,6 +430,122 @@ func TestResolveOllamaModel_ConnectionError(t *testing.T) {
 	assert.Contains(t, err.Error(), "listing Ollama models")
 }
 
+func TestApplyAPIBaseFlag_CreatesEntry(t *testing.T) {
+	// Save and restore package-level flags.
+	origBase, origKey := apiBaseFlag, apiKeyFlag
+	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
+
+	apiBaseFlag = "http://localhost:1234/v1"
+	apiKeyFlag = "test-key"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "my-server"
+
+	applyAPIBaseFlag(cfg)
+
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "my-server", cfg.Provider.OpenAI[0].Name)
+	assert.Equal(t, "http://localhost:1234/v1", cfg.Provider.OpenAI[0].BaseURL)
+	assert.Equal(t, "config", cfg.Provider.OpenAI[0].APIKeySource)
+	assert.Equal(t, "test-key", cfg.Provider.OpenAI[0].APIKey)
+	assert.Equal(t, "my-server", cfg.Provider.Default)
+}
+
+func TestApplyAPIBaseFlag_DefaultsKeyToNone(t *testing.T) {
+	origBase, origKey := apiBaseFlag, apiKeyFlag
+	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
+
+	apiBaseFlag = "http://localhost:1234/v1"
+	apiKeyFlag = ""
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "local"
+
+	applyAPIBaseFlag(cfg)
+
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "none", cfg.Provider.OpenAI[0].APIKey)
+}
+
+func TestApplyAPIBaseFlag_OverridesExistingEntry(t *testing.T) {
+	origBase, origKey := apiBaseFlag, apiKeyFlag
+	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
+
+	apiBaseFlag = "http://new-url:5678/v1"
+	apiKeyFlag = "new-key"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "my-server"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{
+			Name:         "my-server",
+			BaseURL:      "http://old-url:1234/v1",
+			APIKeySource: "config",
+			APIKey:       "old-key",
+		},
+	}
+
+	applyAPIBaseFlag(cfg)
+
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "http://new-url:5678/v1", cfg.Provider.OpenAI[0].BaseURL)
+	assert.Equal(t, "new-key", cfg.Provider.OpenAI[0].APIKey)
+}
+
+func TestApplyAPIBaseFlag_BuiltinProviderGetCustomName(t *testing.T) {
+	origBase, origKey := apiBaseFlag, apiKeyFlag
+	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
+
+	apiBaseFlag = "http://localhost:1234/v1"
+	apiKeyFlag = ""
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "anthropic" // built-in name
+
+	applyAPIBaseFlag(cfg)
+
+	assert.Equal(t, "custom", cfg.Provider.Default)
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "custom", cfg.Provider.OpenAI[0].Name)
+}
+
+func TestApplyAPIKeyFlag_Anthropic(t *testing.T) {
+	origKey := apiKeyFlag
+	defer func() { apiKeyFlag = origKey }()
+
+	apiKeyFlag = "sk-override"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "anthropic"
+
+	applyAPIKeyFlag(cfg)
+
+	assert.Equal(t, "config", cfg.Provider.Anthropic.APIKeySource)
+	assert.Equal(t, "sk-override", cfg.Provider.Anthropic.APIKey)
+}
+
+func TestApplyAPIKeyFlag_OpenAICompatible(t *testing.T) {
+	origKey := apiKeyFlag
+	defer func() { apiKeyFlag = origKey }()
+
+	apiKeyFlag = "new-key"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "my-server"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{
+			Name:         "my-server",
+			BaseURL:      "http://localhost:1234/v1",
+			APIKeySource: "env",
+		},
+	}
+
+	applyAPIKeyFlag(cfg)
+
+	assert.Equal(t, "config", cfg.Provider.OpenAI[0].APIKeySource)
+	assert.Equal(t, "new-key", cfg.Provider.OpenAI[0].APIKey)
+}
+
 func TestEnsureFolderAccessApproved_FirstTimeApprove(t *testing.T) {
 	s := mustOpenStore(t)
 	defer s.Close()

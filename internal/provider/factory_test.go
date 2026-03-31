@@ -157,5 +157,24 @@ func TestNewProviderUnknown(t *testing.T) {
 
 	_, err := provider.NewProvider(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown provider")
+	assert.Contains(t, err.Error(), `unknown provider: "unknown-provider"`)
+	assert.Contains(t, err.Error(), "No OpenAI-compatible providers are configured")
+	assert.Contains(t, err.Error(), "--api-base")
+	assert.Contains(t, err.Error(), "[[provider.openai_compatible]]")
+}
+
+func TestNewProviderUnknownListsConfigured(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "typo-provider"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{
+			Name:    "my-server",
+			BaseURL: "http://localhost:1234/v1",
+		},
+	}
+
+	_, err := provider.NewProvider(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown provider: "typo-provider"`)
+	assert.Contains(t, err.Error(), "my-server (http://localhost:1234/v1)")
 }
