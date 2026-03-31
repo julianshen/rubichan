@@ -40,6 +40,9 @@ type ShellHost struct {
 	shellExec       ShellExecFunc
 	slashCommandFn  SlashCommandFunc
 	errorAnalyzer   *ErrorAnalyzer
+	scriptGen       *ScriptGenerator
+	intentClassifier *IntentClassifier
+	scriptApprovalFn func(ctx context.Context, script string) (bool, string, error)
 	workDir         string
 	stdin           io.Reader
 	stdout          io.Writer
@@ -60,7 +63,8 @@ type ShellHostConfig struct {
 	Stdout         io.Writer
 	Stderr         io.Writer
 	GitBranchFn    func(string) string
-	ErrorAnalysis  bool // Enable AI-powered error analysis for failed commands
+	ErrorAnalysis    bool // Enable AI-powered error analysis for failed commands
+	ScriptApprovalFn func(ctx context.Context, script string) (bool, string, error) // Enable smart script (nil = disabled)
 }
 
 // NewShellHost creates a new shell host with the given configuration.
@@ -86,21 +90,29 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		ea = NewErrorAnalyzer(cfg.AgentTurn, true, 4096)
 	}
 
-	return &ShellHost{
-		classifier:     NewInputClassifier(cfg.Executables),
-		history:        NewCommandHistory(cfg.MaxHistory),
-		ctxTracker:     NewContextTracker(4096),
-		prompt:         NewPromptRenderer(cfg.HomeDir),
-		agentTurn:      cfg.AgentTurn,
-		shellExec:      cfg.ShellExec,
-		slashCommandFn: cfg.SlashCommandFn,
-		errorAnalyzer:  ea,
-		workDir:        cfg.WorkDir,
-		stdin:          cfg.Stdin,
-		stdout:         cfg.Stdout,
-		stderr:         cfg.Stderr,
-		gitBranchFn:    cfg.GitBranchFn,
+	h := &ShellHost{
+		classifier:       NewInputClassifier(cfg.Executables),
+		history:          NewCommandHistory(cfg.MaxHistory),
+		ctxTracker:       NewContextTracker(4096),
+		prompt:           NewPromptRenderer(cfg.HomeDir),
+		agentTurn:        cfg.AgentTurn,
+		shellExec:        cfg.ShellExec,
+		slashCommandFn:   cfg.SlashCommandFn,
+		errorAnalyzer:    ea,
+		scriptApprovalFn: cfg.ScriptApprovalFn,
+		workDir:          cfg.WorkDir,
+		stdin:            cfg.Stdin,
+		stdout:           cfg.Stdout,
+		stderr:           cfg.Stderr,
+		gitBranchFn:      cfg.GitBranchFn,
 	}
+
+	if cfg.ScriptApprovalFn != nil && cfg.AgentTurn != nil {
+		h.intentClassifier = NewIntentClassifier(cfg.AgentTurn)
+		h.scriptGen = NewScriptGenerator(cfg.AgentTurn, cfg.ShellExec, &h.workDir)
+	}
+
+	return h
 }
 
 // Mode returns the agent mode label for shell mode.
@@ -249,7 +261,8 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
 	// Strip force prefix (?) from the query text sent to the LLM.
 	query := strings.TrimSpace(input.Raw)
-	if strings.HasPrefix(query, "?") {
+	isForceQuery := strings.HasPrefix(query, "?")
+	if isForceQuery {
 		query = strings.TrimSpace(query[1:])
 	}
 
@@ -258,6 +271,15 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
 	if h.agentTurn == nil {
 		fmt.Fprintf(h.stderr, "agent not available\n")
 		return
+	}
+
+	// Smart script: for ?-prefixed input, classify intent and potentially generate a script
+	if isForceQuery && h.scriptGen != nil && h.intentClassifier != nil {
+		intent, _ := h.intentClassifier.Classify(ctx, query)
+		if intent == IntentAction {
+			h.handleSmartScript(ctx, query)
+			return
+		}
 	}
 
 	// Build the message with optional context from last shell command
@@ -278,6 +300,66 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
 		h.ctxTracker.Clear()
 	}
 
+	h.streamEvents(events)
+}
+
+func (h *ShellHost) handleSmartScript(ctx context.Context, query string) {
+	script, err := h.scriptGen.Generate(ctx, query)
+	if err != nil {
+		fmt.Fprintf(h.stderr, "error generating script: %v\n", err)
+		return
+	}
+
+	// Display the generated script
+	fmt.Fprintf(h.stdout, "\nGenerated script:\n```\n%s\n```\n\n", script)
+
+	// Ask for approval
+	approved, editedScript, err := h.scriptApprovalFn(ctx, script)
+	if err != nil {
+		fmt.Fprintf(h.stderr, "error: %v\n", err)
+		return
+	}
+
+	if !approved {
+		fmt.Fprintln(h.stderr, "Script discarded.")
+		return
+	}
+
+	// Use edited script if provided
+	runScript := script
+	if editedScript != "" {
+		runScript = editedScript
+	}
+
+	// Execute
+	stdout, stderr, exitCode, err := h.scriptGen.Execute(ctx, runScript)
+	if err != nil {
+		fmt.Fprintf(h.stderr, "error: %v\n", err)
+		return
+	}
+
+	if stdout != "" {
+		fmt.Fprint(h.stdout, stdout)
+		if !strings.HasSuffix(stdout, "\n") {
+			fmt.Fprintln(h.stdout)
+		}
+	}
+	if stderr != "" {
+		fmt.Fprint(h.stderr, stderr)
+		if !strings.HasSuffix(stderr, "\n") {
+			fmt.Fprintln(h.stderr)
+		}
+	}
+
+	// Record in context tracker for follow-up
+	combined := stdout
+	if stderr != "" {
+		combined += stderr
+	}
+	h.ctxTracker.Record(runScript, combined, exitCode)
+}
+
+func (h *ShellHost) streamEvents(events <-chan TurnEvent) {
 	for event := range events {
 		switch event.Type {
 		case "text_delta":
