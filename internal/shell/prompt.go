@@ -6,7 +6,8 @@ import (
 
 // PromptRenderer generates PS1-style shell prompts.
 type PromptRenderer struct {
-	homeDir string
+	homeDir    string
+	statusLine *StatusLine
 }
 
 // NewPromptRenderer creates a prompt renderer that shortens paths under homeDir.
@@ -19,6 +20,15 @@ func NewPromptRenderer(homeDir string) *PromptRenderer {
 func (r *PromptRenderer) Render(workDir string, gitBranch string) string {
 	var b strings.Builder
 
+	// Render status line if available
+	if r.statusLine != nil {
+		sl := r.statusLine.Render()
+		if sl != "" {
+			b.WriteString(sl)
+			b.WriteString("\n")
+		}
+	}
+
 	// Shorten home directory to ~
 	display := workDir
 	if r.homeDir != "" && strings.HasPrefix(workDir, r.homeDir) {
@@ -28,6 +38,12 @@ func (r *PromptRenderer) Render(workDir string, gitBranch string) string {
 		} else if rest[0] == '/' {
 			display = "~" + rest
 		}
+	}
+
+	// When status line is active, use a shorter prompt (status has the detail)
+	if r.statusLine != nil {
+		b.WriteString("ai$ ")
+		return b.String()
 	}
 
 	b.WriteString(display)

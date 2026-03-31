@@ -44,6 +44,7 @@ type ShellHost struct {
 	intentClassifier *IntentClassifier
 	scriptApprovalFn func(ctx context.Context, script string) (bool, string, error)
 	pkgInstaller     *PackageInstaller
+	statusLine       *StatusLine
 	workDir          string
 	stdin           io.Reader
 	stdout          io.Writer
@@ -68,6 +69,7 @@ type ShellHostConfig struct {
 	ScriptApprovalFn  func(ctx context.Context, script string) (bool, string, error) // Enable smart script (nil = disabled)
 	PackageManager    *PackageManager // Enable missing tool installer (nil = disabled)
 	InstallApprovalFn func(ctx context.Context, action string) (bool, error) // Approval for package installation
+	StatusLine        bool // Enable status line in prompt
 }
 
 // NewShellHost creates a new shell host with the given configuration.
@@ -98,17 +100,28 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		pi = NewPackageInstaller(cfg.PackageManager, cfg.AgentTurn, cfg.ShellExec, cfg.InstallApprovalFn)
 	}
 
+	pr := NewPromptRenderer(cfg.HomeDir)
+
+	var sl *StatusLine
+	if cfg.StatusLine {
+		sl = NewStatusLine(80) // default width, updated on render
+		sl.homeDir = cfg.HomeDir
+		sl.UpdateCWD(cfg.WorkDir)
+		pr.statusLine = sl
+	}
+
 	h := &ShellHost{
 		classifier:       NewInputClassifier(cfg.Executables),
 		history:          NewCommandHistory(cfg.MaxHistory),
 		ctxTracker:       NewContextTracker(4096),
-		prompt:           NewPromptRenderer(cfg.HomeDir),
+		prompt:           pr,
 		agentTurn:        cfg.AgentTurn,
 		shellExec:        cfg.ShellExec,
 		slashCommandFn:   cfg.SlashCommandFn,
 		errorAnalyzer:    ea,
 		scriptApprovalFn: cfg.ScriptApprovalFn,
 		pkgInstaller:     pi,
+		statusLine:       sl,
 		workDir:          cfg.WorkDir,
 		stdin:            cfg.Stdin,
 		stdout:           cfg.Stdout,
@@ -143,6 +156,9 @@ func (h *ShellHost) Run(ctx context.Context) error {
 
 		// Render prompt
 		branch := h.gitBranchFn(h.workDir)
+		if h.statusLine != nil {
+			h.statusLine.Update("branch", branch)
+		}
 		promptStr := h.prompt.Render(h.workDir, branch)
 		fmt.Fprint(h.stdout, promptStr)
 
@@ -211,6 +227,14 @@ func (h *ShellHost) handleCD(args []string) error {
 	}
 
 	h.workDir = target
+
+	// Update status line
+	if h.statusLine != nil {
+		h.statusLine.UpdateCWD(target)
+		branch := h.gitBranchFn(target)
+		h.statusLine.Update("branch", branch)
+	}
+
 	return nil
 }
 
@@ -247,6 +271,16 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 		combined += stderr
 	}
 	h.ctxTracker.Record(input.Command, combined, exitCode)
+
+	// Update status line
+	if h.statusLine != nil {
+		h.statusLine.UpdateExitCode(exitCode)
+		// Refresh branch after git commands
+		if strings.HasPrefix(input.Command, "git ") {
+			branch := h.gitBranchFn(h.workDir)
+			h.statusLine.Update("branch", branch)
+		}
+	}
 
 	// Missing tool installer: detect "command not found" and offer to install
 	if exitCode != 0 && h.pkgInstaller != nil {
