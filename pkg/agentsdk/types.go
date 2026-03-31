@@ -39,6 +39,23 @@ func DefaultCapabilities() ModelCapabilities {
 	}
 }
 
+// Content block type constants.
+const (
+	BlockTypeText       = "text"
+	BlockTypeToolUse    = "tool_use"
+	BlockTypeToolResult = "tool_result"
+	BlockTypeThinking   = "thinking"
+)
+
+// Stream event type constants.
+const (
+	EventTextDelta     = "text_delta"
+	EventThinkingDelta = "thinking_delta"
+	EventToolUse       = "tool_use"
+	EventStop          = "stop"
+	EventError         = "error"
+)
+
 // CompletionRequest represents a request to an LLM for completion.
 type CompletionRequest struct {
 	Model            string            `json:"model"`

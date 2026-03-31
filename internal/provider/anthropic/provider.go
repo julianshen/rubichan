@@ -212,9 +212,11 @@ func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
 			ToolUseID: b.ToolUseID,
 			IsError:   b.IsError,
 		}
-		if b.Type == "tool_result" {
+		switch b.Type {
+		case "tool_result":
 			cb.Content = b.Text
-		} else {
+		default:
+			// text, thinking, and tool_use blocks all use the "text" field.
 			cb.Text = b.Text
 		}
 		out = append(out, cb)
@@ -289,7 +291,8 @@ func (p *Provider) handleContentBlockStart(data string) *provider.StreamEvent {
 		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing content_block_start: %w", err)}
 	}
 
-	if parsed.ContentBlock.Type == "tool_use" {
+	switch parsed.ContentBlock.Type {
+	case "tool_use":
 		return &provider.StreamEvent{
 			Type: "tool_use",
 			ToolUse: &provider.ToolUseBlock{
@@ -297,9 +300,12 @@ func (p *Provider) handleContentBlockStart(data string) *provider.StreamEvent {
 				Name: parsed.ContentBlock.Name,
 			},
 		}
+	case "thinking":
+		// Thinking content arrives via content_block_delta events; no event needed at start.
+		return nil
+	default:
+		return nil
 	}
-
-	return nil
 }
 
 func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
@@ -307,6 +313,7 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 		Delta struct {
 			Type        string `json:"type"`
 			Text        string `json:"text"`
+			Thinking    string `json:"thinking"`
 			PartialJSON string `json:"partial_json"`
 		} `json:"delta"`
 	}
@@ -320,6 +327,11 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 		return &provider.StreamEvent{
 			Type: "text_delta",
 			Text: parsed.Delta.Text,
+		}
+	case "thinking_delta":
+		return &provider.StreamEvent{
+			Type: "thinking_delta",
+			Text: parsed.Delta.Thinking,
 		}
 	case "input_json_delta":
 		// Emit JSON input deltas as text_delta - the agent layer accumulates the JSON

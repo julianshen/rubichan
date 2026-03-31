@@ -613,6 +613,94 @@ func TestStreamToolResultUsesContentField(t *testing.T) {
 	assert.Nil(t, block["text"], "tool_result must not have 'text' field")
 }
 
+func TestStreamThinkingBlocks(t *testing.T) {
+	sseBody := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_t","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about this."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Here is my answer."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Think about this")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var events []provider.StreamEvent
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	// Collect events by type
+	var thinkingParts []string
+	var textParts []string
+	var hasStop bool
+	for _, evt := range events {
+		switch evt.Type {
+		case "thinking_delta":
+			thinkingParts = append(thinkingParts, evt.Text)
+		case "text_delta":
+			textParts = append(textParts, evt.Text)
+		case "stop":
+			hasStop = true
+		}
+	}
+
+	assert.Equal(t, []string{"Let me think", " about this."}, thinkingParts)
+	assert.Equal(t, []string{"Here is my answer."}, textParts)
+	assert.True(t, hasStop, "should have received stop event")
+}
+
+func TestConvertContentBlocksHandlesThinkingType(t *testing.T) {
+	blocks := []provider.ContentBlock{
+		{Type: "thinking", Text: "internal reasoning"},
+		{Type: "text", Text: "visible answer"},
+	}
+
+	out := convertContentBlocks(blocks)
+	require.Len(t, out, 2)
+	assert.Equal(t, "thinking", out[0].Type)
+	assert.Equal(t, "internal reasoning", out[0].Text)
+	assert.Equal(t, "text", out[1].Type)
+	assert.Equal(t, "visible answer", out[1].Text)
+}
+
 func TestConvertContentBlocksStripsEmptyText(t *testing.T) {
 	blocks := []provider.ContentBlock{
 		{Type: "text", Text: "hello"},

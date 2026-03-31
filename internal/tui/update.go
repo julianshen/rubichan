@@ -457,6 +457,11 @@ func (m *Model) setContentAndAutoScroll() {
 // handleTurnEvent processes a streaming TurnEvent from the agent.
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
+	case "thinking_delta":
+		// Thinking is internal reasoning — don't display to user.
+		// The agent loop accumulates it and stores it in the conversation.
+		return m, m.waitForEvent()
+
 	case "text_delta":
 		if m.rawAssistant.Len() == 0 {
 			m.assistantStartIdx = m.content.LenWithWidth(m.width)
