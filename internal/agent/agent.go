@@ -1254,6 +1254,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 
+		// Check if the model signaled task completion via task_complete tool.
+		for _, tc := range pendingTools {
+			if tc.Name == "task_complete" {
+				// Execute the tool to record its result, then exit cleanly.
+				a.executeTools(ctx, ch, pendingTools)
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				return
+			}
+		}
+
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}

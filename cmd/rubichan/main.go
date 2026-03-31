@@ -1575,6 +1575,13 @@ func runInteractive() error {
 		}
 	}
 
+	// Register task_complete tool for explicit loop termination.
+	if toolsCfg.ShouldEnable("task_complete") {
+		if err := registry.Register(tools.NewCompletionSignalTool()); err != nil {
+			return fmt.Errorf("registering task_complete tool: %w", err)
+		}
+	}
+
 	// Wire the agent into the TUI model now that both exist.
 	model.SetAgent(a)
 	model.SetWikiConfig(tui.WikiCommandConfig{
@@ -1891,6 +1898,13 @@ func runHeadless() error {
 	if headlessToolsCfg.ShouldEnable("notes") {
 		if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
 			return fmt.Errorf("registering notes tool: %w", err)
+		}
+	}
+
+	// Register task_complete tool for explicit loop termination.
+	if headlessToolsCfg.ShouldEnable("task_complete") {
+		if err := registry.Register(tools.NewCompletionSignalTool()); err != nil {
+			return fmt.Errorf("registering task_complete tool: %w", err)
 		}
 	}
 
