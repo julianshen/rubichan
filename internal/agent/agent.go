@@ -1229,6 +1229,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
+		// If the LLM returned no content at all (no text, no tool calls),
+		// emit an error and add a placeholder assistant message to keep the
+		// conversation valid (every user message must be followed by an
+		// assistant message).
+		if len(blocks) == 0 && len(pendingTools) == 0 {
+			placeholder := "[empty response from model]"
+			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: placeholder})
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
+		}
+
 		// Add assistant message with accumulated blocks
 		if len(blocks) > 0 {
 			a.conversation.AddAssistant(blocks)
@@ -1282,7 +1292,6 @@ func hasTextContent(blocks []provider.ContentBlock) bool {
 	}
 	return false
 }
-
 
 func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {
 	var b strings.Builder
