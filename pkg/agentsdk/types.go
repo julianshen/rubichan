@@ -26,6 +26,10 @@ type ModelCapabilities struct {
 	// MaxToolCount is the maximum number of tools to send to the model.
 	// 0 means unlimited. Negative values are treated as 0.
 	MaxToolCount int
+	// ReasoningEffort controls thinking depth: "low", "medium", "high", or
+	// empty (provider default). Mapped to provider-specific parameters when
+	// the provider supports extended thinking (e.g. Anthropic budget_tokens).
+	ReasoningEffort string
 }
 
 // DefaultCapabilities returns ModelCapabilities with the safe defaults:

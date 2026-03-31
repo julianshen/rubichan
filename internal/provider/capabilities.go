@@ -44,9 +44,16 @@ func DetectCapabilities(providerName, modelID string) ModelCapabilities {
 // compensate for their reduced context window and instruction-following depth.
 func detectAnthropicCapabilities(modelID string) ModelCapabilities {
 	caps := agentsdk.DefaultCapabilities()
-	if strings.Contains(strings.ToLower(modelID), "haiku") {
+	lower := strings.ToLower(modelID)
+	if strings.Contains(lower, "haiku") {
 		caps.NeedsToolDiscoveryHint = true
 		caps.MaxToolCount = 12
+	}
+	// Set default reasoning effort for models known to support extended thinking.
+	if strings.Contains(lower, "opus") {
+		caps.ReasoningEffort = "high"
+	} else if strings.Contains(lower, "sonnet") {
+		caps.ReasoningEffort = "medium"
 	}
 	return caps
 }

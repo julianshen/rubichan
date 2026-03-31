@@ -457,6 +457,43 @@ func TestDefaultCapabilities(t *testing.T) {
 	}
 }
 
+func TestDetectCapabilities_ReasoningEffort(t *testing.T) {
+	t.Run("anthropic opus gets high reasoning effort", func(t *testing.T) {
+		caps := DetectCapabilities("anthropic", "claude-opus-4")
+		if caps.ReasoningEffort != "high" {
+			t.Errorf("expected ReasoningEffort=high for opus, got %q", caps.ReasoningEffort)
+		}
+	})
+
+	t.Run("anthropic sonnet gets medium reasoning effort", func(t *testing.T) {
+		caps := DetectCapabilities("anthropic", "claude-sonnet-4")
+		if caps.ReasoningEffort != "medium" {
+			t.Errorf("expected ReasoningEffort=medium for sonnet, got %q", caps.ReasoningEffort)
+		}
+	})
+
+	t.Run("anthropic haiku gets no reasoning effort", func(t *testing.T) {
+		caps := DetectCapabilities("anthropic", "claude-3-haiku-20240307")
+		if caps.ReasoningEffort != "" {
+			t.Errorf("expected empty ReasoningEffort for haiku, got %q", caps.ReasoningEffort)
+		}
+	})
+
+	t.Run("ollama models get no reasoning effort", func(t *testing.T) {
+		caps := DetectCapabilities("ollama", "llama3.1:70b")
+		if caps.ReasoningEffort != "" {
+			t.Errorf("expected empty ReasoningEffort for ollama, got %q", caps.ReasoningEffort)
+		}
+	})
+
+	t.Run("openai models get no reasoning effort", func(t *testing.T) {
+		caps := DetectCapabilities("openai", "gpt-4o")
+		if caps.ReasoningEffort != "" {
+			t.Errorf("expected empty ReasoningEffort for gpt-4o, got %q", caps.ReasoningEffort)
+		}
+	})
+}
+
 func TestDetectCapabilitiesEmptyProvider(t *testing.T) {
 	// Empty provider falls through to OpenAI-compat path with optimistic defaults.
 	caps := DetectCapabilities("", "some-model")
