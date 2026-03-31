@@ -83,6 +83,8 @@ var (
 	configPath       string
 	modelFlag        string
 	providerFlag     string
+	apiBaseFlag      string
+	apiKeyFlag       string
 	autoApprove      bool
 	noAltScreen      bool
 	noMouse          bool
@@ -505,6 +507,8 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to config file")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "override model name")
 	rootCmd.PersistentFlags().StringVar(&providerFlag, "provider", "", "override provider name")
+	rootCmd.PersistentFlags().StringVar(&apiBaseFlag, "api-base", "", "base URL for OpenAI-compatible API (e.g. http://localhost:1234/v1)")
+	rootCmd.PersistentFlags().StringVar(&apiKeyFlag, "api-key", "", "API key for the provider (use 'none' for local servers)")
 	rootCmd.PersistentFlags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all tool calls (dangerous: enables RCE)")
 	rootCmd.PersistentFlags().BoolVar(&noAltScreen, "no-alt-screen", false, "run interactive TUI in the normal terminal buffer")
 	rootCmd.PersistentFlags().BoolVar(&noMouse, "no-mouse", false, "disable mouse tracking in the interactive TUI")
@@ -1109,6 +1113,15 @@ func loadConfig() (*config.Config, error) {
 		cfg.Provider.Default = providerFlag
 	}
 
+	// When --api-base is provided, ensure an OpenAI-compatible entry exists
+	// for the current provider so users don't have to write TOML config for
+	// simple local setups (e.g. rubichan --provider my-server --api-base http://localhost:1234/v1 --model coder).
+	if apiBaseFlag != "" {
+		applyAPIBaseFlag(cfg)
+	} else if apiKeyFlag != "" {
+		applyAPIKeyFlag(cfg)
+	}
+
 	// Resolve Ollama URL once for all downstream checks.
 	ollamaURL := cfg.Provider.Ollama.BaseURL
 	if ollamaURL == "" {
@@ -1131,6 +1144,67 @@ func loadConfig() (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// applyAPIBaseFlag injects or updates an OpenAI-compatible provider entry so
+// that --api-base (and optionally --api-key) work without requiring TOML
+// config. If the current default provider already has a matching entry, its
+// BaseURL is overwritten; otherwise a new entry is appended.
+func applyAPIBaseFlag(cfg *config.Config) {
+	name := cfg.Provider.Default
+	// For built-in providers that don't use the openai_compatible list,
+	// synthesise a provider name so the entry can be looked up later.
+	if name == "anthropic" || name == "ollama" || name == "" {
+		name = "custom"
+		cfg.Provider.Default = name
+	}
+
+	apiKey := apiKeyFlag
+	for i, oc := range cfg.Provider.OpenAI {
+		if oc.Name == name {
+			cfg.Provider.OpenAI[i].BaseURL = apiBaseFlag
+			if apiKey != "" {
+				cfg.Provider.OpenAI[i].APIKeySource = "config"
+				cfg.Provider.OpenAI[i].APIKey = apiKey
+			}
+			return
+		}
+	}
+
+	// No existing entry — create one. Default API key to "none" so local
+	// servers that need no auth work without an env-var lookup failure.
+	key := apiKey
+	if key == "" {
+		key = "none"
+	}
+	cfg.Provider.OpenAI = append(cfg.Provider.OpenAI, config.OpenAICompatibleConfig{
+		Name:         name,
+		BaseURL:      apiBaseFlag,
+		APIKeySource: "config",
+		APIKey:       key,
+	})
+}
+
+// applyAPIKeyFlag overrides the API key for the current default provider
+// when --api-key is given without --api-base.
+func applyAPIKeyFlag(cfg *config.Config) {
+	name := cfg.Provider.Default
+	switch name {
+	case "anthropic":
+		cfg.Provider.Anthropic.APIKeySource = "config"
+		cfg.Provider.Anthropic.APIKey = apiKeyFlag
+		return
+	case "ollama":
+		// Ollama doesn't use API keys; ignore silently.
+		return
+	}
+	for i, oc := range cfg.Provider.OpenAI {
+		if oc.Name == name {
+			cfg.Provider.OpenAI[i].APIKeySource = "config"
+			cfg.Provider.OpenAI[i].APIKey = apiKeyFlag
+			return
+		}
+	}
 }
 
 func runInteractive() error {
