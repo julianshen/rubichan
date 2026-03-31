@@ -45,6 +45,7 @@ type ShellHost struct {
 	scriptApprovalFn func(ctx context.Context, script string) (bool, string, error)
 	pkgInstaller     *PackageInstaller
 	statusLine       *StatusLine
+	lineReader       LineReader
 	workDir          string
 	stdin           io.Reader
 	stdout          io.Writer
@@ -70,6 +71,7 @@ type ShellHostConfig struct {
 	PackageManager    *PackageManager // Enable missing tool installer (nil = disabled)
 	InstallApprovalFn func(ctx context.Context, action string) (bool, error) // Approval for package installation
 	StatusLine        bool // Enable status line in prompt
+	LineReader        LineReader // Custom line reader (nil = use bufio.Scanner from Stdin)
 }
 
 // NewShellHost creates a new shell host with the given configuration.
@@ -122,6 +124,7 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		scriptApprovalFn: cfg.ScriptApprovalFn,
 		pkgInstaller:     pi,
 		statusLine:       sl,
+		lineReader:       cfg.LineReader,
 		workDir:          cfg.WorkDir,
 		stdin:            cfg.Stdin,
 		stdout:           cfg.Stdout,
@@ -144,6 +147,11 @@ func (h *ShellHost) Mode() string {
 
 // Run starts the REPL loop. It blocks until EOF, exit, or context cancellation.
 func (h *ShellHost) Run(ctx context.Context) error {
+	// Use LineReader if configured, otherwise fall back to bufio.Scanner
+	if h.lineReader != nil {
+		return h.runWithLineReader(ctx)
+	}
+
 	scanner := bufio.NewScanner(h.stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -190,6 +198,50 @@ func (h *ShellHost) Run(ctx context.Context) error {
 		case ClassLLMQuery:
 			h.handleLLMQuery(ctx, input)
 
+		case ClassSlashCommand:
+			if quit := h.handleSlashCommand(ctx, input); quit {
+				return ErrExit
+			}
+		}
+	}
+}
+
+func (h *ShellHost) runWithLineReader(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		branch := h.gitBranchFn(h.workDir)
+		if h.statusLine != nil {
+			h.statusLine.Update("branch", branch)
+		}
+		promptStr := h.prompt.Render(h.workDir, branch)
+
+		line, err := h.lineReader.ReadLine(promptStr)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Fprintln(h.stdout)
+				return nil
+			}
+			return fmt.Errorf("reading shell input: %w", err)
+		}
+
+		input := h.classifier.Classify(line)
+
+		switch input.Classification {
+		case ClassEmpty:
+			continue
+		case ClassBuiltinCommand:
+			if err := h.handleBuiltin(input); err != nil {
+				return err
+			}
+		case ClassShellCommand:
+			h.handleShellCommand(ctx, input)
+		case ClassLLMQuery:
+			h.handleLLMQuery(ctx, input)
 		case ClassSlashCommand:
 			if quit := h.handleSlashCommand(ctx, input); quit {
 				return ErrExit
