@@ -21,6 +21,10 @@ func (r *PromptRenderer) Render(workDir string, gitBranch string) string {
 	var b strings.Builder
 
 	if r.statusLine != nil {
+		r.statusLine.UpdateCWD(workDir)
+		if gitBranch != "" {
+			r.statusLine.Update(SegmentBranch, gitBranch)
+		}
 		sl := r.statusLine.Render()
 		if sl != "" {
 			b.WriteString(sl)

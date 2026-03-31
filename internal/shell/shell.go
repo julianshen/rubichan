@@ -271,7 +271,10 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 	}
 
 	if exitCode != 0 && h.pkgInstaller != nil {
-		handled, _ := h.pkgInstaller.HandleCommandNotFound(ctx, input.Command, stderr, exitCode, h.stdout, h.stderr)
+		handled, err := h.pkgInstaller.HandleCommandNotFound(ctx, input.Command, stderr, exitCode, h.workDir, h.stdout, h.stderr)
+		if err != nil {
+			fmt.Fprintf(h.stderr, "package installer error: %v\n", err)
+		}
 		if handled {
 			return
 		}
@@ -279,8 +282,10 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 
 	if exitCode != 0 && h.errorAnalyzer != nil {
 		fmt.Fprintf(h.stderr, "\n> Analyzing error...\n")
-		events, err := h.errorAnalyzer.Analyze(ctx, input.Command, stdout, stderr, exitCode)
-		if err == nil && events != nil {
+		events, analysisErr := h.errorAnalyzer.Analyze(ctx, input.Command, stdout, stderr, exitCode)
+		if analysisErr != nil {
+			fmt.Fprintf(h.stderr, "analysis error: %v\n", analysisErr)
+		} else if events != nil {
 			for event := range events {
 				switch event.Type {
 				case EventTextDelta:
@@ -376,6 +381,10 @@ func (h *ShellHost) handleSmartScript(ctx context.Context, query string) {
 		combined += stderr
 	}
 	h.ctxTracker.Record(runScript, combined, exitCode)
+
+	if h.statusLine != nil {
+		h.statusLine.UpdateExitCode(exitCode)
+	}
 }
 
 func (h *ShellHost) streamEvents(events <-chan TurnEvent) {

@@ -73,12 +73,10 @@ func TestErrorAnalyzerAnalyzesBenignFailure(t *testing.T) {
 	assert.Contains(t, capturedPrompt, "exit code 1")
 }
 
-func TestErrorAnalyzerSkipsSuccessfulCommand(t *testing.T) {
+func TestErrorAnalyzerDoesNotCrashOnExitZero(t *testing.T) {
 	t.Parallel()
 
-	called := false
 	agent := func(_ context.Context, _ string) (<-chan TurnEvent, error) {
-		called = true
 		ch := make(chan TurnEvent, 1)
 		ch <- TurnEvent{Type: "done"}
 		close(ch)
@@ -87,19 +85,13 @@ func TestErrorAnalyzerSkipsSuccessfulCommand(t *testing.T) {
 
 	ea := NewErrorAnalyzer(agent, 4096)
 
-	// Exit code 0 — should not be called (caller checks exit code, but Analyze
-	// itself doesn't gate on exit code — the caller does). Test that even if
-	// called with exit 0, it still works (no crash), but in practice the caller
-	// gates this. We test the caller gating in integration test 2.8.
+	// Analyze itself doesn't gate on exit code — the caller (ShellHost) does.
+	// Verify it doesn't crash if called with exit 0.
 	events, err := ea.Analyze(context.Background(), "ls", "file.go", "", 0)
 	require.NoError(t, err)
-
-	// Analyzer is enabled and agent available — it will analyze even exit 0
-	// The gating on exit code is the caller's responsibility.
 	if events != nil {
 		for range events {
 		}
-		assert.True(t, called)
 	}
 }
 

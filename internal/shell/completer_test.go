@@ -104,7 +104,7 @@ func TestCompleterBuiltinCompletion(t *testing.T) {
 	names := completionTexts(results)
 	assert.Contains(t, names, "exit")
 
-	// "cd" is already a full command — should complete to file paths, not itself
+	// "cd" without trailing space is still a prefix match — returns "cd" as candidate
 	results = c.Complete("cd", 2)
 	names = completionTexts(results)
 	assert.Contains(t, names, "cd")

@@ -172,7 +172,7 @@ if exitCode != 0 && h.errorAnalyzer != nil && h.errorAnalyzer.enabled {
 
 - **Analyze all failures (exit > 0)**: Even benign exit codes (grep no-match = 1) get analysis. The LLM adapts its suggestion to the severity — a typo hint for grep, a fix for a build failure. Users can disable if too noisy.
 - **Non-blocking**: The error output is shown immediately; analysis streams after.
-- **Opt-in by default**: Enabled by default, can be disabled per-session or globally.
+- **Enabled by default**: On by default, can be disabled per-session or globally via opt-out flags.
 - **Concise prompt**: The analysis prompt focuses on actionable suggestions, not verbose explanations.
 - **Context tracker still records**: The failed command is still recorded in `ContextTracker` for manual `?why` follow-ups.
 

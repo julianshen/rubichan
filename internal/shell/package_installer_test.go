@@ -198,7 +198,7 @@ func TestPackageInstallerApprovalRequired(t *testing.T) {
 		nil, exec, approvalFn,
 	)
 
-	handled, err := pi.HandleCommandNotFound(context.Background(), "jq '.name' file.json", "command not found: jq", 127, &bytes.Buffer{}, &bytes.Buffer{})
+	handled, err := pi.HandleCommandNotFound(context.Background(), "jq '.name' file.json", "command not found: jq", 127, "/project", &bytes.Buffer{}, &bytes.Buffer{})
 	assert.NoError(t, err)
 	assert.True(t, handled)
 	assert.False(t, installCalled, "install should not run when user rejects")
@@ -223,7 +223,7 @@ func TestPackageInstallerRerunsOnSuccess(t *testing.T) {
 	)
 
 	stdout := &bytes.Buffer{}
-	handled, err := pi.HandleCommandNotFound(context.Background(), "jq '.name' file.json", "command not found: jq", 127, stdout, &bytes.Buffer{})
+	handled, err := pi.HandleCommandNotFound(context.Background(), "jq '.name' file.json", "command not found: jq", 127, "/project", stdout, &bytes.Buffer{})
 	assert.NoError(t, err)
 	assert.True(t, handled)
 
@@ -240,26 +240,29 @@ func TestPackageInstallerCachesMapping(t *testing.T) {
 	agentTurn := func(_ context.Context, _ string) (<-chan TurnEvent, error) {
 		llmCalls++
 		ch := make(chan TurnEvent, 2)
-		ch <- TurnEvent{Type: "text_delta", Text: "ripgrep"}
+		ch <- TurnEvent{Type: "text_delta", Text: "exotic-pkg"}
 		ch <- TurnEvent{Type: "done"}
 		close(ch)
 		return ch, nil
 	}
 
 	pi := NewPackageInstaller(
-		&PackageManager{Name: "apt", InstallCmd: "sudo apt install -y"},
+		&PackageManager{Name: "brew", InstallCmd: "brew install"},
 		agentTurn, nil, nil,
 	)
 	pi.pkgSearch = func(_ context.Context, _ string, _ string) (string, error) {
 		return "", nil // force LLM fallback
 	}
 
-	// First call — built-in table finds it for apt as "ripgrep"
-	pkg := pi.resolvePackage(context.Background(), "rg")
-	assert.Equal(t, "ripgrep", pkg)
+	// First call: not in built-in table, not in pkg search — falls through to LLM
+	pkg := pi.resolvePackage(context.Background(), "exotictool")
+	assert.Equal(t, "exotic-pkg", pkg)
+	assert.Equal(t, 1, llmCalls)
 
-	// No LLM calls since "rg" is in the built-in table for apt
-	assert.Equal(t, 0, llmCalls)
+	// Second call: should use cache, no additional LLM call
+	pkg = pi.resolvePackage(context.Background(), "exotictool")
+	assert.Equal(t, "exotic-pkg", pkg)
+	assert.Equal(t, 1, llmCalls, "second call should use cache, not LLM")
 }
 
 func TestPackageInstallerNilSafe(t *testing.T) {
@@ -285,7 +288,7 @@ func TestPackageInstallerNoPkgManager(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	handled, err := pi.HandleCommandNotFound(context.Background(), "jq '.name'", "command not found: jq", 127, stdout, stderr)
+	handled, err := pi.HandleCommandNotFound(context.Background(), "jq '.name'", "command not found: jq", 127, "/project", stdout, stderr)
 	assert.NoError(t, err)
 	assert.False(t, handled, "should not handle when no package manager")
 }

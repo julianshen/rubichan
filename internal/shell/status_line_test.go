@@ -142,8 +142,7 @@ func TestPromptRendererWithStatusLine(t *testing.T) {
 	t.Parallel()
 
 	sl := NewStatusLine(80)
-	sl.Update("cwd", "~/project")
-	sl.Update("branch", "main")
+	sl.homeDir = "/home/user"
 	sl.UpdateExitCode(0)
 
 	pr := NewPromptRenderer("/home/user")

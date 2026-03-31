@@ -57,7 +57,7 @@ func (ic *IntentClassifier) Classify(ctx context.Context, input string) (IntentK
 	}
 
 	text := strings.TrimSpace(strings.ToLower(collectTurnText(events)))
-	if strings.Contains(text, "action") {
+	if text == "action" {
 		return IntentAction, nil
 	}
 	// Default to question (safe fallback)

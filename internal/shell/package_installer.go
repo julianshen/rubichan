@@ -47,6 +47,7 @@ func (pi *PackageInstaller) HandleCommandNotFound(
 	fullCommand string,
 	stderr string,
 	exitCode int,
+	workDir string,
 	stdout io.Writer,
 	errWriter io.Writer,
 ) (bool, error) {
@@ -99,7 +100,7 @@ func (pi *PackageInstaller) HandleCommandNotFound(
 	}
 
 	fmt.Fprintf(errWriter, "[Installing: %s]\n", installCmd)
-	_, installErr, installExit, err := pi.shellExec(ctx, installCmd, "")
+	_, installErr, installExit, err := pi.shellExec(ctx, installCmd, workDir)
 	if err != nil {
 		return true, fmt.Errorf("install failed: %w", err)
 	}
@@ -112,7 +113,7 @@ func (pi *PackageInstaller) HandleCommandNotFound(
 
 	// Re-run original command
 	fmt.Fprintf(errWriter, "[Re-running: %s]\n", fullCommand)
-	rerunStdout, rerunStderr, _, err := pi.shellExec(ctx, fullCommand, "")
+	rerunStdout, rerunStderr, _, err := pi.shellExec(ctx, fullCommand, workDir)
 	if err != nil {
 		return true, fmt.Errorf("re-run failed: %w", err)
 	}
@@ -220,7 +221,7 @@ var knownPackages = map[string]map[string]string{
 	"tmux":    {"*": "tmux"},
 	"make":    {"apt": "build-essential", "*": "make"},
 	"gcc":     {"apt": "build-essential", "*": "gcc"},
-	"g++":     {"apt": "build-essential", "*": "gcc"},
+	"g++":     {"apt": "build-essential", "dnf": "gcc-c++", "yum": "gcc-c++", "*": "gcc"},
 	"python3": {"brew": "python3", "apt": "python3", "*": "python3"},
 	"pip":     {"apt": "python3-pip", "*": "pip"},
 	"pip3":    {"apt": "python3-pip", "*": "pip3"},
