@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // LSPNotifier provides post-write diagnostic feedback from a language server.
@@ -30,6 +32,8 @@ type FileTool struct {
 	rootDir     string
 	diffTracker *DiffTracker
 	lspNotifier LSPNotifier
+	readHashes  map[string]uint64 // path -> content hash from last read
+	readHashMu  sync.Mutex
 }
 
 // NewFileTool creates a new FileTool that operates within the given root directory.
@@ -45,7 +49,7 @@ func NewFileTool(rootDir string) *FileTool {
 	if err != nil {
 		resolved = abs
 	}
-	return &FileTool{rootDir: resolved}
+	return &FileTool{rootDir: resolved, readHashes: make(map[string]uint64)}
 }
 
 // SetDiffTracker attaches a DiffTracker to record file changes.
@@ -235,10 +239,36 @@ func (f *FileTool) readFile(path string) (ToolResult, error) {
 	if err != nil {
 		return ToolResult{Content: err.Error(), IsError: true}, nil
 	}
+
+	hash := hashContent(data)
+	f.readHashMu.Lock()
+	prev, seen := f.readHashes[path]
+	f.readHashes[path] = hash
+	f.readHashMu.Unlock()
+
+	if seen && prev == hash {
+		relPath, _ := filepath.Rel(f.rootDir, path)
+		lineCount := strings.Count(string(data), "\n") + 1
+		summary := fmt.Sprintf("File %s unchanged since last read (%d lines). Content already in conversation context.", relPath, lineCount)
+		return ToolResult{Content: summary}, nil
+	}
+
 	return ToolResult{Content: string(data)}, nil
 }
 
+// hashContent returns a FNV-1a hash of the given data.
+func hashContent(data []byte) uint64 {
+	h := fnv.New64a()
+	h.Write(data)
+	return h.Sum64()
+}
+
 func (f *FileTool) writeFile(ctx context.Context, path, content string) (ToolResult, error) {
+	// Invalidate read cache for this path since content is changing.
+	f.readHashMu.Lock()
+	delete(f.readHashes, path)
+	f.readHashMu.Unlock()
+
 	// Check if the file already exists to determine create vs modify.
 	_, statErr := os.Stat(path)
 	existed := statErr == nil
@@ -282,6 +312,11 @@ func (f *FileTool) patchFile(ctx context.Context, path, oldString, newString str
 	if oldString == "" {
 		return ToolResult{Content: "old_string must not be empty", IsError: true}, nil
 	}
+
+	// Invalidate read cache for this path since content is changing.
+	f.readHashMu.Lock()
+	delete(f.readHashes, path)
+	f.readHashMu.Unlock()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
