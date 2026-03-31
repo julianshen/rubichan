@@ -56,15 +56,7 @@ func (ic *IntentClassifier) Classify(ctx context.Context, input string) (IntentK
 		return IntentQuestion, nil
 	}
 
-	// Collect the response text
-	var response strings.Builder
-	for event := range events {
-		if event.Type == "text_delta" {
-			response.WriteString(event.Text)
-		}
-	}
-
-	text := strings.TrimSpace(strings.ToLower(response.String()))
+	text := strings.TrimSpace(strings.ToLower(collectTurnText(events)))
 	if strings.Contains(text, "action") {
 		return IntentAction, nil
 	}

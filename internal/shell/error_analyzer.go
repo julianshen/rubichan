@@ -9,18 +9,16 @@ import (
 // ErrorAnalyzer provides AI-powered analysis of failed shell commands.
 type ErrorAnalyzer struct {
 	agentTurn AgentTurnFunc
-	enabled   bool
-	maxOutput int // max bytes of output to send to LLM
+	maxOutput int
 }
 
 // NewErrorAnalyzer creates an error analyzer.
-func NewErrorAnalyzer(agentTurn AgentTurnFunc, enabled bool, maxOutput int) *ErrorAnalyzer {
+func NewErrorAnalyzer(agentTurn AgentTurnFunc, maxOutput int) *ErrorAnalyzer {
 	if maxOutput <= 0 {
 		maxOutput = 4096
 	}
 	return &ErrorAnalyzer{
 		agentTurn: agentTurn,
-		enabled:   enabled,
 		maxOutput: maxOutput,
 	}
 }
@@ -28,11 +26,10 @@ func NewErrorAnalyzer(agentTurn AgentTurnFunc, enabled bool, maxOutput int) *Err
 // Analyze sends a failed command's output to the LLM for diagnosis.
 // Returns a channel of TurnEvents for streaming the suggestion.
 func (ea *ErrorAnalyzer) Analyze(ctx context.Context, command string, stdout string, stderr string, exitCode int) (<-chan TurnEvent, error) {
-	if !ea.enabled || ea.agentTurn == nil {
+	if ea.agentTurn == nil {
 		return nil, nil
 	}
 
-	// Build combined output, truncating if needed.
 	combined := stdout
 	if stderr != "" {
 		if combined != "" {
@@ -40,12 +37,8 @@ func (ea *ErrorAnalyzer) Analyze(ctx context.Context, command string, stdout str
 		}
 		combined += stderr
 	}
-	if len(combined) > ea.maxOutput {
-		remaining := len(combined) - ea.maxOutput
-		combined = combined[:ea.maxOutput] + fmt.Sprintf("\n... (truncated, %d more bytes)", remaining)
-	}
+	combined = truncateWithNotice(combined, ea.maxOutput)
 
-	// Build prompt.
 	var b strings.Builder
 	fmt.Fprintf(&b, "The command `%s` failed with exit code %d.", command, exitCode)
 	if combined != "" {

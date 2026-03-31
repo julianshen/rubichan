@@ -60,14 +60,7 @@ func (sg *ScriptGenerator) Generate(ctx context.Context, prompt string) (string,
 		return "", fmt.Errorf("generating script: %w", err)
 	}
 
-	var response strings.Builder
-	for event := range events {
-		if event.Type == "text_delta" {
-			response.WriteString(event.Text)
-		}
-	}
-
-	return extractScript(response.String()), nil
+	return extractScript(collectTurnText(events)), nil
 }
 
 // Execute runs an approved script and returns its output.

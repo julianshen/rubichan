@@ -34,7 +34,7 @@ func TestErrorAnalyzerAnalyzesFailedCommand(t *testing.T) {
 		return ch, nil
 	}
 
-	ea := NewErrorAnalyzer(agentTurn, true, 4096)
+	ea := NewErrorAnalyzer(agentTurn, 4096)
 
 	events, err := ea.Analyze(context.Background(), "go test ./...", "FAIL", "undefined: Foo", 1)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestErrorAnalyzerAnalyzesBenignFailure(t *testing.T) {
 	t.Parallel()
 
 	var capturedPrompt string
-	ea := NewErrorAnalyzer(mockAgentTurnCapture(&capturedPrompt), true, 4096)
+	ea := NewErrorAnalyzer(mockAgentTurnCapture(&capturedPrompt), 4096)
 
 	events, err := ea.Analyze(context.Background(), "grep foo bar.txt", "", "bar.txt: No such file or directory", 1)
 	require.NoError(t, err)
@@ -85,7 +85,7 @@ func TestErrorAnalyzerSkipsSuccessfulCommand(t *testing.T) {
 		return ch, nil
 	}
 
-	ea := NewErrorAnalyzer(agent, true, 4096)
+	ea := NewErrorAnalyzer(agent, 4096)
 
 	// Exit code 0 — should not be called (caller checks exit code, but Analyze
 	// itself doesn't gate on exit code — the caller does). Test that even if
@@ -107,7 +107,7 @@ func TestErrorAnalyzerTruncatesLargeOutput(t *testing.T) {
 	t.Parallel()
 
 	var capturedPrompt string
-	ea := NewErrorAnalyzer(mockAgentTurnCapture(&capturedPrompt), true, 100)
+	ea := NewErrorAnalyzer(mockAgentTurnCapture(&capturedPrompt), 100)
 
 	largeOutput := strings.Repeat("x", 200)
 	events, err := ea.Analyze(context.Background(), "cmd", largeOutput, "", 1)
@@ -126,7 +126,7 @@ func TestErrorAnalyzerPromptFormat(t *testing.T) {
 	t.Parallel()
 
 	var capturedPrompt string
-	ea := NewErrorAnalyzer(mockAgentTurnCapture(&capturedPrompt), true, 4096)
+	ea := NewErrorAnalyzer(mockAgentTurnCapture(&capturedPrompt), 4096)
 
 	events, err := ea.Analyze(context.Background(), "make build", "compiled ok", "error: missing dep", 2)
 	require.NoError(t, err)
@@ -139,30 +139,22 @@ func TestErrorAnalyzerPromptFormat(t *testing.T) {
 	assert.Contains(t, capturedPrompt, "Analyze the error concisely")
 }
 
-func TestErrorAnalyzerDisabled(t *testing.T) {
+func TestErrorAnalyzerDisabledViaNoAgent(t *testing.T) {
 	t.Parallel()
 
-	called := false
-	agent := func(_ context.Context, _ string) (<-chan TurnEvent, error) {
-		called = true
-		ch := make(chan TurnEvent, 1)
-		close(ch)
-		return ch, nil
-	}
-
-	ea := NewErrorAnalyzer(agent, false, 4096)
+	// With nil agentTurn, Analyze returns nil (disabled behavior)
+	ea := NewErrorAnalyzer(nil, 4096)
 
 	events, err := ea.Analyze(context.Background(), "cmd", "", "error", 1)
 	assert.NoError(t, err)
 	assert.Nil(t, events)
-	assert.False(t, called)
 }
 
 func TestErrorAnalyzerNilSafe(t *testing.T) {
 	t.Parallel()
 
 	// nil agentTurn
-	ea := NewErrorAnalyzer(nil, true, 4096)
+	ea := NewErrorAnalyzer(nil, 4096)
 
 	events, err := ea.Analyze(context.Background(), "cmd", "", "error", 1)
 	assert.NoError(t, err)

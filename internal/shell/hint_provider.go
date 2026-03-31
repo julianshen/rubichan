@@ -10,7 +10,7 @@ import (
 type HintProvider struct {
 	agentTurn AgentTurnFunc
 	cache     map[string][]Completion
-	pending   map[string]bool // tracks in-flight requests
+	pending   map[string]bool
 	mu        sync.RWMutex
 }
 
@@ -45,22 +45,16 @@ func (hp *HintProvider) Hint(input string) []Completion {
 		return nil
 	}
 
-	// Check cache
-	hp.mu.RLock()
+	// Check-and-set under a single Lock to avoid TOCTOU race
+	hp.mu.Lock()
 	if results, ok := hp.cache[key]; ok {
-		hp.mu.RUnlock()
+		hp.mu.Unlock()
 		return results
 	}
-	isPending := hp.pending[key]
-	hp.mu.RUnlock()
-
-	// Don't duplicate in-flight requests
-	if isPending {
+	if hp.pending[key] {
+		hp.mu.Unlock()
 		return nil
 	}
-
-	// Mark as pending and trigger background LLM call
-	hp.mu.Lock()
 	hp.pending[key] = true
 	hp.mu.Unlock()
 
@@ -81,16 +75,10 @@ func (hp *HintProvider) fetchHints(key string) {
 		return
 	}
 
-	var response strings.Builder
-	for event := range events {
-		if event.Type == "text_delta" {
-			response.WriteString(event.Text)
-		}
-	}
+	response := collectTurnText(events)
 
-	// Parse response: one completion per line
 	var results []Completion
-	for _, line := range strings.Split(response.String(), "\n") {
+	for _, line := range strings.Split(response, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" {
 			results = append(results, Completion{Text: trimmed})

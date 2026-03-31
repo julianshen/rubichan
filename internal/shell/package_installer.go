@@ -12,7 +12,6 @@ import (
 type PackageManager struct {
 	Name       string // "brew", "apt", "dnf", "pacman", "apk", etc.
 	InstallCmd string // "brew install", "sudo apt install -y", etc.
-	SearchCmd  string // "brew search", "apt search", etc.
 }
 
 // PackageInstaller detects missing commands and offers to install them.
@@ -173,14 +172,7 @@ func (pi *PackageInstaller) resolveLLM(ctx context.Context, cmdName string, pkgM
 		return ""
 	}
 
-	var response strings.Builder
-	for event := range events {
-		if event.Type == "text_delta" {
-			response.WriteString(event.Text)
-		}
-	}
-
-	return strings.TrimSpace(response.String())
+	return strings.TrimSpace(collectTurnText(events))
 }
 
 // IsCommandNotFound detects if a command failure is due to a missing executable.

@@ -46,16 +46,7 @@ func (sl *StatusLine) UpdateCWD(path string) {
 	if sl == nil {
 		return
 	}
-	display := path
-	if sl.homeDir != "" && strings.HasPrefix(path, sl.homeDir) {
-		rest := path[len(sl.homeDir):]
-		if rest == "" {
-			display = "~"
-		} else if rest[0] == '/' {
-			display = "~" + rest
-		}
-	}
-	sl.Update("cwd", display)
+	sl.Update(SegmentCWD, shortenHome(path, sl.homeDir))
 }
 
 // UpdateExitCode updates the exit code segment with appropriate symbol.
@@ -64,9 +55,9 @@ func (sl *StatusLine) UpdateExitCode(exitCode int) {
 		return
 	}
 	if exitCode == 0 {
-		sl.Update("exitcode", "0")
+		sl.Update(SegmentExitCode, "0")
 	} else {
-		sl.Update("exitcode", fmt.Sprintf("%d", exitCode))
+		sl.Update(SegmentExitCode, fmt.Sprintf("%d", exitCode))
 	}
 }
 
@@ -75,7 +66,7 @@ func (sl *StatusLine) UpdateModel(model string) {
 	if sl == nil {
 		return
 	}
-	sl.Update("model", shortenModelName(model))
+	sl.Update(SegmentModel, shortenModelName(model))
 }
 
 // Render returns the formatted status line string with ANSI colors.
@@ -86,27 +77,20 @@ func (sl *StatusLine) Render() string {
 
 	var parts []string
 
-	// CWD
-	if cwd := sl.segments["cwd"]; cwd != "" {
+	if cwd := sl.segments[SegmentCWD]; cwd != "" {
 		parts = append(parts, ansiCyan+cwd+ansiReset)
 	}
-
-	// Git branch
-	if branch := sl.segments["branch"]; branch != "" {
+	if branch := sl.segments[SegmentBranch]; branch != "" {
 		parts = append(parts, ansiYellow+branch+ansiReset)
 	}
-
-	// Exit code
-	if ec := sl.segments["exitcode"]; ec != "" {
+	if ec := sl.segments[SegmentExitCode]; ec != "" {
 		if ec == "0" {
 			parts = append(parts, ansiGreen+"✓"+ansiReset)
 		} else {
 			parts = append(parts, ansiRed+"✗ "+ec+ansiReset)
 		}
 	}
-
-	// Model
-	if model := sl.segments["model"]; model != "" {
+	if model := sl.segments[SegmentModel]; model != "" {
 		parts = append(parts, ansiDim+model+ansiReset)
 	}
 
