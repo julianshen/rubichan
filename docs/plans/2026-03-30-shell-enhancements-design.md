@@ -90,12 +90,33 @@ Replace `bufio.Scanner` with a readline library that supports custom completers.
 
 The readline library provides line editing (arrow keys, Ctrl-A/E, history navigation) for free, which also improves the base shell experience.
 
+**Testability — `LineReader` interface:**
+
+To avoid breaking the existing test infrastructure (which uses `strings.NewReader` for stdin), the readline dependency is abstracted behind a `LineReader` interface:
+
+```go
+// LineReader abstracts line input with optional completion support.
+type LineReader interface {
+    ReadLine(prompt string) (string, error)
+    Close() error
+}
+
+// SimpleLineReader wraps bufio.Scanner for testing (no completion).
+type SimpleLineReader struct { ... }
+
+// ReadlineLineReader wraps chzyer/readline for production (with completion).
+type ReadlineLineReader struct { ... }
+```
+
+`ShellHost` uses `LineReader` instead of `bufio.Scanner` directly. Tests inject `SimpleLineReader` (backed by `strings.NewReader`), production uses `ReadlineLineReader`. Existing tests remain unchanged.
+
 ### 2.5 Key Decisions
 
 - **Local-first**: Tab always completes locally (instant). LLM hints are supplemental.
 - **No LLM for basic completion**: File paths and executables never hit the LLM.
 - **Cache aggressively**: LLM hint results cached for the session to avoid redundant calls.
 - **Graceful degradation**: If LLM is slow/unavailable, local completion still works.
+- **Interface-based readline**: `LineReader` interface keeps tests simple. Production gets full readline; tests use a mock.
 
 ---
 
@@ -114,7 +135,7 @@ When a shell command fails (non-zero exit code), the user currently sees the raw
 3. Display the suggestion below the error output, clearly delineated
 
 **Behavior:**
-- Only triggers on non-zero exit code
+- Triggers on **any non-zero exit code** (exit > 0), including benign ones like `grep` returning 1 (no match). Even "expected" failures can be useful to analyze — a grep with no matches might indicate a typo, a wrong directory, or a misremembered flag. The LLM is smart enough to give context-appropriate suggestions (e.g., "No matches found — did you mean X?" vs. "Compilation failed because...").
 - Respects a configurable opt-out (`--no-error-analysis` flag or config)
 - Truncates large output before sending to LLM (reuses `ContextTracker.maxOutputSize`)
 - Shows a brief "Analyzing..." indicator while the LLM responds
@@ -149,6 +170,7 @@ if exitCode != 0 && h.errorAnalyzer != nil && h.errorAnalyzer.enabled {
 
 ### 3.5 Key Decisions
 
+- **Analyze all failures (exit > 0)**: Even benign exit codes (grep no-match = 1) get analysis. The LLM adapts its suggestion to the severity — a typo hint for grep, a fix for a build failure. Users can disable if too noisy.
 - **Non-blocking**: The error output is shown immediately; analysis streams after.
 - **Opt-in by default**: Enabled by default, can be disabled per-session or globally.
 - **Concise prompt**: The analysis prompt focuses on actionable suggestions, not verbose explanations.
@@ -228,13 +250,29 @@ bash: jq: command not found
    "rubichan"
 ```
 
-### 4.6 Key Decisions
+### 4.6 Package Resolution Strategy
+
+**Three-tier resolution** — fast local lookup first, package manager search second, LLM as last resort:
+
+1. **Built-in lookup table** (instant, ~100 common tools): A hardcoded map of the most common developer tools and their package names across package managers. Examples:
+   - `jq` → `jq` (all), `rg` → `ripgrep` (all), `fd` → `fd-find` (apt) / `fd` (brew)
+   - `htop`, `tree`, `wget`, `curl`, `tmux`, `make`, `gcc`, `python3`, etc.
+   - Covers ~90% of real-world "command not found" cases with zero latency.
+
+2. **Package manager search** (fast, local): If not in the built-in table, use the package manager's native search:
+   - `brew search <cmd>`, `apt-file search /usr/bin/<cmd>`, `dnf provides */bin/<cmd>`
+   - Requires `apt-file` to be installed on Debian/Ubuntu (common in dev environments).
+   - Returns exact matches preferred, then fuzzy matches.
+
+3. **LLM fallback** (async): If both above fail, ask the LLM for the package name. This handles edge cases, renamed packages, and platform-specific alternatives.
+
+### 4.7 Key Decisions
 
 - **Always ask before installing**: Never auto-install. Approval prompt required.
-- **LLM for package mapping**: The LLM determines the correct package name (e.g., `jq` → `jq`, `rg` → `ripgrep`).
+- **Three-tier resolution**: Built-in table → package manager search → LLM. Fast for common tools, comprehensive for obscure ones.
 - **Re-run on success**: After successful installation, automatically re-run the original command.
 - **Sudo awareness**: If the package manager requires sudo (apt, dnf), include it in the suggested command.
-- **Cache package mappings**: Cache `command → package` mappings for the session.
+- **Cache package mappings**: Cache `command → package` mappings for the session (all tiers contribute to cache).
 
 ---
 
@@ -246,12 +284,21 @@ The `?` prefix currently routes to the LLM for a conversational response. Smart 
 
 ### 5.2 Design
 
-The existing `?` prefix already forces LLM routing. Smart Script adds a new classification: when the `?` query looks like an action request (not a question), generate a script instead of a conversational response.
+The existing `?` prefix already forces LLM routing. Smart Script uses a **two-pass approach**: the LLM first classifies whether the `?` input is a question or an action, then routes accordingly.
 
-**Flow:**
+**Two-pass flow:**
+
+**Pass 1 — Intent Classification (fast, small prompt):**
+The LLM receives the `?`-prefixed input and classifies it as `"question"` or `"action"`:
+- `? what is a goroutine` → `"question"` → normal conversational LLM response
+- `? find all TODO comments` → `"action"` → proceed to script generation
+
+This uses a lightweight classification prompt (few-shot, ~200 tokens) for fast turnaround. The classification result is cached for the session to avoid re-classifying similar patterns.
+
+**Pass 2 — Script Generation (only for actions):**
 1. User types: `? find all TODO comments and count them by file`
 2. Classifier routes to `ClassLLMQuery` (existing behavior)
-3. Smart Script interceptor detects this is a `?`-prefixed action request
+3. Two-pass: LLM classifies as `"action"`
 4. Sends a script-generation prompt to the LLM
 5. LLM returns a shell script
 6. Script is displayed in a code block with syntax highlighting
@@ -260,15 +307,35 @@ The existing `?` prefix already forces LLM routing. Smart Script adds a new clas
 9. On `e`/`edit`: open in `$EDITOR` for modification, then re-prompt
 10. On `n`: discard
 
+**Fallback:** If intent classification fails or is ambiguous, default to conversational (question) mode — safer than generating an unwanted script.
+
 ### 5.3 Architecture
 
 ```go
+// IntentKind represents whether a ? query is a question or an action.
+type IntentKind int
+
+const (
+    IntentQuestion IntentKind = iota // Conversational response
+    IntentAction                     // Generate and run a script
+)
+
+// IntentClassifier uses the LLM to classify ? queries as questions or actions.
+type IntentClassifier struct {
+    agentTurn AgentTurnFunc
+}
+
+// Classify determines if the input is a question or an action request.
+// Returns IntentQuestion on error or ambiguity (safe default).
+func (ic *IntentClassifier) Classify(ctx context.Context, input string) (IntentKind, error)
+
 // ScriptGenerator generates shell scripts from natural language prompts.
 type ScriptGenerator struct {
-    agentTurn AgentTurnFunc
-    shellExec ShellExecFunc
-    approvalFn func(ctx context.Context, script string) (approved bool, edited string, err error)
-    workDir   *string
+    intentClassifier *IntentClassifier
+    agentTurn        AgentTurnFunc
+    shellExec        ShellExecFunc
+    approvalFn       func(ctx context.Context, script string) (approved bool, edited string, err error)
+    workDir          *string
 }
 
 // Generate creates a shell script from a natural language prompt.
@@ -277,6 +344,10 @@ func (sg *ScriptGenerator) Generate(ctx context.Context, prompt string) (string,
 
 // Execute runs an approved script and returns its output.
 func (sg *ScriptGenerator) Execute(ctx context.Context, script string) (stdout string, stderr string, exitCode int, err error)
+
+// HandleQuery is the main entry point: classifies intent, then either
+// generates a script (action) or returns nil to signal conversational mode.
+func (sg *ScriptGenerator) HandleQuery(ctx context.Context, query string) (script *string, err error)
 ```
 
 ### 5.4 Script Generation Prompt
@@ -335,6 +406,7 @@ Run this script? (y/n/edit): y
 ### 5.7 Key Decisions
 
 - **`?` prefix only**: Smart Script only activates on `?`-prefixed input. Regular NL queries still get conversational responses.
+- **Two-pass LLM routing**: First pass classifies intent (question vs action) via a lightweight LLM call. Questions go to normal conversational path. Actions trigger script generation. Ambiguous defaults to question (safe).
 - **Always show before running**: The script is always displayed for review. No blind execution.
 - **Approval required**: `y/n/edit` prompt. Never auto-execute.
 - **Edit option**: Let users tweak the generated script before running.
@@ -350,34 +422,33 @@ Users want persistent visibility of shell state: current directory, git branch, 
 
 ### 6.2 Design
 
-A persistent status bar at the bottom of the terminal, updated after each command. Uses ANSI escape sequences to reserve the bottom line(s) and render status information.
+Instead of a persistent bottom bar using ANSI scroll regions (which conflicts with streaming LLM output and shell command output), the status is displayed as an **enhanced prompt line** — a rich, multi-segment line rendered above or as part of the prompt on every iteration.
+
+This is simpler, more compatible across terminals, and avoids visual glitches during long streaming outputs.
 
 ### 6.3 Architecture
 
 ```go
-// StatusBar renders a persistent status line at the bottom of the terminal.
-type StatusBar struct {
-    writer    io.Writer
-    width     int // terminal width
-    segments  []StatusSegment
-    enabled   bool
+// StatusLine renders a rich status display as part of the shell prompt.
+type StatusLine struct {
+    segments []StatusSegment
+    writer   io.Writer
+    width    int // terminal width for truncation
+    enabled  bool
 }
 
-// StatusSegment is a single section of the status bar.
+// StatusSegment is a single section of the status line.
 type StatusSegment struct {
     Key   string // identifier for updates
     Value string // display text
     Style string // ANSI style codes (color, bold, etc.)
 }
 
-// Update changes a segment's value and re-renders the bar.
-func (sb *StatusBar) Update(key string, value string)
+// Update changes a segment's value.
+func (sl *StatusLine) Update(key string, value string)
 
-// Render draws the status bar at the bottom of the terminal.
-func (sb *StatusBar) Render()
-
-// Clear removes the status bar (on exit).
-func (sb *StatusBar) Clear()
+// Render writes the status line to the writer. Called before each prompt.
+func (sl *StatusLine) Render() string
 ```
 
 ### 6.4 Segments
@@ -390,34 +461,43 @@ func (sb *StatusBar) Clear()
 | Active model | `model` | `sonnet` | After `/model` command |
 | Mode indicator | `mode` | `AI Shell` | Static |
 
-### 6.5 Terminal Handling
+### 6.5 Prompt-Integrated Display
+
+The status line renders as a colored line above the main prompt:
 
 ```
-┌─────────────────────────── Terminal ────────────────────────────┐
-│ ~/project (main) ai$ ls -la                                    │
-│ total 64                                                       │
-│ drwxr-xr-x  12 user staff  384 Mar 30 09:00 .                 │
-│ ...                                                            │
-│ ~/project (main) ai$ _                                         │
-│                                                                │
-├────────────────────────── Status Bar ──────────────────────────┤
-│ 📁 ~/project  🌿 main  ✓  🤖 sonnet  AI Shell                │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ ~/project | main | ✓ | sonnet | AI Shell         │  ← status line (colored)
+│ ai$ _                                            │  ← input prompt
+└──────────────────────────────────────────────────┘
+```
+
+Or as a two-line prompt:
+
+```
+[~/project] (main) ✓ sonnet
+ai$ git status
+On branch main
+...
+
+[~/project] (main) ✗1 sonnet
+ai$ _
 ```
 
 Implementation approach:
-- Use ANSI scroll region (`\033[1;{rows-1}r`) to reserve the bottom line
-- Cursor save/restore to update the status bar without disrupting the main content
-- Detect terminal size via `golang.org/x/term` (already a dependency)
-- Handle `SIGWINCH` for terminal resize
+- `StatusLine.Render()` returns a formatted string with ANSI colors
+- `PromptRenderer` is enhanced to optionally prepend the status line
+- Terminal width detected via `golang.org/x/term` for truncation
+- Segments separated by `|` or spaces, with ANSI color codes
+- No scroll regions, no cursor manipulation — just printed text
 
 ### 6.6 Key Decisions
 
-- **ANSI-based**: No TUI framework needed. Pure escape sequences for the status bar.
-- **Opt-in**: Can be disabled with `--no-status-bar` or config.
-- **Minimal overhead**: Only re-renders when a segment changes.
-- **Graceful fallback**: If terminal doesn't support scroll regions, status bar is disabled.
-- **No emoji by default**: Use text symbols (`*` for branch, `>` for CWD) unless unicode is detected.
+- **Prompt-integrated**: Status is part of the prompt, not a persistent bar. No ANSI scroll regions means zero conflicts with streaming output, pipes, or terminal resizers.
+- **Simple and robust**: Works in every terminal, over SSH, in tmux, in screen. No special terminal capability required.
+- **ANSI colors**: Uses standard 16-color ANSI codes for broad compatibility. Configurable for 256-color or no-color.
+- **Opt-in**: Can be disabled with `--no-status` or config.
+- **No emoji by default**: Use text symbols (`*` for branch, `>` for CWD) unless unicode is detected via locale.
 
 ---
 
@@ -451,6 +531,7 @@ type ShellHostConfig struct {
 
     // Feature 1: Auto-completion
     SlashCommandNames func() []string // for completion candidates
+    LineReader        LineReader       // nil = use SimpleLineReader (bufio)
 
     // Feature 2: Error Analysis
     ErrorAnalysis bool // enable/disable
@@ -461,10 +542,25 @@ type ShellHostConfig struct {
     // Feature 4: Smart Script
     ScriptApprovalFn func(ctx context.Context, script string) (approved bool, edited string, err error)
 
-    // Feature 5: Status Bar
-    StatusBar bool // enable/disable
+    // Feature 5: Status Line
+    StatusLine bool // enable/disable
 }
 ```
+
+### Feature Flags (Config)
+
+Each feature has an individual toggle in the TOML config file under `[shell]`:
+
+```toml
+[shell]
+error_analysis = true    # Feature 2 (default: true)
+package_installer = true # Feature 3 (default: true)
+smart_script = true      # Feature 4 (default: true)
+status_line = true       # Feature 5 (default: true)
+completion = true        # Feature 1 (default: true)
+```
+
+All features default to **enabled**. Each can be overridden per-invocation via CLI flags (`--no-error-analysis`, `--no-status`, etc.). The nil-safe design ensures disabled features have zero overhead.
 
 ---
 
