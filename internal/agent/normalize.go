@@ -13,8 +13,7 @@ func NormalizeMessages(messages []provider.Message) []provider.Message {
 
 // removeOrphanedToolCalls removes tool_use content blocks from assistant
 // messages when no subsequent user message contains a matching tool_result.
-// This happens after compaction strips tool results, leaving dangling tool_use
-// blocks that confuse the LLM.
+// Returns the original slice unmodified when no orphans are found.
 func removeOrphanedToolCalls(messages []provider.Message) []provider.Message {
 	// Collect all tool_result IDs from user messages.
 	resultIDs := make(map[string]bool)
@@ -29,8 +28,28 @@ func removeOrphanedToolCalls(messages []provider.Message) []provider.Message {
 		}
 	}
 
-	// Remove tool_use blocks without matching results.
-	var out []provider.Message
+	// Quick check: any orphans exist?
+	hasOrphans := false
+	for _, msg := range messages {
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" && block.ID != "" && !resultIDs[block.ID] {
+				hasOrphans = true
+				break
+			}
+		}
+		if hasOrphans {
+			break
+		}
+	}
+	if !hasOrphans {
+		return messages
+	}
+
+	// Remove orphaned tool_use blocks.
+	out := make([]provider.Message, 0, len(messages))
 	for _, msg := range messages {
 		if msg.Role != "assistant" {
 			out = append(out, msg)
@@ -39,7 +58,7 @@ func removeOrphanedToolCalls(messages []provider.Message) []provider.Message {
 		var filtered []provider.ContentBlock
 		for _, block := range msg.Content {
 			if block.Type == "tool_use" && block.ID != "" && !resultIDs[block.ID] {
-				continue // orphaned — skip
+				continue
 			}
 			filtered = append(filtered, block)
 		}
@@ -51,16 +70,27 @@ func removeOrphanedToolCalls(messages []provider.Message) []provider.Message {
 }
 
 // mergeConsecutiveAssistant merges adjacent assistant messages into a single
-// message. Some providers reject conversations with consecutive messages of the
-// same role, and compaction can produce such sequences.
+// message. Returns the original slice when no merging is needed.
 func mergeConsecutiveAssistant(messages []provider.Message) []provider.Message {
 	if len(messages) <= 1 {
 		return messages
 	}
-	var out []provider.Message
+
+	// Quick check: any consecutive assistants?
+	needsMerge := false
+	for i := 1; i < len(messages); i++ {
+		if messages[i].Role == "assistant" && messages[i-1].Role == "assistant" {
+			needsMerge = true
+			break
+		}
+	}
+	if !needsMerge {
+		return messages
+	}
+
+	out := make([]provider.Message, 0, len(messages))
 	for _, msg := range messages {
 		if len(out) > 0 && out[len(out)-1].Role == msg.Role && msg.Role == "assistant" {
-			// Merge content blocks into the previous message.
 			out[len(out)-1].Content = append(out[len(out)-1].Content, msg.Content...)
 		} else {
 			out = append(out, msg)
