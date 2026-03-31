@@ -176,7 +176,7 @@ func TestNormalizeMessages_CombinesBothPasses(t *testing.T) {
 		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "ok"}}},
 	}
 
-	result := NormalizeMessages(messages)
+	result := normalizeMessages(messages)
 
 	// The orphaned tool_use is removed. The two assistant messages merge.
 	require.Len(t, result, 3)
@@ -204,7 +204,7 @@ func TestNormalizeMessages_PreservesValidConversation(t *testing.T) {
 		}},
 	}
 
-	result := NormalizeMessages(messages)
+	result := normalizeMessages(messages)
 	require.Len(t, result, 4)
 	// All messages preserved unchanged.
 	assert.Equal(t, "user", result[0].Role)

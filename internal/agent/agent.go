@@ -1089,7 +1089,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		req := provider.CompletionRequest{
 			Model:            a.model,
 			System:           systemPrompt,
-			Messages:         NormalizeMessages(a.conversation.Messages()),
+			Messages:         normalizeMessages(a.conversation.Messages()),
 			Tools:            reqTools,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,

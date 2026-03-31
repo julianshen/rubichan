@@ -2,10 +2,10 @@ package agent
 
 import "github.com/julianshen/rubichan/internal/provider"
 
-// NormalizeMessages cleans up conversation messages before sending to the LLM.
+// normalizeMessages cleans up conversation messages before sending to the LLM.
 // It removes orphaned tool_use blocks (those without a matching tool_result)
 // and merges consecutive assistant messages.
-func NormalizeMessages(messages []provider.Message) []provider.Message {
+func normalizeMessages(messages []provider.Message) []provider.Message {
 	messages = removeOrphanedToolCalls(messages)
 	messages = mergeConsecutiveAssistant(messages)
 	return messages
@@ -91,7 +91,11 @@ func mergeConsecutiveAssistant(messages []provider.Message) []provider.Message {
 	out := make([]provider.Message, 0, len(messages))
 	for _, msg := range messages {
 		if len(out) > 0 && out[len(out)-1].Role == msg.Role && msg.Role == "assistant" {
-			out[len(out)-1].Content = append(out[len(out)-1].Content, msg.Content...)
+			// Copy before append to avoid aliasing the original message's backing array.
+			prev := out[len(out)-1].Content
+			merged := make([]provider.ContentBlock, len(prev), len(prev)+len(msg.Content))
+			copy(merged, prev)
+			out[len(out)-1].Content = append(merged, msg.Content...)
 		} else {
 			out = append(out, msg)
 		}
