@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -41,7 +42,7 @@ Rules:
 func (sg *ScriptGenerator) Generate(ctx context.Context, prompt string) (string, error) {
 	trimmed := strings.TrimSpace(prompt)
 	if trimmed == "" {
-		return "", fmt.Errorf("empty prompt")
+		return "", errors.New("empty prompt")
 	}
 
 	if sg.agentTurn == nil {

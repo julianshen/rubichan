@@ -7,10 +7,14 @@ import (
 
 // LineReader abstracts line input with optional completion support.
 type LineReader interface {
-	// ReadLine reads a line of input. The prompt is used for display only.
+	// ReadLine reads a line of input. The prompt is passed for libraries
+	// that handle their own prompt display (e.g., readline).
 	ReadLine(prompt string) (string, error)
 	// Close cleans up resources.
 	Close() error
+	// HandlesPrompt returns true if the LineReader displays the prompt itself
+	// (e.g., a readline library). When false, the caller must print the prompt.
+	HandlesPrompt() bool
 }
 
 // SimpleLineReader wraps bufio.Scanner for testing and basic use (no completion).
@@ -39,4 +43,9 @@ func (lr *SimpleLineReader) ReadLine(_ string) (string, error) {
 // Close is a no-op for SimpleLineReader.
 func (lr *SimpleLineReader) Close() error {
 	return nil
+}
+
+// HandlesPrompt returns false — the caller must print the prompt.
+func (lr *SimpleLineReader) HandlesPrompt() bool {
+	return false
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // TurnEvent represents a streaming event from the agent.
@@ -152,6 +153,8 @@ func (h *ShellHost) Mode() string {
 
 // Run starts the REPL loop. It blocks until EOF, exit, or context cancellation.
 func (h *ShellHost) Run(ctx context.Context) error {
+	defer h.lineReader.Close()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -164,7 +167,9 @@ func (h *ShellHost) Run(ctx context.Context) error {
 			h.statusLine.Update(SegmentBranch, branch)
 		}
 		promptStr := h.prompt.Render(h.workDir, branch)
-		fmt.Fprint(h.stdout, promptStr)
+		if !h.lineReader.HandlesPrompt() {
+			fmt.Fprint(h.stdout, promptStr)
+		}
 
 		line, err := h.lineReader.ReadLine(promptStr)
 		if err != nil {
@@ -273,7 +278,7 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 	}
 
 	if exitCode != 0 && h.errorAnalyzer != nil {
-		fmt.Fprintf(h.stderr, "\n💡 Analyzing error...\n")
+		fmt.Fprintf(h.stderr, "\n> Analyzing error...\n")
 		events, err := h.errorAnalyzer.Analyze(ctx, input.Command, stdout, stderr, exitCode)
 		if err == nil && events != nil {
 			for event := range events {
@@ -409,11 +414,11 @@ func (h *ShellHost) handleSlashCommand(ctx context.Context, input ClassifiedInpu
 	return quit
 }
 
-// truncateForDisplay truncates a string to maxLen, adding ellipsis if needed.
+// truncateForDisplay truncates a string to maxLen runes, adding ellipsis if needed.
 func truncateForDisplay(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= maxLen {
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return truncateRunes(s, maxLen) + "..."
 }

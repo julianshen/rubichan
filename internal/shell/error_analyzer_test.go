@@ -117,7 +117,7 @@ func TestErrorAnalyzerTruncatesLargeOutput(t *testing.T) {
 	}
 
 	assert.Contains(t, capturedPrompt, "truncated")
-	assert.Contains(t, capturedPrompt, "100 more bytes")
+	assert.Contains(t, capturedPrompt, "100 more chars")
 	// The full 200-byte output should NOT be in the prompt
 	assert.NotContains(t, capturedPrompt, largeOutput)
 }

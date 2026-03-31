@@ -91,4 +91,5 @@ func (m *mockLineReader) ReadLine(_ string) (string, error) {
 	return line, nil
 }
 
-func (m *mockLineReader) Close() error { return nil }
+func (m *mockLineReader) Close() error        { return nil }
+func (m *mockLineReader) HandlesPrompt() bool { return false }

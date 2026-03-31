@@ -65,10 +65,12 @@ func (c *Completer) Complete(input string, pos int) []Completion {
 
 	fields := strings.Fields(trimmed)
 
-	// Git branch completion
-	if len(fields) >= 3 && fields[0] == "git" && gitBranchSubcommands[fields[1]] {
-		prefix := fields[len(fields)-1]
-		// Only if the cursor is after the subcommand
+	// Git branch completion: "git checkout <prefix>" or "git checkout " (trailing space)
+	if len(fields) >= 2 && fields[0] == "git" && gitBranchSubcommands[fields[1]] {
+		prefix := ""
+		if len(fields) >= 3 && !strings.HasSuffix(text, " ") {
+			prefix = fields[len(fields)-1]
+		}
 		return c.completeGitBranch(prefix)
 	}
 

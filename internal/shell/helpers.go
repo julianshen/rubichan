@@ -2,7 +2,10 @@ package shell
 
 import (
 	"fmt"
+	"io"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Event type constants for TurnEvent.Type.
@@ -49,7 +52,7 @@ func collectTurnText(events <-chan TurnEvent) string {
 }
 
 // writeOutput writes s to w, appending a newline if s doesn't already end with one.
-func writeOutput(w interface{ Write([]byte) (int, error) }, s string) {
+func writeOutput(w io.Writer, s string) {
 	if s == "" {
 		return
 	}
@@ -59,11 +62,27 @@ func writeOutput(w interface{ Write([]byte) (int, error) }, s string) {
 	}
 }
 
-// truncateWithNotice truncates s to maxLen bytes, appending a notice if truncated.
+// truncateWithNotice truncates s to maxLen runes, appending a notice if truncated.
 func truncateWithNotice(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	remaining := len(s) - maxLen
-	return s[:maxLen] + fmt.Sprintf("\n... (truncated, %d more bytes)", remaining)
+	truncated := truncateRunes(s, maxLen)
+	remaining := utf8.RuneCountInString(s) - maxLen
+	return truncated + fmt.Sprintf("\n... (truncated, %d more chars)", remaining)
 }
+
+// truncateRunes returns the first n runes of s.
+func truncateRunes(s string, n int) string {
+	count := 0
+	for i := range s {
+		if count >= n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
+// safePackageName matches only characters safe for use in package manager commands.
+var safePackageName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@/+:-]*$`)

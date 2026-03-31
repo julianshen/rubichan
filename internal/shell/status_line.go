@@ -8,7 +8,6 @@ import (
 // ANSI color codes
 const (
 	ansiReset  = "\033[0m"
-	ansiBold   = "\033[1m"
 	ansiDim    = "\033[2m"
 	ansiGreen  = "\033[32m"
 	ansiRed    = "\033[31m"

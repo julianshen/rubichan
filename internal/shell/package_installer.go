@@ -71,8 +71,14 @@ func (pi *PackageInstaller) HandleCommandNotFound(
 		return true, nil
 	}
 
+	// Validate package name to prevent command injection from LLM responses.
+	if !safePackageName.MatchString(pkg) {
+		fmt.Fprintf(errWriter, "Resolved package name %q contains unsafe characters\n", pkg)
+		return true, nil
+	}
+
 	installCmd := pi.pkgManager.InstallCmd + " " + pkg
-	fmt.Fprintf(errWriter, "\n📦 %s is not installed. Install with: %s\n", cmdName, installCmd)
+	fmt.Fprintf(errWriter, "\n%s is not installed. Install with: %s\n", cmdName, installCmd)
 
 	// Ask for approval
 	if pi.approvalFn == nil {
@@ -181,7 +187,9 @@ func IsCommandNotFound(stderr string, exitCode int) bool {
 		return true
 	}
 	lower := strings.ToLower(stderr)
-	return strings.Contains(lower, "command not found") || strings.Contains(lower, "not found:")
+	// Match shell-specific "command not found" messages, not generic "not found" errors.
+	return strings.Contains(lower, "command not found") ||
+		strings.Contains(lower, ": not found")
 }
 
 // extractCommandName gets the command name from a full command string.
