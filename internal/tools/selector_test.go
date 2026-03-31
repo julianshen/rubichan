@@ -245,3 +245,35 @@ func TestApplyMaxToolCountMaxLessThanCoreCount(t *testing.T) {
 	assert.NotContains(t, names, "search")
 	assert.NotContains(t, names, "git_status")
 }
+
+func TestSelectReturnsSorted(t *testing.T) {
+	ts := NewToolSelector()
+	messages := []provider.Message{
+		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "read the file at main.go"}}},
+	}
+
+	result := ts.Select(messages, allTestTools())
+	names := toolNames(result)
+
+	// Verify the result is sorted alphabetically.
+	for i := 1; i < len(names); i++ {
+		assert.True(t, names[i-1] <= names[i],
+			"expected sorted order but %q > %q at position %d", names[i-1], names[i], i)
+	}
+}
+
+func TestSelectSafeBaselineReturnsSorted(t *testing.T) {
+	ts := NewToolSelector()
+	// Generic message triggers safe baseline fallback.
+	messages := []provider.Message{
+		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "hello"}}},
+	}
+
+	result := ts.Select(messages, allTestTools())
+	names := toolNames(result)
+
+	for i := 1; i < len(names); i++ {
+		assert.True(t, names[i-1] <= names[i],
+			"expected sorted order but %q > %q at position %d", names[i-1], names[i], i)
+	}
+}

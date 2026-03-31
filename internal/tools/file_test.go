@@ -492,3 +492,136 @@ func TestFileToolNoDiffTrackerDoesNotPanic(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 }
+
+func TestFileToolReadDeduplication_FirstReadReturnsFullContent(t *testing.T) {
+	dir := t.TempDir()
+	content := "hello, world\nsecond line"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dedup.txt"), []byte(content), 0644))
+
+	ft := NewFileTool(dir)
+	input, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "dedup.txt",
+	})
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Equal(t, content, result.Content)
+}
+
+func TestFileToolReadDeduplication_SecondReadReturnsSummary(t *testing.T) {
+	dir := t.TempDir()
+	content := "hello, world\nsecond line"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dedup.txt"), []byte(content), 0644))
+
+	ft := NewFileTool(dir)
+	input, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "dedup.txt",
+	})
+
+	// First read — full content.
+	result, err := ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, content, result.Content)
+
+	// Second read of unchanged file — summary message.
+	result, err = ft.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "unchanged since last read")
+	assert.Contains(t, result.Content, "2 lines")
+}
+
+func TestFileToolReadDeduplication_WriteInvalidatesCache(t *testing.T) {
+	dir := t.TempDir()
+	content := "original content"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dedup.txt"), []byte(content), 0644))
+
+	ft := NewFileTool(dir)
+	ctx := context.Background()
+
+	// First read.
+	readInput, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "dedup.txt",
+	})
+	result, err := ft.Execute(ctx, readInput)
+	require.NoError(t, err)
+	assert.Equal(t, content, result.Content)
+
+	// Write new content to the file.
+	writeInput, _ := json.Marshal(map[string]string{
+		"operation": "write",
+		"path":      "dedup.txt",
+		"content":   "new content",
+	})
+	result, err = ft.Execute(ctx, writeInput)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	// Read again — should return full content since cache was invalidated.
+	result, err = ft.Execute(ctx, readInput)
+	require.NoError(t, err)
+	assert.Equal(t, "new content", result.Content)
+}
+
+func TestFileToolReadDeduplication_PatchInvalidatesCache(t *testing.T) {
+	dir := t.TempDir()
+	content := "line one\nline two\nline three"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dedup.txt"), []byte(content), 0644))
+
+	ft := NewFileTool(dir)
+	ctx := context.Background()
+
+	// First read.
+	readInput, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "dedup.txt",
+	})
+	result, err := ft.Execute(ctx, readInput)
+	require.NoError(t, err)
+	assert.Equal(t, content, result.Content)
+
+	// Patch the file.
+	patchInput, _ := json.Marshal(map[string]string{
+		"operation":  "patch",
+		"path":       "dedup.txt",
+		"old_string": "line two",
+		"new_string": "line TWO",
+	})
+	result, err = ft.Execute(ctx, patchInput)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	// Read again — should return full content since cache was invalidated.
+	result, err = ft.Execute(ctx, readInput)
+	require.NoError(t, err)
+	assert.Equal(t, "line one\nline TWO\nline three", result.Content)
+}
+
+func TestFileToolReadDeduplication_ChangedFileReturnsFullContent(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dedup.txt"), []byte("v1"), 0644))
+
+	ft := NewFileTool(dir)
+	ctx := context.Background()
+
+	readInput, _ := json.Marshal(map[string]string{
+		"operation": "read",
+		"path":      "dedup.txt",
+	})
+
+	// First read.
+	result, err := ft.Execute(ctx, readInput)
+	require.NoError(t, err)
+	assert.Equal(t, "v1", result.Content)
+
+	// File changed externally (not through FileTool).
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dedup.txt"), []byte("v2"), 0644))
+
+	// Second read — content changed, so full content is returned.
+	result, err = ft.Execute(ctx, readInput)
+	require.NoError(t, err)
+	assert.Equal(t, "v2", result.Content)
+}

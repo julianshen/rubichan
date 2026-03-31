@@ -1264,6 +1264,17 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 
+		// Check if the model signaled task completion via task_complete tool.
+		// All sibling tools in the same batch are executed before exiting —
+		// the model often pairs task_complete with a final write or commit.
+		for _, tc := range pendingTools {
+			if tc.Name == tools.TaskCompleteName {
+				a.executeTools(ctx, ch, pendingTools)
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				return
+			}
+		}
+
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
