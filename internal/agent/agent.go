@@ -1089,7 +1089,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		req := provider.CompletionRequest{
 			Model:            a.model,
 			System:           systemPrompt,
-			Messages:         a.conversation.Messages(),
+			Messages:         normalizeMessages(a.conversation.Messages()),
 			Tools:            reqTools,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,
@@ -1196,6 +1196,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// Capture accumulated text before finalizing, for text-based tool extraction.
 		accumulatedText := currentTextBuf
+
+		// Detect truncated tool calls: if the stream ended with a partially
+		// accumulated tool whose input JSON is invalid, discard it and warn.
+		if currentTool != nil && toolInputBuf != "" && !json.Valid([]byte(toolInputBuf)) {
+			ch <- TurnEvent{Type: "text_delta", Text: "\n⚠️ Tool call truncated by output limit.\n"}
+			currentTool = nil
+			toolInputBuf = ""
+		}
 
 		// Finalize any remaining text or tool
 		finalizeText()
