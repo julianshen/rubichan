@@ -39,6 +39,7 @@ type ShellHost struct {
 	agentTurn       AgentTurnFunc
 	shellExec       ShellExecFunc
 	slashCommandFn  SlashCommandFunc
+	errorAnalyzer   *ErrorAnalyzer
 	workDir         string
 	stdin           io.Reader
 	stdout          io.Writer
@@ -59,6 +60,7 @@ type ShellHostConfig struct {
 	Stdout         io.Writer
 	Stderr         io.Writer
 	GitBranchFn    func(string) string
+	ErrorAnalysis  bool // Enable AI-powered error analysis for failed commands
 }
 
 // NewShellHost creates a new shell host with the given configuration.
@@ -79,6 +81,11 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		cfg.GitBranchFn = func(string) string { return "" }
 	}
 
+	var ea *ErrorAnalyzer
+	if cfg.ErrorAnalysis {
+		ea = NewErrorAnalyzer(cfg.AgentTurn, true, 4096)
+	}
+
 	return &ShellHost{
 		classifier:     NewInputClassifier(cfg.Executables),
 		history:        NewCommandHistory(cfg.MaxHistory),
@@ -87,6 +94,7 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		agentTurn:      cfg.AgentTurn,
 		shellExec:      cfg.ShellExec,
 		slashCommandFn: cfg.SlashCommandFn,
+		errorAnalyzer:  ea,
 		workDir:        cfg.WorkDir,
 		stdin:          cfg.Stdin,
 		stdout:         cfg.Stdout,
@@ -218,6 +226,24 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 		combined += stderr
 	}
 	h.ctxTracker.Record(input.Command, combined, exitCode)
+
+	// AI-powered error analysis for failed commands
+	if exitCode != 0 && h.errorAnalyzer != nil {
+		fmt.Fprintf(h.stderr, "\n💡 Analyzing error...\n")
+		events, err := h.errorAnalyzer.Analyze(ctx, input.Command, stdout, stderr, exitCode)
+		if err == nil && events != nil {
+			for event := range events {
+				switch event.Type {
+				case "text_delta":
+					fmt.Fprint(h.stdout, event.Text)
+				case "done":
+					fmt.Fprintln(h.stdout)
+				case "error":
+					fmt.Fprintf(h.stderr, "analysis error: %s\n", event.Text)
+				}
+			}
+		}
+	}
 }
 
 func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
