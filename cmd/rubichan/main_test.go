@@ -430,11 +430,16 @@ func TestResolveOllamaModel_ConnectionError(t *testing.T) {
 	assert.Contains(t, err.Error(), "listing Ollama models")
 }
 
-func TestApplyAPIBaseFlag_CreatesEntry(t *testing.T) {
-	// Save and restore package-level flags.
+// saveFlags saves the current apiBaseFlag and apiKeyFlag values and registers
+// a t.Cleanup to restore them after the test completes.
+func saveFlags(t *testing.T) {
+	t.Helper()
 	origBase, origKey := apiBaseFlag, apiKeyFlag
-	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
+	t.Cleanup(func() { apiBaseFlag, apiKeyFlag = origBase, origKey })
+}
 
+func TestApplyAPIBaseFlag_CreatesEntry(t *testing.T) {
+	saveFlags(t)
 	apiBaseFlag = "http://localhost:1234/v1"
 	apiKeyFlag = "test-key"
 
@@ -452,9 +457,7 @@ func TestApplyAPIBaseFlag_CreatesEntry(t *testing.T) {
 }
 
 func TestApplyAPIBaseFlag_DefaultsKeyToNone(t *testing.T) {
-	origBase, origKey := apiBaseFlag, apiKeyFlag
-	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
-
+	saveFlags(t)
 	apiBaseFlag = "http://localhost:1234/v1"
 	apiKeyFlag = ""
 
@@ -468,9 +471,7 @@ func TestApplyAPIBaseFlag_DefaultsKeyToNone(t *testing.T) {
 }
 
 func TestApplyAPIBaseFlag_OverridesExistingEntry(t *testing.T) {
-	origBase, origKey := apiBaseFlag, apiKeyFlag
-	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
-
+	saveFlags(t)
 	apiBaseFlag = "http://new-url:5678/v1"
 	apiKeyFlag = "new-key"
 
@@ -493,9 +494,7 @@ func TestApplyAPIBaseFlag_OverridesExistingEntry(t *testing.T) {
 }
 
 func TestApplyAPIBaseFlag_BuiltinProviderGetCustomName(t *testing.T) {
-	origBase, origKey := apiBaseFlag, apiKeyFlag
-	defer func() { apiBaseFlag, apiKeyFlag = origBase, origKey }()
-
+	saveFlags(t)
 	apiBaseFlag = "http://localhost:1234/v1"
 	apiKeyFlag = ""
 
@@ -510,9 +509,7 @@ func TestApplyAPIBaseFlag_BuiltinProviderGetCustomName(t *testing.T) {
 }
 
 func TestApplyAPIKeyFlag_Anthropic(t *testing.T) {
-	origKey := apiKeyFlag
-	defer func() { apiKeyFlag = origKey }()
-
+	saveFlags(t)
 	apiKeyFlag = "sk-override"
 
 	cfg := config.DefaultConfig()
@@ -525,9 +522,7 @@ func TestApplyAPIKeyFlag_Anthropic(t *testing.T) {
 }
 
 func TestApplyAPIKeyFlag_OpenAICompatible(t *testing.T) {
-	origKey := apiKeyFlag
-	defer func() { apiKeyFlag = origKey }()
-
+	saveFlags(t)
 	apiKeyFlag = "new-key"
 
 	cfg := config.DefaultConfig()

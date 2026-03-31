@@ -1171,21 +1171,18 @@ func applyAPIBaseFlag(cfg *config.Config) {
 		}
 	}
 
-	// No existing entry — create one.
-	entry := config.OpenAICompatibleConfig{
-		Name:    name,
-		BaseURL: apiBaseFlag,
+	// No existing entry — create one. Default API key to "none" so local
+	// servers that need no auth work without an env-var lookup failure.
+	key := apiKey
+	if key == "" {
+		key = "none"
 	}
-	if apiKey != "" {
-		entry.APIKeySource = "config"
-		entry.APIKey = apiKey
-	} else {
-		// Default to "none" so local servers that need no auth work
-		// out of the box without an env-var lookup failure.
-		entry.APIKeySource = "config"
-		entry.APIKey = "none"
-	}
-	cfg.Provider.OpenAI = append(cfg.Provider.OpenAI, entry)
+	cfg.Provider.OpenAI = append(cfg.Provider.OpenAI, config.OpenAICompatibleConfig{
+		Name:         name,
+		BaseURL:      apiBaseFlag,
+		APIKeySource: "config",
+		APIKey:       key,
+	})
 }
 
 // applyAPIKeyFlag overrides the API key for the current default provider
