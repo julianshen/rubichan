@@ -113,7 +113,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, provider.FormatAPIError(resp.StatusCode, respBody)
+		return nil, provider.FormatAPIError(resp.StatusCode, respBody, httpReq)
 	}
 
 	ch := make(chan provider.StreamEvent)
