@@ -130,6 +130,13 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 	}
 	r.emitEvent(session.NewTurnCompletedEvent(doneDiffSummary, doneInputTokens, doneOutputTokens))
 
+	// When the model produced no textual response but tool calls completed,
+	// populate Response with the summary so downstream consumers (JSON, PR
+	// comments) receive useful output instead of an empty string.
+	if strings.TrimSpace(response) == "" && summary != "" {
+		response = summary
+	}
+
 	return &output.RunResult{
 		Prompt:          prompt,
 		Response:        response,
@@ -708,9 +715,9 @@ func buildHeadlessSummary(response string, toolCalls []output.ToolCallLog, lastE
 	case backendFailure != "":
 		return fmt.Sprintf("Run ended with a backend validation failure: %s", backendFailure)
 	case lastErr != "" && len(toolCalls) > 0:
-		return fmt.Sprintf("Run failed after %d tool call(s); %d returned errors.", len(toolCalls), toolErrors)
+		return fmt.Sprintf("Run failed after %d tool call(s); %d returned errors. Last error: %s", len(toolCalls), toolErrors, lastErr)
 	case lastErr != "":
-		return "Run failed before producing a textual response."
+		return fmt.Sprintf("Run failed before producing a textual response. Error: %s", lastErr)
 	case len(toolCalls) > 0:
 		return fmt.Sprintf("Run completed without a textual response after %d tool call(s); %d returned errors.", len(toolCalls), toolErrors)
 	default:
