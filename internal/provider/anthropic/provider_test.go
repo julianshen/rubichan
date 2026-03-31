@@ -613,4 +613,24 @@ func TestStreamToolResultUsesContentField(t *testing.T) {
 	assert.Nil(t, block["text"], "tool_result must not have 'text' field")
 }
 
+func TestConvertContentBlocksStripsEmptyText(t *testing.T) {
+	blocks := []provider.ContentBlock{
+		{Type: "text", Text: "hello"},
+		{Type: "text", Text: ""},
+		{Type: "text", Text: "world"},
+		{Type: "tool_use", ID: "tu_1", Name: "shell", Input: json.RawMessage(`{}`)},
+	}
+
+	out := convertContentBlocks(blocks)
+
+	// The empty text block should be stripped.
+	require.Len(t, out, 3)
+	assert.Equal(t, "text", out[0].Type)
+	assert.Equal(t, "hello", out[0].Text)
+	assert.Equal(t, "text", out[1].Type)
+	assert.Equal(t, "world", out[1].Text)
+	assert.Equal(t, "tool_use", out[2].Type)
+	assert.Equal(t, "tu_1", out[2].ID)
+}
+
 func floatPtr(f float64) *float64 { return &f }

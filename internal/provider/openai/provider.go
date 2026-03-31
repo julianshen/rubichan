@@ -266,7 +266,9 @@ func (p *Provider) convertUserMessages(msg provider.Message) []apiMessage {
 				ToolCallID: block.ToolUseID,
 			})
 		case "text":
-			texts = append(texts, block.Text)
+			if block.Text != "" {
+				texts = append(texts, block.Text)
+			}
 		}
 	}
 

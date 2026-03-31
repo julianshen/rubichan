@@ -198,9 +198,13 @@ func buildCachedSystemBlocks(system string, breakpoints []int) []apiSystemBlock 
 // apiContentBlock. For tool_result blocks, the text is placed in the "content"
 // field (which is what the Anthropic API expects) instead of "text".
 func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
-	out := make([]apiContentBlock, len(blocks))
-	for i, b := range blocks {
-		out[i] = apiContentBlock{
+	var out []apiContentBlock
+	for _, b := range blocks {
+		// Skip empty text blocks — Anthropic rejects them.
+		if b.Type == "text" && b.Text == "" {
+			continue
+		}
+		cb := apiContentBlock{
 			Type:      b.Type,
 			ID:        b.ID,
 			Name:      b.Name,
@@ -209,10 +213,11 @@ func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
 			IsError:   b.IsError,
 		}
 		if b.Type == "tool_result" {
-			out[i].Content = b.Text
+			cb.Content = b.Text
 		} else {
-			out[i].Text = b.Text
+			cb.Text = b.Text
 		}
+		out = append(out, cb)
 	}
 	return out
 }
