@@ -39,11 +39,12 @@ type ShellHost struct {
 	agentTurn       AgentTurnFunc
 	shellExec       ShellExecFunc
 	slashCommandFn  SlashCommandFunc
-	errorAnalyzer   *ErrorAnalyzer
-	scriptGen       *ScriptGenerator
+	errorAnalyzer    *ErrorAnalyzer
+	scriptGen        *ScriptGenerator
 	intentClassifier *IntentClassifier
 	scriptApprovalFn func(ctx context.Context, script string) (bool, string, error)
-	workDir         string
+	pkgInstaller     *PackageInstaller
+	workDir          string
 	stdin           io.Reader
 	stdout          io.Writer
 	stderr          io.Writer
@@ -63,8 +64,10 @@ type ShellHostConfig struct {
 	Stdout         io.Writer
 	Stderr         io.Writer
 	GitBranchFn    func(string) string
-	ErrorAnalysis    bool // Enable AI-powered error analysis for failed commands
-	ScriptApprovalFn func(ctx context.Context, script string) (bool, string, error) // Enable smart script (nil = disabled)
+	ErrorAnalysis     bool // Enable AI-powered error analysis for failed commands
+	ScriptApprovalFn  func(ctx context.Context, script string) (bool, string, error) // Enable smart script (nil = disabled)
+	PackageManager    *PackageManager // Enable missing tool installer (nil = disabled)
+	InstallApprovalFn func(ctx context.Context, action string) (bool, error) // Approval for package installation
 }
 
 // NewShellHost creates a new shell host with the given configuration.
@@ -90,6 +93,11 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		ea = NewErrorAnalyzer(cfg.AgentTurn, true, 4096)
 	}
 
+	var pi *PackageInstaller
+	if cfg.PackageManager != nil {
+		pi = NewPackageInstaller(cfg.PackageManager, cfg.AgentTurn, cfg.ShellExec, cfg.InstallApprovalFn)
+	}
+
 	h := &ShellHost{
 		classifier:       NewInputClassifier(cfg.Executables),
 		history:          NewCommandHistory(cfg.MaxHistory),
@@ -100,6 +108,7 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		slashCommandFn:   cfg.SlashCommandFn,
 		errorAnalyzer:    ea,
 		scriptApprovalFn: cfg.ScriptApprovalFn,
+		pkgInstaller:     pi,
 		workDir:          cfg.WorkDir,
 		stdin:            cfg.Stdin,
 		stdout:           cfg.Stdout,
@@ -238,6 +247,14 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 		combined += stderr
 	}
 	h.ctxTracker.Record(input.Command, combined, exitCode)
+
+	// Missing tool installer: detect "command not found" and offer to install
+	if exitCode != 0 && h.pkgInstaller != nil {
+		handled, _ := h.pkgInstaller.HandleCommandNotFound(ctx, input.Command, stderr, exitCode, h.stdout, h.stderr)
+		if handled {
+			return
+		}
+	}
 
 	// AI-powered error analysis for failed commands
 	if exitCode != 0 && h.errorAnalyzer != nil {
