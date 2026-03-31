@@ -225,7 +225,9 @@ func (p *Provider) convertAssistantMessage(msg provider.Message) apiMessage {
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
-			text += block.Text
+			if block.Text != "" {
+				text += block.Text
+			}
 		case "tool_use":
 			toolCalls = append(toolCalls, apiToolCall{
 				ID:   block.ID,
