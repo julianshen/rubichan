@@ -35,7 +35,8 @@ func (m *Model) viewportContent() string {
 
 // renderAgentPanel renders the expandable agent detail panel when visible.
 func (m *Model) renderAgentPanel() string {
-	if !m.agentPanelVisible || len(m.runningAgents) == 0 {
+	agents := m.statusBar.RunningAgents()
+	if !m.agentPanelVisible || len(agents) == 0 {
 		return ""
 	}
 
@@ -44,7 +45,7 @@ func (m *Model) renderAgentPanel() string {
 		styleToolResultHeader.Render("Running Agents"),
 		styleKeyHint.Render("[ctrl+a]"),
 	))
-	for _, a := range m.runningAgents {
+	for _, a := range agents {
 		body.WriteString(fmt.Sprintf("\n  ⊕ %s [%s]", a.Name, a.ID))
 	}
 

@@ -2675,10 +2675,12 @@ func TestModelSetRunningAgents(t *testing.T) {
 		{ID: "a2", Name: "linter"},
 	}
 	m.SetRunningAgents(agents)
-	assert.Len(t, m.runningAgents, 2)
-	assert.Equal(t, "code-review", m.runningAgents[0].Name)
 
-	// Status bar should also reflect the agents.
+	// Agents are stored in the status bar (thread-safe), not in model directly.
+	got := m.statusBar.RunningAgents()
+	assert.Len(t, got, 2)
+	assert.Equal(t, "code-review", got[0].Name)
+
 	barView := m.statusBar.View()
 	assert.Contains(t, barView, "⊕ 2 agents")
 }
