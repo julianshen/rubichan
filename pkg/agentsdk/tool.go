@@ -58,6 +58,14 @@ type StreamingTool interface {
 	ExecuteStream(ctx context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error)
 }
 
+// SearchHinter is an optional interface that tools can implement to provide
+// keyword hints for tool_search discovery. When a tool is deferred to save
+// context, the search hint helps the LLM find it via keyword queries even
+// when the tool name and description don't contain the exact search terms.
+type SearchHinter interface {
+	SearchHint() string
+}
+
 // ToolResult represents the result of executing a tool.
 type ToolResult struct {
 	Content        string // sent to LLM conversation history

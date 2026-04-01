@@ -45,6 +45,10 @@ func (s *SearchTool) Name() string {
 	return "search"
 }
 
+func (s *SearchTool) SearchHint() string {
+	return "grep find regex pattern codebase explore analyze review files directory listing structure"
+}
+
 func (s *SearchTool) Description() string {
 	return "Search for patterns in code files using regex. Use this instead of shell commands like grep, rg, or find.\n" +
 		"Supports file filtering by glob, context lines around matches, and max results.\n" +

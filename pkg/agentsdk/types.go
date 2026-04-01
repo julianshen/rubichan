@@ -116,6 +116,7 @@ type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	SearchHint  string          `json:"search_hint,omitempty"` // keywords for tool_search discovery
 }
 
 // ToolUseBlock represents a tool use block from the LLM response.

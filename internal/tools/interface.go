@@ -29,5 +29,9 @@ type ToolEventEmitter = agentsdk.ToolEventEmitter
 // real-time progress events while executing.
 type StreamingTool = agentsdk.StreamingTool
 
+// SearchHinter is an optional interface for tools that provide keyword hints
+// for tool_search discovery of deferred tools.
+type SearchHinter = agentsdk.SearchHinter
+
 // ToolResult represents the result of executing a tool.
 type ToolResult = agentsdk.ToolResult

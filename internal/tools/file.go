@@ -67,6 +67,10 @@ func (f *FileTool) Name() string {
 	return "file"
 }
 
+func (f *FileTool) SearchHint() string {
+	return "read write edit create patch modify content text code source configuration"
+}
+
 func (f *FileTool) Description() string {
 	return "Read, write, or patch files. This is the preferred tool for all file operations — use it instead of shell commands like cat, head, tail, sed, or echo.\n" +
 		"Supports operations: read (view file contents), write (create or overwrite a file), patch (apply targeted edits without rewriting the full file).\n" +

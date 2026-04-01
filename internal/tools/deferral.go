@@ -71,13 +71,14 @@ func (dm *DeferralManager) SelectForContext(allTools []provider.ToolDef, effecti
 	return active, deferredCount
 }
 
-// Search finds deferred tools by name or description keyword match.
+// Search finds deferred tools by name, description, or search hint keyword match.
 func (dm *DeferralManager) Search(query string) []provider.ToolDef {
 	query = strings.ToLower(query)
 	var results []provider.ToolDef
 	for _, td := range dm.deferredTools {
 		if strings.Contains(strings.ToLower(td.Name), query) ||
-			strings.Contains(strings.ToLower(td.Description), query) {
+			strings.Contains(strings.ToLower(td.Description), query) ||
+			strings.Contains(strings.ToLower(td.SearchHint), query) {
 			results = append(results, td)
 		}
 	}

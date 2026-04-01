@@ -147,6 +147,10 @@ func (s *ShellTool) Name() string {
 	return "shell"
 }
 
+func (s *ShellTool) SearchHint() string {
+	return "execute run command terminal bash build test install deploy npm pip cargo make"
+}
+
 func (s *ShellTool) Description() string {
 	return "Execute shell commands. Commands are run via sh -c with a configurable timeout.\n" +
 		"Use for builds, tests, package management, servers, and system operations.\n" +
