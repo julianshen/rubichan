@@ -43,7 +43,9 @@ func (p *ProgressTracker) Record(turn int, action, detail, result string) {
 	})
 
 	if len(p.entries) > p.maxEntries {
-		p.entries = p.entries[len(p.entries)-p.maxEntries:]
+		trimmed := make([]ProgressEntry, p.maxEntries)
+		copy(trimmed, p.entries[len(p.entries)-p.maxEntries:])
+		p.entries = trimmed
 	}
 }
 
@@ -68,12 +70,12 @@ func (p *ProgressTracker) Render() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("| # | Action | Detail | Result |\n")
-	sb.WriteString("|---|--------|--------|--------|\n")
+	sb.WriteString("| Turn | Action | Detail | Result |\n")
+	sb.WriteString("|------|--------|--------|--------|\n")
 
-	for i, e := range p.entries {
+	for _, e := range p.entries {
 		sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s |\n",
-			i+1,
+			e.Turn,
 			escapeTableCell(e.Action),
 			escapeTableCell(e.Detail),
 			escapeTableCell(e.Result),
@@ -83,9 +85,12 @@ func (p *ProgressTracker) Render() string {
 	return sb.String()
 }
 
-// escapeTableCell replaces pipe characters that would break the markdown table.
+// escapeTableCell sanitizes a string for use inside a markdown table cell.
 func escapeTableCell(s string) string {
-	return strings.ReplaceAll(s, "|", "\\|")
+	s = strings.ReplaceAll(s, "|", "\\|")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
 }
 
 // classifyToolAction maps a tool name and its JSON input to a human-readable
@@ -112,19 +117,13 @@ func classifyToolAction(toolName string, input json.RawMessage) (action, detail 
 		}
 	case "shell":
 		cmd := jsonStr(parsed["command"])
-		if len(cmd) > 80 {
-			cmd = cmd[:80] + "..."
-		}
-		return "ran command", cmd
+		return "ran command", truncateResult(cmd, 80)
 	case "search":
 		pattern := jsonStr(parsed["pattern"])
 		return "searched", pattern
 	case "task":
 		desc := jsonStr(parsed["description"])
-		if len(desc) > 60 {
-			desc = desc[:60] + "..."
-		}
-		return "spawned task", desc
+		return "spawned task", truncateResult(desc, 60)
 	case "task_complete":
 		return "completed task", jsonStr(parsed["summary"])
 	default:
@@ -144,10 +143,11 @@ func jsonStr(raw json.RawMessage) string {
 	return s
 }
 
-// truncateResult returns a prefix of s up to maxLen bytes, appending "..." if truncated.
+// truncateResult returns a prefix of s up to maxLen runes, appending "..." if truncated.
 func truncateResult(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }

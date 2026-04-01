@@ -63,23 +63,23 @@ func TestProgressTracker_Render(t *testing.T) {
 
 	rendered := pt.Render()
 
-	// Should have header row.
-	if !strings.Contains(rendered, "| # | Action | Detail | Result |") {
+	// Should have header row with "Turn" column.
+	if !strings.Contains(rendered, "| Turn | Action | Detail | Result |") {
 		t.Error("missing header row")
 	}
 	// Should have separator.
-	if !strings.Contains(rendered, "|---|--------|--------|--------|") {
+	if !strings.Contains(rendered, "|------|--------|--------|--------|") {
 		t.Error("missing separator row")
 	}
-	// Should have data rows.
+	// Should use actual turn numbers, not sequence indices.
 	if !strings.Contains(rendered, "| 1 | wrote file | src/main.go | ok |") {
-		t.Error("missing entry 1")
+		t.Error("missing entry for turn 1")
 	}
 	if !strings.Contains(rendered, "| 2 | ran command | go test ./... | ok |") {
-		t.Error("missing entry 2")
+		t.Error("missing entry for turn 2")
 	}
 	if !strings.Contains(rendered, "| 3 | searched |") {
-		t.Error("missing entry 3")
+		t.Error("missing entry for turn 3")
 	}
 }
 
@@ -90,6 +90,36 @@ func TestProgressTracker_Render_EscapesPipes(t *testing.T) {
 	rendered := pt.Render()
 	if !strings.Contains(rendered, `echo foo \| bar`) {
 		t.Errorf("pipes in detail not escaped: %s", rendered)
+	}
+}
+
+func TestProgressTracker_Render_EscapesNewlines(t *testing.T) {
+	pt := NewProgressTracker()
+	pt.Record(1, "ran command", "go test", "error:\nline1\nline2")
+
+	rendered := pt.Render()
+	if strings.Contains(rendered, "\n| 1 |") && strings.Contains(rendered, "error:\nline1") {
+		t.Error("newlines in result not escaped — would corrupt markdown table")
+	}
+	if !strings.Contains(rendered, "error: line1 line2") {
+		t.Errorf("expected newlines replaced with spaces, got: %s", rendered)
+	}
+}
+
+func TestProgressTracker_Render_TurnNumberAfterTrimming(t *testing.T) {
+	pt := &ProgressTracker{maxEntries: 3}
+	pt.Record(10, "a", "d", "ok")
+	pt.Record(11, "b", "d", "ok")
+	pt.Record(12, "c", "d", "ok")
+	pt.Record(13, "d", "d", "ok") // trims turn 10
+
+	rendered := pt.Render()
+	// First visible entry should show turn 11, not "1".
+	if strings.Contains(rendered, "| 1 |") {
+		t.Error("render should use actual turn numbers, not sequence indices")
+	}
+	if !strings.Contains(rendered, "| 11 |") {
+		t.Errorf("expected turn 11 in rendered output: %s", rendered)
 	}
 }
 
@@ -201,10 +231,27 @@ func TestTruncateResult(t *testing.T) {
 	}
 	long := strings.Repeat("a", 100)
 	got := truncateResult(long, 60)
-	if len(got) != 63 { // 60 + "..."
-		t.Errorf("expected length 63, got %d", len(got))
+	runes := []rune(got)
+	// 60 runes of content + 3 runes for "..."
+	if len(runes) != 63 {
+		t.Errorf("expected 63 runes, got %d", len(runes))
 	}
 	if !strings.HasSuffix(got, "...") {
 		t.Error("truncated result should end with ...")
+	}
+}
+
+func TestTruncateResult_UTF8Safe(t *testing.T) {
+	// 10 multi-byte runes (each is 3 bytes in UTF-8).
+	input := strings.Repeat("日", 10)
+	got := truncateResult(input, 5)
+	// Should have 5 runes + "..." — never a split rune.
+	runes := []rune(got)
+	if len(runes) != 8 { // 5 + 3 for "..."
+		t.Errorf("expected 8 runes, got %d: %q", len(runes), got)
+	}
+	// Verify the result is valid UTF-8 by round-tripping.
+	if got != string([]rune(got)) {
+		t.Error("truncated result contains invalid UTF-8")
 	}
 }
