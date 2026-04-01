@@ -121,6 +121,32 @@ func classifyToolAction(toolName string, input json.RawMessage) (action, detail 
 	case "search":
 		pattern := jsonStr(parsed["pattern"])
 		return "searched", pattern
+	case "git_status":
+		path := jsonStr(parsed["path"])
+		return "git status", path
+	case "git_diff":
+		path := jsonStr(parsed["path"])
+		return "git diff", path
+	case "git_log":
+		path := jsonStr(parsed["path"])
+		return "git log", path
+	case "git_show":
+		return "git show", jsonStr(parsed["rev"])
+	case "git_blame":
+		return "git blame", jsonStr(parsed["path"])
+	case "process":
+		op := jsonStr(parsed["operation"])
+		switch op {
+		case "exec":
+			return "started process", truncateResult(jsonStr(parsed["command"]), 60)
+		case "kill":
+			return "killed process", jsonStr(parsed["id"])
+		default:
+			return "process " + op, jsonStr(parsed["id"])
+		}
+	case "notes":
+		op := jsonStr(parsed["action"])
+		return "notes " + op, jsonStr(parsed["tag"])
 	case "task":
 		desc := jsonStr(parsed["description"])
 		return "spawned task", truncateResult(desc, 60)

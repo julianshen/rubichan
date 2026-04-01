@@ -18,7 +18,7 @@ func TestSystemPromptContainsIdentity(t *testing.T) {
 	assert.Contains(t, prompt, "Pigi")
 	assert.Contains(t, prompt, "ガンバ")
 	assert.Contains(t, prompt, "kaomoji")
-	assert.Contains(t, prompt, "coding assistant")
+	assert.Contains(t, prompt, "coding agent")
 	assert.Contains(t, prompt, "Never reveal internal reasoning")
 	assert.Contains(t, prompt, "assistantanalysis")
 	assert.Contains(t, prompt, "to=functions")
@@ -28,7 +28,7 @@ func TestBaseSystemPrompt(t *testing.T) {
 	t.Parallel()
 
 	prompt := BaseSystemPrompt()
-	assert.Contains(t, prompt, "coding assistant")
+	assert.Contains(t, prompt, "coding agent")
 	assert.NotContains(t, prompt, "Ruby Kurosawa")
 }
 
