@@ -154,6 +154,39 @@ func TestRegistryAll(t *testing.T) {
 	assert.True(t, names["tool_b"])
 }
 
+// mockToolWithHint implements both Tool and SearchHinter.
+type mockToolWithHint struct {
+	mockTool
+	hint string
+}
+
+func (m *mockToolWithHint) SearchHint() string { return m.hint }
+
+func TestRegistryAllPopulatesSearchHint(t *testing.T) {
+	reg := NewRegistry()
+
+	// Tool without SearchHinter — SearchHint should be empty.
+	plain := newMockTool("plain", "A plain tool")
+	require.NoError(t, reg.Register(plain))
+
+	// Tool with SearchHinter — SearchHint should be populated.
+	hinted := &mockToolWithHint{
+		mockTool: *newMockTool("hinted", "A hinted tool"),
+		hint:     "api endpoint webhook",
+	}
+	require.NoError(t, reg.Register(hinted))
+
+	defs := reg.All()
+	assert.Len(t, defs, 2)
+
+	defMap := make(map[string]string)
+	for _, d := range defs {
+		defMap[d.Name] = d.SearchHint
+	}
+	assert.Empty(t, defMap["plain"], "plain tool should have no search hint")
+	assert.Equal(t, "api endpoint webhook", defMap["hinted"])
+}
+
 func TestRegistryAlias(t *testing.T) {
 	reg := NewRegistry()
 	tool := newMockTool("shell", "Execute shell commands")

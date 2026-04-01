@@ -57,6 +57,9 @@ func (t *ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (Tool
 	sb.WriteString(fmt.Sprintf("Found %d deferred tool(s):\n\n", len(results)))
 	for _, td := range results {
 		sb.WriteString(fmt.Sprintf("**%s**: %s\n", td.Name, td.Description))
+		if td.SearchHint != "" {
+			sb.WriteString(fmt.Sprintf("Hints: %s\n", td.SearchHint))
+		}
 		sb.WriteString(fmt.Sprintf("Schema: %s\n\n", string(td.InputSchema)))
 	}
 

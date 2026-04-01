@@ -108,11 +108,15 @@ func (r *Registry) All() []provider.ToolDef {
 
 	var defs []provider.ToolDef
 	for _, t := range r.tools {
-		defs = append(defs, provider.ToolDef{
+		td := provider.ToolDef{
 			Name:        t.Name(),
 			Description: t.Description(),
 			InputSchema: t.InputSchema(),
-		})
+		}
+		if hinter, ok := t.(SearchHinter); ok {
+			td.SearchHint = hinter.SearchHint()
+		}
+		defs = append(defs, td)
 	}
 	return defs
 }

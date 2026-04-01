@@ -31,6 +31,10 @@ func (p *ProcessTool) Name() string {
 	return "process"
 }
 
+func (p *ProcessTool) SearchHint() string {
+	return "background server daemon watcher"
+}
+
 func (p *ProcessTool) Description() string {
 	return "Manage long-running processes. Supports operations: exec (start a process), " +
 		"read_output (get recent output), write_stdin (send input), kill (terminate), " +

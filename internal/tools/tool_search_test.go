@@ -38,6 +38,40 @@ func TestToolSearchToolExecute(t *testing.T) {
 	assert.Contains(t, result.Content, "mcp-xcode-build")
 }
 
+func TestToolSearchToolShowsHints(t *testing.T) {
+	searcher := &mockSearcher{
+		results: []provider.ToolDef{
+			{
+				Name:        "http_get",
+				Description: "Fetch HTTP resources.",
+				SearchHint:  "api endpoint webhook",
+			},
+		},
+	}
+	tool := NewToolSearchTool(searcher)
+
+	input, _ := json.Marshal(map[string]string{"query": "api"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Contains(t, result.Content, "http_get")
+	assert.Contains(t, result.Content, "Hints: api endpoint webhook")
+}
+
+func TestToolSearchToolOmitsEmptyHints(t *testing.T) {
+	searcher := &mockSearcher{
+		results: []provider.ToolDef{
+			{Name: "plain_tool", Description: "A tool with no hints."},
+		},
+	}
+	tool := NewToolSearchTool(searcher)
+
+	input, _ := json.Marshal(map[string]string{"query": "plain"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.Contains(t, result.Content, "plain_tool")
+	assert.NotContains(t, result.Content, "Hints:")
+}
+
 func TestToolSearchToolNoResults(t *testing.T) {
 	tool := NewToolSearchTool(&mockSearcher{})
 

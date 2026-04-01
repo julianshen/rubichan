@@ -71,6 +71,45 @@ func TestDeferralManagerSearch(t *testing.T) {
 	assert.Equal(t, "mcp-xcode-build", results[0].Name)
 }
 
+func TestDeferralManagerSearchMatchesSearchHint(t *testing.T) {
+	dm := NewDeferralManager(0.10)
+
+	bigSchema := make([]byte, 2000)
+	for i := range bigSchema {
+		bigSchema[i] = 'a'
+	}
+
+	allTools := []provider.ToolDef{
+		{Name: "shell", Description: "exec", InputSchema: []byte(`{}`)},
+		{
+			Name:        "mcp-special",
+			Description: "A special integration tool.",
+			SearchHint:  "api endpoint webhook",
+			InputSchema: bigSchema,
+		},
+	}
+
+	dm.SelectForContext(allTools, 1000) // trigger deferral
+	assert.Equal(t, 1, dm.DeferredCount(), "mcp-special should be deferred")
+
+	// Should NOT match by name or description.
+	results := dm.Search("webhook")
+	assert.Equal(t, 1, len(results), "should find tool via search hint keyword")
+	assert.Equal(t, "mcp-special", results[0].Name)
+
+	// Should still find by name.
+	results = dm.Search("special")
+	assert.Equal(t, 1, len(results), "should still find by name")
+
+	// Should still find by description.
+	results = dm.Search("integration")
+	assert.Equal(t, 1, len(results), "should still find by description")
+
+	// No match.
+	results = dm.Search("nonexistent")
+	assert.Equal(t, 0, len(results))
+}
+
 func TestToolSummaryNoDeferredTools(t *testing.T) {
 	dm := NewDeferralManager(0.10)
 

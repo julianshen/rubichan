@@ -73,6 +73,10 @@ func newTool(method, name string) *Tool {
 // Name returns the tool name.
 func (t *Tool) Name() string { return t.name }
 
+func (t *Tool) SearchHint() string {
+	return "api fetch url endpoint rest web network download webhook"
+}
+
 // Description returns a human-readable description of the tool.
 func (t *Tool) Description() string {
 	return fmt.Sprintf("Perform an HTTP %s request with optional headers, query parameters, request body, timeout, and redirect control.", t.method)

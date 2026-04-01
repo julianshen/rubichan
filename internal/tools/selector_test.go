@@ -159,6 +159,56 @@ func TestSelectorKeywordDetection(t *testing.T) {
 	assert.Contains(t, names, "xcode_build")
 }
 
+func TestSelectorExplorationKeywordsActivateSearchAndGit(t *testing.T) {
+	ts := NewToolSelector()
+
+	explorationPrompts := []string{
+		"Give me the brief",
+		"Analyze this project",
+		"list the features",
+		"review the codes",
+		"describe the architecture",
+		"explain how this codebase works",
+		"show me an overview of the project",
+		"summarize the modules",
+	}
+
+	for _, prompt := range explorationPrompts {
+		t.Run(prompt, func(t *testing.T) {
+			messages := []provider.Message{
+				{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: prompt}}},
+			}
+
+			result := ts.Select(messages, allTestTools())
+			names := toolNames(result)
+
+			assert.Contains(t, names, "search",
+				"search tool should be included for exploration query: %q", prompt)
+			assert.Contains(t, names, "git_status",
+				"git tools should be included for exploration query: %q", prompt)
+			assert.Contains(t, names, "shell", "core tools always present")
+			assert.Contains(t, names, "file", "core tools always present")
+		})
+	}
+}
+
+func TestSelectorExplorationKeywordsDoNotActivateNetOrPlatform(t *testing.T) {
+	ts := NewToolSelector()
+	messages := []provider.Message{
+		{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "analyze this project"}}},
+	}
+
+	result := ts.Select(messages, allTestTools())
+	names := toolNames(result)
+
+	assert.NotContains(t, names, "http_get",
+		"net tools should not be activated by exploration keywords alone")
+	assert.NotContains(t, names, "xcode_build",
+		"platform tools should not be activated by exploration keywords alone")
+	assert.NotContains(t, names, "mcp-github",
+		"MCP tools should not be activated by exploration keywords alone")
+}
+
 func TestSelectorGenericPromptsDoNotExposeSensitiveCategories(t *testing.T) {
 	ts := NewToolSelector()
 	messages := []provider.Message{
