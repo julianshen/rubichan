@@ -458,8 +458,11 @@ func (m *Model) setContentAndAutoScroll() {
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case "thinking_delta":
+		// Discard late thinking deltas that arrive after text output.
+		if m.rawAssistant.Len() > 0 {
+			return m, m.waitForEvent()
+		}
 		if m.rawThinking.Len() == 0 {
-			// Write a thinking header before the first thinking chunk.
 			header := styleTextDim.Render("💭 Thinking...")
 			m.content.WriteString("\n" + header + "\n")
 			m.thinkingStartIdx = m.content.LenWithWidth(m.width)
@@ -467,7 +470,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 		m.rawThinking.WriteString(msg.Text)
 		rendered := styleTextDim.Render(m.rawThinking.String())
-		m.replaceThinkingContent(rendered)
+		m.replaceContentRange(&m.thinkingStartIdx, &m.thinkingEndIdx, rendered)
 		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
@@ -490,6 +493,10 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "tool_call":
+		if m.rawThinking.Len() > 0 {
+			m.rawThinking.Reset()
+			m.content.WriteString("\n")
+		}
 		name := ""
 		args := ""
 		if msg.ToolCall != nil {
@@ -623,6 +630,8 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			errMsg = msg.Error.Error()
 		}
 		m.rawThinking.Reset()
+		m.thinkingStartIdx = 0
+		m.thinkingEndIdx = 0
 		m.rawAssistant.Reset()
 		m.content.WriteString(persona.ErrorMessage(errMsg))
 		m.setContentAndAutoScroll()
@@ -638,6 +647,8 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			m.turnStartTime = time.Time{}
 		}
 		m.rawThinking.Reset()
+		m.thinkingStartIdx = 0
+		m.thinkingEndIdx = 0
 		raw := m.rawAssistant.String()
 		visible := SanitizeAssistantOutput(raw)
 		m.renderAssistantMarkdown()
@@ -720,36 +731,25 @@ func (m *Model) renderAssistantMarkdown() {
 // replaceAssistantContent swaps only the assistant's display slice, preserving
 // any tool output appended after the assistant started streaming.
 func (m *Model) replaceAssistantContent(text string) {
-	contentStr := m.content.Render(m.width)
-	if m.assistantStartIdx > len(contentStr) {
-		return
-	}
-	if m.assistantEndIdx < m.assistantStartIdx {
-		m.assistantEndIdx = len(contentStr)
-	}
-	if m.assistantEndIdx > len(contentStr) {
-		m.assistantEndIdx = len(contentStr)
-	}
-
-	m.content.ReplaceTextRangeWithWidth(m.width, m.assistantStartIdx, m.assistantEndIdx, text)
-	m.assistantEndIdx = m.assistantStartIdx + len(text)
+	m.replaceContentRange(&m.assistantStartIdx, &m.assistantEndIdx, text)
 }
 
-// replaceThinkingContent swaps only the thinking display slice.
-func (m *Model) replaceThinkingContent(text string) {
+// replaceContentRange replaces a tracked content slice identified by start/end
+// index pointers, clamping bounds to the current content length.
+func (m *Model) replaceContentRange(startIdx, endIdx *int, text string) {
 	contentStr := m.content.Render(m.width)
-	if m.thinkingStartIdx > len(contentStr) {
+	if *startIdx > len(contentStr) {
 		return
 	}
-	if m.thinkingEndIdx < m.thinkingStartIdx {
-		m.thinkingEndIdx = len(contentStr)
+	if *endIdx < *startIdx {
+		*endIdx = len(contentStr)
 	}
-	if m.thinkingEndIdx > len(contentStr) {
-		m.thinkingEndIdx = len(contentStr)
+	if *endIdx > len(contentStr) {
+		*endIdx = len(contentStr)
 	}
 
-	m.content.ReplaceTextRangeWithWidth(m.width, m.thinkingStartIdx, m.thinkingEndIdx, text)
-	m.thinkingEndIdx = m.thinkingStartIdx + len(text)
+	m.content.ReplaceTextRangeWithWidth(m.width, *startIdx, *endIdx, text)
+	*endIdx = *startIdx + len(text)
 }
 
 func (m *Model) advanceRalphLoop(raw string) tea.Cmd {

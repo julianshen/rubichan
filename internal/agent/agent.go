@@ -1168,7 +1168,6 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 			switch event.Type {
 			case "thinking_delta":
-				// Accumulate thinking text and emit to TUI for display.
 				thinkingBuf += event.Text
 				ch <- TurnEvent{Type: "thinking_delta", Text: event.Text}
 
