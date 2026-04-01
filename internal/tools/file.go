@@ -68,7 +68,9 @@ func (f *FileTool) Name() string {
 }
 
 func (f *FileTool) Description() string {
-	return "Read, write, or patch files. Supports operations: read, write, patch.\n" +
+	return "Read, write, or patch files. This is the preferred tool for all file operations — use it instead of shell commands like cat, head, tail, sed, or echo.\n" +
+		"Supports operations: read (view file contents), write (create or overwrite a file), patch (apply targeted edits without rewriting the full file).\n" +
+		"Always read a file before patching it to understand the existing content.\n" +
 		"Examples:\n" +
 		"  Read:  {\"operation\": \"read\", \"path\": \"src/main.ts\"}\n" +
 		"  Write: {\"operation\": \"write\", \"path\": \"src/App.tsx\", \"content\": \"...\"}\n" +

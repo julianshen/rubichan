@@ -46,7 +46,8 @@ func (s *SearchTool) Name() string {
 }
 
 func (s *SearchTool) Description() string {
-	return "Search for patterns in code files using regex. Supports file filtering, context lines, and max results.\n" +
+	return "Search for patterns in code files using regex. Use this instead of shell commands like grep, rg, or find.\n" +
+		"Supports file filtering by glob, context lines around matches, and max results.\n" +
 		"Example: {\"pattern\": \"TODO\", \"file_pattern\": \"*.go\", \"max_results\": 20}"
 }
 
