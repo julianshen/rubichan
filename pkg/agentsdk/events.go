@@ -4,7 +4,7 @@ import "encoding/json"
 
 // TurnEvent represents a streaming event emitted during an agent turn.
 type TurnEvent struct {
-	Type           string             // "text_delta", "tool_call", "tool_result", "tool_progress", "ui_request", "ui_update", "ui_response", "error", "done", "subagent_done"
+	Type           string             // "text_delta", "thinking_delta", "tool_call", "tool_result", "tool_progress", "ui_request", "ui_update", "ui_response", "error", "done", "subagent_done"
 	Text           string             // text content for text_delta events
 	ToolCall       *ToolCallEvent     // populated for tool_call events
 	ToolResult     *ToolResultEvent   // populated for tool_result events

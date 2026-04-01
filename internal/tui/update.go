@@ -735,19 +735,8 @@ func (m *Model) replaceAssistantContent(text string) {
 }
 
 // replaceContentRange replaces a tracked content slice identified by start/end
-// index pointers, clamping bounds to the current content length.
+// index pointers. Bounds clamping is handled by ReplaceTextRangeWithWidth.
 func (m *Model) replaceContentRange(startIdx, endIdx *int, text string) {
-	contentStr := m.content.Render(m.width)
-	if *startIdx > len(contentStr) {
-		return
-	}
-	if *endIdx < *startIdx {
-		*endIdx = len(contentStr)
-	}
-	if *endIdx > len(contentStr) {
-		*endIdx = len(contentStr)
-	}
-
 	m.content.ReplaceTextRangeWithWidth(m.width, *startIdx, *endIdx, text)
 	*endIdx = *startIdx + len(text)
 }
