@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -24,14 +25,14 @@ type fakeBackend struct {
 
 func (b *fakeBackend) Name() string { return b.name }
 func (b *fakeBackend) Open(_ context.Context, _ any, _ OpenOptions) (any, OpenResult, error) {
-	return struct{}{}, OpenResult{URL: "https://example.com", Title: "Example", Backend: b.name}, nil
+	return struct{}{}, OpenResult{URL: "https://93.184.216.34", Title: "Example", Backend: b.name}, nil
 }
 func (b *fakeBackend) Click(context.Context, any, string, bool) error { return nil }
 func (b *fakeBackend) Fill(context.Context, any, string, string, bool) error {
 	return nil
 }
 func (b *fakeBackend) Snapshot(context.Context, any) (string, error) {
-	return "title: Example\nurl: https://example.com", nil
+	return "title: Example\nurl: https://93.184.216.34", nil
 }
 func (b *fakeBackend) Screenshot(_ context.Context, _ any, _ string, _ bool, _ string) (ScreenshotResult, error) {
 	return ScreenshotResult{Path: "/tmp/test.png"}, nil
@@ -109,7 +110,7 @@ func newTestService(t *testing.T, backend Backend) *Service {
 // openSession opens a session and returns the session ID.
 func openSession(t *testing.T, svc *Service) string {
 	t.Helper()
-	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com"}`))
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34"}`))
 	require.NoError(t, err)
 	require.False(t, result.IsError, "open failed: %s", result.Content)
 	return extractSessionID(t, result.Content)
@@ -132,7 +133,7 @@ func TestServiceOpenAndClose(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &fakeBackend{name: "native"})
 
-	openResult, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com"}`))
+	openResult, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34"}`))
 	require.NoError(t, err)
 	assert.False(t, openResult.IsError)
 	assert.Contains(t, openResult.Content, "session_id:")
@@ -174,7 +175,7 @@ func TestServiceRejectsNonHTTPURL(t *testing.T) {
 		url  string
 	}{
 		{"file_scheme", `{"url":"file:///tmp/test"}`},
-		{"ftp_scheme", `{"url":"ftp://example.com/file"}`},
+		{"ftp_scheme", `{"url":"ftp://93.184.216.34/file"}`},
 		{"javascript_scheme", `{"url":"javascript:alert(1)"}`},
 	}
 	for _, tc := range tests {
@@ -217,7 +218,7 @@ func TestServiceOpenBackendError(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &errorBackend{fakeBackend: fakeBackend{name: "native"}, failOn: "open"})
 
-	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com"}`))
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34"}`))
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "browser_open failed")
@@ -227,7 +228,7 @@ func TestServiceOpenWithCustomSessionID(t *testing.T) {
 	t.Parallel()
 	svc := newTestService(t, &fakeBackend{name: "native"})
 
-	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com","session_id":"mysess"}`))
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34","session_id":"mysess"}`))
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 	assert.Contains(t, result.Content, "session_id: mysess")
@@ -238,12 +239,12 @@ func TestServiceOpenExistingSession(t *testing.T) {
 	svc := newTestService(t, &fakeBackend{name: "native"})
 
 	// Open initial session with custom ID.
-	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com","session_id":"reuse"}`))
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34","session_id":"reuse"}`))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 
 	// Navigate in existing session.
-	result, err = svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com/page2","session_id":"reuse"}`))
+	result, err = svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34/page2","session_id":"reuse"}`))
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 	assert.Contains(t, result.Content, "session_id: reuse")
@@ -255,13 +256,13 @@ func TestServiceOpenExistingSessionBackendError(t *testing.T) {
 	svc := newTestService(t, eb)
 
 	// Open initial session.
-	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com","session_id":"s1"}`))
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34","session_id":"s1"}`))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 
 	// Now make Open fail.
 	eb.failOn = "open"
-	result, err = svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com/page2","session_id":"s1"}`))
+	result, err = svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34/page2","session_id":"s1"}`))
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "browser_open failed")
@@ -277,7 +278,7 @@ func TestServiceOpenExistingClosedSession(t *testing.T) {
 
 	// Attempt to reuse a closed session by opening with that ID — session is deleted,
 	// so it should create a new one.
-	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com","session_id":"`+sid+`"}`))
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34","session_id":"`+sid+`"}`))
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 }
@@ -287,7 +288,7 @@ func TestServiceOpenWithViewport(t *testing.T) {
 	svc := newTestService(t, &fakeBackend{name: "native"})
 
 	result, err := svc.Open(context.Background(), json.RawMessage(
-		`{"url":"https://example.com","viewport":{"width":800,"height":600}}`))
+		`{"url":"https://93.184.216.34","viewport":{"width":800,"height":600}}`))
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 }
@@ -297,7 +298,7 @@ func TestServiceOpenWithHeadless(t *testing.T) {
 	svc := newTestService(t, &fakeBackend{name: "native"})
 
 	result, err := svc.Open(context.Background(), json.RawMessage(
-		`{"url":"https://example.com","headless":false}`))
+		`{"url":"https://93.184.216.34","headless":false}`))
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 }
@@ -312,7 +313,7 @@ func TestServiceOpenNoBackend(t *testing.T) {
 		sessions:    make(map[string]*session),
 	}
 
-	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://example.com"}`))
+	result, err := svc.Open(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34"}`))
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "no browser backend")
@@ -1288,8 +1289,8 @@ func TestFirstSnapshotLine(t *testing.T) {
 		prefix   string
 		want     string
 	}{
-		{"found", "title: My Page\nurl: https://example.com", "title: ", "My Page"},
-		{"not found", "url: https://example.com", "title: ", ""},
+		{"found", "title: My Page\nurl: https://93.184.216.34", "title: ", "My Page"},
+		{"not found", "url: https://93.184.216.34", "title: ", ""},
 		{"empty snapshot", "", "title: ", ""},
 		{"prefix at start", "title: Hello", "title: ", "Hello"},
 	}
@@ -1409,7 +1410,7 @@ func TestToolExecuteDelegates(t *testing.T) {
 	}
 	require.NotNil(t, openTool)
 
-	result, err := openTool.Execute(context.Background(), json.RawMessage(`{"url":"https://example.com"}`))
+	result, err := openTool.Execute(context.Background(), json.RawMessage(`{"url":"https://93.184.216.34"}`))
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 	assert.Contains(t, result.Content, "session_id:")
@@ -1442,7 +1443,7 @@ func TestServiceOpenClosedSessionInMap(t *testing.T) {
 
 	// Create session with custom ID then mark it closed but keep in map.
 	result, err := svc.Open(context.Background(), json.RawMessage(
-		`{"url":"https://example.com","session_id":"will-close"}`))
+		`{"url":"https://93.184.216.34","session_id":"will-close"}`))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
 
@@ -1452,7 +1453,7 @@ func TestServiceOpenClosedSessionInMap(t *testing.T) {
 
 	// Open with same session_id — should see closed and return error.
 	result, err = svc.Open(context.Background(), json.RawMessage(
-		`{"url":"https://example.com","session_id":"will-close"}`))
+		`{"url":"https://93.184.216.34","session_id":"will-close"}`))
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "unknown session_id")
@@ -1560,7 +1561,7 @@ func TestNativeBackendOpenNilHandle(t *testing.T) {
 	// Open with nil handle creates a new session, which requires Chrome.
 	// This will either work or fail depending on Chrome availability,
 	// but we can test the wrong-type handle.
-	_, _, err := b.Open(context.Background(), "wrong-type", OpenOptions{Headless: true, URL: "http://example.com"})
+	_, _, err := b.Open(context.Background(), "wrong-type", OpenOptions{Headless: true, URL: "http://93.184.216.34"})
 	// With wrong type, it should create a new session (not error from requireNativeSession).
 	// The error will come from chromedp trying to start Chrome if not available.
 	// We just verify it doesn't panic.
@@ -1605,7 +1606,13 @@ func TestValidateAndPinBrowserTargetUnresolvableHost(t *testing.T) {
 // --- Native backend integration tests (require Chrome) ---
 
 func chromeAvailable() bool {
-	_, err := newNativeSession(OpenOptions{Headless: true})
+	_, err := exec.LookPath("google-chrome")
+	if err != nil {
+		_, err = exec.LookPath("chromium-browser")
+	}
+	if err != nil {
+		_, err = exec.LookPath("chromium")
+	}
 	return err == nil
 }
 
@@ -1880,7 +1887,7 @@ func TestMCPOpenFailsWithoutServer(t *testing.T) {
 			Transport: "unsupported",
 		},
 	}
-	_, _, err := b.Open(context.Background(), nil, OpenOptions{URL: "http://example.com"})
+	_, _, err := b.Open(context.Background(), nil, OpenOptions{URL: "http://93.184.216.34"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported mcp transport")
 }

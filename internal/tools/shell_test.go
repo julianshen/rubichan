@@ -29,6 +29,7 @@ func initGitRepo(t *testing.T, dir string, files ...string) {
 		"git init",
 		"git config user.email test@test.com",
 		"git config user.name Test",
+		"git config commit.gpgsign false",
 	}
 	for _, f := range files {
 		cmds = append(cmds, "echo initial > "+f)
