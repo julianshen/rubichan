@@ -66,6 +66,8 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 
 	for evt := range ch {
 		switch evt.Type {
+		case "thinking_delta":
+			// Thinking is displayed in the TUI but suppressed in headless mode.
 		case "text_delta":
 			textBuf.WriteString(evt.Text)
 		case "tool_call":

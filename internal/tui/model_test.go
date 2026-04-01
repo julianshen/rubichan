@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"testing"
@@ -2533,4 +2534,132 @@ func TestHandleSubagentDoneRendersNotification(t *testing.T) {
 	um := updated.(*Model)
 	assert.Contains(t, um.content.String(), "bg-42")
 	assert.Contains(t, um.content.String(), "helper")
+}
+
+func TestHandleThinkingDeltaDisplaysContent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// First thinking delta should add header and content.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "Let me analyze"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	content := um.content.String()
+	assert.Contains(t, content, "Thinking...")
+	assert.Contains(t, content, "Let me analyze")
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Second thinking delta should append.
+	evt2 := TurnEventMsg{Type: "thinking_delta", Text: " the code"}
+	updated2, _ := um.handleTurnEvent(evt2)
+	um2 := updated2.(*Model)
+	content2 := um2.content.String()
+	assert.Contains(t, content2, "Let me analyze the code")
+}
+
+func TestThinkingResetOnTextDelta(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "reasoning here"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send text delta — thinking buffer should be reset.
+	evt2 := TurnEventMsg{Type: "text_delta", Text: "Hello user"}
+	updated2, _ := um.handleTurnEvent(evt2)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+	assert.Contains(t, um2.content.String(), "Hello user")
+}
+
+func TestThinkingResetOnDone(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "reasoning"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send done event — thinking buffer should be reset.
+	doneEvt := TurnEventMsg{Type: "done"}
+	updated2, _ := um.handleTurnEvent(doneEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+}
+
+func TestThinkingFinalizedOnToolCall(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "analyzing code"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send tool_call — thinking should be finalized.
+	toolEvt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_call",
+		ToolCall: &agent.ToolCallEvent{
+			ID:   "t1",
+			Name: "read_file",
+		},
+	})
+	updated2, _ := um.handleTurnEvent(toolEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+}
+
+func TestLateThinkingDeltaDiscardedAfterText(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send text delta first.
+	textEvt := TurnEventMsg{Type: "text_delta", Text: "Hello"}
+	updated, _ := m.handleTurnEvent(textEvt)
+	um := updated.(*Model)
+	assert.True(t, um.rawAssistant.Len() > 0)
+
+	// Late thinking delta should be silently discarded.
+	thinkEvt := TurnEventMsg{Type: "thinking_delta", Text: "late reasoning"}
+	updated2, _ := um.handleTurnEvent(thinkEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+	assert.NotContains(t, um2.content.String(), "late reasoning")
+}
+
+func TestThinkingResetOnError(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "reasoning"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send error — thinking buffer and indices should be reset.
+	errEvt := TurnEventMsg{Type: "error", Error: fmt.Errorf("test error")}
+	updated2, _ := um.handleTurnEvent(errEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+	assert.Equal(t, 0, um2.thinkingStartIdx)
+	assert.Equal(t, 0, um2.thinkingEndIdx)
 }
