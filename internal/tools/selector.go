@@ -41,7 +41,7 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 			selected = append(selected, tool)
 
 		case cat == CategoryFileSystem:
-			if containsFileKeywords(recentText) || recentToolNames[tool.Name] {
+			if containsFileKeywords(recentText) || containsExplorationKeywords(recentText) || recentToolNames[tool.Name] {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
@@ -58,7 +58,13 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 				nonCoreMatched = true
 			}
 
-		case cat == CategoryGit || cat == CategoryNet || cat == CategoryMCP || cat == CategorySkill:
+		case cat == CategoryGit:
+			if containsExplorationKeywords(recentText) || recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
+				selected = append(selected, tool)
+				nonCoreMatched = true
+			}
+
+		case cat == CategoryNet || cat == CategoryMCP || cat == CategorySkill:
 			if recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
 				selected = append(selected, tool)
 				nonCoreMatched = true
@@ -166,6 +172,19 @@ func (ts *ToolSelector) collectRecentToolNames(messages []provider.Message) map[
 	return names
 }
 
+// explorationKeywords indicate the user wants to understand or explore the
+// project. These activate both FileSystem (search) and Git tools so the LLM
+// can proactively investigate the codebase instead of responding with text only.
+var explorationKeywords = []string{
+	"analyze", "analyse", "review", "brief", "overview", "explain",
+	"describe", "summarize", "summary", "understand", "explore",
+	"structure", "architecture", "codebase", "project", "feature",
+	"features", "module", "modules", "component", "components",
+	"how does", "how do", "what does", "what do", "what is",
+	"walk me through", "tell me about", "show me",
+	"audit", "inspect", "examine", "assessment",
+}
+
 var fileKeywords = []string{
 	"file", "path", "directory", "folder", "read", "write", "search",
 	"find", "grep", "code", "source", ".go", ".py", ".js", ".ts",
@@ -177,6 +196,15 @@ var platformKeywords = []string{
 	"xcode", "swift", "ios", "macos", "apple", "simulator",
 	"build", "codesign", "xcrun", "spm", "package.swift",
 	"xcodebuild", ".xcodeproj", ".xcworkspace",
+}
+
+func containsExplorationKeywords(text string) bool {
+	for _, kw := range explorationKeywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsFileKeywords(text string) bool {
