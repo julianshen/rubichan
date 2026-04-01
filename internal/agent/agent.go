@@ -1168,8 +1168,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 			switch event.Type {
 			case "thinking_delta":
-				// Accumulate thinking text but don't emit to TUI — it's internal reasoning.
+				// Accumulate thinking text and emit to TUI for display.
 				thinkingBuf += event.Text
+				ch <- TurnEvent{Type: "thinking_delta", Text: event.Text}
 
 			case "text_delta":
 				if currentTool != nil {

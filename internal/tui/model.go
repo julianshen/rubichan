@@ -65,6 +65,9 @@ type Model struct {
 	spinner           spinner.Model
 	content           ContentBuffer
 	rawAssistant      strings.Builder
+	rawThinking       strings.Builder
+	thinkingStartIdx  int
+	thinkingEndIdx    int
 	mdRenderer        *MarkdownRenderer
 	toolBox           *ToolBoxRenderer
 	statusBar         *StatusBar
