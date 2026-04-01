@@ -628,6 +628,10 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil {
 			errMsg = msg.Error.Error()
 		}
+		// Remove streaming thinking indicator if active.
+		if m.thinkingActive {
+			m.replaceContentRange(&m.thinkingStartIdx, &m.thinkingEndIdx, "")
+		}
 		m.thinkingActive = false
 		m.rawThinking.Reset()
 		m.thinkingStartIdx = 0

@@ -118,19 +118,22 @@ func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	return header + r.RenderToolResult(c.Content, c.IsError, c.Name)
 }
 
-// lineLabel returns a human-friendly line count label with status indicator.
-func (c *CollapsibleToolResult) lineLabel() string {
-	var label string
+// formatLineLabel returns a human-friendly line count string.
+func formatLineLabel(lineCount int, fullyExpanded bool) string {
 	switch {
-	case c.LineCount == 0:
-		label = "empty"
-	case c.LineCount > maxToolResultLines && !c.FullyExpanded:
-		label = fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
-	case c.LineCount == 1:
-		label = "1 line"
+	case lineCount == 0:
+		return "empty"
+	case lineCount > maxToolResultLines && !fullyExpanded:
+		return fmt.Sprintf("%d lines (%d shown)", lineCount, maxToolResultLines)
+	case lineCount == 1:
+		return "1 line"
 	default:
-		label = fmt.Sprintf("%d lines", c.LineCount)
+		return fmt.Sprintf("%d lines", lineCount)
 	}
+}
+
+func (c *CollapsibleToolResult) lineLabel() string {
+	label := formatLineLabel(c.LineCount, c.FullyExpanded)
 	if c.IsError {
 		label += " ✗"
 	} else {
@@ -207,16 +210,7 @@ func (ct *CollapsibleThinking) Render(r *ToolBoxRenderer) string {
 }
 
 func (ct *CollapsibleThinking) lineLabel() string {
-	switch {
-	case ct.LineCount == 0:
-		return "empty"
-	case ct.LineCount > maxToolResultLines && !ct.FullyExpanded:
-		return fmt.Sprintf("%d lines (%d shown)", ct.LineCount, maxToolResultLines)
-	case ct.LineCount == 1:
-		return "1 line"
-	default:
-		return fmt.Sprintf("%d lines", ct.LineCount)
-	}
+	return formatLineLabel(ct.LineCount, ct.FullyExpanded)
 }
 
 // ColorizeDiffLines applies green/red/cyan coloring to unified diff lines.
