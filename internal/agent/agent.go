@@ -307,6 +307,7 @@ type Agent struct {
 	turnNumber       atomic.Int32
 	rateLimiter      *SharedRateLimiter
 	capabilities     provider.ModelCapabilities
+	progress         *ProgressTracker
 }
 
 const maxUIRequestInputBytes = 2048
@@ -326,6 +327,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
 		scratchpad:   NewScratchpad(),
+		progress:     NewProgressTracker(),
 		capabilities: agentsdk.DefaultCapabilities(),
 	}
 	for _, opt := range opts {
@@ -991,6 +993,18 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context) (string, []i
 		}
 	}
 
+	// Progress tracker — auto-populated from tool results, survives compaction.
+	if a.progress != nil {
+		rendered := a.progress.Render()
+		if rendered != "" {
+			pb.AddSection(PromptSection{
+				Name:      "Progress",
+				Content:   rendered,
+				Cacheable: false,
+			})
+		}
+	}
+
 	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
 		for _, f := range builtFragments {
@@ -1336,6 +1350,20 @@ func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {
 	return b.String()
 }
 
+// recordToolProgress classifies a tool call and records it in the progress
+// tracker. Called after each tool result is committed to the conversation.
+func (a *Agent) recordToolProgress(tc provider.ToolUseBlock, r toolExecResult) {
+	if a.progress == nil {
+		return
+	}
+	action, detail := classifyToolAction(tc.Name, tc.Input)
+	outcome := "ok"
+	if r.isError {
+		outcome = truncateResult(r.content, 60)
+	}
+	a.progress.Record(int(a.turnNumber.Load()), action, detail, outcome)
+}
+
 func (a *Agent) buildSkillTriggerContext(lastUserMessage string) skills.TriggerContext {
 	entries, err := os.ReadDir(a.WorkingDir())
 	projectFiles := make([]string, 0, len(entries))
@@ -1543,6 +1571,9 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
+
+		// Record progress for compaction-resistant tracking.
+		a.recordToolProgress(pendingTools[i], r)
 	}
 
 	// Snapshot after all tool results so a resume picks up from here.
@@ -1570,6 +1601,9 @@ func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- Tur
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
+
+		// Record progress for compaction-resistant tracking.
+		a.recordToolProgress(planned.tc, r)
 	}
 
 	// Snapshot after all tool results so a resume picks up from here.
