@@ -1359,7 +1359,7 @@ func (a *Agent) recordToolProgress(tc provider.ToolUseBlock, r toolExecResult) {
 	action, detail := classifyToolAction(tc.Name, tc.Input)
 	outcome := "ok"
 	if r.isError {
-		outcome = truncateResult(r.content, 60)
+		outcome = "error: " + truncateResult(r.content, 53)
 	}
 	a.progress.Record(int(a.turnNumber.Load()), action, detail, outcome)
 }

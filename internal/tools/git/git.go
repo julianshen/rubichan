@@ -57,7 +57,7 @@ func NewStatusTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
 		name:        "git_status",
-		description: "Show git working tree status. Use this instead of shell 'git status'.",
+		description: "Show read-only git working tree status. Use this instead of shell 'git status'.",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -74,7 +74,7 @@ func NewDiffTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
 		name:        "git_diff",
-		description: "Show a git diff. Use this instead of shell 'git diff'.",
+		description: "Show a read-only git diff. Use this instead of shell 'git diff'.",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -93,7 +93,7 @@ func NewLogTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
 		name:        "git_log",
-		description: "Show git commit history. Use this instead of shell 'git log'.",
+		description: "Show read-only git commit history. Use this instead of shell 'git log'.",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -111,7 +111,7 @@ func NewShowTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
 		name:        "git_show",
-		description: "Show a git revision's content. Use this instead of shell 'git show'.",
+		description: "Show a read-only git revision. Use this instead of shell 'git show'.",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -128,7 +128,7 @@ func NewBlameTool(workDir string) tools.Tool {
 	return &gitTool{
 		workDir:     workDir,
 		name:        "git_blame",
-		description: "Show git blame for a file. Use this instead of shell 'git blame'.",
+		description: "Show read-only git blame for a file. Use this instead of shell 'git blame'.",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
