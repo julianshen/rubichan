@@ -3,11 +3,18 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/julianshen/rubichan/internal/persona"
 )
+
+// AgentStatus represents a running agent's identity for status bar display.
+type AgentStatus struct {
+	ID   string
+	Name string
+}
 
 // segment priority tiers (lower = higher priority = shown first)
 const (
@@ -25,18 +32,20 @@ type statusSegment struct {
 // StatusBar displays model, token usage, turn count, estimated cost,
 // git branch, and turn elapsed time.
 type StatusBar struct {
-	width        int
-	model        string
-	inputTokens  int
-	maxTokens    int
-	turn         int
-	maxTurns     int
-	cost         float64
-	wikiStage    string
-	gitBranch    string
-	elapsed      time.Duration
-	skillSummary string
-	subagentName string
+	mu            sync.Mutex
+	width         int
+	model         string
+	inputTokens   int
+	maxTokens     int
+	turn          int
+	maxTurns      int
+	cost          float64
+	wikiStage     string
+	gitBranch     string
+	elapsed       time.Duration
+	skillSummary  string
+	subagentName  string
+	runningAgents []AgentStatus
 }
 
 // NewStatusBar creates a new StatusBar with the given terminal width.
@@ -80,6 +89,20 @@ func (s *StatusBar) SetSkillSummary(summary string) { s.skillSummary = summary }
 // Pass empty string to clear.
 func (s *StatusBar) SetSubagent(name string) { s.subagentName = name }
 
+// SetRunningAgents updates the list of currently running agents for display.
+func (s *StatusBar) SetRunningAgents(agents []AgentStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runningAgents = agents
+}
+
+// RunningAgents returns the current list of running agents.
+func (s *StatusBar) RunningAgents() []AgentStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]AgentStatus(nil), s.runningAgents...)
+}
+
 // View renders the status bar as a styled string with clear segments.
 // Lower-priority segments are elided first when the bar does not fit the terminal width.
 func (s *StatusBar) View() string {
@@ -110,6 +133,20 @@ func (s *StatusBar) View() string {
 	if s.subagentName != "" {
 		segments = append(segments, statusSegment{
 			styleStatusLabel.Render("🔄 ") + styleStatusValue.Render(s.subagentName), priorityLow,
+		})
+	}
+	s.mu.Lock()
+	agents := s.runningAgents
+	s.mu.Unlock()
+	if len(agents) > 0 {
+		var label string
+		if len(agents) == 1 {
+			label = fmt.Sprintf("⊕ 1 agent: %s", agents[0].Name)
+		} else {
+			label = fmt.Sprintf("⊕ %d agents", len(agents))
+		}
+		segments = append(segments, statusSegment{
+			styleStatusLabel.Render(label), priorityMedium,
 		})
 	}
 	if s.skillSummary != "" {

@@ -2665,3 +2665,65 @@ func TestThinkingResetOnError(t *testing.T) {
 	assert.Equal(t, 0, um2.thinkingStartIdx)
 	assert.Equal(t, 0, um2.thinkingEndIdx)
 }
+
+// --- Running agents panel tests ---
+
+func TestModelSetRunningAgents(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	agents := []AgentStatus{
+		{ID: "a1", Name: "code-review"},
+		{ID: "a2", Name: "linter"},
+	}
+	m.SetRunningAgents(agents)
+
+	// Agents are stored in the status bar (thread-safe), not in model directly.
+	got := m.statusBar.RunningAgents()
+	assert.Len(t, got, 2)
+	assert.Equal(t, "code-review", got[0].Name)
+
+	barView := m.statusBar.View()
+	assert.Contains(t, barView, "⊕ 2 agents")
+}
+
+func TestModelCtrlATogglesAgentPanel(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.SetRunningAgents([]AgentStatus{
+		{ID: "a1", Name: "code-review"},
+	})
+
+	// First Ctrl+A — show panel.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	um := updated.(*Model)
+	assert.True(t, um.agentPanelVisible)
+	assert.Nil(t, cmd)
+	vpContent := um.viewport.View()
+	assert.Contains(t, vpContent, "Running Agents")
+	assert.Contains(t, vpContent, "code-review")
+	assert.Contains(t, vpContent, "a1")
+
+	// Second Ctrl+A — hide panel.
+	updated, cmd = um.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	um = updated.(*Model)
+	assert.False(t, um.agentPanelVisible)
+	assert.Nil(t, cmd)
+	vpContent = um.viewport.View()
+	assert.NotContains(t, vpContent, "Running Agents")
+}
+
+func TestModelAgentPanelHiddenWhenNoAgents(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.agentPanelVisible = true
+	// No agents set — panel should render empty.
+	panel := m.renderAgentPanel()
+	assert.Empty(t, panel)
+}
+
+func TestModelAgentPanelNotToggledDuringStreaming(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.SetRunningAgents([]AgentStatus{{ID: "a1", Name: "worker"}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	um := updated.(*Model)
+	assert.False(t, um.agentPanelVisible, "Ctrl+A should not toggle panel during streaming")
+}

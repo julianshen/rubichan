@@ -259,6 +259,13 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Ctrl+A toggles the running agents detail panel.
+	if msg.Type == tea.KeyCtrlA && m.state == StateInput {
+		m.agentPanelVisible = !m.agentPanelVisible
+		m.viewport.SetContent(m.viewportContent())
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyEnter:
 		if m.state != StateInput {

@@ -108,6 +108,7 @@ type Model struct {
 	wikiCancel        context.CancelFunc
 	skillProvider     skillSummaryProvider
 	activeSkills      []string
+	agentPanelVisible bool
 	plainMode         bool
 	debug             bool
 	lastPrompt        string
@@ -289,6 +290,12 @@ func (m *Model) SetFileCompletionSource(src *FileCompletionSource) {
 // SetGitBranch sets the git branch name displayed in the status bar.
 func (m *Model) SetGitBranch(branch string) {
 	m.statusBar.SetGitBranch(branch)
+}
+
+// SetRunningAgents updates the list of running agents shown in the status bar
+// and agent detail panel.
+func (m *Model) SetRunningAgents(agents []AgentStatus) {
+	m.statusBar.SetRunningAgents(agents)
 }
 
 // SetDebug enables or disables debug-only UI surfaces.

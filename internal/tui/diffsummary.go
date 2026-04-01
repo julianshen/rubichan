@@ -11,17 +11,45 @@ var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file(?:\(s\)|s)?\s+cha
 
 func (m *Model) viewportContent() string {
 	content := m.content.Render(m.width)
+
+	// Append diff summary panel if available.
 	panel := m.renderDiffSummaryPanel()
-	if panel == "" {
-		return content
+	if panel != "" {
+		if content != "" && !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += panel
 	}
-	if content == "" {
-		return panel
+
+	// Append agent detail panel if toggled.
+	agentPanel := m.renderAgentPanel()
+	if agentPanel != "" {
+		if content != "" && !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += agentPanel
 	}
-	if strings.HasSuffix(content, "\n") {
-		return content + panel
+
+	return content
+}
+
+// renderAgentPanel renders the expandable agent detail panel when visible.
+func (m *Model) renderAgentPanel() string {
+	agents := m.statusBar.RunningAgents()
+	if !m.agentPanelVisible || len(agents) == 0 {
+		return ""
 	}
-	return content + "\n" + panel
+
+	var body strings.Builder
+	body.WriteString(fmt.Sprintf("▼ %s %s",
+		styleToolResultHeader.Render("Running Agents"),
+		styleKeyHint.Render("[ctrl+a]"),
+	))
+	for _, a := range agents {
+		body.WriteString(fmt.Sprintf("\n  ⊕ %s [%s]", a.Name, a.ID))
+	}
+
+	return styleDiffPanel.Render(body.String()) + "\n"
 }
 
 func (m *Model) renderDiffSummaryPanel() string {
