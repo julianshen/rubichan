@@ -709,7 +709,7 @@ func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
 
 	// Simulate text_delta events with markdown content
 	m.rawAssistant.WriteString("Hello **world**")
-	m.content.WriteString("Hello **world**")
+	m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 
 	ch := make(chan agent.TurnEvent)
 	close(ch)
@@ -1928,8 +1928,9 @@ func TestRenderAssistantMarkdown(t *testing.T) {
 	// Simulate: user prompt is prefix, raw markdown is assistant text.
 	m.content.WriteString("> hello\n")
 	m.assistantStartIdx = m.content.Len()
+	m.assistantEndIdx = m.assistantStartIdx
 	m.rawAssistant.WriteString("Hello **world**")
-	m.content.WriteString("Hello **world**") // raw during streaming
+	m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 
 	m.renderAssistantMarkdown()
 
@@ -1964,10 +1965,11 @@ func TestRenderAssistantMarkdownSanitizesProtocolContent(t *testing.T) {
 
 	m.content.WriteString("> hello\n")
 	m.assistantStartIdx = m.content.Len()
+	m.assistantEndIdx = m.assistantStartIdx
 	m.rawAssistant.WriteString("assistantanalysisThinking..." +
 		"assistantcommentary to=functions.shell json{\"command\":\"ls\"}" +
 		"assistantfinalHello **world**")
-	m.content.WriteString(m.rawAssistant.String())
+	m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 
 	m.renderAssistantMarkdown()
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1002,10 +1003,22 @@ func TestWakeStatusAdapter_WithTasks(t *testing.T) {
 
 func TestDetectGitBranch_ValidRepo(t *testing.T) {
 	t.Parallel()
-	// Use the current repo which is a git repo.
-	branch, err := detectGitBranch(testRepoRoot(t))
+	// Create a dedicated test repo with a known branch to avoid failures
+	// in detached HEAD worktrees or CI environments.
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-b", "test-branch"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "test"},
+		{"config", "commit.gpgsign", "false"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		require.NoError(t, cmd.Run(), "git %v failed", args)
+	}
+	branch, err := detectGitBranch(dir)
 	require.NoError(t, err)
-	assert.NotEmpty(t, branch)
+	assert.Equal(t, "test-branch", branch)
 }
 
 func TestDetectGitBranch_InvalidDir(t *testing.T) {

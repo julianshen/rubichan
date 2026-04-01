@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -1605,8 +1606,12 @@ func TestValidateAndPinBrowserTargetUnresolvableHost(t *testing.T) {
 // --- Native backend integration tests (require Chrome) ---
 
 func chromeAvailable() bool {
-	_, err := newNativeSession(OpenOptions{Headless: true})
-	return err == nil
+	for _, name := range []string{"google-chrome", "chromium-browser", "chromium"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNativeBackendIntegration(t *testing.T) {

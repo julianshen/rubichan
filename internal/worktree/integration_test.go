@@ -19,6 +19,7 @@ func initTestRepo(t *testing.T) string {
 	runGit(t, dir, "init", "-b", "main")
 	runGit(t, dir, "config", "user.email", "test@test.com")
 	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "commit.gpgsign", "false")
 
 	// Create initial commit so branches work.
 	f := filepath.Join(dir, "README.md")

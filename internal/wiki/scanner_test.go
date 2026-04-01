@@ -25,6 +25,7 @@ func initGitRepo(t *testing.T, dir string) {
 	runGit(t, dir, "init")
 	runGit(t, dir, "config", "user.email", "test@test.com")
 	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "commit.gpgsign", "false")
 }
 
 func gitAdd(t *testing.T, dir, file string) {

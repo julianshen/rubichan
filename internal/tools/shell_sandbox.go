@@ -319,6 +319,7 @@ func sandboxCommandEnv(cmd *exec.Cmd, proxyPort int) []string {
 		"XDG_CACHE_HOME":  filepath.Join(sandboxHome, ".cache"),
 		"XDG_CONFIG_HOME": filepath.Join(sandboxHome, ".config"),
 	}
+	proxyKeys := []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"}
 	if proxyPort > 0 {
 		proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 		values["HTTP_PROXY"] = proxyURL
@@ -327,8 +328,26 @@ func sandboxCommandEnv(cmd *exec.Cmd, proxyPort int) []string {
 		values["https_proxy"] = proxyURL
 		values["NO_PROXY"] = "localhost,127.0.0.1"
 		values["no_proxy"] = "localhost,127.0.0.1"
+	} else {
+		env = stripEnvKeys(env, proxyKeys)
 	}
 	return setEnvValues(env, values)
+}
+
+func stripEnvKeys(env []string, keys []string) []string {
+	strip := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		strip[k] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok && strip[name] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func setEnvValues(env []string, values map[string]string) []string {
