@@ -179,6 +179,46 @@ func isDiffContent(content string) bool {
 	return false
 }
 
+// CollapsibleThinking tracks a thinking/reasoning block with collapse state.
+type CollapsibleThinking struct {
+	ID            int
+	Content       string
+	LineCount     int
+	Collapsed     bool
+	FullyExpanded bool
+}
+
+// Render returns the rendered view of a thinking block in one of three states:
+//   - collapsed: single summary line with ▶ indicator
+//   - expanded-truncated: ▼ header + first maxToolResultLines lines
+//   - expanded-full: ▼ header + all lines (when FullyExpanded == true)
+func (ct *CollapsibleThinking) Render(r *ToolBoxRenderer) string {
+	lineLabel := ct.lineLabel()
+	if ct.Collapsed {
+		return styleToolResultHeader.Render("▶ 💭 Thinking") +
+			styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
+	}
+	header := styleToolResultHeader.Render("▼ 💭 Thinking") +
+		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
+	if ct.FullyExpanded {
+		return header + r.renderInBox(ct.Content, false)
+	}
+	return header + r.RenderToolResult(ct.Content, false, "")
+}
+
+func (ct *CollapsibleThinking) lineLabel() string {
+	switch {
+	case ct.LineCount == 0:
+		return "empty"
+	case ct.LineCount > maxToolResultLines && !ct.FullyExpanded:
+		return fmt.Sprintf("%d lines (%d shown)", ct.LineCount, maxToolResultLines)
+	case ct.LineCount == 1:
+		return "1 line"
+	default:
+		return fmt.Sprintf("%d lines", ct.LineCount)
+	}
+}
+
 // ColorizeDiffLines applies green/red/cyan coloring to unified diff lines.
 // Delegates to ColorizeContent for the actual colorization.
 func ColorizeDiffLines(content string) string {
