@@ -449,3 +449,90 @@ func TestToggleFullExpandSkipsShortResults(t *testing.T) {
 	toggleFullExpandMostRecent(results)
 	assert.False(t, results[0].FullyExpanded)
 }
+
+func TestCollapsibleThinking_Collapsed(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ct := &CollapsibleThinking{
+		ID:        0,
+		Content:   "Let me think about this...\nFirst, I need to consider X.\nThen Y.",
+		LineCount: 3,
+		Collapsed: true,
+	}
+	result := ct.Render(r)
+	assert.Contains(t, result, "▶")
+	assert.Contains(t, result, "Thinking")
+	assert.Contains(t, result, "3 lines")
+	// Collapsed should NOT show the content.
+	assert.NotContains(t, result, "Let me think")
+}
+
+func TestCollapsibleThinking_Expanded(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ct := &CollapsibleThinking{
+		ID:        0,
+		Content:   "Let me think about this...\nFirst, I need to consider X.\nThen Y.",
+		LineCount: 3,
+		Collapsed: false,
+	}
+	result := ct.Render(r)
+	assert.Contains(t, result, "▼")
+	assert.Contains(t, result, "Thinking")
+	assert.Contains(t, result, "Let me think")
+}
+
+func TestCollapsibleThinking_FullyExpanded(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	lines := make([]string, 50)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("reasoning step %d", i+1)
+	}
+	ct := &CollapsibleThinking{
+		ID:            0,
+		Content:       strings.Join(lines, "\n"),
+		LineCount:     50,
+		Collapsed:     false,
+		FullyExpanded: true,
+	}
+	result := ct.Render(r)
+	assert.Contains(t, result, "▼")
+	assert.Contains(t, result, "reasoning step 50")
+	assert.Contains(t, result, "50 lines")
+	assert.NotContains(t, result, "20 shown")
+}
+
+func TestCollapsibleThinking_EmptyContent(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ct := &CollapsibleThinking{
+		ID:        0,
+		Content:   "",
+		LineCount: 0,
+		Collapsed: true,
+	}
+	result := ct.Render(r)
+	assert.Contains(t, result, "empty")
+}
+
+func TestCollapsibleThinking_SingleLine(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ct := &CollapsibleThinking{
+		ID:        0,
+		Content:   "short thought",
+		LineCount: 1,
+		Collapsed: true,
+	}
+	result := ct.Render(r)
+	assert.Contains(t, result, "1 line")
+	assert.NotContains(t, result, "1 lines")
+}
+
+func TestCollapsibleThinking_TruncatedLabel(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ct := &CollapsibleThinking{
+		ID:        0,
+		Content:   strings.Repeat("line\n", 50),
+		LineCount: 50,
+		Collapsed: true,
+	}
+	result := ct.Render(r)
+	assert.Contains(t, result, "50 lines (20 shown)")
+}

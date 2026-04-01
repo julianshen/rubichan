@@ -239,8 +239,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Ctrl+T toggles collapse/expand on all tool results.
-	if msg.Type == tea.KeyCtrlT && m.state == StateInput && m.content.ToolResultCount() > 0 {
+	// Ctrl+T toggles collapse/expand on all tool results and thinking blocks.
+	if msg.Type == tea.KeyCtrlT && m.state == StateInput && m.content.HasCollapsible() {
 		m.content.ToggleAllToolResults()
 		m.viewport.SetContent(m.viewportContent())
 		return m, nil
@@ -467,6 +467,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			m.content.WriteString("\n" + header + "\n")
 			m.thinkingStartIdx = m.content.LenWithWidth(m.width)
 			m.thinkingEndIdx = m.thinkingStartIdx
+			m.thinkingActive = true
 		}
 		m.rawThinking.WriteString(msg.Text)
 		rendered := styleTextDim.Render(m.rawThinking.String())
@@ -475,10 +476,9 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "text_delta":
-		// Finalize thinking section when text output begins.
-		if m.rawThinking.Len() > 0 && m.rawAssistant.Len() == 0 {
-			m.rawThinking.Reset()
-			m.content.WriteString("\n")
+		// Finalize thinking section into a collapsible block when text output begins.
+		if m.thinkingActive && m.rawAssistant.Len() == 0 {
+			m.finalizeThinking()
 		}
 		if m.rawAssistant.Len() == 0 {
 			m.assistantStartIdx = m.content.LenWithWidth(m.width)
@@ -493,9 +493,8 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "tool_call":
-		if m.rawThinking.Len() > 0 {
-			m.rawThinking.Reset()
-			m.content.WriteString("\n")
+		if m.thinkingActive {
+			m.finalizeThinking()
 		}
 		name := ""
 		args := ""
@@ -629,6 +628,11 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil {
 			errMsg = msg.Error.Error()
 		}
+		// Remove streaming thinking indicator if active.
+		if m.thinkingActive {
+			m.replaceContentRange(&m.thinkingStartIdx, &m.thinkingEndIdx, "")
+		}
+		m.thinkingActive = false
 		m.rawThinking.Reset()
 		m.thinkingStartIdx = 0
 		m.thinkingEndIdx = 0
@@ -645,6 +649,9 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if !m.turnStartTime.IsZero() {
 			m.statusBar.SetElapsed(time.Since(m.turnStartTime))
 			m.turnStartTime = time.Time{}
+		}
+		if m.thinkingActive {
+			m.finalizeThinking()
 		}
 		m.rawThinking.Reset()
 		m.thinkingStartIdx = 0
@@ -739,6 +746,31 @@ func (m *Model) replaceAssistantContent(text string) {
 func (m *Model) replaceContentRange(startIdx, endIdx *int, text string) {
 	m.content.ReplaceTextRangeWithWidth(m.width, *startIdx, *endIdx, text)
 	*endIdx = *startIdx + len(text)
+}
+
+// finalizeThinking replaces the streaming "💭 Thinking..." indicator with a
+// collapsible thinking block. The block defaults to collapsed so the user sees
+// a compact summary and can expand it on demand.
+func (m *Model) finalizeThinking() {
+	m.thinkingActive = false
+	thinkingText := m.rawThinking.String()
+	m.rawThinking.Reset()
+
+	// Remove the streaming indicator text by replacing it with empty string.
+	m.replaceContentRange(&m.thinkingStartIdx, &m.thinkingEndIdx, "")
+
+	if thinkingText == "" {
+		return
+	}
+
+	lineCount := strings.Count(thinkingText, "\n") + 1
+	ct := CollapsibleThinking{
+		Content:   thinkingText,
+		LineCount: lineCount,
+		Collapsed: true,
+	}
+	m.content.AppendThinking(ct)
+	m.setContentAndAutoScroll()
 }
 
 func (m *Model) advanceRalphLoop(raw string) tea.Cmd {

@@ -8,13 +8,16 @@ type SegmentType int
 const (
 	SegmentTypeText SegmentType = iota
 	SegmentTypeToolResult
+	SegmentTypeThinking
 )
 
-// ContentSegment stores either plain text or a collapsible tool-result segment.
+// ContentSegment stores either plain text, a collapsible tool-result, or a
+// collapsible thinking segment.
 type ContentSegment struct {
 	Type       SegmentType
 	Text       string
 	ToolResult *CollapsibleToolResult
+	Thinking   *CollapsibleThinking
 
 	dirty      bool
 	lastWidth  int
@@ -52,12 +55,42 @@ func (b *ContentBuffer) WriteString(text string) {
 // AppendToolResult appends a collapsible tool-result segment.
 func (b *ContentBuffer) AppendToolResult(result CollapsibleToolResult) {
 	copy := result
-	copy.ID = b.ToolResultCount()
+	copy.ID = b.nextCollapsibleID()
 	b.segments = append(b.segments, ContentSegment{
 		Type:       SegmentTypeToolResult,
 		ToolResult: &copy,
 		dirty:      true,
 	})
+}
+
+// AppendThinking appends a collapsible thinking segment.
+func (b *ContentBuffer) AppendThinking(t CollapsibleThinking) {
+	copy := t
+	copy.ID = b.nextCollapsibleID()
+	b.segments = append(b.segments, ContentSegment{
+		Type:     SegmentTypeThinking,
+		Thinking: &copy,
+		dirty:    true,
+	})
+}
+
+// nextCollapsibleID returns a monotonically increasing ID across both tool
+// results and thinking segments so IDs never collide.
+func (b *ContentBuffer) nextCollapsibleID() int {
+	maxID := -1
+	for i := range b.segments {
+		if b.segments[i].Type == SegmentTypeToolResult && b.segments[i].ToolResult != nil {
+			if b.segments[i].ToolResult.ID > maxID {
+				maxID = b.segments[i].ToolResult.ID
+			}
+		}
+		if b.segments[i].Type == SegmentTypeThinking && b.segments[i].Thinking != nil {
+			if b.segments[i].Thinking.ID > maxID {
+				maxID = b.segments[i].Thinking.ID
+			}
+		}
+	}
+	return maxID + 1
 }
 
 // ToggleToolResult toggles collapsed/expanded state for a specific tool-result ID.
@@ -85,25 +118,33 @@ func (b *ContentBuffer) ToggleAllToolResults() {
 			anyCollapsed = true
 			break
 		}
+		if seg.Type == SegmentTypeThinking && seg.Thinking != nil && seg.Thinking.Collapsed {
+			anyCollapsed = true
+			break
+		}
 	}
 	for i := range b.segments {
 		seg := &b.segments[i]
-		if seg.Type != SegmentTypeToolResult || seg.ToolResult == nil {
-			continue
+		if seg.Type == SegmentTypeToolResult && seg.ToolResult != nil {
+			seg.ToolResult.Collapsed = !anyCollapsed
+			seg.dirty = true
 		}
-		seg.ToolResult.Collapsed = !anyCollapsed
-		seg.dirty = true
+		if seg.Type == SegmentTypeThinking && seg.Thinking != nil {
+			seg.Thinking.Collapsed = !anyCollapsed
+			seg.dirty = true
+		}
 	}
 }
 
 func (b *ContentBuffer) CollapseAllToolResults() {
 	for i := range b.segments {
 		seg := &b.segments[i]
-		if seg.Type != SegmentTypeToolResult || seg.ToolResult == nil {
-			continue
-		}
-		if !seg.ToolResult.Collapsed {
+		if seg.Type == SegmentTypeToolResult && seg.ToolResult != nil && !seg.ToolResult.Collapsed {
 			seg.ToolResult.Collapsed = true
+			seg.dirty = true
+		}
+		if seg.Type == SegmentTypeThinking && seg.Thinking != nil && !seg.Thinking.Collapsed {
+			seg.Thinking.Collapsed = true
 			seg.dirty = true
 		}
 	}
@@ -122,6 +163,20 @@ func (b *ContentBuffer) ToggleFullExpandMostRecent() {
 			return
 		}
 	}
+}
+
+// HasCollapsible returns true if the buffer contains any collapsible segments
+// (tool results or thinking blocks).
+func (b *ContentBuffer) HasCollapsible() bool {
+	for i := range b.segments {
+		if b.segments[i].Type == SegmentTypeToolResult && b.segments[i].ToolResult != nil {
+			return true
+		}
+		if b.segments[i].Type == SegmentTypeThinking && b.segments[i].Thinking != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *ContentBuffer) ToolResultCount() int {
@@ -164,6 +219,10 @@ func (b *ContentBuffer) Render(width int) string {
 		case SegmentTypeToolResult:
 			if seg.ToolResult != nil {
 				rendered = seg.ToolResult.Render(renderer)
+			}
+		case SegmentTypeThinking:
+			if seg.Thinking != nil {
+				rendered = seg.Thinking.Render(renderer)
 			}
 		}
 		seg.lastRender = rendered
@@ -295,6 +354,10 @@ func cloneSegment(seg ContentSegment) ContentSegment {
 		tool := *seg.ToolResult
 		cloned.ToolResult = &tool
 	}
+	if seg.Thinking != nil {
+		thinking := *seg.Thinking
+		cloned.Thinking = &thinking
+	}
 	cloned.dirty = true
 	cloned.lastWidth = 0
 	cloned.lastRender = ""
@@ -310,6 +373,11 @@ func (b *ContentBuffer) segmentRender(seg ContentSegment, width int) string {
 			return ""
 		}
 		return seg.ToolResult.Render(NewToolBoxRenderer(width))
+	case SegmentTypeThinking:
+		if seg.Thinking == nil {
+			return ""
+		}
+		return seg.Thinking.Render(NewToolBoxRenderer(width))
 	default:
 		return ""
 	}

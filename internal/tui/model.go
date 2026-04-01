@@ -101,6 +101,7 @@ type Model struct {
 	wikiForm          *WikiForm
 	fileCompletion    *FileCompletionOverlay
 	toolCallArgs      map[string]string
+	thinkingActive    bool
 	thinkingMsg       string
 	wikiRunning       bool
 	wikiCfg           WikiCommandConfig
