@@ -66,7 +66,7 @@ func runServe() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	llm, err := provider.NewProvider(cfg)
+	llm, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("create provider: %w", err)
 	}

@@ -54,7 +54,7 @@ func runShell() error {
 	defer wtCleanup()
 
 	// Create provider.
-	p, err := provider.NewProvider(cfg)
+	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
 	}
