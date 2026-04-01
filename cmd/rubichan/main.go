@@ -1278,7 +1278,7 @@ func runInteractive() error {
 	}
 
 	// Create provider
-	p, err := provider.NewProvider(cfg)
+	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
 	}
@@ -1747,7 +1747,7 @@ func runHeadless() error {
 		}
 	}
 	// Create provider
-	p, err := provider.NewProvider(cfg)
+	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
 	}
@@ -2900,7 +2900,7 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 // It creates an LLM provider, a parser, and delegates to wiki.Run, emitting
 // progress updates to stderr.
 func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency int) error {
-	p, err := provider.NewProvider(cfg)
+	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
 	}

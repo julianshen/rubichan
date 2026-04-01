@@ -20,9 +20,15 @@ func init() {
 
 // Provider implements the LLMProvider interface for the Anthropic API.
 type Provider struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	baseURL     string
+	apiKey      string
+	client      *http.Client
+	debugLogger provider.DebugLogger
+}
+
+// SetDebugLogger enables debug logging for API requests and responses.
+func (p *Provider) SetDebugLogger(logger provider.DebugLogger) {
+	p.debugLogger = logger
 }
 
 // New creates a new Anthropic provider.
@@ -105,6 +111,8 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
+	provider.LogRequest(p.debugLogger, httpReq, body)
+
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
@@ -113,7 +121,12 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
+		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
 		return nil, provider.FormatAPIError(resp.StatusCode, respBody, httpReq)
+	}
+
+	if p.debugLogger != nil {
+		p.debugLogger("[DEBUG] <<< HTTP Response: %d %s (streaming)", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
 	ch := make(chan provider.StreamEvent)

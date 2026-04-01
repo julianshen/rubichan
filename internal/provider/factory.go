@@ -32,15 +32,35 @@ func RegisterProvider(name string, constructor ProviderConstructor) {
 
 // NewProvider creates an LLMProvider based on the given configuration.
 // It routes to the appropriate provider constructor based on the default provider name.
+// Use NewProviderWithDebug to enable debug logging of API requests/responses.
 func NewProvider(cfg *config.Config) (LLMProvider, error) {
+	return NewProviderWithDebug(cfg, false)
+}
+
+// NewProviderWithDebug creates an LLMProvider and optionally enables debug
+// logging of HTTP request/response details to stderr via log.Printf.
+func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
+	var p LLMProvider
+	var err error
+
 	switch cfg.Provider.Default {
 	case "anthropic":
-		return newAnthropicProvider(cfg)
+		p, err = newAnthropicProvider(cfg)
 	case "ollama":
-		return newOllamaProvider(cfg)
+		p, err = newOllamaProvider(cfg)
 	default:
-		return newOpenAIProvider(cfg)
+		p, err = newOpenAIProvider(cfg)
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if debug {
+		EnableDebugLogging(p)
+	}
+
+	return p, nil
 }
 
 func newAnthropicProvider(cfg *config.Config) (LLMProvider, error) {
