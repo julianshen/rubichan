@@ -68,7 +68,7 @@ func (f *FileTool) Name() string {
 }
 
 func (f *FileTool) SearchHint() string {
-	return "read write edit create patch modify content text code source configuration"
+	return "create modify content text configuration template"
 }
 
 func (f *FileTool) Description() string {

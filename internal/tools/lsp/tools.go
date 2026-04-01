@@ -70,7 +70,7 @@ func NewDiagnosticsTool(m *Manager) tools.Tool {
 		manager:     m,
 		name:        "lsp_diagnostics",
 		description: "Get compiler diagnostics (errors, warnings) for a file from the language server.",
-		searchHint:  "compiler error warning type check lint static analysis",
+		searchHint:  "type check lint static analysis",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

@@ -44,7 +44,7 @@ func TestToolSearchToolShowsHints(t *testing.T) {
 			{
 				Name:        "http_get",
 				Description: "Fetch HTTP resources.",
-				SearchHint:  "api rest endpoint webhook fetch",
+				SearchHint:  "api endpoint webhook",
 			},
 		},
 	}
@@ -54,7 +54,7 @@ func TestToolSearchToolShowsHints(t *testing.T) {
 	result, err := tool.Execute(context.Background(), input)
 	require.NoError(t, err)
 	assert.Contains(t, result.Content, "http_get")
-	assert.Contains(t, result.Content, "Hints: api rest endpoint webhook fetch")
+	assert.Contains(t, result.Content, "Hints: api endpoint webhook")
 }
 
 func TestToolSearchToolOmitsEmptyHints(t *testing.T) {

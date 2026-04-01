@@ -172,7 +172,7 @@ func TestRegistryAllPopulatesSearchHint(t *testing.T) {
 	// Tool with SearchHinter — SearchHint should be populated.
 	hinted := &mockToolWithHint{
 		mockTool: *newMockTool("hinted", "A hinted tool"),
-		hint:     "api rest endpoint webhook",
+		hint:     "api endpoint webhook",
 	}
 	require.NoError(t, reg.Register(hinted))
 
@@ -184,7 +184,7 @@ func TestRegistryAllPopulatesSearchHint(t *testing.T) {
 		defMap[d.Name] = d.SearchHint
 	}
 	assert.Empty(t, defMap["plain"], "plain tool should have no search hint")
-	assert.Equal(t, "api rest endpoint webhook", defMap["hinted"])
+	assert.Equal(t, "api endpoint webhook", defMap["hinted"])
 }
 
 func TestRegistryAlias(t *testing.T) {

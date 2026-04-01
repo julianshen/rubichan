@@ -46,7 +46,7 @@ func (s *SearchTool) Name() string {
 }
 
 func (s *SearchTool) SearchHint() string {
-	return "grep find regex pattern codebase explore analyze review files directory listing structure"
+	return "codebase explore analyze review directory listing structure symbol"
 }
 
 func (s *SearchTool) Description() string {

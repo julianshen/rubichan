@@ -32,7 +32,7 @@ func (p *ProcessTool) Name() string {
 }
 
 func (p *ProcessTool) SearchHint() string {
-	return "background server daemon watcher long-running stdin stdout kill terminate"
+	return "background server daemon watcher"
 }
 
 func (p *ProcessTool) Description() string {

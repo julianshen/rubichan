@@ -148,7 +148,7 @@ func (s *ShellTool) Name() string {
 }
 
 func (s *ShellTool) SearchHint() string {
-	return "execute run command terminal bash build test install deploy npm pip cargo make"
+	return "terminal bash run deploy npm pip cargo make compile"
 }
 
 func (s *ShellTool) Description() string {

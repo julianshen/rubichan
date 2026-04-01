@@ -462,14 +462,14 @@ func errResult(format string, args ...any) tools.ToolResult {
 type tool struct {
 	name        string
 	description string
-	hint        string
+	searchHint  string
 	schema      json.RawMessage
 	run         func(context.Context, json.RawMessage) (tools.ToolResult, error)
 }
 
 func (t *tool) Name() string                 { return t.name }
 func (t *tool) Description() string          { return t.description }
-func (t *tool) SearchHint() string           { return t.hint }
+func (t *tool) SearchHint() string           { return t.searchHint }
 func (t *tool) InputSchema() json.RawMessage { return t.schema }
 func (t *tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	return t.run(ctx, input)
@@ -481,7 +481,7 @@ func NewTools(service *Service) []tools.Tool {
 		&tool{
 			name:        "browser_open",
 			description: "Open a browser session and navigate to a URL.",
-			hint:        "web page navigate screenshot scrape headless chromium",
+			searchHint:  "web page navigate screenshot scrape headless chromium",
 			schema:      json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"session_id":{"type":"string"},"headless":{"type":"boolean"},"viewport":{"type":"object","properties":{"width":{"type":"integer"},"height":{"type":"integer"}}}},"required":["url"]}`),
 			run:         service.Open,
 		},

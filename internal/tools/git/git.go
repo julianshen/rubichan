@@ -53,7 +53,6 @@ type gitTool struct {
 	run         func(context.Context, *gitTool, json.RawMessage) (tools.ToolResult, error)
 }
 
-// SearchHint returns discovery keywords for tool_search.
 func (t *gitTool) SearchHint() string { return t.searchHint }
 
 // NewStatusTool returns a read-only git status tool.
@@ -62,7 +61,7 @@ func NewStatusTool(workDir string) tools.Tool {
 		workDir:     workDir,
 		name:        "git_status",
 		description: "Show read-only git working tree status. Use this instead of shell 'git status'.",
-		searchHint:  "version control changes modified staged untracked branch repository review",
+		searchHint:  "vcs modified staged untracked branch repository review",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -80,7 +79,7 @@ func NewDiffTool(workDir string) tools.Tool {
 		workDir:     workDir,
 		name:        "git_diff",
 		description: "Show a read-only git diff. Use this instead of shell 'git diff'.",
-		searchHint:  "version control changes compare patch modification review",
+		searchHint:  "vcs compare patch modification review changes",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -100,7 +99,7 @@ func NewLogTool(workDir string) tools.Tool {
 		workDir:     workDir,
 		name:        "git_log",
 		description: "Show read-only git commit history. Use this instead of shell 'git log'.",
-		searchHint:  "version control history commits author timeline changelog",
+		searchHint:  "vcs timeline changelog recent",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -119,7 +118,7 @@ func NewShowTool(workDir string) tools.Tool {
 		workDir:     workDir,
 		name:        "git_show",
 		description: "Show a read-only git revision. Use this instead of shell 'git show'.",
-		searchHint:  "version control commit details revision inspect",
+		searchHint:  "vcs details inspect contents",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -137,7 +136,7 @@ func NewBlameTool(workDir string) tools.Tool {
 		workDir:     workDir,
 		name:        "git_blame",
 		description: "Show read-only git blame for a file. Use this instead of shell 'git blame'.",
-		searchHint:  "version control annotation authorship line origin who wrote",
+		searchHint:  "vcs annotation authorship origin who wrote",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

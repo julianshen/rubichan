@@ -49,9 +49,8 @@ func NewQueryTool(workDir string) *QueryTool {
 // Name returns the tool name.
 func (t *QueryTool) Name() string { return "db_query" }
 
-// SearchHint returns discovery keywords for tool_search.
 func (t *QueryTool) SearchHint() string {
-	return "sql database sqlite postgres mysql select table schema data"
+	return "select table schema data inspect"
 }
 
 // Description returns a human-readable description of the tool.

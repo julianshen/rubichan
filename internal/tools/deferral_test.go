@@ -84,7 +84,7 @@ func TestDeferralManagerSearchMatchesSearchHint(t *testing.T) {
 		{
 			Name:        "mcp-special",
 			Description: "A special integration tool.",
-			SearchHint:  "api rest endpoint webhook fetch",
+			SearchHint:  "api endpoint webhook",
 			InputSchema: bigSchema,
 		},
 	}

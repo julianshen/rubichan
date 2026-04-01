@@ -29,6 +29,7 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 	// Collect recent text for keyword analysis.
 	recentText := ts.collectRecentText(messages)
 	recentToolNames := ts.collectRecentToolNames(messages)
+	isExploration := containsAny(recentText, explorationKeywords)
 
 	var selected []provider.ToolDef
 	nonCoreMatched := false
@@ -41,25 +42,25 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 			selected = append(selected, tool)
 
 		case cat == CategoryFileSystem:
-			if containsFileKeywords(recentText) || containsExplorationKeywords(recentText) || recentToolNames[tool.Name] {
+			if containsAny(recentText, fileKeywords) || isExploration || recentToolNames[tool.Name] {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
 
 		case cat == CategoryPlatform:
-			if containsPlatformKeywords(recentText) || recentToolNames[tool.Name] {
+			if containsAny(recentText, platformKeywords) || recentToolNames[tool.Name] {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
 
 		case cat == CategoryLSP:
-			if containsLSPKeywords(recentText) || recentToolNames[tool.Name] {
+			if containsAny(recentText, lspKeywords) || recentToolNames[tool.Name] {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
 
 		case cat == CategoryGit:
-			if containsExplorationKeywords(recentText) || recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
+			if isExploration || recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
@@ -198,26 +199,9 @@ var platformKeywords = []string{
 	"xcodebuild", ".xcodeproj", ".xcworkspace",
 }
 
-func containsExplorationKeywords(text string) bool {
-	for _, kw := range explorationKeywords {
-		if strings.Contains(text, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsFileKeywords(text string) bool {
-	for _, kw := range fileKeywords {
-		if strings.Contains(text, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsPlatformKeywords(text string) bool {
-	for _, kw := range platformKeywords {
+// containsAny returns true if text contains any of the keywords.
+func containsAny(text string, keywords []string) bool {
+	for _, kw := range keywords {
 		if strings.Contains(text, kw) {
 			return true
 		}
@@ -230,15 +214,6 @@ var lspKeywords = []string{
 	"diagnostics", "completions", "rename", "code action", "symbol",
 	"call hierarchy", "type signature", "go to definition", "find references",
 	"compiler error", "compile error",
-}
-
-func containsLSPKeywords(text string) bool {
-	for _, kw := range lspKeywords {
-		if strings.Contains(text, kw) {
-			return true
-		}
-	}
-	return false
 }
 
 func containsToolNameKeyword(text, toolName string) bool {

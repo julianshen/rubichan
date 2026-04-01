@@ -73,9 +73,8 @@ func newTool(method, name string) *Tool {
 // Name returns the tool name.
 func (t *Tool) Name() string { return t.name }
 
-// SearchHint returns discovery keywords for tool_search.
 func (t *Tool) SearchHint() string {
-	return "api request fetch url endpoint rest web network download"
+	return "api fetch url endpoint rest web network download webhook"
 }
 
 // Description returns a human-readable description of the tool.
