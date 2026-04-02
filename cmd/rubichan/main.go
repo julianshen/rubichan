@@ -638,8 +638,61 @@ func executeModelCapabilityTest(ctx context.Context, out io.Writer, p provider.L
 		return fmt.Errorf("model stream ended without stop event")
 	}
 
+	if caps.SupportsNativeToolUse {
+		toolSupported, err := checkToolSupport(ctx, p, model)
+		if err != nil {
+			return err
+		}
+		if !toolSupported {
+			return fmt.Errorf("tool support test failed: model did not emit tool_use")
+		}
+		fmt.Fprintln(out, "Tool support: PASS")
+	} else {
+		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
+	}
+
 	fmt.Fprintln(out, "\nModel test: PASS")
 	return nil
+}
+
+func checkToolSupport(ctx context.Context, p provider.LLMProvider, model string) (bool, error) {
+	req := provider.CompletionRequest{
+		Model: model,
+		Messages: []provider.Message{provider.NewUserMessage(
+			"Call the capability_probe tool with an empty JSON object and do not output any text.",
+		)},
+		Tools: []provider.ToolDef{{
+			Name:        "capability_probe",
+			Description: "Capability probe tool for testing native tool use support",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		}},
+		MaxTokens: 64,
+	}
+
+	stream, err := p.Stream(ctx, req)
+	if err != nil {
+		return false, fmt.Errorf("tool support test request failed: %w", err)
+	}
+
+	var sawStop bool
+	for evt := range stream {
+		switch evt.Type {
+		case "tool_use":
+			if evt.ToolUse != nil && evt.ToolUse.Name == "capability_probe" {
+				return true, nil
+			}
+		case "error":
+			return false, fmt.Errorf("tool support stream failed: %w", evt.Error)
+		case "stop":
+			sawStop = true
+		}
+	}
+
+	if !sawStop {
+		return false, fmt.Errorf("tool support stream ended without stop event")
+	}
+
+	return false, nil
 }
 
 // parseSkillsFlag splits a comma-separated skills string into a slice of names.

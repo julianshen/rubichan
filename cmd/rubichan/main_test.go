@@ -426,18 +426,25 @@ func TestResolveOllamaModel_MultipleModels(t *testing.T) {
 }
 
 type capabilityTestProvider struct {
-	events []provider.StreamEvent
-	err    error
-	req    provider.CompletionRequest
+	eventsByCall [][]provider.StreamEvent
+	errByCall    []error
+	requests     []provider.CompletionRequest
+	callCount    int
 }
 
 func (p *capabilityTestProvider) Stream(_ context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
-	p.req = req
-	if p.err != nil {
-		return nil, p.err
+	p.requests = append(p.requests, req)
+	idx := p.callCount
+	p.callCount++
+	if idx < len(p.errByCall) && p.errByCall[idx] != nil {
+		return nil, p.errByCall[idx]
 	}
-	ch := make(chan provider.StreamEvent, len(p.events))
-	for _, evt := range p.events {
+	var events []provider.StreamEvent
+	if idx < len(p.eventsByCall) {
+		events = p.eventsByCall[idx]
+	}
+	ch := make(chan provider.StreamEvent, len(events))
+	for _, evt := range events {
 		ch <- evt
 	}
 	close(ch)
@@ -445,14 +452,20 @@ func (p *capabilityTestProvider) Stream(_ context.Context, req provider.Completi
 }
 
 func TestExecuteModelCapabilityTest_Success(t *testing.T) {
-	p := &capabilityTestProvider{events: []provider.StreamEvent{{Type: "text_delta", Text: "OK"}, {Type: "stop"}}}
+	p := &capabilityTestProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "text_delta", Text: "OK"}, {Type: "stop"}},
+		{{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "capability_probe", Input: []byte(`{}`)}}, {Type: "stop"}},
+	}}
 	var out bytes.Buffer
 
 	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
 	require.NoError(t, err)
-	assert.Equal(t, "gpt-4o", p.req.Model)
+	require.Len(t, p.requests, 2)
+	assert.Equal(t, "gpt-4o", p.requests[0].Model)
+	assert.Equal(t, "capability_probe", p.requests[1].Tools[0].Name)
 	assert.Contains(t, out.String(), "Provider: openai")
 	assert.Contains(t, out.String(), "Capabilities:")
+	assert.Contains(t, out.String(), "Tool support: PASS")
 	assert.Contains(t, out.String(), "Model test: PASS")
 }
 
@@ -464,12 +477,24 @@ func TestExecuteModelCapabilityTest_MissingModel(t *testing.T) {
 }
 
 func TestExecuteModelCapabilityTest_StreamErrorEvent(t *testing.T) {
-	p := &capabilityTestProvider{events: []provider.StreamEvent{{Type: "error", Error: fmt.Errorf("boom")}}}
+	p := &capabilityTestProvider{eventsByCall: [][]provider.StreamEvent{{{Type: "error", Error: fmt.Errorf("boom")}}}}
 	var out bytes.Buffer
 
 	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model stream test failed")
+}
+
+func TestExecuteModelCapabilityTest_ToolSupportMissing(t *testing.T) {
+	p := &capabilityTestProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "text_delta", Text: "OK"}, {Type: "stop"}},
+		{{Type: "stop"}},
+	}}
+	var out bytes.Buffer
+
+	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool support test failed")
 }
 
 func TestResolveOllamaModel_ConnectionError(t *testing.T) {
