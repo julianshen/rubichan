@@ -113,7 +113,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 
 	provider.LogRequest(p.debugLogger, httpReq, body)
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := provider.DoWithRetry(ctx, p.client, httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
