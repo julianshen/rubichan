@@ -514,3 +514,68 @@ func TestStateBuildVerificationSnapshotSchemaMissingIsSoftFail(t *testing.T) {
 	assert.Contains(t, snapshot, "missing schema/init evidence")
 	assert.Equal(t, PlanStatusCompleted, s.Plan()[0].Status)
 }
+
+func TestToolCallLooksLikeDependencyResolutionRecognizesSharedPatterns(t *testing.T) {
+	for _, command := range []string{
+		`{"command":"npm ci"}`,
+		`{"command":"pnpm install"}`,
+		`{"command":"yarn install --frozen-lockfile"}`,
+		`{"command":"go mod tidy"}`,
+		`{"command":"python -m pip install -r requirements.txt"}`,
+		`{"command":"python3 -m pip install fastapi uvicorn"}`,
+		`{"command":"uv sync"}`,
+		`{"command":"poetry install --no-interaction"}`,
+	} {
+		assert.True(t, toolCallLooksLikeDependencyResolution(command, "", false), command)
+	}
+}
+
+func TestStateBuildVerificationSnapshotDependencyFailureReasonDetails(t *testing.T) {
+	s := NewState()
+	s.ResetForPrompt("verify backend api with sqlite")
+	s.ApplyEvent(agentsdk.TurnEvent{
+		Type: "tool_call",
+		ToolCall: &agentsdk.ToolCallEvent{
+			ID:    "t1",
+			Name:  "shell",
+			Input: json.RawMessage(`{"command":"pip install -r requirements.txt"}`),
+		},
+	})
+	s.ApplyEvent(agentsdk.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agentsdk.ToolResultEvent{
+			ID:      "t1",
+			Name:    "shell",
+			Content: "ERROR: Could not find a version",
+			IsError: true,
+		},
+	})
+
+	snapshot := s.BuildVerificationSnapshot()
+	assert.Contains(t, snapshot, "dependency resolution command errored (pip install -r requirements.txt)")
+}
+
+func TestStateBuildVerificationSnapshotDependencyUnrecognizedReasonDetails(t *testing.T) {
+	s := NewState()
+	s.ResetForPrompt("verify backend api with sqlite")
+	s.ApplyEvent(agentsdk.TurnEvent{
+		Type: "tool_call",
+		ToolCall: &agentsdk.ToolCallEvent{
+			ID:    "t1",
+			Name:  "shell",
+			Input: json.RawMessage(`{"command":"pnpm i"}`),
+		},
+	})
+	s.ApplyEvent(agentsdk.TurnEvent{
+		Type: "tool_result",
+		ToolResult: &agentsdk.ToolResultEvent{
+			ID:      "t1",
+			Name:    "shell",
+			Content: "resolved 143, reused 143",
+			IsError: false,
+		},
+	})
+
+	snapshot := s.BuildVerificationSnapshot()
+	assert.Contains(t, snapshot, "dependency resolution command unrecognized (pnpm i)")
+}

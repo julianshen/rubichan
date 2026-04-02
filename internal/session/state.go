@@ -135,15 +135,18 @@ func BuildVerificationSnapshot(prompt string, toolCalls []ToolCall) string {
 }
 
 type verificationEval struct {
-	applicable  bool
-	dependency  bool
-	schema      bool
-	runtime     bool
-	api         bool
-	invalidated bool
-	gate        string
-	verdict     string
-	reason      string
+	applicable            bool
+	dependency            bool
+	dependencyErr         bool
+	schema                bool
+	runtime               bool
+	api                   bool
+	invalidated           bool
+	gate                  string
+	verdict               string
+	reason                string
+	lastDependencyCommand string
+	lastDependencyUnknown string
 }
 
 func evaluateVerification(prompt string, toolCalls []ToolCall) verificationEval {
@@ -158,8 +161,16 @@ func evaluateVerification(prompt string, toolCalls []ToolCall) verificationEval 
 	for i, tc := range toolCalls {
 		args := strings.ToLower(string(tc.Input))
 		content := strings.ToLower(tc.Result)
+		cmd := strings.TrimSpace(extractEmbeddedCommand(args))
+		if looksLikeDependencyCommandIntent(cmd) {
+			eval.lastDependencyUnknown = cmd
+		}
 		if toolCallLooksLikeDependencyResolution(args, content, tc.IsError) {
+			eval.lastDependencyCommand = dependencyResolutionCommandFromArgs(args)
 			eval.dependency = eval.dependency || !tc.IsError
+			if tc.IsError {
+				eval.dependencyErr = true
+			}
 			if !tc.IsError {
 				lastVerification = i
 			}
@@ -199,7 +210,14 @@ func evaluateVerification(prompt string, toolCalls []ToolCall) verificationEval 
 	case !eval.dependency:
 		eval.gate = "hard_fail"
 		eval.verdict = "failed"
-		eval.reason = "missing dependency resolution evidence"
+		switch {
+		case eval.lastDependencyCommand != "" && eval.dependencyErr:
+			eval.reason = fmt.Sprintf("dependency resolution command errored (%s)", eval.lastDependencyCommand)
+		case eval.lastDependencyUnknown != "":
+			eval.reason = fmt.Sprintf("dependency resolution command unrecognized (%s)", eval.lastDependencyUnknown)
+		default:
+			eval.reason = "missing dependency resolution evidence"
+		}
 	case !eval.schema:
 		eval.gate = "soft_fail"
 		eval.verdict = "passed_with_warnings"
@@ -281,23 +299,61 @@ func looksLikeBackendVerificationPrompt(prompt string) bool {
 	return false
 }
 
-func toolCallLooksLikeDependencyResolution(args, _ string, isError bool) bool {
-	if isError {
-		return strings.Contains(args, "npm ci") ||
-			strings.Contains(args, "npm install") ||
-			strings.Contains(args, "pip install") ||
-			strings.Contains(args, "python3 -m pip install") ||
-			strings.Contains(args, "go mod tidy") ||
-			strings.Contains(args, "go get") ||
-			strings.Contains(args, "mvn ")
+func toolCallLooksLikeDependencyResolution(args, _ string, _ bool) bool {
+	return dependencyResolutionCommandFromArgs(args) != ""
+}
+
+func dependencyResolutionCommandFromArgs(args string) string {
+	command := strings.TrimSpace(extractEmbeddedCommand(args))
+	if command == "" {
+		command = args
 	}
-	return strings.Contains(args, "npm ci") ||
-		strings.Contains(args, "npm install") ||
-		strings.Contains(args, "pip install") ||
-		strings.Contains(args, "python3 -m pip install") ||
-		strings.Contains(args, "go mod tidy") ||
-		strings.Contains(args, "go get") ||
-		(strings.Contains(args, "mvn ") && (strings.Contains(args, "compile") || strings.Contains(args, "package") || strings.Contains(args, "dependency:resolve")))
+	switch {
+	case strings.Contains(command, "npm ci"),
+		strings.Contains(command, "npm install"),
+		strings.Contains(command, "pnpm install"),
+		strings.Contains(command, "yarn install"),
+		strings.Contains(command, "go get"),
+		strings.Contains(command, "go mod tidy"),
+		strings.Contains(command, "pip install"),
+		strings.Contains(command, "python -m pip install"),
+		strings.Contains(command, "python3 -m pip install"),
+		strings.Contains(command, "uv sync"),
+		strings.Contains(command, "poetry install"):
+		return command
+	case strings.Contains(command, "mvn "):
+		if strings.Contains(command, "dependency:resolve") ||
+			strings.Contains(command, "compile") ||
+			strings.Contains(command, "package") ||
+			strings.Contains(command, "test") {
+			return command
+		}
+	}
+	return ""
+}
+
+func extractEmbeddedCommand(args string) string {
+	idx := strings.Index(args, `"command":"`)
+	if idx == -1 {
+		return ""
+	}
+	cmdStart := idx + len(`"command":"`)
+	cmdEnd := strings.Index(args[cmdStart:], `"`)
+	if cmdEnd == -1 {
+		return ""
+	}
+	return args[cmdStart : cmdStart+cmdEnd]
+}
+
+func looksLikeDependencyCommandIntent(command string) bool {
+	return strings.Contains(command, "install") ||
+		strings.Contains(command, "npm i") ||
+		strings.Contains(command, "pnpm i") ||
+		strings.Contains(command, "yarn add") ||
+		strings.Contains(command, "pip") ||
+		strings.Contains(command, "go mod") ||
+		strings.Contains(command, "go get") ||
+		strings.Contains(command, "mvn")
 }
 
 func toolCallLooksLikeSchemaEvidence(args, content string) bool {
