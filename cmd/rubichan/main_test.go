@@ -18,6 +18,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/session"
@@ -422,6 +423,53 @@ func TestResolveOllamaModel_MultipleModels(t *testing.T) {
 	model, err := resolveOllamaModel(srv.URL)
 	require.NoError(t, err)
 	assert.Equal(t, "llama3.2:latest", model) // returns first model
+}
+
+type capabilityTestProvider struct {
+	events []provider.StreamEvent
+	err    error
+	req    provider.CompletionRequest
+}
+
+func (p *capabilityTestProvider) Stream(_ context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	p.req = req
+	if p.err != nil {
+		return nil, p.err
+	}
+	ch := make(chan provider.StreamEvent, len(p.events))
+	for _, evt := range p.events {
+		ch <- evt
+	}
+	close(ch)
+	return ch, nil
+}
+
+func TestExecuteModelCapabilityTest_Success(t *testing.T) {
+	p := &capabilityTestProvider{events: []provider.StreamEvent{{Type: "text_delta", Text: "OK"}, {Type: "stop"}}}
+	var out bytes.Buffer
+
+	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-4o", p.req.Model)
+	assert.Contains(t, out.String(), "Provider: openai")
+	assert.Contains(t, out.String(), "Capabilities:")
+	assert.Contains(t, out.String(), "Model test: PASS")
+}
+
+func TestExecuteModelCapabilityTest_MissingModel(t *testing.T) {
+	var out bytes.Buffer
+	err := executeModelCapabilityTest(context.Background(), &out, &capabilityTestProvider{}, "openai", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is not configured")
+}
+
+func TestExecuteModelCapabilityTest_StreamErrorEvent(t *testing.T) {
+	p := &capabilityTestProvider{events: []provider.StreamEvent{{Type: "error", Error: fmt.Errorf("boom")}}}
+	var out bytes.Buffer
+
+	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model stream test failed")
 }
 
 func TestResolveOllamaModel_ConnectionError(t *testing.T) {
