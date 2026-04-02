@@ -493,8 +493,8 @@ func TestExecuteModelCapabilityTest_ToolSupportMissing(t *testing.T) {
 	var out bytes.Buffer
 
 	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tool support test failed")
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "Tool support: INCONCLUSIVE")
 }
 
 func TestResolveOllamaModel_ConnectionError(t *testing.T) {

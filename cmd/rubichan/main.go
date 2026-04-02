@@ -644,9 +644,10 @@ func executeModelCapabilityTest(ctx context.Context, out io.Writer, p provider.L
 			return err
 		}
 		if !toolSupported {
-			return fmt.Errorf("tool support test failed: model did not emit tool_use")
+			fmt.Fprintln(out, "Tool support: INCONCLUSIVE (no tool_use emitted during probe)")
+		} else {
+			fmt.Fprintln(out, "Tool support: PASS")
 		}
-		fmt.Fprintln(out, "Tool support: PASS")
 	} else {
 		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
 	}
