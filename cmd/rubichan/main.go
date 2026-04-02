@@ -91,6 +91,7 @@ var (
 	plainTUI         bool
 	plainInteractive bool
 	debugMode        bool
+	testFlag         bool
 	approveCwd       bool
 	eventLogPath     string
 
@@ -124,6 +125,8 @@ var (
 
 	activeSessionLogMu   sync.RWMutex
 	activeSessionLogPath string
+
+	newProviderWithDebug = provider.NewProviderWithDebug
 )
 
 func versionString() string {
@@ -484,6 +487,9 @@ func main() {
 		Short: "An AI coding assistant",
 		Long:  "rubichan — an interactive AI coding assistant powered by LLMs.",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if testFlag {
+				return runModelCapabilityTest()
+			}
 			if wikiFlag {
 				cwd, err := os.Getwd()
 				if err != nil {
@@ -515,6 +521,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&plainTUI, "plain-tui", false, "run a reduced interactive TUI optimized for PTY capture and automation")
 	rootCmd.PersistentFlags().BoolVar(&plainInteractive, "plain-interactive", false, "run a non-TUI interactive REPL that shares the interactive agent, skills, and approval flow")
 	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "enable interactive debug surfaces and mirror logs to stderr")
+	rootCmd.PersistentFlags().BoolVar(&testFlag, "test", false, "test configured provider/model capabilities and connectivity")
 	rootCmd.PersistentFlags().BoolVar(&approveCwd, "approve-cwd", false, "approve access to the current working directory in headless mode without enabling full auto-approval")
 	rootCmd.PersistentFlags().StringVar(&eventLogPath, "event-log", "", "write structured interactive session events to the given JSONL file")
 	rootCmd.PersistentFlags().BoolVar(&headless, "headless", false, "run in non-interactive headless mode")
@@ -568,6 +575,125 @@ func main() {
 		fmt.Fprint(os.Stderr, persona.ErrorMessage(err.Error()))
 		os.Exit(1)
 	}
+}
+
+func runModelCapabilityTest() error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
+	p, err := newProviderWithDebug(cfg, debugMode)
+	if err != nil {
+		return fmt.Errorf("creating provider: %w", err)
+	}
+
+	return executeModelCapabilityTest(context.Background(), os.Stdout, p, cfg.Provider.Default, cfg.Provider.Model)
+}
+
+func executeModelCapabilityTest(ctx context.Context, out io.Writer, p provider.LLMProvider, providerName, model string) error {
+	if p == nil {
+		return fmt.Errorf("provider is nil")
+	}
+	if strings.TrimSpace(model) == "" {
+		return fmt.Errorf("model is not configured")
+	}
+
+	caps := provider.DetectCapabilities(providerName, model)
+	fmt.Fprintf(out, "Provider: %s\nModel: %s\n", providerName, model)
+	fmt.Fprintf(out, "Capabilities: native_tool_use=%t system_prompt=%t tool_discovery_hint=%t max_tool_count=%d reasoning_effort=%q\n",
+		caps.SupportsNativeToolUse,
+		caps.SupportsSystemPrompt,
+		caps.NeedsToolDiscoveryHint,
+		caps.MaxToolCount,
+		caps.ReasoningEffort,
+	)
+
+	req := provider.CompletionRequest{
+		Model:     model,
+		Messages:  []provider.Message{provider.NewUserMessage("Reply with exactly: OK")},
+		MaxTokens: 16,
+	}
+
+	stream, err := p.Stream(ctx, req)
+	if err != nil {
+		return fmt.Errorf("model connectivity test failed: %w", err)
+	}
+
+	var sawStop bool
+	for evt := range stream {
+		switch evt.Type {
+		case "text_delta":
+			if evt.Text != "" {
+				fmt.Fprint(out, evt.Text)
+			}
+		case "stop":
+			sawStop = true
+		case "error":
+			return fmt.Errorf("model stream test failed: %w", evt.Error)
+		}
+	}
+
+	if !sawStop {
+		return fmt.Errorf("model stream ended without stop event")
+	}
+
+	if caps.SupportsNativeToolUse {
+		toolSupported, err := checkToolSupport(ctx, p, model)
+		if err != nil {
+			return err
+		}
+		if !toolSupported {
+			fmt.Fprintln(out, "Tool support: INCONCLUSIVE (no tool_use emitted during probe)")
+		} else {
+			fmt.Fprintln(out, "Tool support: PASS")
+		}
+	} else {
+		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
+	}
+
+	fmt.Fprintln(out, "\nModel test: PASS")
+	return nil
+}
+
+func checkToolSupport(ctx context.Context, p provider.LLMProvider, model string) (bool, error) {
+	req := provider.CompletionRequest{
+		Model: model,
+		Messages: []provider.Message{provider.NewUserMessage(
+			"Call the capability_probe tool with an empty JSON object and do not output any text.",
+		)},
+		Tools: []provider.ToolDef{{
+			Name:        "capability_probe",
+			Description: "Capability probe tool for testing native tool use support",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		}},
+		MaxTokens: 64,
+	}
+
+	stream, err := p.Stream(ctx, req)
+	if err != nil {
+		return false, fmt.Errorf("tool support test request failed: %w", err)
+	}
+
+	var sawStop bool
+	for evt := range stream {
+		switch evt.Type {
+		case "tool_use":
+			if evt.ToolUse != nil && evt.ToolUse.Name == "capability_probe" {
+				return true, nil
+			}
+		case "error":
+			return false, fmt.Errorf("tool support stream failed: %w", evt.Error)
+		case "stop":
+			sawStop = true
+		}
+	}
+
+	if !sawStop {
+		return false, fmt.Errorf("tool support stream ended without stop event")
+	}
+
+	return false, nil
 }
 
 // parseSkillsFlag splits a comma-separated skills string into a slice of names.
