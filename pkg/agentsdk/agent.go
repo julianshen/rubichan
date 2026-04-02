@@ -253,6 +253,9 @@ func (a *Agent) consumeStream(
 				ID:   event.ToolUse.ID,
 				Name: event.ToolUse.Name,
 			}
+			if len(event.ToolUse.Input) > 0 {
+				toolInputBuf = string(event.ToolUse.Input)
+			}
 		case "error":
 			a.logger.Error("stream error: %v", event.Error)
 			ch <- TurnEvent{Type: "error", Error: event.Error}

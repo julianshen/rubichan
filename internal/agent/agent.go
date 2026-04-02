@@ -1198,6 +1198,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					ID:   event.ToolUse.ID,
 					Name: event.ToolUse.Name,
 				}
+				if len(event.ToolUse.Input) > 0 {
+					toolInputBuf = string(event.ToolUse.Input)
+				}
 
 			case "error":
 				streamErr = true
