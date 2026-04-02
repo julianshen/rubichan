@@ -863,6 +863,31 @@ func TestAgentToolUseWithInlineInput(t *testing.T) {
 	assert.Equal(t, `{"text":"inline"}`, results[0])
 }
 
+func TestAgentToolUsePrefersDeltaInputOverInlineSeed(t *testing.T) {
+	stream := []StreamEvent{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "echo", Input: json.RawMessage(`{}`)}},
+		{Type: "text_delta", Text: `{"text":"delta"}`},
+		{Type: "stop", InputTokens: 100, OutputTokens: 50},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{stream, textResponse("done")}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var results []string
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			results = append(results, ev.ToolResult.Content)
+		}
+	}
+
+	require.Len(t, results, 1)
+	assert.Equal(t, `{"text":"delta"}`, results[0])
+}
+
 // contextCancelTool cancels the provided context on execution.
 type contextCancelTool struct {
 	cancel context.CancelFunc

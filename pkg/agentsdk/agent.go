@@ -208,7 +208,9 @@ func (a *Agent) consumeStream(
 
 	finalizeTool := func() {
 		if currentTool != nil {
-			currentTool.Input = json.RawMessage(toolInputBuf)
+			if toolInputBuf != "" {
+				currentTool.Input = json.RawMessage(toolInputBuf)
+			}
 			pendingTools = append(pendingTools, *currentTool)
 			blocks = append(blocks, ContentBlock{
 				Type:  "tool_use",
@@ -250,11 +252,9 @@ func (a *Agent) consumeStream(
 			finalizeText()
 			finalizeTool()
 			currentTool = &ToolUseBlock{
-				ID:   event.ToolUse.ID,
-				Name: event.ToolUse.Name,
-			}
-			if len(event.ToolUse.Input) > 0 {
-				toolInputBuf = string(event.ToolUse.Input)
+				ID:    event.ToolUse.ID,
+				Name:  event.ToolUse.Name,
+				Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 			}
 		case "error":
 			a.logger.Error("stream error: %v", event.Error)

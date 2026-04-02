@@ -756,6 +756,54 @@ func TestTurnWithInlineToolUseInput(t *testing.T) {
 	assert.Equal(t, `{"k":"v"}`, toolResults[0].ToolResult.Content)
 }
 
+func TestTurnWithDeltaInputOverridesInlineToolUseSeed(t *testing.T) {
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:    "tool_inline_seed_1",
+					Name:  "echo_inline",
+					Input: json.RawMessage(`{}`),
+				}},
+				{Type: "text_delta", Text: `{"k":"delta"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "done"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	echoInlineTool := &mockTool{
+		name:        "echo_inline",
+		description: "echoes raw input",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, input json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: string(input)}, nil
+		},
+	}
+	require.NoError(t, reg.Register(echoInlineTool))
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "run inline tool")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+
+	require.Len(t, toolResults, 1)
+	require.NotNil(t, toolResults[0].ToolResult)
+	assert.Equal(t, `{"k":"delta"}`, toolResults[0].ToolResult.Content)
+}
+
 func TestTurnWithStreamingToolProgress(t *testing.T) {
 	dmp := &dynamicMockProvider{
 		responses: [][]provider.StreamEvent{
