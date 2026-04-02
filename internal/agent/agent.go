@@ -1138,7 +1138,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		finalizeTool := func() {
 			if currentTool != nil {
-				currentTool.Input = json.RawMessage(toolInputBuf)
+				if toolInputBuf != "" {
+					currentTool.Input = json.RawMessage(toolInputBuf)
+				}
 				pendingTools = append(pendingTools, *currentTool)
 				blocks = append(blocks, provider.ContentBlock{
 					Type:  "tool_use",
@@ -1195,8 +1197,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				finalizeTool()
 				// Start new tool accumulation
 				currentTool = &provider.ToolUseBlock{
-					ID:   event.ToolUse.ID,
-					Name: event.ToolUse.Name,
+					ID:    event.ToolUse.ID,
+					Name:  event.ToolUse.Name,
+					Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 				}
 
 			case "error":
