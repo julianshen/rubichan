@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/julianshen/rubichan/internal/depcheck"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
@@ -162,7 +163,7 @@ func evaluateVerification(prompt string, toolCalls []ToolCall) verificationEval 
 		args := strings.ToLower(string(tc.Input))
 		content := strings.ToLower(tc.Result)
 		cmd := strings.TrimSpace(extractEmbeddedCommand(args))
-		if looksLikeDependencyCommandIntent(cmd) {
+		if depcheck.LooksLikeDependencyCommandIntent(cmd) {
 			eval.lastDependencyUnknown = cmd
 		}
 		if toolCallLooksLikeDependencyResolution(args, content, tc.IsError) {
@@ -328,32 +329,21 @@ func dependencyResolutionCommandFromArgs(args string) string {
 			strings.Contains(command, "test") {
 			return command
 		}
+	case strings.Contains(command, "gradle build"),
+		strings.Contains(command, "./gradlew build"):
+		return command
 	}
 	return ""
 }
 
 func extractEmbeddedCommand(args string) string {
-	idx := strings.Index(args, `"command":"`)
-	if idx == -1 {
+	var parsed struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
 		return ""
 	}
-	cmdStart := idx + len(`"command":"`)
-	cmdEnd := strings.Index(args[cmdStart:], `"`)
-	if cmdEnd == -1 {
-		return ""
-	}
-	return args[cmdStart : cmdStart+cmdEnd]
-}
-
-func looksLikeDependencyCommandIntent(command string) bool {
-	return strings.Contains(command, "install") ||
-		strings.Contains(command, "npm i") ||
-		strings.Contains(command, "pnpm i") ||
-		strings.Contains(command, "yarn add") ||
-		strings.Contains(command, "pip") ||
-		strings.Contains(command, "go mod") ||
-		strings.Contains(command, "go get") ||
-		strings.Contains(command, "mvn")
+	return parsed.Command
 }
 
 func toolCallLooksLikeSchemaEvidence(args, content string) bool {

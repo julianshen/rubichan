@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/depcheck"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/session"
 )
@@ -836,7 +837,7 @@ func lastDependencyIntentWithoutMatch(toolCalls []output.ToolCallLog) string {
 		if command == "" {
 			continue
 		}
-		if !looksLikeDependencyCommandIntent(command) {
+		if !depcheck.LooksLikeDependencyCommandIntent(command) {
 			continue
 		}
 		if isDependencyResolutionCommand(toolCalls[i]) {
@@ -845,17 +846,6 @@ func lastDependencyIntentWithoutMatch(toolCalls []output.ToolCallLog) string {
 		return compactCommand(command)
 	}
 	return ""
-}
-
-func looksLikeDependencyCommandIntent(command string) bool {
-	return strings.Contains(command, "install") ||
-		strings.Contains(command, "npm i") ||
-		strings.Contains(command, "pnpm i") ||
-		strings.Contains(command, "yarn add") ||
-		strings.Contains(command, "pip") ||
-		strings.Contains(command, "go mod") ||
-		strings.Contains(command, "go get") ||
-		strings.Contains(command, "mvn")
 }
 
 func compactCommand(command string) string {
