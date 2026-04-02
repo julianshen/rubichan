@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/depcheck"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/session"
 )
@@ -218,6 +219,9 @@ func backendVerificationVerdict(toolCalls []output.ToolCallLog) (string, string)
 		return "failed", reason
 	}
 	if !hasSuccessfulDependencyResolution(toolCalls) {
+		if unknown := lastDependencyIntentWithoutMatch(toolCalls); unknown != "" {
+			return "failed", fmt.Sprintf("dependency resolution command unrecognized (%s)", unknown)
+		}
 		return "failed", "no dependency resolution evidence"
 	}
 	if !hasSuccessfulBackendValidationAfterLastEdit(toolCalls) && !hasBackendRuntimeAndAPIAfterLastEdit(toolCalls) {
@@ -286,9 +290,9 @@ func backendDependencyFailureReason(toolCalls []output.ToolCallLog) string {
 			return ""
 		}
 		if snippet := extractBuildFailureSnippet(tc.Result); snippet != "" {
-			return snippet
+			return fmt.Sprintf("dependency resolution command errored (%s): %s", compactCommand(commandString(tc)), snippet)
 		}
-		return "dependency resolution failed"
+		return fmt.Sprintf("dependency resolution command errored (%s)", compactCommand(commandString(tc)))
 	}
 	return ""
 }
@@ -812,6 +816,8 @@ func isDependencyResolutionCommand(tc output.ToolCallLog) bool {
 		"gradle build",
 		"./gradlew build",
 		"pip install",
+		"python -m pip install",
+		"python3 -m pip install",
 		"uv sync",
 		"poetry install",
 	} {
@@ -823,6 +829,34 @@ func isDependencyResolutionCommand(tc output.ToolCallLog) bool {
 		}
 	}
 	return false
+}
+
+func lastDependencyIntentWithoutMatch(toolCalls []output.ToolCallLog) string {
+	for i := len(toolCalls) - 1; i >= 0; i-- {
+		command := commandString(toolCalls[i])
+		if command == "" {
+			continue
+		}
+		if !depcheck.LooksLikeDependencyCommandIntent(command) {
+			continue
+		}
+		if isDependencyResolutionCommand(toolCalls[i]) {
+			continue
+		}
+		return compactCommand(command)
+	}
+	return ""
+}
+
+func compactCommand(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "unknown"
+	}
+	if len(command) <= 120 {
+		return command
+	}
+	return command[:117] + "..."
 }
 
 func commandString(tc output.ToolCallLog) string {

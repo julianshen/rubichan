@@ -736,6 +736,50 @@ func TestIsDependencyResolutionCommandRecognizesNpmCI(t *testing.T) {
 	assert.True(t, isDependencyResolutionCommand(tc))
 }
 
+func TestIsDependencyResolutionCommandRecognizesSharedPatterns(t *testing.T) {
+	for _, command := range []string{
+		"pnpm install",
+		"yarn install --frozen-lockfile",
+		"go mod tidy",
+		"python -m pip install -r requirements.txt",
+		"python3 -m pip install fastapi uvicorn",
+		"uv sync",
+		"poetry install --no-interaction",
+	} {
+		tc := output.ToolCallLog{Name: "shell", Input: json.RawMessage(`{"command":"` + command + `"}`)}
+		assert.True(t, isDependencyResolutionCommand(tc), command)
+	}
+}
+
+func TestBackendDependencyFailureReasonIncludesCommandAndErrorSnippet(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{
+			Name:    "shell",
+			Input:   json.RawMessage(`{"command":"go mod tidy"}`),
+			Result:  "go: module example.com/foo: not found",
+			IsError: true,
+		},
+	}
+
+	reason := backendDependencyFailureReason(toolCalls)
+	assert.Contains(t, reason, "dependency resolution command errored (go mod tidy)")
+	assert.Contains(t, reason, "not found")
+}
+
+func TestBackendVerificationVerdictDependencyUnrecognizedReason(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{
+			Name:   "shell",
+			Input:  json.RawMessage(`{"command":"pnpm i"}`),
+			Result: "resolved dependencies",
+		},
+	}
+
+	verdict, reason := backendVerificationVerdict(toolCalls)
+	assert.Equal(t, "failed", verdict)
+	assert.Contains(t, reason, "dependency resolution command unrecognized (pnpm i)")
+}
+
 type errMaxTurnsExceededStub struct{}
 
 func (errMaxTurnsExceededStub) Error() string {
