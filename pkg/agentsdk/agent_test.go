@@ -888,6 +888,28 @@ func TestAgentToolUsePrefersDeltaInputOverInlineSeed(t *testing.T) {
 	assert.Equal(t, `{"text":"delta"}`, results[0])
 }
 
+func TestAgentNilToolUseEventEmitsError(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		{
+			{Type: "tool_use", ToolUse: nil},
+			{Type: "stop", InputTokens: 10, OutputTokens: 5},
+		},
+	}}
+	a := NewAgent(p)
+
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var sawError bool
+	for ev := range ch {
+		if ev.Type == "error" && ev.Error != nil {
+			sawError = true
+			assert.Contains(t, ev.Error.Error(), "nil ToolUse")
+		}
+	}
+	assert.True(t, sawError, "expected malformed tool_use error event")
+}
+
 // contextCancelTool cancels the provided context on execution.
 type contextCancelTool struct {
 	cancel context.CancelFunc

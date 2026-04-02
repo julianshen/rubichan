@@ -249,6 +249,13 @@ func (a *Agent) consumeStream(
 				ch <- TurnEvent{Type: "text_delta", Text: event.Text}
 			}
 		case "tool_use":
+			if event.ToolUse == nil {
+				finalizeText()
+				finalizeTool()
+				ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")}
+				hadError = true
+				continue
+			}
 			finalizeText()
 			finalizeTool()
 			currentTool = &ToolUseBlock{
