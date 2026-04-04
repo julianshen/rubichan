@@ -37,6 +37,8 @@ func NewProvider(cfg *config.Config) (LLMProvider, error) {
 		return newAnthropicProvider(cfg)
 	case "ollama":
 		return newOllamaProvider(cfg)
+	case "zai":
+		return newZaiProvider(cfg)
 	default:
 		return newOpenAIProvider(cfg)
 	}
@@ -78,6 +80,34 @@ func newOllamaProvider(cfg *config.Config) (LLMProvider, error) {
 		}
 	}
 	return p, nil
+}
+
+func newZaiProvider(cfg *config.Config) (LLMProvider, error) {
+	constructor, ok := registry["zai"]
+	if !ok {
+		return nil, fmt.Errorf("zai provider not registered")
+	}
+
+	apiKey, err := config.ResolveAPIKey(
+		cfg.Provider.Zai.APIKeySource,
+		cfg.Provider.Zai.APIKey,
+		"Z_AI_API_KEY",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolving Z.ai API key: %w", err)
+	}
+
+	baseURL := cfg.Provider.Zai.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.z.ai/api/paas/v4"
+	}
+
+	model := cfg.Provider.Zai.Model
+	if model == "" {
+		model = "glm-5"
+	}
+
+	return constructor(baseURL, apiKey, nil), nil
 }
 
 func newOpenAIProvider(cfg *config.Config) (LLMProvider, error) {
