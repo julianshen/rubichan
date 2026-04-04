@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -367,6 +368,106 @@ func TestValidateTrustRulesInvalidGlobPattern(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid glob rule")
+}
+
+// mockSecurityScanner implements SecurityScanner for testing.
+type mockSecurityScanner struct {
+	findMalicious bool
+	scanError     error
+}
+
+func (m *mockSecurityScanner) Scan(ctx context.Context, toolName string, input json.RawMessage) (bool, string, error) {
+	if m.scanError != nil {
+		return false, "", m.scanError
+	}
+	if m.findMalicious {
+		return true, "potential injection attack detected", nil
+	}
+	return false, "", nil
+}
+
+// mockApprovalChecker implements ApprovalChecker for testing.
+type mockApprovalChecker struct {
+	result ApprovalResult
+}
+
+func (m *mockApprovalChecker) CheckApproval(tool string, input json.RawMessage) ApprovalResult {
+	return m.result
+}
+
+func TestSecurityAwareApprovalCheckerAllowsWhenBothPass(t *testing.T) {
+	baseChecker := &mockApprovalChecker{result: TrustRuleApproved}
+	scanner := &mockSecurityScanner{findMalicious: false}
+
+	checker := NewSecurityAwareApprovalChecker(baseChecker, scanner)
+
+	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"ls"}`))
+	assert.Equal(t, TrustRuleApproved, result)
+}
+
+func TestSecurityAwareApprovalCheckerBlocksWhenSecurityFails(t *testing.T) {
+	baseChecker := &mockApprovalChecker{result: TrustRuleApproved}
+	scanner := &mockSecurityScanner{findMalicious: true}
+
+	checker := NewSecurityAwareApprovalChecker(baseChecker, scanner)
+
+	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"eval something"}`))
+	assert.Equal(t, AutoDenied, result)
+}
+
+func TestSecurityAwareApprovalCheckerSkipsSecurityIfBaseDenied(t *testing.T) {
+	// If base checker returns AutoDenied, security scan should not be called
+	baseChecker := &mockApprovalChecker{result: AutoDenied}
+	scanner := &mockSecurityScanner{findMalicious: false}
+
+	checker := NewSecurityAwareApprovalChecker(baseChecker, scanner)
+
+	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"ls"}`))
+	assert.Equal(t, AutoDenied, result)
+}
+
+func TestSecurityAwareApprovalCheckerIgnoresScanErrors(t *testing.T) {
+	// Scan errors don't block — proceed with original approval result
+	baseChecker := &mockApprovalChecker{result: TrustRuleApproved}
+	scanner := &mockSecurityScanner{scanError: assert.AnError}
+
+	checker := NewSecurityAwareApprovalChecker(baseChecker, scanner)
+
+	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"ls"}`))
+	assert.Equal(t, TrustRuleApproved, result, "scan errors should not block approval")
+}
+
+func TestSecurityAwareApprovalCheckerApprovalRequired(t *testing.T) {
+	// If base checker returns ApprovalRequired and security passes, still requires approval
+	baseChecker := &mockApprovalChecker{result: ApprovalRequired}
+	scanner := &mockSecurityScanner{findMalicious: false}
+
+	checker := NewSecurityAwareApprovalChecker(baseChecker, scanner)
+
+	result := checker.CheckApproval("unknown", json.RawMessage(`{"data":"anything"}`))
+	assert.Equal(t, ApprovalRequired, result)
+}
+
+func TestSecurityAwareApprovalCheckerAutoApproved(t *testing.T) {
+	// If base checker returns AutoApproved and security passes, allow approval
+	baseChecker := &mockApprovalChecker{result: AutoApproved}
+	scanner := &mockSecurityScanner{findMalicious: false}
+
+	checker := NewSecurityAwareApprovalChecker(baseChecker, scanner)
+
+	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"go test"}`))
+	assert.Equal(t, AutoApproved, result)
+}
+
+func TestSecurityAwareApprovalCheckerBlocksAutoApprovedIfSecurityFails(t *testing.T) {
+	// Even auto-approved, security scan can block the operation
+	baseChecker := &mockApprovalChecker{result: AutoApproved}
+	scanner := &mockSecurityScanner{findMalicious: true}
+
+	checker := NewSecurityAwareApprovalChecker(baseChecker, scanner)
+
+	result := checker.CheckApproval("shell", json.RawMessage(`{"command":"dangerous"}`))
+	assert.Equal(t, AutoDenied, result)
 }
 
 func TestParseGlobRule(t *testing.T) {
