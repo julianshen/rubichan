@@ -355,10 +355,10 @@ func TestCompositeEvaluatorFailsFastOnFirstRejection(t *testing.T) {
 
 func TestSpeculativeCheckerFileExistsCheck(t *testing.T) {
 	tests := []struct {
-		name      string
-		toolName  string
-		input     string
-		expectOK  bool
+		name     string
+		toolName string
+		input    string
+		expectOK bool
 	}{
 		{
 			name:     "read existing file",
@@ -397,10 +397,10 @@ func TestSpeculativeCheckerFileExistsCheck(t *testing.T) {
 
 func TestSpeculativeCheckerDirectoryExistsCheck(t *testing.T) {
 	tests := []struct {
-		name      string
-		toolName  string
-		input     string
-		expectOK  bool
+		name     string
+		toolName string
+		input    string
+		expectOK bool
 	}{
 		{
 			name:     "directory exists",
@@ -439,9 +439,9 @@ func TestSpeculativeCheckerDirectoryExistsCheck(t *testing.T) {
 
 func TestSpeculativeCheckerCommandRecognizedCheck(t *testing.T) {
 	tests := []struct {
-		name      string
-		command   string
-		expectOK  bool
+		name     string
+		command  string
+		expectOK bool
 	}{
 		{
 			name:     "normal command",
