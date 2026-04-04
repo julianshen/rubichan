@@ -1,0 +1,349 @@
+package agent
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestProgressTracker_Record(t *testing.T) {
+	t.Parallel()
+	pt := NewProgressTracker()
+
+	pt.Record(1, "wrote file", "src/main.go", "ok")
+	pt.Record(1, "ran command", "go test ./...", "ok")
+	pt.Record(2, "searched", "TODO", "12 matches")
+
+	entries := pt.Entries()
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+
+	if entries[0].Turn != 1 || entries[0].Action != "wrote file" || entries[0].Detail != "src/main.go" || entries[0].Result != "ok" {
+		t.Errorf("entry 0 mismatch: %+v", entries[0])
+	}
+	if entries[2].Action != "searched" || entries[2].Detail != "TODO" || entries[2].Result != "12 matches" {
+		t.Errorf("entry 2 mismatch: %+v", entries[2])
+	}
+}
+
+func TestProgressTracker_MaxEntries(t *testing.T) {
+	t.Parallel()
+	pt := NewProgressTracker()
+
+	// Record 60 entries — should trim to 50 (the last 50).
+	for i := 0; i < 60; i++ {
+		pt.Record(i, "action", "detail", "ok")
+	}
+
+	entries := pt.Entries()
+	if len(entries) != 50 {
+		t.Fatalf("expected 50 entries after trimming, got %d", len(entries))
+	}
+
+	// The oldest entry should be turn 10 (entries 0-9 were trimmed).
+	if entries[0].Turn != 10 {
+		t.Errorf("expected oldest entry turn=10, got %d", entries[0].Turn)
+	}
+	if entries[49].Turn != 59 {
+		t.Errorf("expected newest entry turn=59, got %d", entries[49].Turn)
+	}
+}
+
+func TestProgressTracker_Render_Empty(t *testing.T) {
+	t.Parallel()
+	pt := NewProgressTracker()
+	if got := pt.Render(); got != "" {
+		t.Errorf("expected empty string for no entries, got %q", got)
+	}
+}
+
+func TestProgressTracker_Render(t *testing.T) {
+	t.Parallel()
+	pt := NewProgressTracker()
+	pt.Record(1, "wrote file", "src/main.go", "ok")
+	pt.Record(2, "ran command", "go test ./...", "ok")
+	pt.Record(3, "searched", `"TODO" in internal/`, "12 matches")
+
+	rendered := pt.Render()
+
+	// Should have header row with "Turn" column.
+	if !strings.Contains(rendered, "| Turn | Action | Detail | Result |") {
+		t.Error("missing header row")
+	}
+	// Should have separator.
+	if !strings.Contains(rendered, "|------|--------|--------|--------|") {
+		t.Error("missing separator row")
+	}
+	// Should use actual turn numbers, not sequence indices.
+	if !strings.Contains(rendered, "| 1 | wrote file | src/main.go | ok |") {
+		t.Error("missing entry for turn 1")
+	}
+	if !strings.Contains(rendered, "| 2 | ran command | go test ./... | ok |") {
+		t.Error("missing entry for turn 2")
+	}
+	if !strings.Contains(rendered, "| 3 | searched |") {
+		t.Error("missing entry for turn 3")
+	}
+}
+
+func TestProgressTracker_Render_EscapesPipes(t *testing.T) {
+	t.Parallel()
+	pt := NewProgressTracker()
+	pt.Record(1, "ran command", "echo foo | bar", "ok")
+
+	rendered := pt.Render()
+	if !strings.Contains(rendered, `echo foo \| bar`) {
+		t.Errorf("pipes in detail not escaped: %s", rendered)
+	}
+}
+
+func TestProgressTracker_Render_EscapesNewlines(t *testing.T) {
+	t.Parallel()
+	pt := NewProgressTracker()
+	pt.Record(1, "ran command", "go test", "error:\nline1\nline2")
+
+	rendered := pt.Render()
+	if strings.Contains(rendered, "\n| 1 |") && strings.Contains(rendered, "error:\nline1") {
+		t.Error("newlines in result not escaped — would corrupt markdown table")
+	}
+	if !strings.Contains(rendered, "error: line1 line2") {
+		t.Errorf("expected newlines replaced with spaces, got: %s", rendered)
+	}
+}
+
+func TestProgressTracker_Render_TurnNumberAfterTrimming(t *testing.T) {
+	t.Parallel()
+	pt := &ProgressTracker{maxEntries: 3}
+	pt.Record(10, "a", "d", "ok")
+	pt.Record(11, "b", "d", "ok")
+	pt.Record(12, "c", "d", "ok")
+	pt.Record(13, "d", "d", "ok") // trims turn 10
+
+	rendered := pt.Render()
+	// First visible entry should show turn 11, not "1".
+	if strings.Contains(rendered, "| 1 |") {
+		t.Error("render should use actual turn numbers, not sequence indices")
+	}
+	if !strings.Contains(rendered, "| 11 |") {
+		t.Errorf("expected turn 11 in rendered output: %s", rendered)
+	}
+}
+
+func TestClassifyToolAction_File(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		op     string
+		path   string
+		action string
+		detail string
+	}{
+		{"write", "/tmp/main.go", "wrote file", "/tmp/main.go"},
+		{"read", "/tmp/config.yaml", "read file", "/tmp/config.yaml"},
+		{"patch", "/tmp/handler.go", "patched file", "/tmp/handler.go"},
+		{"delete", "/tmp/old.txt", "file op", "/tmp/old.txt"},
+	}
+
+	for _, tt := range tests {
+		input, _ := json.Marshal(map[string]string{"operation": tt.op, "path": tt.path})
+		action, detail := classifyToolAction("file", input)
+		if action != tt.action {
+			t.Errorf("op=%s: expected action=%q, got %q", tt.op, tt.action, action)
+		}
+		if detail != tt.detail {
+			t.Errorf("op=%s: expected detail=%q, got %q", tt.op, tt.detail, detail)
+		}
+	}
+}
+
+func TestClassifyToolAction_Shell(t *testing.T) {
+	t.Parallel()
+	// Short command.
+	input, _ := json.Marshal(map[string]string{"command": "go test ./..."})
+	action, detail := classifyToolAction("shell", input)
+	if action != "ran command" {
+		t.Errorf("expected action='ran command', got %q", action)
+	}
+	if detail != "go test ./..." {
+		t.Errorf("expected detail='go test ./...', got %q", detail)
+	}
+
+	// Long command should be truncated at 80 chars.
+	longCmd := strings.Repeat("x", 100)
+	input, _ = json.Marshal(map[string]string{"command": longCmd})
+	_, detail = classifyToolAction("shell", input)
+	if len(detail) != 83 { // 80 + "..."
+		t.Errorf("expected truncated detail of length 83, got %d", len(detail))
+	}
+	if !strings.HasSuffix(detail, "...") {
+		t.Error("truncated command should end with ...")
+	}
+}
+
+func TestClassifyToolAction_Search(t *testing.T) {
+	t.Parallel()
+	input, _ := json.Marshal(map[string]string{"pattern": "TODO"})
+	action, detail := classifyToolAction("search", input)
+	if action != "searched" {
+		t.Errorf("expected action='searched', got %q", action)
+	}
+	if detail != "TODO" {
+		t.Errorf("expected detail='TODO', got %q", detail)
+	}
+}
+
+func TestClassifyToolAction_Task(t *testing.T) {
+	t.Parallel()
+	input, _ := json.Marshal(map[string]string{"description": "refactor the handler"})
+	action, detail := classifyToolAction("task", input)
+	if action != "spawned task" {
+		t.Errorf("expected 'spawned task', got %q", action)
+	}
+	if detail != "refactor the handler" {
+		t.Errorf("expected detail, got %q", detail)
+	}
+}
+
+func TestClassifyToolAction_TaskComplete(t *testing.T) {
+	t.Parallel()
+	input, _ := json.Marshal(map[string]string{"summary": "done"})
+	action, detail := classifyToolAction("task_complete", input)
+	if action != "completed task" {
+		t.Errorf("expected 'completed task', got %q", action)
+	}
+	if detail != "done" {
+		t.Errorf("expected 'done', got %q", detail)
+	}
+}
+
+func TestClassifyToolAction_Unknown(t *testing.T) {
+	t.Parallel()
+	input, _ := json.Marshal(map[string]string{"foo": "bar"})
+	action, detail := classifyToolAction("custom_tool", input)
+	if action != "custom_tool" {
+		t.Errorf("expected action='custom_tool', got %q", action)
+	}
+	if detail != "" {
+		t.Errorf("expected empty detail for unknown tool, got %q", detail)
+	}
+}
+
+func TestClassifyToolAction_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	action, detail := classifyToolAction("file", json.RawMessage(`not json`))
+	if action != "file" {
+		t.Errorf("expected fallback action='file', got %q", action)
+	}
+	if detail != "" {
+		t.Errorf("expected empty detail for invalid JSON, got %q", detail)
+	}
+}
+
+func TestTruncateResult(t *testing.T) {
+	t.Parallel()
+	if got := truncateResult("short", 60); got != "short" {
+		t.Errorf("expected 'short', got %q", got)
+	}
+	long := strings.Repeat("a", 100)
+	got := truncateResult(long, 60)
+	runes := []rune(got)
+	// 60 runes of content + 3 runes for "..."
+	if len(runes) != 63 {
+		t.Errorf("expected 63 runes, got %d", len(runes))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Error("truncated result should end with ...")
+	}
+}
+
+func TestTruncateResult_UTF8Safe(t *testing.T) {
+	t.Parallel()
+	// 10 multi-byte runes (each is 3 bytes in UTF-8).
+	input := strings.Repeat("日", 10)
+	got := truncateResult(input, 5)
+	// Should have 5 runes + "..." — never a split rune.
+	runes := []rune(got)
+	if len(runes) != 8 { // 5 + 3 for "..."
+		t.Errorf("expected 8 runes, got %d: %q", len(runes), got)
+	}
+	// Verify the result is valid UTF-8 by round-tripping.
+	if got != string([]rune(got)) {
+		t.Error("truncated result contains invalid UTF-8")
+	}
+}
+
+func TestClassifyToolAction_Git(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tool   string
+		input  map[string]string
+		action string
+		detail string
+	}{
+		{"git_status", map[string]string{"path": "src/"}, "git status", "src/"},
+		{"git_status", map[string]string{}, "git status", ""},
+		{"git_diff", map[string]string{"path": "main.go"}, "git diff", "main.go"},
+		{"git_log", map[string]string{"path": "internal/"}, "git log", "internal/"},
+		{"git_show", map[string]string{"rev": "abc123"}, "git show", "abc123"},
+		{"git_blame", map[string]string{"path": "handler.go"}, "git blame", "handler.go"},
+	}
+
+	for _, tt := range tests {
+		input, _ := json.Marshal(tt.input)
+		action, detail := classifyToolAction(tt.tool, input)
+		if action != tt.action {
+			t.Errorf("tool=%s: expected action=%q, got %q", tt.tool, tt.action, action)
+		}
+		if detail != tt.detail {
+			t.Errorf("tool=%s: expected detail=%q, got %q", tt.tool, tt.detail, detail)
+		}
+	}
+}
+
+func TestClassifyToolAction_Process(t *testing.T) {
+	t.Parallel()
+
+	// exec operation
+	input, _ := json.Marshal(map[string]string{"operation": "exec", "command": "npm start"})
+	action, detail := classifyToolAction("process", input)
+	if action != "started process" {
+		t.Errorf("expected 'started process', got %q", action)
+	}
+	if detail != "npm start" {
+		t.Errorf("expected 'npm start', got %q", detail)
+	}
+
+	// kill operation
+	input, _ = json.Marshal(map[string]string{"operation": "kill", "id": "proc-1"})
+	action, detail = classifyToolAction("process", input)
+	if action != "killed process" {
+		t.Errorf("expected 'killed process', got %q", action)
+	}
+	if detail != "proc-1" {
+		t.Errorf("expected 'proc-1', got %q", detail)
+	}
+
+	// read_output operation
+	input, _ = json.Marshal(map[string]string{"operation": "read_output", "id": "proc-2"})
+	action, detail = classifyToolAction("process", input)
+	if action != "process read_output" {
+		t.Errorf("expected 'process read_output', got %q", action)
+	}
+	if detail != "proc-2" {
+		t.Errorf("expected 'proc-2', got %q", detail)
+	}
+}
+
+func TestClassifyToolAction_Notes(t *testing.T) {
+	t.Parallel()
+
+	input, _ := json.Marshal(map[string]string{"action": "set", "tag": "plan"})
+	action, detail := classifyToolAction("notes", input)
+	if action != "notes set" {
+		t.Errorf("expected 'notes set', got %q", action)
+	}
+	if detail != "plan" {
+		t.Errorf("expected 'plan', got %q", detail)
+	}
+}

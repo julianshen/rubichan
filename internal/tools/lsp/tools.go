@@ -16,12 +16,14 @@ type lspTool struct {
 	manager     *Manager
 	name        string
 	description string
+	searchHint  string
 	schema      json.RawMessage
 	run         func(context.Context, *Manager, json.RawMessage) (tools.ToolResult, error)
 }
 
 func (t *lspTool) Name() string                 { return t.name }
 func (t *lspTool) Description() string          { return t.description }
+func (t *lspTool) SearchHint() string           { return t.searchHint }
 func (t *lspTool) InputSchema() json.RawMessage { return t.schema }
 
 func (t *lspTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
@@ -68,6 +70,7 @@ func NewDiagnosticsTool(m *Manager) tools.Tool {
 		manager:     m,
 		name:        "lsp_diagnostics",
 		description: "Get compiler diagnostics (errors, warnings) for a file from the language server.",
+		searchHint:  "type check lint static analysis",
 		schema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

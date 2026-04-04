@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/integrations"
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/toolexec"
@@ -48,17 +50,17 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		want     bool
 	}{
 		{
-			name: "model does not support tools",
+			name: "non-native model still registers tools for text-based fallback",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: false},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: false},
 			},
 			toolName: "file",
-			want:     false,
+			want:     true,
 		},
 		{
 			name: "headless with no overrides denies all",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				HeadlessMode:      true,
 			},
 			toolName: "file",
@@ -67,7 +69,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "headless with explicit allowlist allows listed",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				HeadlessMode:      true,
 				CLIOverrides:      map[string]bool{"file": true},
 			},
@@ -77,7 +79,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "headless with explicit allowlist denies unlisted",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				HeadlessMode:      true,
 				CLIOverrides:      map[string]bool{"file": true},
 			},
@@ -87,7 +89,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "feature flag disables tool",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				FeatureFlags:      map[string]bool{"tools.search": false},
 			},
 			toolName: "search",
@@ -96,7 +98,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "feature flag does not affect unrelated tool",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				FeatureFlags:      map[string]bool{"tools.search": false},
 			},
 			toolName: "file",
@@ -105,7 +107,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "user disabled overrides enabled",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				UserPreferences: UserToolPrefs{
 					Enabled:  map[string]bool{"shell": true},
 					Disabled: map[string]bool{"shell": true},
@@ -117,7 +119,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "user enabled list restricts to only listed tools",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				UserPreferences: UserToolPrefs{
 					Enabled: map[string]bool{"file": true},
 				},
@@ -128,7 +130,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "apple tool without apple project or skill",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				ProjectContext: ProjectContext{
 					AppleProjectDetected: false,
 					AppleSkillRequested:  false,
@@ -140,7 +142,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "apple tool with apple project detected",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				ProjectContext: ProjectContext{
 					AppleProjectDetected: true,
 					AppleSkillRequested:  false,
@@ -152,7 +154,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "apple tool with apple skill requested",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				ProjectContext: ProjectContext{
 					AppleProjectDetected: false,
 					AppleSkillRequested:  true,
@@ -164,7 +166,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "CLI overrides act as whitelist in non-headless",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 				CLIOverrides:      map[string]bool{"search": true},
 			},
 			toolName: "file",
@@ -173,7 +175,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "no overrides in non-headless allows all",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 			},
 			toolName: "file",
 			want:     true,
@@ -181,7 +183,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "xcrun tool is apple-only",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 			},
 			toolName: "xcrun",
 			want:     false,
@@ -189,7 +191,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "xcrun_something tool is apple-only",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 			},
 			toolName: "xcrun_notarize",
 			want:     false,
@@ -197,7 +199,7 @@ func TestToolsConfigShouldEnable_TableDriven(t *testing.T) {
 		{
 			name: "codesign_verify tool is apple-only",
 			tc: ToolsConfig{
-				ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+				ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 			},
 			toolName: "codesign_verify",
 			want:     false,
@@ -355,7 +357,7 @@ func TestRegisterCoreTools_AllDisabled(t *testing.T) {
 	diffTracker := tools.NewDiffTracker()
 
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		HeadlessMode:      true,
 		// No CLIOverrides => all tools denied in headless
 	}
@@ -380,7 +382,7 @@ func TestRegisterCoreTools_FileOnly(t *testing.T) {
 	diffTracker := tools.NewDiffTracker()
 
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides:      map[string]bool{"file": true},
 	}
 
@@ -401,7 +403,7 @@ func TestRegisterCoreTools_ShellOnly(t *testing.T) {
 	diffTracker := tools.NewDiffTracker()
 
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides:      map[string]bool{"shell": true},
 	}
 
@@ -421,7 +423,7 @@ func TestRegisterCoreTools_SearchOnly(t *testing.T) {
 	diffTracker := tools.NewDiffTracker()
 
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides:      map[string]bool{"search": true},
 	}
 
@@ -441,7 +443,7 @@ func TestRegisterCoreTools_ProcessOnly(t *testing.T) {
 	diffTracker := tools.NewDiffTracker()
 
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides:      map[string]bool{"process": true},
 	}
 
@@ -462,7 +464,7 @@ func TestRegisterCoreTools_AllTools(t *testing.T) {
 	diffTracker := tools.NewDiffTracker()
 
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		// No CLIOverrides, non-headless => all tools allowed
 	}
 
@@ -1001,10 +1003,22 @@ func TestWakeStatusAdapter_WithTasks(t *testing.T) {
 
 func TestDetectGitBranch_ValidRepo(t *testing.T) {
 	t.Parallel()
-	// Use the current repo which is a git repo.
-	branch, err := detectGitBranch(testRepoRoot(t))
+	// Create a dedicated test repo with a known branch to avoid failures
+	// in detached HEAD worktrees or CI environments.
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-b", "test-branch"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "test"},
+		{"config", "commit.gpgsign", "false"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		require.NoError(t, cmd.Run(), "git %v failed", args)
+	}
+	branch, err := detectGitBranch(dir)
 	require.NoError(t, err)
-	assert.NotEmpty(t, branch)
+	assert.Equal(t, "test-branch", branch)
 }
 
 func TestDetectGitBranch_InvalidDir(t *testing.T) {
@@ -1196,7 +1210,7 @@ func TestWireExtendedTools_AllDisabled(t *testing.T) {
 	registry := tools.NewRegistry()
 	cfg := config.DefaultConfig()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		HeadlessMode:      true,
 		// No CLIOverrides => nothing enabled
 	}
@@ -1211,7 +1225,7 @@ func TestWireExtendedTools_SomeEnabled(t *testing.T) {
 	registry := tools.NewRegistry()
 	cfg := config.DefaultConfig()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides:      map[string]bool{"http_get": true, "git_status": true},
 	}
 
@@ -1291,24 +1305,20 @@ func (r *stringReader) Read(p []byte) (int, error) {
 }
 
 // ---------------------------------------------------------------------------
-// detectModelCapabilities — additional edge cases
+// provider.DetectCapabilities — additional edge cases
 // ---------------------------------------------------------------------------
 
-func TestDetectModelCapabilities_OllamaProvider(t *testing.T) {
+func TestDetectCapabilities_OllamaProvider(t *testing.T) {
 	t.Parallel()
-	cfg := config.DefaultConfig()
-	cfg.Provider.Default = "ollama"
-	caps := detectModelCapabilities(cfg)
-	assert.True(t, caps.SupportsToolUse)
+	caps := provider.DetectCapabilities("ollama", "llama3")
+	assert.True(t, caps.SupportsNativeToolUse)
 }
 
-func TestDetectModelCapabilities_UnknownProviderNoOpenAI(t *testing.T) {
+func TestDetectCapabilities_UnknownProviderFallsToOpenAICompat(t *testing.T) {
 	t.Parallel()
-	cfg := config.DefaultConfig()
-	cfg.Provider.Default = "some-unknown"
-	cfg.Provider.OpenAI = nil
-	caps := detectModelCapabilities(cfg)
-	assert.False(t, caps.SupportsToolUse)
+	// Unknown providers fall through to OpenAI-compat path which is tool-capable.
+	caps := provider.DetectCapabilities("some-unknown", "")
+	assert.True(t, caps.SupportsNativeToolUse)
 }
 
 // ---------------------------------------------------------------------------
@@ -1319,7 +1329,7 @@ func TestWireWiki_DisabledInHeadless(t *testing.T) {
 	t.Parallel()
 	registry := tools.NewRegistry()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		HeadlessMode:      true,
 		// No CLIOverrides => wiki disabled
 	}
@@ -1336,7 +1346,7 @@ func TestWireAppleDev_NoAppleProject(t *testing.T) {
 	t.Parallel()
 	registry := tools.NewRegistry()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: false,
 			AppleSkillRequested:  false,
@@ -1515,11 +1525,12 @@ func TestWireLSPTools_Disabled(t *testing.T) {
 	cfg.LSP.Enabled = &disabled
 
 	registry := tools.NewRegistry()
-	toolsCfg := ToolsConfig{ModelCapabilities: ModelCapabilities{SupportsToolUse: true}}
+	toolsCfg := ToolsConfig{ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true}}
 
-	cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
+	mgr, cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
 	assert.NoError(t, err)
 	assert.Nil(t, cleanup)
+	assert.Nil(t, mgr)
 }
 
 // ---------------------------------------------------------------------------
@@ -1743,7 +1754,7 @@ func TestWireAppleDev_WithAppleProjectDetected(t *testing.T) {
 
 	registry := tools.NewRegistry()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: true,
 			AppleSkillRequested:  true,
@@ -1762,7 +1773,7 @@ func TestWireWiki_Enabled(t *testing.T) {
 	t.Parallel()
 	registry := tools.NewRegistry()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 	}
 	err := wireWiki(t.TempDir(), registry, nil, toolsCfg)
 	assert.NoError(t, err)
@@ -1794,9 +1805,9 @@ func TestWireLSPTools_Enabled(t *testing.T) {
 	t.Parallel()
 	cfg := config.DefaultConfig()
 	registry := tools.NewRegistry()
-	toolsCfg := ToolsConfig{ModelCapabilities: ModelCapabilities{SupportsToolUse: true}}
+	toolsCfg := ToolsConfig{ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true}}
 
-	cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
+	_, cleanup, err := wireLSPTools(cfg, registry, toolsCfg, t.TempDir())
 	assert.NoError(t, err)
 	if cleanup != nil {
 		cleanup()
@@ -2170,7 +2181,7 @@ func TestRegisterCoreTools_FullProfile(t *testing.T) {
 
 	// Use the "all" profile.
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides:      parseToolsFlag("all"),
 	}
 
@@ -2194,7 +2205,7 @@ func TestWireExtendedTools_AllEnabled(t *testing.T) {
 	registry := tools.NewRegistry()
 	cfg := config.DefaultConfig()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		// No overrides, non-headless => all enabled
 	}
 
@@ -2404,7 +2415,7 @@ func TestRegisterCoreTools_WithExtendedTools(t *testing.T) {
 	diffTracker := tools.NewDiffTracker()
 
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: ModelCapabilities{SupportsToolUse: true},
+		ModelCapabilities: provider.ModelCapabilities{SupportsNativeToolUse: true},
 		CLIOverrides: map[string]bool{
 			"file": true, "shell": true, "search": true,
 			"http_get": true, "git_status": true,

@@ -18,12 +18,14 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/persona"
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -423,10 +425,193 @@ func TestResolveOllamaModel_MultipleModels(t *testing.T) {
 	assert.Equal(t, "llama3.2:latest", model) // returns first model
 }
 
+type capabilityTestProvider struct {
+	eventsByCall [][]provider.StreamEvent
+	errByCall    []error
+	requests     []provider.CompletionRequest
+	callCount    int
+}
+
+func (p *capabilityTestProvider) Stream(_ context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	p.requests = append(p.requests, req)
+	idx := p.callCount
+	p.callCount++
+	if idx < len(p.errByCall) && p.errByCall[idx] != nil {
+		return nil, p.errByCall[idx]
+	}
+	var events []provider.StreamEvent
+	if idx < len(p.eventsByCall) {
+		events = p.eventsByCall[idx]
+	}
+	ch := make(chan provider.StreamEvent, len(events))
+	for _, evt := range events {
+		ch <- evt
+	}
+	close(ch)
+	return ch, nil
+}
+
+func TestExecuteModelCapabilityTest_Success(t *testing.T) {
+	p := &capabilityTestProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "text_delta", Text: "OK"}, {Type: "stop"}},
+		{{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "capability_probe", Input: []byte(`{}`)}}, {Type: "stop"}},
+	}}
+	var out bytes.Buffer
+
+	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
+	require.NoError(t, err)
+	require.Len(t, p.requests, 2)
+	assert.Equal(t, "gpt-4o", p.requests[0].Model)
+	assert.Equal(t, "capability_probe", p.requests[1].Tools[0].Name)
+	assert.Contains(t, out.String(), "Provider: openai")
+	assert.Contains(t, out.String(), "Capabilities:")
+	assert.Contains(t, out.String(), "Tool support: PASS")
+	assert.Contains(t, out.String(), "Model test: PASS")
+}
+
+func TestExecuteModelCapabilityTest_MissingModel(t *testing.T) {
+	var out bytes.Buffer
+	err := executeModelCapabilityTest(context.Background(), &out, &capabilityTestProvider{}, "openai", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is not configured")
+}
+
+func TestExecuteModelCapabilityTest_StreamErrorEvent(t *testing.T) {
+	p := &capabilityTestProvider{eventsByCall: [][]provider.StreamEvent{{{Type: "error", Error: fmt.Errorf("boom")}}}}
+	var out bytes.Buffer
+
+	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model stream test failed")
+}
+
+func TestExecuteModelCapabilityTest_ToolSupportMissing(t *testing.T) {
+	p := &capabilityTestProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "text_delta", Text: "OK"}, {Type: "stop"}},
+		{{Type: "stop"}},
+	}}
+	var out bytes.Buffer
+
+	err := executeModelCapabilityTest(context.Background(), &out, p, "openai", "gpt-4o")
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "Tool support: INCONCLUSIVE")
+}
+
 func TestResolveOllamaModel_ConnectionError(t *testing.T) {
 	_, err := resolveOllamaModel("http://localhost:1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listing Ollama models")
+}
+
+// saveFlags saves the current apiBaseFlag and apiKeyFlag values and registers
+// a t.Cleanup to restore them after the test completes.
+func saveFlags(t *testing.T) {
+	t.Helper()
+	origBase, origKey := apiBaseFlag, apiKeyFlag
+	t.Cleanup(func() { apiBaseFlag, apiKeyFlag = origBase, origKey })
+}
+
+func TestApplyAPIBaseFlag_CreatesEntry(t *testing.T) {
+	saveFlags(t)
+	apiBaseFlag = "http://localhost:1234/v1"
+	apiKeyFlag = "test-key"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "my-server"
+
+	applyAPIBaseFlag(cfg)
+
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "my-server", cfg.Provider.OpenAI[0].Name)
+	assert.Equal(t, "http://localhost:1234/v1", cfg.Provider.OpenAI[0].BaseURL)
+	assert.Equal(t, "config", cfg.Provider.OpenAI[0].APIKeySource)
+	assert.Equal(t, "test-key", cfg.Provider.OpenAI[0].APIKey)
+	assert.Equal(t, "my-server", cfg.Provider.Default)
+}
+
+func TestApplyAPIBaseFlag_DefaultsKeyToNone(t *testing.T) {
+	saveFlags(t)
+	apiBaseFlag = "http://localhost:1234/v1"
+	apiKeyFlag = ""
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "local"
+
+	applyAPIBaseFlag(cfg)
+
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "none", cfg.Provider.OpenAI[0].APIKey)
+}
+
+func TestApplyAPIBaseFlag_OverridesExistingEntry(t *testing.T) {
+	saveFlags(t)
+	apiBaseFlag = "http://new-url:5678/v1"
+	apiKeyFlag = "new-key"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "my-server"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{
+			Name:         "my-server",
+			BaseURL:      "http://old-url:1234/v1",
+			APIKeySource: "config",
+			APIKey:       "old-key",
+		},
+	}
+
+	applyAPIBaseFlag(cfg)
+
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "http://new-url:5678/v1", cfg.Provider.OpenAI[0].BaseURL)
+	assert.Equal(t, "new-key", cfg.Provider.OpenAI[0].APIKey)
+}
+
+func TestApplyAPIBaseFlag_BuiltinProviderGetCustomName(t *testing.T) {
+	saveFlags(t)
+	apiBaseFlag = "http://localhost:1234/v1"
+	apiKeyFlag = ""
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "anthropic" // built-in name
+
+	applyAPIBaseFlag(cfg)
+
+	assert.Equal(t, "custom", cfg.Provider.Default)
+	require.Len(t, cfg.Provider.OpenAI, 1)
+	assert.Equal(t, "custom", cfg.Provider.OpenAI[0].Name)
+}
+
+func TestApplyAPIKeyFlag_Anthropic(t *testing.T) {
+	saveFlags(t)
+	apiKeyFlag = "sk-override"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "anthropic"
+
+	applyAPIKeyFlag(cfg)
+
+	assert.Equal(t, "config", cfg.Provider.Anthropic.APIKeySource)
+	assert.Equal(t, "sk-override", cfg.Provider.Anthropic.APIKey)
+}
+
+func TestApplyAPIKeyFlag_OpenAICompatible(t *testing.T) {
+	saveFlags(t)
+	apiKeyFlag = "new-key"
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "my-server"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{
+			Name:         "my-server",
+			BaseURL:      "http://localhost:1234/v1",
+			APIKeySource: "env",
+		},
+	}
+
+	applyAPIKeyFlag(cfg)
+
+	assert.Equal(t, "config", cfg.Provider.OpenAI[0].APIKeySource)
+	assert.Equal(t, "new-key", cfg.Provider.OpenAI[0].APIKey)
 }
 
 func TestEnsureFolderAccessApproved_FirstTimeApprove(t *testing.T) {
@@ -526,4 +711,103 @@ func TestPersonaErrorMessage(t *testing.T) {
 	msg := persona.ErrorMessage("something broke")
 	assert.Contains(t, msg, "Pigi")
 	assert.Contains(t, msg, "something broke")
+}
+
+func TestWikiFlagCobraDefaults(t *testing.T) {
+	// Build a minimal cobra command that mirrors the real flag registration
+	// so we can verify the cobra-defined defaults are correct.
+	var localWiki bool
+	var localOut, localFormat string
+	var localConcurrency int
+
+	cmd := &cobra.Command{Use: "rubichan", RunE: func(_ *cobra.Command, _ []string) error { return nil }}
+	cmd.PersistentFlags().BoolVar(&localWiki, "wiki", false, "run wiki generation")
+	cmd.PersistentFlags().StringVar(&localOut, "wiki-out", "docs/wiki", "output directory for wiki files")
+	cmd.PersistentFlags().StringVar(&localFormat, "wiki-format", "raw-md", "wiki output format")
+	cmd.PersistentFlags().IntVar(&localConcurrency, "wiki-concurrency", 5, "max parallel LLM calls")
+
+	// Execute with no wiki flags — cobra applies defaults.
+	cmd.SetArgs([]string{})
+	require.NoError(t, cmd.Execute())
+
+	assert.False(t, localWiki, "--wiki must default to false")
+	assert.Equal(t, "docs/wiki", localOut, "--wiki-out must default to docs/wiki")
+	assert.Equal(t, "raw-md", localFormat, "--wiki-format must default to raw-md")
+	assert.Equal(t, 5, localConcurrency, "--wiki-concurrency must default to 5")
+}
+
+func TestWikiFlagsParsedByCobra(t *testing.T) {
+	// Reset to defaults before the test and restore afterwards.
+	origWiki := wikiFlag
+	origOut := wikiOutFlag
+	origFormat := wikiFormatFlag
+	origConcurrency := wikiConcurrencyFlag
+	t.Cleanup(func() {
+		wikiFlag = origWiki
+		wikiOutFlag = origOut
+		wikiFormatFlag = origFormat
+		wikiConcurrencyFlag = origConcurrency
+	})
+
+	cmd := &cobra.Command{Use: "rubichan", RunE: func(_ *cobra.Command, _ []string) error { return nil }}
+	cmd.PersistentFlags().BoolVar(&wikiFlag, "wiki", false, "run wiki generation")
+	cmd.PersistentFlags().StringVar(&wikiOutFlag, "wiki-out", "docs/wiki", "output directory for wiki files")
+	cmd.PersistentFlags().StringVar(&wikiFormatFlag, "wiki-format", "raw-md", "wiki output format")
+	cmd.PersistentFlags().IntVar(&wikiConcurrencyFlag, "wiki-concurrency", 5, "max parallel LLM calls")
+
+	cmd.SetArgs([]string{"--wiki", "--wiki-out", "out/custom", "--wiki-format", "hugo", "--wiki-concurrency", "10"})
+	require.NoError(t, cmd.Execute())
+
+	assert.True(t, wikiFlag)
+	assert.Equal(t, "out/custom", wikiOutFlag)
+	assert.Equal(t, "hugo", wikiFormatFlag)
+	assert.Equal(t, 10, wikiConcurrencyFlag)
+}
+
+func TestRunWikiHeadlessInvalidProviderReturnsError(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Provider.Default = "nonexistent-provider-xyz"
+
+	err := runWikiHeadless(cfg, t.TempDir(), "docs/wiki", "raw-md", 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating provider")
+}
+
+func TestWikiHeadlessEndToEnd_NoProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = ""
+	cfg.Provider.Model = ""
+	err := runWikiHeadless(cfg, t.TempDir(), filepath.Join(t.TempDir(), "wiki-out"), "raw-md", 1)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "provider")
+}
+
+func TestWikiHelpOutput(t *testing.T) {
+	// Build a minimal cobra command that mirrors the real wiki flag registration
+	// so we can verify the flag names appear in help output without spinning up
+	// the full application.
+	var localWiki bool
+	var localOut, localFormat string
+	var localConcurrency int
+
+	cmd := &cobra.Command{
+		Use:   "rubichan",
+		Short: "An AI coding assistant",
+		RunE:  func(_ *cobra.Command, _ []string) error { return nil },
+	}
+	cmd.PersistentFlags().BoolVar(&localWiki, "wiki", false, "run wiki generation (implies --headless, --approve-cwd)")
+	cmd.PersistentFlags().StringVar(&localOut, "wiki-out", "docs/wiki", "output directory for wiki files")
+	cmd.PersistentFlags().StringVar(&localFormat, "wiki-format", "raw-md", "wiki output format: raw-md, hugo, docusaurus")
+	cmd.PersistentFlags().IntVar(&localConcurrency, "wiki-concurrency", 5, "max parallel LLM calls for wiki generation")
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetArgs([]string{"--help"})
+	err := cmd.Execute()
+	require.NoError(t, err)
+	output := buf.String()
+	assert.Contains(t, output, "--wiki")
+	assert.Contains(t, output, "--wiki-out")
+	assert.Contains(t, output, "--wiki-format")
+	assert.Contains(t, output, "--wiki-concurrency")
 }

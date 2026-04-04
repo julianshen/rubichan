@@ -9,7 +9,6 @@ import (
 
 const maxToolResultLines = 20
 
-// Diff colorization styles use the centralized pink theme.
 var (
 	diffAddedStyle   = styleDiffAdded
 	diffRemovedStyle = styleDiffRemoved
@@ -39,9 +38,10 @@ func NewToolBoxRenderer(width int) *ToolBoxRenderer {
 	}
 }
 
-// RenderToolCall renders a tool invocation header box.
+// RenderToolCall renders a tool invocation header box with formatted arguments.
 func (r *ToolBoxRenderer) RenderToolCall(name, args string) string {
-	header := fmt.Sprintf("─ %s(%s) ", name, args)
+	formatted := formatToolArgs(name, args)
+	header := fmt.Sprintf("─ %s %s ", ClassifyTool(name).Icon()+name, formatted)
 	return r.normalBox.Render(header) + "\n"
 }
 
@@ -55,7 +55,8 @@ func (r *ToolBoxRenderer) renderInBox(content string, isError bool) string {
 }
 
 // RenderToolResult renders a tool result in a bordered box, truncating to maxToolResultLines.
-func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string {
+// The toolName is used to aid content-type detection for syntax highlighting.
+func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool, toolName string) string {
 	lines := strings.Split(content, "\n")
 	truncated := 0
 	if len(lines) > maxToolResultLines {
@@ -63,7 +64,7 @@ func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string 
 		lines = lines[:maxToolResultLines]
 	}
 
-	display := ColorizeDiffLines(strings.Join(lines, "\n"))
+	display := ColorizeContent(strings.Join(lines, "\n"), toolName)
 	if truncated > 0 {
 		display += fmt.Sprintf("\n[%d more lines — Ctrl+E to expand]", truncated)
 	}
@@ -71,8 +72,8 @@ func (r *ToolBoxRenderer) RenderToolResult(content string, isError bool) string 
 }
 
 // RenderToolResultFull renders a tool result without truncation.
-func (r *ToolBoxRenderer) RenderToolResultFull(content string, isError bool) string {
-	return r.renderInBox(ColorizeDiffLines(content), isError)
+func (r *ToolBoxRenderer) RenderToolResultFull(content string, isError bool, toolName string) string {
+	return r.renderInBox(ColorizeContent(content, toolName), isError)
 }
 
 // RenderToolProgress renders streaming tool progress output.
@@ -104,42 +105,39 @@ type CollapsibleToolResult struct {
 func (c *CollapsibleToolResult) Render(r *ToolBoxRenderer) string {
 	lineLabel := c.lineLabel()
 	icon := c.ToolType.Icon()
+	formatted := formatToolArgs(c.Name, c.Args)
 	if c.Collapsed {
-		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s%s(%s)", icon, c.Name, c.Args)) +
+		return styleToolResultHeader.Render(fmt.Sprintf("▶ %s%s %s", icon, c.Name, formatted)) +
 			styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	}
-	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s(%s)", icon, c.Name, c.Args)) +
+	header := styleToolResultHeader.Render(fmt.Sprintf("▼ %s%s %s", icon, c.Name, formatted)) +
 		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
 	if c.FullyExpanded {
-		return header + r.RenderToolResultFull(c.Content, c.IsError)
+		return header + r.RenderToolResultFull(c.Content, c.IsError, c.Name)
 	}
-	return header + r.RenderToolResult(c.Content, c.IsError)
+	return header + r.RenderToolResult(c.Content, c.IsError, c.Name)
 }
 
-// lineLabel returns a human-friendly line count label.
-// When content exceeds maxToolResultLines, it shows "N lines (20 shown)"
-// unless FullyExpanded is true. For shell tools, appends [ok] or [error].
-func (c *CollapsibleToolResult) lineLabel() string {
-	label := ""
-	if c.LineCount == 0 {
-		label = "empty"
-	} else if c.LineCount > maxToolResultLines {
-		if c.FullyExpanded {
-			label = fmt.Sprintf("%d lines", c.LineCount)
-		} else {
-			label = fmt.Sprintf("%d lines (%d shown)", c.LineCount, maxToolResultLines)
-		}
-	} else if c.LineCount == 1 {
-		label = "1 line"
-	} else {
-		label = fmt.Sprintf("%d lines", c.LineCount)
+// formatLineLabel returns a human-friendly line count string.
+func formatLineLabel(lineCount int, fullyExpanded bool) string {
+	switch {
+	case lineCount == 0:
+		return "empty"
+	case lineCount > maxToolResultLines && !fullyExpanded:
+		return fmt.Sprintf("%d lines (%d shown)", lineCount, maxToolResultLines)
+	case lineCount == 1:
+		return "1 line"
+	default:
+		return fmt.Sprintf("%d lines", lineCount)
 	}
-	if c.ToolType == ToolTypeShell {
-		if c.IsError {
-			label += " [error]"
-		} else {
-			label += " [ok]"
-		}
+}
+
+func (c *CollapsibleToolResult) lineLabel() string {
+	label := formatLineLabel(c.LineCount, c.FullyExpanded)
+	if c.IsError {
+		label += " ✗"
+	} else {
+		label += " ✓"
 	}
 	return label
 }
@@ -184,27 +182,42 @@ func isDiffContent(content string) bool {
 	return false
 }
 
+// CollapsibleThinking tracks a thinking/reasoning block with collapse state.
+type CollapsibleThinking struct {
+	ID            int
+	Content       string
+	LineCount     int
+	Collapsed     bool
+	FullyExpanded bool
+}
+
+// Render returns the rendered view of a thinking block in one of three states:
+//   - collapsed: single summary line with ▶ indicator
+//   - expanded-truncated: ▼ header + first maxToolResultLines lines
+//   - expanded-full: ▼ header + all lines (when FullyExpanded == true)
+func (ct *CollapsibleThinking) Render(r *ToolBoxRenderer) string {
+	lineLabel := ct.lineLabel()
+	if ct.Collapsed {
+		return styleToolResultHeader.Render("▶ 💭 Thinking") +
+			styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
+	}
+	header := styleToolResultHeader.Render("▼ 💭 Thinking") +
+		styleSectionLabel.Render(fmt.Sprintf(" — %s", lineLabel)) + "\n"
+	if ct.FullyExpanded {
+		return header + r.renderInBox(ct.Content, false)
+	}
+	return header + r.RenderToolResult(ct.Content, false, "")
+}
+
+func (ct *CollapsibleThinking) lineLabel() string {
+	return formatLineLabel(ct.LineCount, ct.FullyExpanded)
+}
+
 // ColorizeDiffLines applies green/red/cyan coloring to unified diff lines.
-// If the content does not appear to be a diff (no @@ hunk headers), it is
-// returned unchanged to avoid false positives.
+// Delegates to ColorizeContent for the actual colorization.
 func ColorizeDiffLines(content string) string {
 	if content == "" || !isDiffContent(content) {
 		return content
 	}
-
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		switch {
-		case strings.HasPrefix(line, "@@ "):
-			lines[i] = diffHunkStyle.Render(line)
-		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
-			// File headers — leave unstyled (or could style bold)
-			continue
-		case strings.HasPrefix(line, "+"):
-			lines[i] = diffAddedStyle.Render(line)
-		case strings.HasPrefix(line, "-"):
-			lines[i] = diffRemovedStyle.Render(line)
-		}
-	}
-	return strings.Join(lines, "\n")
+	return colorizeDiffContent(content)
 }

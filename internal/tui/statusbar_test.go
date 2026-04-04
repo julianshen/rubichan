@@ -235,6 +235,52 @@ func TestStatusBarSetSubagent_EmptyClearsFromView(t *testing.T) {
 	assert.NotContains(t, result, "🔄", "clearing subagent should remove the icon from view")
 }
 
+// --- Running agents ---
+
+func TestStatusBarSetRunningAgents_SingleAgent(t *testing.T) {
+	t.Parallel()
+	sb := NewStatusBar(120)
+	sb.SetModel("test-model")
+	sb.SetRunningAgents([]AgentStatus{{ID: "a1", Name: "code-review"}})
+	result := sb.View()
+	assert.Contains(t, result, "⊕ 1 agent: code-review")
+}
+
+func TestStatusBarSetRunningAgents_MultipleAgents(t *testing.T) {
+	t.Parallel()
+	sb := NewStatusBar(120)
+	sb.SetModel("test-model")
+	sb.SetRunningAgents([]AgentStatus{
+		{ID: "a1", Name: "code-review"},
+		{ID: "a2", Name: "linter"},
+		{ID: "a3", Name: "tester"},
+	})
+	result := sb.View()
+	assert.Contains(t, result, "⊕ 3 agents")
+}
+
+func TestStatusBarSetRunningAgents_EmptyClearsFromView(t *testing.T) {
+	t.Parallel()
+	sb := NewStatusBar(120)
+	sb.SetModel("test-model")
+	sb.SetRunningAgents([]AgentStatus{{ID: "a1", Name: "code-review"}})
+	sb.SetRunningAgents(nil)
+	result := sb.View()
+	assert.NotContains(t, result, "⊕")
+}
+
+func TestStatusBarRunningAgents_ReturnsCopy(t *testing.T) {
+	t.Parallel()
+	sb := NewStatusBar(80)
+	sb.SetRunningAgents([]AgentStatus{{ID: "a1", Name: "worker"}})
+	agents := sb.RunningAgents()
+	assert.Len(t, agents, 1)
+	assert.Equal(t, "worker", agents[0].Name)
+	// Mutating the returned slice should not affect the status bar.
+	agents[0].Name = "modified"
+	assert.Equal(t, "worker", sb.RunningAgents()[0].Name)
+}
+
 func TestStatusBarAllFields(t *testing.T) {
 	sb := NewStatusBar(80)
 	sb.SetModel("claude-sonnet-4-5")

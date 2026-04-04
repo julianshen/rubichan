@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"testing"
@@ -708,7 +709,7 @@ func TestModelHandleTurnEventDoneRendersMarkdown(t *testing.T) {
 
 	// Simulate text_delta events with markdown content
 	m.rawAssistant.WriteString("Hello **world**")
-	m.content.WriteString("Hello **world**")
+	m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 
 	ch := make(chan agent.TurnEvent)
 	close(ch)
@@ -1927,8 +1928,9 @@ func TestRenderAssistantMarkdown(t *testing.T) {
 	// Simulate: user prompt is prefix, raw markdown is assistant text.
 	m.content.WriteString("> hello\n")
 	m.assistantStartIdx = m.content.Len()
+	m.assistantEndIdx = m.assistantStartIdx
 	m.rawAssistant.WriteString("Hello **world**")
-	m.content.WriteString("Hello **world**") // raw during streaming
+	m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 
 	m.renderAssistantMarkdown()
 
@@ -1963,10 +1965,11 @@ func TestRenderAssistantMarkdownSanitizesProtocolContent(t *testing.T) {
 
 	m.content.WriteString("> hello\n")
 	m.assistantStartIdx = m.content.Len()
+	m.assistantEndIdx = m.assistantStartIdx
 	m.rawAssistant.WriteString("assistantanalysisThinking..." +
 		"assistantcommentary to=functions.shell json{\"command\":\"ls\"}" +
 		"assistantfinalHello **world**")
-	m.content.WriteString(m.rawAssistant.String())
+	m.replaceAssistantContent(SanitizeAssistantOutput(m.rawAssistant.String()))
 
 	m.renderAssistantMarkdown()
 
@@ -2029,7 +2032,9 @@ func TestModelHandleTurnEventTextDeltaPreservesToolBoxes(t *testing.T) {
 
 	content := m.content.String()
 	assert.Contains(t, content, "Hello there")
-	assert.Contains(t, content, "shell({\"command\":\"ls\"})")
+	// Tool call header now shows formatted args with icon.
+	assert.Contains(t, content, "❯ shell")
+	assert.Contains(t, content, "ls")
 }
 
 func TestModelWikiOverlayRoutesMessages(t *testing.T) {
@@ -2531,4 +2536,194 @@ func TestHandleSubagentDoneRendersNotification(t *testing.T) {
 	um := updated.(*Model)
 	assert.Contains(t, um.content.String(), "bg-42")
 	assert.Contains(t, um.content.String(), "helper")
+}
+
+func TestHandleThinkingDeltaDisplaysContent(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// First thinking delta should add header and content.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "Let me analyze"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	content := um.content.String()
+	assert.Contains(t, content, "Thinking...")
+	assert.Contains(t, content, "Let me analyze")
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Second thinking delta should append.
+	evt2 := TurnEventMsg{Type: "thinking_delta", Text: " the code"}
+	updated2, _ := um.handleTurnEvent(evt2)
+	um2 := updated2.(*Model)
+	content2 := um2.content.String()
+	assert.Contains(t, content2, "Let me analyze the code")
+}
+
+func TestThinkingResetOnTextDelta(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "reasoning here"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send text delta — thinking buffer should be reset.
+	evt2 := TurnEventMsg{Type: "text_delta", Text: "Hello user"}
+	updated2, _ := um.handleTurnEvent(evt2)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+	assert.Contains(t, um2.content.String(), "Hello user")
+}
+
+func TestThinkingResetOnDone(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "reasoning"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send done event — thinking buffer should be reset.
+	doneEvt := TurnEventMsg{Type: "done"}
+	updated2, _ := um.handleTurnEvent(doneEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+}
+
+func TestThinkingFinalizedOnToolCall(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "analyzing code"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send tool_call — thinking should be finalized.
+	toolEvt := TurnEventMsg(agent.TurnEvent{
+		Type: "tool_call",
+		ToolCall: &agent.ToolCallEvent{
+			ID:   "t1",
+			Name: "read_file",
+		},
+	})
+	updated2, _ := um.handleTurnEvent(toolEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+}
+
+func TestLateThinkingDeltaDiscardedAfterText(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send text delta first.
+	textEvt := TurnEventMsg{Type: "text_delta", Text: "Hello"}
+	updated, _ := m.handleTurnEvent(textEvt)
+	um := updated.(*Model)
+	assert.True(t, um.rawAssistant.Len() > 0)
+
+	// Late thinking delta should be silently discarded.
+	thinkEvt := TurnEventMsg{Type: "thinking_delta", Text: "late reasoning"}
+	updated2, _ := um.handleTurnEvent(thinkEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+	assert.NotContains(t, um2.content.String(), "late reasoning")
+}
+
+func TestThinkingResetOnError(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.width = 80
+	m.height = 24
+
+	// Send thinking delta.
+	evt := TurnEventMsg{Type: "thinking_delta", Text: "reasoning"}
+	updated, _ := m.handleTurnEvent(evt)
+	um := updated.(*Model)
+	assert.True(t, um.rawThinking.Len() > 0)
+
+	// Send error — thinking buffer and indices should be reset.
+	errEvt := TurnEventMsg{Type: "error", Error: fmt.Errorf("test error")}
+	updated2, _ := um.handleTurnEvent(errEvt)
+	um2 := updated2.(*Model)
+	assert.Equal(t, 0, um2.rawThinking.Len())
+	assert.Equal(t, 0, um2.thinkingStartIdx)
+	assert.Equal(t, 0, um2.thinkingEndIdx)
+}
+
+// --- Running agents panel tests ---
+
+func TestModelSetRunningAgents(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	agents := []AgentStatus{
+		{ID: "a1", Name: "code-review"},
+		{ID: "a2", Name: "linter"},
+	}
+	m.SetRunningAgents(agents)
+
+	// Agents are stored in the status bar (thread-safe), not in model directly.
+	got := m.statusBar.RunningAgents()
+	assert.Len(t, got, 2)
+	assert.Equal(t, "code-review", got[0].Name)
+
+	barView := m.statusBar.View()
+	assert.Contains(t, barView, "⊕ 2 agents")
+}
+
+func TestModelCtrlATogglesAgentPanel(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.SetRunningAgents([]AgentStatus{
+		{ID: "a1", Name: "code-review"},
+	})
+
+	// First Ctrl+A — show panel.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	um := updated.(*Model)
+	assert.True(t, um.agentPanelVisible)
+	assert.Nil(t, cmd)
+	vpContent := um.viewport.View()
+	assert.Contains(t, vpContent, "Running Agents")
+	assert.Contains(t, vpContent, "code-review")
+	assert.Contains(t, vpContent, "a1")
+
+	// Second Ctrl+A — hide panel.
+	updated, cmd = um.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	um = updated.(*Model)
+	assert.False(t, um.agentPanelVisible)
+	assert.Nil(t, cmd)
+	vpContent = um.viewport.View()
+	assert.NotContains(t, vpContent, "Running Agents")
+}
+
+func TestModelAgentPanelHiddenWhenNoAgents(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.agentPanelVisible = true
+	// No agents set — panel should render empty.
+	panel := m.renderAgentPanel()
+	assert.Empty(t, panel)
+}
+
+func TestModelAgentPanelNotToggledDuringStreaming(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.state = StateStreaming
+	m.SetRunningAgents([]AgentStatus{{ID: "a1", Name: "worker"}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	um := updated.(*Model)
+	assert.False(t, um.agentPanelVisible, "Ctrl+A should not toggle panel during streaming")
 }

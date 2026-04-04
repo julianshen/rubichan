@@ -46,6 +46,16 @@ type SkillInstallState struct {
 	Version     string
 	Source      string
 	InstalledAt time.Time
+	// SourceType is the origin kind: "local", "git", "github", "npm", "registry".
+	SourceType string
+	// SourceURL is the original URL for git/npm/github installs.
+	SourceURL string
+	// SourceRef is the tag, branch, or version pinned at install time.
+	SourceRef string
+	// Category is the skill category from its manifest.
+	Category string
+	// Tags is a comma-separated list of manifest tags.
+	Tags string
 }
 
 // RegistryEntry is a cached skill entry from the remote registry.
@@ -215,11 +225,48 @@ func createTables(db *sql.DB) error {
 		}
 	}
 
+	// Schema migration: add extended source/category/tags columns to skill_state.
+	// SQLite does not support IF NOT EXISTS on ALTER TABLE, so we attempt each
+	// ALTER and ignore the "duplicate column" error if already present.
+	skillStateMigrations := []struct {
+		column string
+		ddl    string
+	}{
+		{"source_type", `ALTER TABLE skill_state ADD COLUMN source_type TEXT NOT NULL DEFAULT 'local'`},
+		{"source_url", `ALTER TABLE skill_state ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`},
+		{"source_ref", `ALTER TABLE skill_state ADD COLUMN source_ref TEXT NOT NULL DEFAULT ''`},
+		{"category", `ALTER TABLE skill_state ADD COLUMN category TEXT NOT NULL DEFAULT ''`},
+		{"tags", `ALTER TABLE skill_state ADD COLUMN tags TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, m := range skillStateMigrations {
+		if err := addColumnIfMissing(db, "skill_state", m.column, m.ddl); err != nil {
+			return err
+		}
+	}
+
 	// Index must be created after migration ensures the column exists.
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_forked_from ON sessions(forked_from)`); err != nil {
 		return fmt.Errorf("create forked_from index: %w", err)
 	}
 
+	return nil
+}
+
+// addColumnIfMissing checks whether a column exists in the given table and, if
+// not, executes the provided ALTER TABLE statement. This is the idiomatic way to
+// perform additive schema migrations in SQLite, which has no IF NOT EXISTS
+// clause for ALTER TABLE … ADD COLUMN.
+func addColumnIfMissing(db *sql.DB, table, column, alterStmt string) error {
+	var count int
+	_ = db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, column,
+	).Scan(&count)
+	if count > 0 {
+		return nil
+	}
+	if _, err := db.Exec(alterStmt); err != nil {
+		return fmt.Errorf("migrate %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 
@@ -332,9 +379,11 @@ func (s *Store) ListApprovals(skill string) ([]Approval, error) {
 // already exists, its record is replaced.
 func (s *Store) SaveSkillState(state SkillInstallState) error {
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO skill_state (name, version, source, installed_at)
-		 VALUES (?, ?, ?, datetime('now'))`,
+		`INSERT OR REPLACE INTO skill_state
+		 (name, version, source, installed_at, source_type, source_url, source_ref, category, tags)
+		 VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
 		state.Name, state.Version, state.Source,
+		state.SourceType, state.SourceURL, state.SourceRef, state.Category, state.Tags,
 	)
 	if err != nil {
 		return fmt.Errorf("save skill state: %w", err)
@@ -348,9 +397,11 @@ func (s *Store) GetSkillState(name string) (*SkillInstallState, error) {
 	var st SkillInstallState
 	var installedAtStr string
 	err := s.db.QueryRow(
-		`SELECT name, version, source, installed_at
+		`SELECT name, version, source, installed_at,
+		        source_type, source_url, source_ref, category, tags
 		 FROM skill_state WHERE name = ?`, name,
-	).Scan(&st.Name, &st.Version, &st.Source, &installedAtStr)
+	).Scan(&st.Name, &st.Version, &st.Source, &installedAtStr,
+		&st.SourceType, &st.SourceURL, &st.SourceRef, &st.Category, &st.Tags)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -364,7 +415,8 @@ func (s *Store) GetSkillState(name string) (*SkillInstallState, error) {
 // ListAllSkillStates returns all installed skill states, sorted by name.
 func (s *Store) ListAllSkillStates() ([]SkillInstallState, error) {
 	rows, err := s.db.Query(
-		`SELECT name, version, source, installed_at
+		`SELECT name, version, source, installed_at,
+		        source_type, source_url, source_ref, category, tags
 		 FROM skill_state ORDER BY name`,
 	)
 	if err != nil {
@@ -376,7 +428,8 @@ func (s *Store) ListAllSkillStates() ([]SkillInstallState, error) {
 	for rows.Next() {
 		var st SkillInstallState
 		var installedAtStr string
-		if err := rows.Scan(&st.Name, &st.Version, &st.Source, &installedAtStr); err != nil {
+		if err := rows.Scan(&st.Name, &st.Version, &st.Source, &installedAtStr,
+			&st.SourceType, &st.SourceURL, &st.SourceRef, &st.Category, &st.Tags); err != nil {
 			return nil, fmt.Errorf("scan skill state: %w", err)
 		}
 		st.InstalledAt, _ = parseSQLiteDatetime(installedAtStr)

@@ -147,8 +147,14 @@ func (s *ShellTool) Name() string {
 	return "shell"
 }
 
+func (s *ShellTool) SearchHint() string {
+	return "terminal bash run deploy npm pip cargo make compile"
+}
+
 func (s *ShellTool) Description() string {
 	return "Execute shell commands. Commands are run via sh -c with a configurable timeout.\n" +
+		"Use for builds, tests, package management, servers, and system operations.\n" +
+		"Do NOT use for: reading/writing files (use file tool), searching code (use search tool), or git queries (use git_status/git_diff/git_log/git_blame tools).\n" +
 		"Example: {\"command\": \"npm install\", \"timeout\": 60000}"
 }
 

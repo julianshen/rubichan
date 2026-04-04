@@ -158,6 +158,13 @@ func WithWorkingDir(dir string) AgentOption {
 	return func(a *Agent) { a.workingDir = dir }
 }
 
+// WithCapabilities sets the model capability flags on the agent. These flags
+// are threaded into CompletionRequests to tune tool dispatch and prompt
+// construction for different model families.
+func WithCapabilities(caps provider.ModelCapabilities) AgentOption {
+	return func(a *Agent) { a.capabilities = caps }
+}
+
 // WorkingDir returns the agent's effective working directory.
 // The value is frozen at construction time and never changes.
 func (a *Agent) WorkingDir() string {
@@ -299,6 +306,8 @@ type Agent struct {
 	userHookRunner   *hooks.UserHookRunner
 	turnNumber       atomic.Int32
 	rateLimiter      *SharedRateLimiter
+	capabilities     provider.ModelCapabilities
+	progress         *ProgressTracker
 }
 
 const maxUIRequestInputBytes = 2048
@@ -318,6 +327,8 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		model:        cfg.Provider.Model,
 		maxTurns:     cfg.Agent.MaxTurns,
 		scratchpad:   NewScratchpad(),
+		progress:     NewProgressTracker(),
+		capabilities: agentsdk.DefaultCapabilities(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -617,6 +628,14 @@ func (a *Agent) ClearConversation() {
 	a.turnMu.Lock()
 	defer a.turnMu.Unlock()
 	a.conversation.Clear()
+}
+
+// InjectUserContext adds a user message to the conversation without starting
+// a turn. Used for shell escape output so the LLM sees it on subsequent turns.
+func (a *Agent) InjectUserContext(text string) {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	a.conversation.AddUser(text)
 }
 
 // ScratchpadAccess returns the agent's scratchpad for external use (e.g., by NotesTool).
@@ -974,6 +993,18 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context) (string, []i
 		}
 	}
 
+	// Progress tracker — auto-populated from tool results, survives compaction.
+	if a.progress != nil {
+		rendered := a.progress.Render()
+		if rendered != "" {
+			pb.AddSection(PromptSection{
+				Name:      "Progress",
+				Content:   rendered,
+				Cacheable: false,
+			})
+		}
+	}
+
 	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
 		for _, f := range builtFragments {
@@ -1036,6 +1067,28 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		budget := a.context.Budget()
 		activeTools, _ := a.deferral.SelectForContext(allToolDefs, budget.EffectiveWindow())
 
+		if a.capabilities.MaxToolCount > 0 {
+			activeTools = tools.ApplyMaxToolCount(activeTools, a.capabilities.MaxToolCount)
+		}
+
+		// Append tool discovery hint for models that benefit from explicit guidance.
+		if a.capabilities.NeedsToolDiscoveryHint {
+			toolHint := a.deferral.ToolSummary(activeTools)
+			systemPrompt = systemPrompt + "\n\n" + toolHint
+		}
+
+		// Branch on native tool use capability: models without native support
+		// receive tool definitions rendered as text in the system prompt instead.
+		useNativeTools := a.capabilities.SupportsNativeToolUse
+		var reqTools []provider.ToolDef
+		if useNativeTools {
+			reqTools = activeTools
+		} else {
+			// Render tools into system prompt as text for non-native models.
+			toolPrompt := tools.RenderToolsAsText(activeTools)
+			systemPrompt = systemPrompt + "\n\n" + toolPrompt
+		}
+
 		// Measure component-level token usage before the LLM call.
 		// Skill prompt fragments are included in systemPrompt via PromptBuilder
 		// but tracked separately for budget visibility.
@@ -1050,8 +1103,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		req := provider.CompletionRequest{
 			Model:            a.model,
 			System:           systemPrompt,
-			Messages:         a.conversation.Messages(),
-			Tools:            activeTools,
+			Messages:         normalizeMessages(a.conversation.Messages()),
+			Tools:            reqTools,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,
 		}
@@ -1081,10 +1134,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var streamErr bool
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
+		var thinkingBuf string
 
 		finalizeTool := func() {
 			if currentTool != nil {
-				currentTool.Input = json.RawMessage(toolInputBuf)
+				if toolInputBuf != "" {
+					currentTool.Input = json.RawMessage(toolInputBuf)
+				}
 				pendingTools = append(pendingTools, *currentTool)
 				blocks = append(blocks, provider.ContentBlock{
 					Type:  "tool_use",
@@ -1113,6 +1169,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			totalOutputTokens += event.OutputTokens
 
 			switch event.Type {
+			case "thinking_delta":
+				thinkingBuf += event.Text
+				ch <- TurnEvent{Type: "thinking_delta", Text: event.Text}
+
 			case "text_delta":
 				if currentTool != nil {
 					// Accumulating tool input JSON fragments
@@ -1137,8 +1197,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				finalizeTool()
 				// Start new tool accumulation
 				currentTool = &provider.ToolUseBlock{
-					ID:   event.ToolUse.ID,
-					Name: event.ToolUse.Name,
+					ID:    event.ToolUse.ID,
+					Name:  event.ToolUse.Name,
+					Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 				}
 
 			case "error":
@@ -1150,14 +1211,70 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
+		// Capture accumulated text before finalizing, for text-based tool extraction.
+		accumulatedText := currentTextBuf
+
+		// Detect truncated tool calls: if the stream ended with a partially
+		// accumulated tool whose input JSON is invalid, discard it and warn.
+		if currentTool != nil && toolInputBuf != "" && !json.Valid([]byte(toolInputBuf)) {
+			ch <- TurnEvent{Type: "text_delta", Text: "\n⚠️ Tool call truncated by output limit.\n"}
+			currentTool = nil
+			toolInputBuf = ""
+		}
+
 		// Finalize any remaining text or tool
 		finalizeText()
 		finalizeTool()
+
+		// Prepend thinking block if the model produced extended thinking output.
+		if thinkingBuf != "" {
+			blocks = append([]provider.ContentBlock{{
+				Type: agentsdk.BlockTypeThinking,
+				Text: thinkingBuf,
+			}}, blocks...)
+		}
 
 		// On stream error, discard partial blocks to prevent conversation corruption
 		if streamErr {
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
+		}
+
+		// For non-native models, parse <tool_use> XML blocks from the text response
+		// and inject them into pendingTools so the normal execution path handles them.
+		if !useNativeTools && len(pendingTools) == 0 && accumulatedText != "" {
+			textCalls := tools.ParseTextToolCalls(accumulatedText)
+			if len(textCalls) == 0 && strings.Contains(accumulatedText, "<tool_use>") {
+				a.logger.Warn("model attempted tool call in text but XML parsing found no valid blocks")
+			}
+			if len(textCalls) > 0 {
+				// Strip <tool_use> XML from the text block so the model
+				// doesn't see its own XML format echoed back on the next turn.
+				for i := range blocks {
+					if blocks[i].Type == "text" {
+						blocks[i].Text = strings.TrimSpace(tools.StripToolUseXML(blocks[i].Text))
+					}
+				}
+			}
+			for _, tc := range textCalls {
+				pendingTools = append(pendingTools, tc)
+				blocks = append(blocks, provider.ContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: tc.Input,
+				})
+			}
+		}
+
+		// If the LLM returned no content at all (no text, no tool calls),
+		// emit an error and add a placeholder assistant message to keep the
+		// conversation valid (every user message must be followed by an
+		// assistant message).
+		if len(blocks) == 0 && len(pendingTools) == 0 {
+			placeholder := "[empty response from model]"
+			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: placeholder})
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
 		}
 
 		// Add assistant message with accumulated blocks
@@ -1183,6 +1300,17 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
+		}
+
+		// Check if the model signaled task completion via task_complete tool.
+		// All sibling tools in the same batch are executed before exiting —
+		// the model often pairs task_complete with a final write or commit.
+		for _, tc := range pendingTools {
+			if tc.Name == tools.TaskCompleteName {
+				a.executeTools(ctx, ch, pendingTools)
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				return
+			}
 		}
 
 		// Execute tool calls — parallelize auto-approved tools when possible.
@@ -1223,6 +1351,20 @@ func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// recordToolProgress classifies a tool call and records it in the progress
+// tracker. Called after each tool result is committed to the conversation.
+func (a *Agent) recordToolProgress(tc provider.ToolUseBlock, r toolExecResult) {
+	if a.progress == nil {
+		return
+	}
+	action, detail := classifyToolAction(tc.Name, tc.Input)
+	outcome := "ok"
+	if r.isError {
+		outcome = "error: " + truncateResult(r.content, 53)
+	}
+	a.progress.Record(int(a.turnNumber.Load()), action, detail, outcome)
 }
 
 func (a *Agent) buildSkillTriggerContext(lastUserMessage string) skills.TriggerContext {
@@ -1432,6 +1574,9 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
+
+		// Record progress for compaction-resistant tracking.
+		a.recordToolProgress(pendingTools[i], r)
 	}
 
 	// Snapshot after all tool results so a resume picks up from here.
@@ -1459,6 +1604,9 @@ func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- Tur
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		ch <- r.event
+
+		// Record progress for compaction-resistant tracking.
+		a.recordToolProgress(planned.tc, r)
 	}
 
 	// Snapshot after all tool results so a resume picks up from here.

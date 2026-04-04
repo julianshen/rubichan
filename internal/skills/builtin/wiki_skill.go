@@ -129,7 +129,7 @@ func (t *generateWikiTool) Execute(ctx context.Context, input json.RawMessage) (
 
 	psr := parser.NewParser()
 
-	err := wiki.Run(ctx, wiki.Config{
+	result, err := wiki.Run(ctx, wiki.Config{
 		Dir:         dir,
 		OutputDir:   outDir,
 		Format:      format,
@@ -141,6 +141,6 @@ func (t *generateWikiTool) Execute(ctx context.Context, input json.RawMessage) (
 	}
 
 	return tools.ToolResult{
-		Content: fmt.Sprintf("Wiki generated successfully in %s (format: %s)", outDir, format),
+		Content: fmt.Sprintf("Wiki generated successfully in %s (%d documents, format: %s)", result.OutputDir, result.Documents, result.Format),
 	}, nil
 }

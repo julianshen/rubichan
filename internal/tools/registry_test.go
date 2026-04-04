@@ -154,6 +154,39 @@ func TestRegistryAll(t *testing.T) {
 	assert.True(t, names["tool_b"])
 }
 
+// mockToolWithHint implements both Tool and SearchHinter.
+type mockToolWithHint struct {
+	mockTool
+	hint string
+}
+
+func (m *mockToolWithHint) SearchHint() string { return m.hint }
+
+func TestRegistryAllPopulatesSearchHint(t *testing.T) {
+	reg := NewRegistry()
+
+	// Tool without SearchHinter — SearchHint should be empty.
+	plain := newMockTool("plain", "A plain tool")
+	require.NoError(t, reg.Register(plain))
+
+	// Tool with SearchHinter — SearchHint should be populated.
+	hinted := &mockToolWithHint{
+		mockTool: *newMockTool("hinted", "A hinted tool"),
+		hint:     "api endpoint webhook",
+	}
+	require.NoError(t, reg.Register(hinted))
+
+	defs := reg.All()
+	assert.Len(t, defs, 2)
+
+	defMap := make(map[string]string)
+	for _, d := range defs {
+		defMap[d.Name] = d.SearchHint
+	}
+	assert.Empty(t, defMap["plain"], "plain tool should have no search hint")
+	assert.Equal(t, "api endpoint webhook", defMap["hinted"])
+}
+
 func TestRegistryAlias(t *testing.T) {
 	reg := NewRegistry()
 	tool := newMockTool("shell", "Execute shell commands")
@@ -271,6 +304,44 @@ func TestRegistryDefaultAliases(t *testing.T) {
 
 	// All() still returns only canonical tools.
 	assert.Len(t, reg.All(), 4)
+}
+
+func TestRegistryHallucinationAliases(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "shell")))
+	require.NoError(t, reg.Register(newMockTool("file", "file")))
+	require.NoError(t, reg.Register(newMockTool("process", "process")))
+
+	reg.RegisterDefaultAliases()
+
+	// Shell hallucination aliases — Qwen 3.5 and similar models.
+	for _, alias := range []string{"tool_shell", "execute_command"} {
+		got, ok := reg.Get(alias)
+		assert.True(t, ok, "alias %q should resolve to shell", alias)
+		if ok {
+			assert.Equal(t, "shell", got.Name(), "alias %q should resolve to shell", alias)
+		}
+	}
+
+	// File hallucination aliases.
+	got, ok := reg.Get("tool_file")
+	assert.True(t, ok, "alias tool_file should resolve to file")
+	if ok {
+		assert.Equal(t, "file", got.Name())
+	}
+
+	// Process hallucination alias.
+	got, ok = reg.Get("tool_process")
+	assert.True(t, ok, "alias tool_process should resolve to process")
+	if ok {
+		assert.Equal(t, "process", got.Name())
+	}
+
+	// tool_search must NOT be an alias — it is a real tool name.
+	// Verify no alias mapping exists for it (it won't resolve to anything
+	// unless a canonical tool named "tool_search" is registered).
+	_, ok = reg.Get("tool_search")
+	assert.False(t, ok, "tool_search must not be aliased; it is a real tool name")
 }
 
 func TestRegistryNames(t *testing.T) {

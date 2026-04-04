@@ -124,7 +124,7 @@ func TestHeadlessRunnerSummaryForToolOnlyRun(t *testing.T) {
 	result, err := r.Run(context.Background(), "inspect app", "generic")
 	require.NoError(t, err)
 
-	assert.Empty(t, result.Response)
+	assert.Equal(t, result.Summary, result.Response)
 	assert.Contains(t, result.Summary, "Run completed without a textual response after 1 tool call")
 }
 
@@ -148,7 +148,7 @@ func TestHeadlessRunnerTreatsToolOnlyMaxTurnsAsIncompleteSuccess(t *testing.T) {
 	result, err := r.Run(context.Background(), "verify app", "generic")
 	require.NoError(t, err)
 
-	assert.Empty(t, result.Response)
+	assert.Equal(t, result.Summary, result.Response)
 	assert.Empty(t, result.Error)
 	assert.Contains(t, result.Summary, "Run completed through tool evidence")
 }
@@ -171,7 +171,7 @@ func TestHeadlessRunnerFrontendTaskRequiresBuildEvidenceForToolOnlySuccess(t *te
 	result, err := r.Run(context.Background(), "Create a React Vite todo app with shadcn styling", "generic")
 	require.NoError(t, err)
 
-	assert.Empty(t, result.Response)
+	assert.Equal(t, result.Summary, result.Response)
 	assert.Contains(t, result.Error, "max turns")
 	assert.Contains(t, result.Summary, "Run failed after 1 tool call")
 }
@@ -194,7 +194,7 @@ func TestHeadlessRunnerFrontendTaskAllowsToolOnlySuccessWithBuildEvidence(t *tes
 	result, err := r.Run(context.Background(), "Refactor this React Vite frontend app and verify build", "generic")
 	require.NoError(t, err)
 
-	assert.Empty(t, result.Response)
+	assert.Equal(t, result.Summary, result.Response)
 	assert.Empty(t, result.Error)
 	assert.Contains(t, result.Summary, "Run completed through tool evidence")
 }
@@ -223,7 +223,7 @@ func TestHeadlessRunnerFrontendTaskRequiresBuildAfterLatestEdit(t *testing.T) {
 	result, err := r.Run(context.Background(), "Improve this React Vite todo app UI and verify build", "generic")
 	require.NoError(t, err)
 
-	assert.Empty(t, result.Response)
+	assert.Equal(t, result.Summary, result.Response)
 	assert.Contains(t, result.Error, "max turns")
 	assert.Contains(t, result.Summary, "Run failed after 2 tool call")
 }
@@ -734,6 +734,50 @@ func TestIsDependencyResolutionCommandRecognizesNpmCI(t *testing.T) {
 		Input: json.RawMessage(`{"command":"npm ci"}`),
 	}
 	assert.True(t, isDependencyResolutionCommand(tc))
+}
+
+func TestIsDependencyResolutionCommandRecognizesSharedPatterns(t *testing.T) {
+	for _, command := range []string{
+		"pnpm install",
+		"yarn install --frozen-lockfile",
+		"go mod tidy",
+		"python -m pip install -r requirements.txt",
+		"python3 -m pip install fastapi uvicorn",
+		"uv sync",
+		"poetry install --no-interaction",
+	} {
+		tc := output.ToolCallLog{Name: "shell", Input: json.RawMessage(`{"command":"` + command + `"}`)}
+		assert.True(t, isDependencyResolutionCommand(tc), command)
+	}
+}
+
+func TestBackendDependencyFailureReasonIncludesCommandAndErrorSnippet(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{
+			Name:    "shell",
+			Input:   json.RawMessage(`{"command":"go mod tidy"}`),
+			Result:  "go: module example.com/foo: not found",
+			IsError: true,
+		},
+	}
+
+	reason := backendDependencyFailureReason(toolCalls)
+	assert.Contains(t, reason, "dependency resolution command errored (go mod tidy)")
+	assert.Contains(t, reason, "not found")
+}
+
+func TestBackendVerificationVerdictDependencyUnrecognizedReason(t *testing.T) {
+	toolCalls := []output.ToolCallLog{
+		{
+			Name:   "shell",
+			Input:  json.RawMessage(`{"command":"pnpm i"}`),
+			Result: "resolved dependencies",
+		},
+	}
+
+	verdict, reason := backendVerificationVerdict(toolCalls)
+	assert.Equal(t, "failed", verdict)
+	assert.Contains(t, reason, "dependency resolution command unrecognized (pnpm i)")
 }
 
 type errMaxTurnsExceededStub struct{}

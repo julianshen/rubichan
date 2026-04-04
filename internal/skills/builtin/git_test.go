@@ -126,6 +126,7 @@ func initTestGitRepo(t *testing.T) string {
 		{"git", "init"},
 		{"git", "config", "user.email", "test@test.com"},
 		{"git", "config", "user.name", "Test"},
+		{"git", "config", "commit.gpgsign", "false"},
 		{"git", "commit", "--allow-empty", "-m", "initial commit"},
 		{"git", "commit", "--allow-empty", "-m", "second commit"},
 	}

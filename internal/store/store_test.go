@@ -1063,3 +1063,111 @@ func TestDeleteSessionBlockedByFork(t *testing.T) {
 	err = s.DeleteSession("src-sess")
 	require.NoError(t, err)
 }
+
+func TestSkillInstallStateExtendedFields(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	want := SkillInstallState{
+		Name:       "my-skill",
+		Version:    "1.2.3",
+		Source:     "github",
+		SourceType: "github",
+		SourceURL:  "https://github.com/example/my-skill",
+		SourceRef:  "v1.2.3",
+		Category:   "utilities",
+		Tags:       "cli,productivity",
+	}
+
+	require.NoError(t, s.SaveSkillState(want))
+
+	got, err := s.GetSkillState("my-skill")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	assert.Equal(t, want.Name, got.Name)
+	assert.Equal(t, want.Version, got.Version)
+	assert.Equal(t, want.Source, got.Source)
+	assert.Equal(t, want.SourceType, got.SourceType)
+	assert.Equal(t, want.SourceURL, got.SourceURL)
+	assert.Equal(t, want.SourceRef, got.SourceRef)
+	assert.Equal(t, want.Category, got.Category)
+	assert.Equal(t, want.Tags, got.Tags)
+}
+
+func TestSkillInstallStateExtendedFieldsInList(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	states := []SkillInstallState{
+		{
+			Name:       "alpha",
+			Version:    "0.1.0",
+			Source:     "local",
+			SourceType: "local",
+			SourceURL:  "",
+			SourceRef:  "",
+			Category:   "dev",
+			Tags:       "tools",
+		},
+		{
+			Name:       "beta",
+			Version:    "2.0.0",
+			Source:     "git",
+			SourceType: "git",
+			SourceURL:  "https://git.example.com/beta.git",
+			SourceRef:  "main",
+			Category:   "infra",
+			Tags:       "ops,monitoring",
+		},
+	}
+
+	for _, st := range states {
+		require.NoError(t, s.SaveSkillState(st))
+	}
+
+	list, err := s.ListAllSkillStates()
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+
+	// ListAllSkillStates returns results sorted by name: alpha, beta.
+	assert.Equal(t, states[0].SourceType, list[0].SourceType)
+	assert.Equal(t, states[0].SourceURL, list[0].SourceURL)
+	assert.Equal(t, states[0].SourceRef, list[0].SourceRef)
+	assert.Equal(t, states[0].Category, list[0].Category)
+	assert.Equal(t, states[0].Tags, list[0].Tags)
+
+	assert.Equal(t, states[1].SourceType, list[1].SourceType)
+	assert.Equal(t, states[1].SourceURL, list[1].SourceURL)
+	assert.Equal(t, states[1].SourceRef, list[1].SourceRef)
+	assert.Equal(t, states[1].Category, list[1].Category)
+	assert.Equal(t, states[1].Tags, list[1].Tags)
+}
+
+func TestSkillInstallStateDefaultsForMissingColumns(t *testing.T) {
+	// This test verifies that existing rows (before migration) read back with
+	// sensible zero values for the new columns when defaults are not set.
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Insert a minimal row bypassing the Go API to simulate a pre-migration row.
+	_, err = s.db.Exec(
+		`INSERT INTO skill_state (name, version, source) VALUES (?, ?, ?)`,
+		"legacy-skill", "0.0.1", "local",
+	)
+	require.NoError(t, err)
+
+	got, err := s.GetSkillState("legacy-skill")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	// New columns should have their DEFAULT values.
+	assert.Equal(t, "local", got.SourceType)
+	assert.Equal(t, "", got.SourceURL)
+	assert.Equal(t, "", got.SourceRef)
+	assert.Equal(t, "", got.Category)
+	assert.Equal(t, "", got.Tags)
+}

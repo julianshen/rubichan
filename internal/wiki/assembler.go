@@ -2,21 +2,23 @@ package wiki
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/julianshen/rubichan/internal/security"
 )
 
-// Assemble combines analysis results, diagrams, skill sections, and security
-// findings into a set of wiki documents. It always produces at least the
-// _index.md page.
-func Assemble(analysis *AnalysisResult, diagrams []Diagram, skillSections []SkillWikiSection, findings []security.Finding) ([]Document, error) {
+// Assemble combines analysis results, diagrams, skill sections, security
+// findings, and scanned files into a set of wiki documents. It always produces
+// at least the _index.md page.
+func Assemble(analysis *AnalysisResult, diagrams []Diagram, skillSections []SkillWikiSection, findings []security.Finding, files []ScannedFile) ([]Document, error) {
 	var docs []Document
 
 	docs = append(docs, buildIndexPage(analysis))
 	docs = append(docs, buildArchitecturePages(analysis, diagrams)...)
-	docs = append(docs, buildModulePages(analysis)...)
+	docs = append(docs, buildModulePages(analysis, files)...)
 	docs = append(docs, buildCodeStructurePage(analysis))
 	docs = append(docs, buildSecurityPage(findings))
 
@@ -119,9 +121,17 @@ func buildArchitecturePages(analysis *AnalysisResult, diagrams []Diagram) []Docu
 }
 
 // buildModulePages creates modules/_index.md and one page per module.
-func buildModulePages(analysis *AnalysisResult) []Document {
+// files is used to enrich each module page with test coverage indicators and
+// public interface summaries.
+func buildModulePages(analysis *AnalysisResult, files []ScannedFile) []Document {
 	if len(analysis.Modules) == 0 {
 		return nil
+	}
+
+	// Index files by module for O(1) lookup when building per-module pages.
+	filesByModule := make(map[string][]ScannedFile, len(files))
+	for _, f := range files {
+		filesByModule[f.Module] = append(filesByModule[f.Module], f)
 	}
 
 	var docs []Document
@@ -145,6 +155,8 @@ func buildModulePages(analysis *AnalysisResult) []Document {
 	// One page per module
 	for _, m := range analysis.Modules {
 		slug := sanitizeID(m.Module)
+		moduleFiles := filesByModule[m.Module]
+
 		var b strings.Builder
 		fmt.Fprintf(&b, "# %s\n\n", m.Module)
 
@@ -169,6 +181,23 @@ func buildModulePages(analysis *AnalysisResult) []Document {
 			b.WriteString("\n\n")
 		}
 
+		// Testing section: detect test files within the module.
+		b.WriteString("## Testing\n\n")
+		if hasTestFiles(moduleFiles) {
+			b.WriteString("Test files detected for this module.\n\n")
+		} else {
+			b.WriteString("No test files detected for this module.\n\n")
+		}
+
+		// Public Interface section: list exported function names.
+		if exported := exportedFunctions(moduleFiles); len(exported) > 0 {
+			b.WriteString("## Public Interface\n\n")
+			for _, name := range exported {
+				fmt.Fprintf(&b, "- `%s`\n", name)
+			}
+			b.WriteString("\n")
+		}
+
 		docs = append(docs, Document{
 			Path:    "modules/" + slug + ".md",
 			Title:   m.Module,
@@ -177,6 +206,65 @@ func buildModulePages(analysis *AnalysisResult) []Document {
 	}
 
 	return docs
+}
+
+// testFileSuffixes lists base-name suffixes that indicate test files.
+var testFileSuffixes = []string{
+	"_test.go",
+	".test.ts",
+	".spec.ts",
+}
+
+// testFilePrefixes lists base-name prefixes that indicate test files.
+var testFilePrefixes = []string{
+	"test_",
+}
+
+// hasTestFiles returns true if any of the given files look like test files.
+// It matches on the base name: suffixes (_test.go, .test.ts, .spec.ts) and
+// prefixes (test_*.py, test_*.go, etc.).
+func hasTestFiles(files []ScannedFile) bool {
+	for _, f := range files {
+		base := filepath.Base(f.Path)
+		for _, suf := range testFileSuffixes {
+			if strings.HasSuffix(base, suf) {
+				return true
+			}
+		}
+		for _, pre := range testFilePrefixes {
+			if strings.HasPrefix(base, pre) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// exportedFunctions returns the names of exported (capitalised) functions
+// across all files in the module, preserving declaration order and deduplicating.
+func exportedFunctions(files []ScannedFile) []string {
+	seen := make(map[string]bool)
+	var names []string
+	for _, f := range files {
+		for _, fn := range f.Functions {
+			if isExported(fn.Name) && !seen[fn.Name] {
+				seen[fn.Name] = true
+				names = append(names, fn.Name)
+			}
+		}
+	}
+	return names
+}
+
+// isExported reports whether a function name is exported (starts with an
+// uppercase letter), following Go conventions which also apply to many other
+// languages' public interfaces.
+func isExported(name string) bool {
+	if name == "" {
+		return false
+	}
+	r := []rune(name)[0]
+	return unicode.IsUpper(r)
 }
 
 // buildCodeStructurePage creates code-structure/overview.md with key abstractions.

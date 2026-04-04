@@ -1,12 +1,14 @@
 package hooks
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,13 +19,15 @@ const defaultTimeout = 30 * time.Second
 
 // Event name constants for user-facing hook event configuration.
 const (
-	EventPreTool      = "pre_tool"
-	EventPostTool     = "post_tool"
-	EventPreEdit      = "pre_edit"
-	EventPostEdit     = "post_edit"
-	EventPreShell     = "pre_shell"
-	EventSessionStart = "session_start"
-	EventSetup        = "setup"
+	EventPreTool       = "pre_tool"
+	EventPostTool      = "post_tool"
+	EventPreEdit       = "pre_edit"
+	EventPostEdit      = "post_edit"
+	EventPreShell      = "pre_shell"
+	EventSessionStart  = "session_start"
+	EventSetup         = "setup"
+	EventTaskCreated   = "task_created"
+	EventTaskCompleted = "task_completed"
 )
 
 // ParseHookTimeout parses a duration string, returning defaultTimeout (30s)
@@ -42,6 +46,7 @@ func ParseHookTimeout(s string) time.Duration {
 type UserHookConfig struct {
 	Event       string
 	Pattern     string
+	If          string
 	Command     string
 	Description string
 	Timeout     time.Duration
@@ -106,6 +111,11 @@ func (r *UserHookRunner) registerInto(reg hookRegistrar) {
 				return skills.HookResult{}, nil
 			}
 
+			// If "if" pattern is set, check if tool_name + input matches.
+			if hookCfg.If != "" && !matchesIfPattern(hookCfg.If, event.Data) {
+				return skills.HookResult{}, nil // skip
+			}
+
 			cmd := expandTemplateVars(hookCfg.Command, event)
 
 			eventCtx := event.Ctx
@@ -117,19 +127,150 @@ func (r *UserHookRunner) registerInto(reg hookRegistrar) {
 
 			c := exec.CommandContext(ctx, "sh", "-c", cmd)
 			c.Dir = workDir
-			output, err := c.CombinedOutput()
+
+			// Pipe event data as JSON to stdin when there's tool context.
+			if len(event.Data) > 0 {
+				hookInput := map[string]any{
+					"event": hookCfg.Event,
+				}
+				for k, v := range event.Data {
+					hookInput[k] = v
+				}
+				if inputJSON, err := json.Marshal(hookInput); err == nil {
+					c.Stdin = bytes.NewReader(inputJSON)
+				}
+			}
+
+			var stdout, stderr bytes.Buffer
+			c.Stdout = &stdout
+			c.Stderr = &stderr
+
+			err := c.Run()
 
 			if err != nil && isPreEvent {
-				log.Printf("user hook %q blocked: %s (output: %s)", hookCfg.Description, err, strings.TrimSpace(string(output)))
+				combined := stdout.String() + stderr.String()
+				log.Printf("user hook %q blocked: %s (output: %s)", hookCfg.Description, err, strings.TrimSpace(combined))
 				return skills.HookResult{Cancel: true}, nil
 			}
 			if err != nil {
 				log.Printf("user hook %q failed (non-blocking): %s", hookCfg.Description, err)
+				return skills.HookResult{}, nil
+			}
+
+			// Try to parse stdout as JSON for structured hook responses.
+			output := stdout.Bytes()
+			var hookResponse struct {
+				Decision string         `json:"decision"`
+				Modified map[string]any `json:"modified"`
+				Message  string         `json:"message"`
+			}
+			if json.Unmarshal(output, &hookResponse) == nil {
+				if hookResponse.Decision == "block" {
+					return skills.HookResult{Cancel: true}, nil
+				}
+				if hookResponse.Modified != nil {
+					return skills.HookResult{Modified: hookResponse.Modified}, nil
+				}
 			}
 
 			return skills.HookResult{}, nil
 		})
 	}
+}
+
+// matchesIfPattern checks whether the event data matches the hook's "if"
+// pattern. The pattern format is "ToolName(glob)" where the tool name is
+// matched against the tool_name field and the glob is matched against the
+// primary input field (command for shell, path for file). A bare glob
+// without parentheses matches against the primary input of any tool.
+func matchesIfPattern(ifPattern string, data map[string]any) bool {
+	if ifPattern == "" {
+		return true
+	}
+
+	toolName, _ := data["tool_name"].(string)
+	inputStr, _ := data["input"].(string)
+
+	var parsed map[string]any
+	if inputStr != "" {
+		_ = json.Unmarshal([]byte(inputStr), &parsed)
+	}
+
+	// Extract primary input field based on tool type.
+	primaryInput := extractPrimaryInput(toolName, parsed)
+
+	// Check for ToolName(pattern) format.
+	if idx := strings.Index(ifPattern, "("); idx >= 0 && strings.HasSuffix(ifPattern, ")") {
+		patternTool := strings.ToLower(ifPattern[:idx])
+		glob := ifPattern[idx+1 : len(ifPattern)-1]
+
+		// Map common aliases.
+		actualTool := strings.ToLower(toolName)
+		toolAliases := map[string]string{
+			"bash": "shell", "sh": "shell",
+			"file": "file", "read": "file", "write": "file",
+		}
+		if alias, ok := toolAliases[patternTool]; ok {
+			patternTool = alias
+		}
+		if alias, ok := toolAliases[actualTool]; ok {
+			actualTool = alias
+		}
+
+		if patternTool != actualTool {
+			return false
+		}
+		return globMatch(glob, primaryInput)
+	}
+
+	// Bare glob — match against primary input regardless of tool.
+	return globMatch(ifPattern, primaryInput)
+}
+
+// extractPrimaryInput returns the primary input field for a tool: command for
+// shell, path for file.
+func extractPrimaryInput(toolName string, parsed map[string]any) string {
+	if parsed == nil {
+		return ""
+	}
+	switch strings.ToLower(toolName) {
+	case "shell", "bash":
+		if cmd, ok := parsed["command"].(string); ok {
+			return cmd
+		}
+	case "file":
+		if p, ok := parsed["path"].(string); ok {
+			return p
+		}
+	}
+	// Fallback: try "command", then "path", then first string value.
+	if cmd, ok := parsed["command"].(string); ok {
+		return cmd
+	}
+	if p, ok := parsed["path"].(string); ok {
+		return p
+	}
+	return ""
+}
+
+// globMatch matches a pattern against a value. Uses filepath.Match for
+// standard globs (e.g., "*.go"), plus prefix matching when the pattern
+// ends with "*" (e.g., "git *" matches "git status").
+func globMatch(pattern, value string) bool {
+	if pattern == "" {
+		return true
+	}
+	if matched, err := filepath.Match(pattern, value); err == nil && matched {
+		return true
+	}
+	if matched, err := filepath.Match(pattern, filepath.Base(value)); err == nil && matched {
+		return true
+	}
+	// Prefix matching: trailing "*" matches any continuation.
+	if strings.HasSuffix(pattern, "*") {
+		return strings.HasPrefix(value, pattern[:len(pattern)-1])
+	}
+	return false
 }
 
 // mapEventToPhase converts a user-facing event name to a HookPhase, a flag
@@ -153,6 +294,10 @@ func mapEventToPhase(event string) (skills.HookPhase, bool, func(skills.HookEven
 		return skills.HookOnConversationStart, false, noFilter
 	case EventSetup:
 		return skills.HookOnSetup, false, noFilter
+	case EventTaskCreated:
+		return skills.HookOnTaskCreated, false, noFilter
+	case EventTaskCompleted:
+		return skills.HookOnTaskCompleted, false, noFilter
 	default:
 		return 0, false, nil
 	}

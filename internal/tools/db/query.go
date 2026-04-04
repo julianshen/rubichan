@@ -49,6 +49,10 @@ func NewQueryTool(workDir string) *QueryTool {
 // Name returns the tool name.
 func (t *QueryTool) Name() string { return "db_query" }
 
+func (t *QueryTool) SearchHint() string {
+	return "select table schema data inspect"
+}
+
 // Description returns a human-readable description of the tool.
 func (t *QueryTool) Description() string {
 	return "Execute a read-only SQL query against SQLite, Postgres, or MySQL and return a truncated result set."

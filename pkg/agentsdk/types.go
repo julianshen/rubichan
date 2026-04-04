@@ -4,15 +4,72 @@ package agentsdk
 
 import "encoding/json"
 
+// ModelCapabilities describes the per-model capability flags used to tune
+// tool dispatch, prompt construction, and agent loop behavior.
+//
+// When SupportsNativeToolUse is false, the agent renders tool definitions as
+// text in the system prompt and parses XML <tool_use> blocks from the model's
+// response. In that mode MaxToolCount still limits which tools are rendered,
+// but NeedsToolDiscoveryHint has no additional effect since all rendered tools
+// are already described in the prompt.
+//
+// Use DefaultCapabilities to obtain a safe starting point; the zero value
+// disables all capabilities, which is almost never desired.
+type ModelCapabilities struct {
+	// SupportsNativeToolUse indicates the model can process a tools[] API parameter.
+	SupportsNativeToolUse bool
+	// SupportsSystemPrompt indicates the model accepts a system prompt.
+	SupportsSystemPrompt bool
+	// NeedsToolDiscoveryHint indicates the system prompt should include a
+	// tool inventory section to guide tool selection.
+	NeedsToolDiscoveryHint bool
+	// MaxToolCount is the maximum number of tools to send to the model.
+	// 0 means unlimited. Negative values are treated as 0.
+	MaxToolCount int
+	// ReasoningEffort controls thinking depth: "low", "medium", "high", or
+	// empty (provider default). Mapped to provider-specific parameters when
+	// the provider supports extended thinking (e.g. Anthropic budget_tokens).
+	ReasoningEffort string
+}
+
+// DefaultCapabilities returns ModelCapabilities with the safe defaults:
+// native tool use and system prompts enabled, no tool count limit.
+// Use DetectCapabilities for model-specific tuning; this function provides
+// the base that DetectCapabilities and the Agent constructor both start from.
+func DefaultCapabilities() ModelCapabilities {
+	return ModelCapabilities{
+		SupportsNativeToolUse: true,
+		SupportsSystemPrompt:  true,
+	}
+}
+
+// Content block type constants.
+const (
+	BlockTypeText       = "text"
+	BlockTypeToolUse    = "tool_use"
+	BlockTypeToolResult = "tool_result"
+	BlockTypeThinking   = "thinking"
+)
+
+// Stream event type constants.
+const (
+	EventTextDelta     = "text_delta"
+	EventThinkingDelta = "thinking_delta"
+	EventToolUse       = "tool_use"
+	EventStop          = "stop"
+	EventError         = "error"
+)
+
 // CompletionRequest represents a request to an LLM for completion.
 type CompletionRequest struct {
-	Model            string    `json:"model"`
-	System           string    `json:"system,omitempty"`
-	Messages         []Message `json:"messages"`
-	Tools            []ToolDef `json:"tools,omitempty"`
-	MaxTokens        int       `json:"max_tokens"`
-	Temperature      *float64  `json:"temperature,omitempty"`
-	CacheBreakpoints []int     `json:"cache_breakpoints,omitempty"` // byte offsets in System for cache hints
+	Model            string            `json:"model"`
+	System           string            `json:"system,omitempty"`
+	Messages         []Message         `json:"messages"`
+	Tools            []ToolDef         `json:"tools,omitempty"`
+	MaxTokens        int               `json:"max_tokens"`
+	Temperature      *float64          `json:"temperature,omitempty"`
+	CacheBreakpoints []int             `json:"cache_breakpoints,omitempty"` // byte offsets in System for cache hints
+	Capabilities     ModelCapabilities `json:"capabilities,omitempty"`
 }
 
 // Message represents a single message in a conversation.
@@ -59,6 +116,7 @@ type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	SearchHint  string          `json:"-"` // keywords for tool_search discovery; never sent to providers
 }
 
 // ToolUseBlock represents a tool use block from the LLM response.

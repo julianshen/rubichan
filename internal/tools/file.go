@@ -4,10 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+// LSPNotifier provides post-write diagnostic feedback from a language server.
+// Implementations should notify the server of file changes and collect any
+// resulting diagnostics (errors/warnings) to surface to the LLM.
+type LSPNotifier interface {
+	NotifyAndCollectDiagnostics(ctx context.Context, filePath string, content []byte) ([]string, error)
+}
 
 // fileInput represents the input for the file tool.
 type fileInput struct {
@@ -22,6 +31,9 @@ type fileInput struct {
 type FileTool struct {
 	rootDir     string
 	diffTracker *DiffTracker
+	lspNotifier LSPNotifier
+	readHashes  map[string]uint64 // path -> content hash from last read
+	readHashMu  sync.Mutex
 }
 
 // NewFileTool creates a new FileTool that operates within the given root directory.
@@ -37,7 +49,7 @@ func NewFileTool(rootDir string) *FileTool {
 	if err != nil {
 		resolved = abs
 	}
-	return &FileTool{rootDir: resolved}
+	return &FileTool{rootDir: resolved, readHashes: make(map[string]uint64)}
 }
 
 // SetDiffTracker attaches a DiffTracker to record file changes.
@@ -45,12 +57,24 @@ func (f *FileTool) SetDiffTracker(dt *DiffTracker) {
 	f.diffTracker = dt
 }
 
+// SetLSPNotifier attaches an LSPNotifier that will be called after file writes
+// to collect diagnostics from the language server.
+func (f *FileTool) SetLSPNotifier(n LSPNotifier) {
+	f.lspNotifier = n
+}
+
 func (f *FileTool) Name() string {
 	return "file"
 }
 
+func (f *FileTool) SearchHint() string {
+	return "create modify content text configuration template"
+}
+
 func (f *FileTool) Description() string {
-	return "Read, write, or patch files. Supports operations: read, write, patch.\n" +
+	return "Read, write, or patch files. This is the preferred tool for all file operations — use it instead of shell commands like cat, head, tail, sed, or echo.\n" +
+		"Supports operations: read (view file contents), write (create or overwrite a file), patch (apply targeted edits without rewriting the full file).\n" +
+		"Always read a file before patching it to understand the existing content.\n" +
 		"Examples:\n" +
 		"  Read:  {\"operation\": \"read\", \"path\": \"src/main.ts\"}\n" +
 		"  Write: {\"operation\": \"write\", \"path\": \"src/App.tsx\", \"content\": \"...\"}\n" +
@@ -90,7 +114,7 @@ func (f *FileTool) InputSchema() json.RawMessage {
 // ExecuteStream implements StreamingTool. It emits Begin/End events
 // around file operations. For read operations on large files, it
 // emits the content as Delta events.
-func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
+func (f *FileTool) ExecuteStream(ctx context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error) {
 	var in fileInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
@@ -111,9 +135,9 @@ func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit 
 			emit(ToolEvent{Stage: EventDelta, Content: result.Content})
 		}
 	case "write":
-		result, err = f.writeFile(fullPath, in.Content)
+		result, err = f.writeFile(ctx, fullPath, in.Content)
 	case "patch":
-		result, err = f.patchFile(fullPath, in.OldString, in.NewString)
+		result, err = f.patchFile(ctx, fullPath, in.OldString, in.NewString)
 	default:
 		result = ToolResult{
 			Content: fmt.Sprintf("unknown operation: %s", in.Operation),
@@ -125,7 +149,7 @@ func (f *FileTool) ExecuteStream(_ context.Context, input json.RawMessage, emit 
 	return result, err
 }
 
-func (f *FileTool) Execute(_ context.Context, input json.RawMessage) (ToolResult, error) {
+func (f *FileTool) Execute(ctx context.Context, input json.RawMessage) (ToolResult, error) {
 	var in fileInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return ToolResult{Content: fmt.Sprintf("invalid input: %s", err), IsError: true}, nil
@@ -140,9 +164,9 @@ func (f *FileTool) Execute(_ context.Context, input json.RawMessage) (ToolResult
 	case "read":
 		return f.readFile(fullPath)
 	case "write":
-		return f.writeFile(fullPath, in.Content)
+		return f.writeFile(ctx, fullPath, in.Content)
 	case "patch":
-		return f.patchFile(fullPath, in.OldString, in.NewString)
+		return f.patchFile(ctx, fullPath, in.OldString, in.NewString)
 	default:
 		return ToolResult{
 			Content: fmt.Sprintf("unknown operation: %s", in.Operation),
@@ -221,10 +245,45 @@ func (f *FileTool) readFile(path string) (ToolResult, error) {
 	if err != nil {
 		return ToolResult{Content: err.Error(), IsError: true}, nil
 	}
+
+	hash := hashContent(data)
+	f.readHashMu.Lock()
+	prev, seen := f.readHashes[path]
+	f.readHashes[path] = hash
+	// Cap map size to prevent unbounded growth in long sessions.
+	if len(f.readHashes) > 500 {
+		for k := range f.readHashes {
+			if k != path {
+				delete(f.readHashes, k)
+				break
+			}
+		}
+	}
+	f.readHashMu.Unlock()
+
+	if seen && prev == hash {
+		relPath, _ := filepath.Rel(f.rootDir, path)
+		lineCount := strings.Count(string(data), "\n") + 1
+		summary := fmt.Sprintf("File %s unchanged since last read (%d lines). Content already in conversation context.", relPath, lineCount)
+		return ToolResult{Content: summary}, nil
+	}
+
 	return ToolResult{Content: string(data)}, nil
 }
 
-func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
+// hashContent returns a FNV-1a hash of the given data.
+func hashContent(data []byte) uint64 {
+	h := fnv.New64a()
+	h.Write(data)
+	return h.Sum64()
+}
+
+func (f *FileTool) writeFile(ctx context.Context, path, content string) (ToolResult, error) {
+	// Invalidate read cache for this path since content is changing.
+	f.readHashMu.Lock()
+	delete(f.readHashes, path)
+	f.readHashMu.Unlock()
+
 	// Check if the file already exists to determine create vs modify.
 	_, statErr := os.Stat(path)
 	existed := statErr == nil
@@ -251,13 +310,28 @@ func (f *FileTool) writeFile(path, content string) (ToolResult, error) {
 		})
 	}
 
-	return ToolResult{Content: fmt.Sprintf("wrote %s", relPath)}, nil
+	result := ToolResult{Content: fmt.Sprintf("wrote %s", relPath)}
+
+	// Collect LSP diagnostics after write.
+	if f.lspNotifier != nil {
+		diags, err := f.lspNotifier.NotifyAndCollectDiagnostics(ctx, path, []byte(content))
+		if err == nil && len(diags) > 0 {
+			result.Content += "\n\n\u26a0\ufe0f LSP diagnostics:\n" + strings.Join(diags, "\n")
+		}
+	}
+
+	return result, nil
 }
 
-func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, error) {
+func (f *FileTool) patchFile(ctx context.Context, path, oldString, newString string) (ToolResult, error) {
 	if oldString == "" {
 		return ToolResult{Content: "old_string must not be empty", IsError: true}, nil
 	}
+
+	// Invalidate read cache for this path since content is changing.
+	f.readHashMu.Lock()
+	delete(f.readHashes, path)
+	f.readHashMu.Unlock()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -289,5 +363,15 @@ func (f *FileTool) patchFile(path, oldString, newString string) (ToolResult, err
 		})
 	}
 
-	return ToolResult{Content: fmt.Sprintf("patched %s", relPath)}, nil
+	result := ToolResult{Content: fmt.Sprintf("patched %s", relPath)}
+
+	// Collect LSP diagnostics after patch.
+	if f.lspNotifier != nil {
+		diags, err := f.lspNotifier.NotifyAndCollectDiagnostics(ctx, path, []byte(patched))
+		if err == nil && len(diags) > 0 {
+			result.Content += "\n\n\u26a0\ufe0f LSP diagnostics:\n" + strings.Join(diags, "\n")
+		}
+	}
+
+	return result, nil
 }

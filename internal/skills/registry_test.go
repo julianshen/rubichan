@@ -304,6 +304,9 @@ func TestRegistryGitInstall(t *testing.T) {
 			"GIT_AUTHOR_EMAIL=test@test.com",
 			"GIT_COMMITTER_NAME=test",
 			"GIT_COMMITTER_EMAIL=test@test.com",
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=commit.gpgsign",
+			"GIT_CONFIG_VALUE_0=false",
 		)
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "command %v failed: %s", args, string(out))

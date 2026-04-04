@@ -30,6 +30,7 @@ import (
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
+	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/permissions"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/pipeline"
@@ -82,12 +83,15 @@ var (
 	configPath       string
 	modelFlag        string
 	providerFlag     string
+	apiBaseFlag      string
+	apiKeyFlag       string
 	autoApprove      bool
 	noAltScreen      bool
 	noMouse          bool
 	plainTUI         bool
 	plainInteractive bool
 	debugMode        bool
+	testFlag         bool
 	approveCwd       bool
 	eventLogPath     string
 
@@ -114,8 +118,15 @@ var (
 	uploadSARIFFlag bool
 	annotationsFlag bool
 
+	wikiFlag            bool
+	wikiOutFlag         string
+	wikiFormatFlag      string
+	wikiConcurrencyFlag int
+
 	activeSessionLogMu   sync.RWMutex
 	activeSessionLogPath string
+
+	newProviderWithDebug = provider.NewProviderWithDebug
 )
 
 func versionString() string {
@@ -197,20 +208,20 @@ func wireSandboxProxy(cfg *config.Config, shellTool *tools.ShellTool) (cleanup f
 // Returns a cleanup function that must be deferred, or nil if LSP is disabled.
 // The cleanup function uses context.Background() because it runs during defers
 // after the caller's context is already cancelled — it always needs its full timeout.
-func wireLSPTools(cfg *config.Config, registry *tools.Registry, toolsCfg ToolsConfig, cwd string) (cleanup func(), err error) {
+func wireLSPTools(cfg *config.Config, registry *tools.Registry, toolsCfg ToolsConfig, cwd string) (mgr *lsp.Manager, cleanup func(), err error) {
 	if !cfg.LSP.IsEnabled() {
-		return nil, nil
+		return nil, nil, nil
 	}
 	lspRegistry := lsp.NewRegistry()
 	lspManager := lsp.NewManager(lspRegistry, cwd, cfg.LSP.IsAutoInstall())
 	for _, tool := range lsp.AllTools(lspManager) {
 		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {
-				return nil, fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
+				return nil, nil, fmt.Errorf("registering LSP tool %s: %w", tool.Name(), err)
 			}
 		}
 	}
-	return func() {
+	return lspManager, func() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := lspManager.Shutdown(shutCtx); err != nil {
@@ -476,6 +487,20 @@ func main() {
 		Short: "An AI coding assistant",
 		Long:  "rubichan — an interactive AI coding assistant powered by LLMs.",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if testFlag {
+				return runModelCapabilityTest()
+			}
+			if wikiFlag {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("getting working directory: %w", err)
+				}
+				cfg, err := loadConfig()
+				if err != nil {
+					return err
+				}
+				return runWikiHeadless(cfg, cwd, wikiOutFlag, wikiFormatFlag, wikiConcurrencyFlag)
+			}
 			if headless {
 				return runHeadless()
 			}
@@ -488,12 +513,15 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to config file")
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "", "override model name")
 	rootCmd.PersistentFlags().StringVar(&providerFlag, "provider", "", "override provider name")
+	rootCmd.PersistentFlags().StringVar(&apiBaseFlag, "api-base", "", "base URL for OpenAI-compatible API (e.g. http://localhost:1234/v1)")
+	rootCmd.PersistentFlags().StringVar(&apiKeyFlag, "api-key", "", "API key for the provider (use 'none' for local servers)")
 	rootCmd.PersistentFlags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all tool calls (dangerous: enables RCE)")
 	rootCmd.PersistentFlags().BoolVar(&noAltScreen, "no-alt-screen", false, "run interactive TUI in the normal terminal buffer")
 	rootCmd.PersistentFlags().BoolVar(&noMouse, "no-mouse", false, "disable mouse tracking in the interactive TUI")
 	rootCmd.PersistentFlags().BoolVar(&plainTUI, "plain-tui", false, "run a reduced interactive TUI optimized for PTY capture and automation")
 	rootCmd.PersistentFlags().BoolVar(&plainInteractive, "plain-interactive", false, "run a non-TUI interactive REPL that shares the interactive agent, skills, and approval flow")
 	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "enable interactive debug surfaces and mirror logs to stderr")
+	rootCmd.PersistentFlags().BoolVar(&testFlag, "test", false, "test configured provider/model capabilities and connectivity")
 	rootCmd.PersistentFlags().BoolVar(&approveCwd, "approve-cwd", false, "approve access to the current working directory in headless mode without enabling full auto-approval")
 	rootCmd.PersistentFlags().StringVar(&eventLogPath, "event-log", "", "write structured interactive session events to the given JSONL file")
 	rootCmd.PersistentFlags().BoolVar(&headless, "headless", false, "run in non-interactive headless mode")
@@ -515,6 +543,10 @@ func main() {
 	rootCmd.PersistentFlags().IntVar(&prNumberFlag, "pr", 0, "explicit PR/MR number (overrides auto-detection)")
 	rootCmd.PersistentFlags().BoolVar(&uploadSARIFFlag, "upload-sarif", false, "upload SARIF to GitHub Code Scanning")
 	rootCmd.PersistentFlags().BoolVar(&annotationsFlag, "annotations", false, "emit GitHub Actions workflow annotations")
+	rootCmd.PersistentFlags().BoolVar(&wikiFlag, "wiki", false, "run wiki generation (implies --headless, --approve-cwd)")
+	rootCmd.PersistentFlags().StringVar(&wikiOutFlag, "wiki-out", "docs/wiki", "output directory for wiki files")
+	rootCmd.PersistentFlags().StringVar(&wikiFormatFlag, "wiki-format", "raw-md", "wiki output format: raw-md, hugo, docusaurus")
+	rootCmd.PersistentFlags().IntVar(&wikiConcurrencyFlag, "wiki-concurrency", 5, "max parallel LLM calls for wiki generation")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
@@ -543,6 +575,125 @@ func main() {
 		fmt.Fprint(os.Stderr, persona.ErrorMessage(err.Error()))
 		os.Exit(1)
 	}
+}
+
+func runModelCapabilityTest() error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
+	p, err := newProviderWithDebug(cfg, debugMode)
+	if err != nil {
+		return fmt.Errorf("creating provider: %w", err)
+	}
+
+	return executeModelCapabilityTest(context.Background(), os.Stdout, p, cfg.Provider.Default, cfg.Provider.Model)
+}
+
+func executeModelCapabilityTest(ctx context.Context, out io.Writer, p provider.LLMProvider, providerName, model string) error {
+	if p == nil {
+		return fmt.Errorf("provider is nil")
+	}
+	if strings.TrimSpace(model) == "" {
+		return fmt.Errorf("model is not configured")
+	}
+
+	caps := provider.DetectCapabilities(providerName, model)
+	fmt.Fprintf(out, "Provider: %s\nModel: %s\n", providerName, model)
+	fmt.Fprintf(out, "Capabilities: native_tool_use=%t system_prompt=%t tool_discovery_hint=%t max_tool_count=%d reasoning_effort=%q\n",
+		caps.SupportsNativeToolUse,
+		caps.SupportsSystemPrompt,
+		caps.NeedsToolDiscoveryHint,
+		caps.MaxToolCount,
+		caps.ReasoningEffort,
+	)
+
+	req := provider.CompletionRequest{
+		Model:     model,
+		Messages:  []provider.Message{provider.NewUserMessage("Reply with exactly: OK")},
+		MaxTokens: 16,
+	}
+
+	stream, err := p.Stream(ctx, req)
+	if err != nil {
+		return fmt.Errorf("model connectivity test failed: %w", err)
+	}
+
+	var sawStop bool
+	for evt := range stream {
+		switch evt.Type {
+		case "text_delta":
+			if evt.Text != "" {
+				fmt.Fprint(out, evt.Text)
+			}
+		case "stop":
+			sawStop = true
+		case "error":
+			return fmt.Errorf("model stream test failed: %w", evt.Error)
+		}
+	}
+
+	if !sawStop {
+		return fmt.Errorf("model stream ended without stop event")
+	}
+
+	if caps.SupportsNativeToolUse {
+		toolSupported, err := checkToolSupport(ctx, p, model)
+		if err != nil {
+			return err
+		}
+		if !toolSupported {
+			fmt.Fprintln(out, "Tool support: INCONCLUSIVE (no tool_use emitted during probe)")
+		} else {
+			fmt.Fprintln(out, "Tool support: PASS")
+		}
+	} else {
+		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
+	}
+
+	fmt.Fprintln(out, "\nModel test: PASS")
+	return nil
+}
+
+func checkToolSupport(ctx context.Context, p provider.LLMProvider, model string) (bool, error) {
+	req := provider.CompletionRequest{
+		Model: model,
+		Messages: []provider.Message{provider.NewUserMessage(
+			"Call the capability_probe tool with an empty JSON object and do not output any text.",
+		)},
+		Tools: []provider.ToolDef{{
+			Name:        "capability_probe",
+			Description: "Capability probe tool for testing native tool use support",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		}},
+		MaxTokens: 64,
+	}
+
+	stream, err := p.Stream(ctx, req)
+	if err != nil {
+		return false, fmt.Errorf("tool support test request failed: %w", err)
+	}
+
+	var sawStop bool
+	for evt := range stream {
+		switch evt.Type {
+		case "tool_use":
+			if evt.ToolUse != nil && evt.ToolUse.Name == "capability_probe" {
+				return true, nil
+			}
+		case "error":
+			return false, fmt.Errorf("tool support stream failed: %w", evt.Error)
+		case "stop":
+			sawStop = true
+		}
+	}
+
+	if !sawStop {
+		return false, fmt.Errorf("tool support stream ended without stop event")
+	}
+
+	return false, nil
 }
 
 // parseSkillsFlag splits a comma-separated skills string into a slice of names.
@@ -1088,6 +1239,15 @@ func loadConfig() (*config.Config, error) {
 		cfg.Provider.Default = providerFlag
 	}
 
+	// When --api-base is provided, ensure an OpenAI-compatible entry exists
+	// for the current provider so users don't have to write TOML config for
+	// simple local setups (e.g. rubichan --provider my-server --api-base http://localhost:1234/v1 --model coder).
+	if apiBaseFlag != "" {
+		applyAPIBaseFlag(cfg)
+	} else if apiKeyFlag != "" {
+		applyAPIKeyFlag(cfg)
+	}
+
 	// Resolve Ollama URL once for all downstream checks.
 	ollamaURL := cfg.Provider.Ollama.BaseURL
 	if ollamaURL == "" {
@@ -1110,6 +1270,67 @@ func loadConfig() (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// applyAPIBaseFlag injects or updates an OpenAI-compatible provider entry so
+// that --api-base (and optionally --api-key) work without requiring TOML
+// config. If the current default provider already has a matching entry, its
+// BaseURL is overwritten; otherwise a new entry is appended.
+func applyAPIBaseFlag(cfg *config.Config) {
+	name := cfg.Provider.Default
+	// For built-in providers that don't use the openai_compatible list,
+	// synthesise a provider name so the entry can be looked up later.
+	if name == "anthropic" || name == "ollama" || name == "" {
+		name = "custom"
+		cfg.Provider.Default = name
+	}
+
+	apiKey := apiKeyFlag
+	for i, oc := range cfg.Provider.OpenAI {
+		if oc.Name == name {
+			cfg.Provider.OpenAI[i].BaseURL = apiBaseFlag
+			if apiKey != "" {
+				cfg.Provider.OpenAI[i].APIKeySource = "config"
+				cfg.Provider.OpenAI[i].APIKey = apiKey
+			}
+			return
+		}
+	}
+
+	// No existing entry — create one. Default API key to "none" so local
+	// servers that need no auth work without an env-var lookup failure.
+	key := apiKey
+	if key == "" {
+		key = "none"
+	}
+	cfg.Provider.OpenAI = append(cfg.Provider.OpenAI, config.OpenAICompatibleConfig{
+		Name:         name,
+		BaseURL:      apiBaseFlag,
+		APIKeySource: "config",
+		APIKey:       key,
+	})
+}
+
+// applyAPIKeyFlag overrides the API key for the current default provider
+// when --api-key is given without --api-base.
+func applyAPIKeyFlag(cfg *config.Config) {
+	name := cfg.Provider.Default
+	switch name {
+	case "anthropic":
+		cfg.Provider.Anthropic.APIKeySource = "config"
+		cfg.Provider.Anthropic.APIKey = apiKeyFlag
+		return
+	case "ollama":
+		// Ollama doesn't use API keys; ignore silently.
+		return
+	}
+	for i, oc := range cfg.Provider.OpenAI {
+		if oc.Name == name {
+			cfg.Provider.OpenAI[i].APIKeySource = "config"
+			cfg.Provider.OpenAI[i].APIKey = apiKeyFlag
+			return
+		}
+	}
 }
 
 func runInteractive() error {
@@ -1183,7 +1404,7 @@ func runInteractive() error {
 	}
 
 	// Create provider
-	p, err := provider.NewProvider(cfg)
+	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
 	}
@@ -1205,8 +1426,9 @@ func runInteractive() error {
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
 	allowed := parseToolsFlag(toolsFlag)
+	modelCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: detectModelCapabilities(cfg),
+		ModelCapabilities: modelCaps,
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -1226,6 +1448,7 @@ func runInteractive() error {
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
 	opts = appendWorkingDirOption(opts, cwd)
+	opts = append(opts, agent.WithCapabilities(modelCaps))
 	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
 	}
@@ -1552,6 +1775,13 @@ func runInteractive() error {
 		}
 	}
 
+	// Register task_complete tool for explicit loop termination.
+	if toolsCfg.ShouldEnable("task_complete") {
+		if err := registry.Register(tools.NewCompletionSignalTool()); err != nil {
+			return fmt.Errorf("registering task_complete tool: %w", err)
+		}
+	}
+
 	// Wire the agent into the TUI model now that both exist.
 	model.SetAgent(a)
 	model.SetWikiConfig(tui.WikiCommandConfig{
@@ -1643,7 +1873,7 @@ func runHeadless() error {
 		}
 	}
 	// Create provider
-	p, err := provider.NewProvider(cfg)
+	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
 	}
@@ -1651,8 +1881,9 @@ func runHeadless() error {
 	registry := tools.NewRegistry()
 	allowed := parseToolsFlag(toolsFlag)
 	headlessDiffTracker := tools.NewDiffTracker()
+	headlessCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
 	headlessToolsCfg := ToolsConfig{
-		ModelCapabilities: detectModelCapabilities(cfg),
+		ModelCapabilities: headlessCaps,
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -1673,6 +1904,7 @@ func runHeadless() error {
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithDiffTracker(headlessDiffTracker))
 	opts = appendWorkingDirOption(opts, cwd)
+	opts = append(opts, agent.WithCapabilities(headlessCaps))
 	if err := wireAppleDev(cwd, registry, headlessToolsCfg); err != nil {
 		return err
 	}
@@ -1866,6 +2098,13 @@ func runHeadless() error {
 	if headlessToolsCfg.ShouldEnable("notes") {
 		if err := registry.Register(tools.NewNotesTool(a.ScratchpadAccess())); err != nil {
 			return fmt.Errorf("registering notes tool: %w", err)
+		}
+	}
+
+	// Register task_complete tool for explicit loop termination.
+	if headlessToolsCfg.ShouldEnable("task_complete") {
+		if err := registry.Register(tools.NewCompletionSignalTool()); err != nil {
+			return fmt.Errorf("registering task_complete tool: %w", err)
 		}
 	}
 
@@ -2103,11 +2342,6 @@ func parseToolsFlag(s string) map[string]bool {
 	return m
 }
 
-// ModelCapabilities describes tool-related capabilities of the active model.
-type ModelCapabilities struct {
-	SupportsToolUse bool
-}
-
 // UserToolPrefs captures user-level tool preferences from config/runtime.
 type UserToolPrefs struct {
 	Enabled  map[string]bool
@@ -2129,7 +2363,7 @@ type ProjectContext struct {
 // 4) Project context constraints
 // 5) CLI whitelist overrides
 type ToolsConfig struct {
-	ModelCapabilities ModelCapabilities
+	ModelCapabilities provider.ModelCapabilities
 	UserPreferences   UserToolPrefs
 	ProjectContext    ProjectContext
 	FeatureFlags      map[string]bool
@@ -2140,36 +2374,10 @@ type ToolsConfig struct {
 	HeadlessMode bool
 }
 
-// detectModelCapabilities derives tool-related model capability flags from
-// runtime config/provider metadata.
-func detectModelCapabilities(cfg *config.Config) ModelCapabilities {
-	if cfg == nil {
-		return ModelCapabilities{SupportsToolUse: false}
-	}
-
-	switch cfg.Provider.Default {
-	case "anthropic", "ollama":
-		return ModelCapabilities{SupportsToolUse: true}
-	default:
-		// OpenAI-compatible providers are configured by name under
-		// provider.openai_compatible. If the default provider matches one of
-		// those configured entries, treat it as tool-capable.
-		for _, oc := range cfg.Provider.OpenAI {
-			if oc.Name == cfg.Provider.Default {
-				return ModelCapabilities{SupportsToolUse: true}
-			}
-		}
-		// Unknown provider type: treat as not tool-capable.
-		return ModelCapabilities{SupportsToolUse: false}
-	}
-}
-
-// ShouldEnable returns true if a tool should be registered.
+// ShouldEnable returns true if a tool should be registered. Tools are always
+// registered regardless of SupportsNativeToolUse — the agent loop handles
+// the distinction between native tool_use and text-based XML fallback.
 func (tc ToolsConfig) ShouldEnable(name string) bool {
-	if !tc.ModelCapabilities.SupportsToolUse {
-		return false
-	}
-
 	if tc.FeatureFlags != nil {
 		if enabled, ok := tc.FeatureFlags["tools."+name]; ok && !enabled {
 			return false
@@ -2245,8 +2453,9 @@ type coreToolsResult struct {
 func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig, diffTracker *tools.DiffTracker, shellTimeout time.Duration) (*coreToolsResult, error) {
 	result := &coreToolsResult{}
 
+	var fileTool *tools.FileTool
 	if toolsCfg.ShouldEnable("file") {
-		fileTool := tools.NewFileTool(cwd)
+		fileTool = tools.NewFileTool(cwd)
 		fileTool.SetDiffTracker(diffTracker)
 		if err := registry.Register(fileTool); err != nil {
 			return nil, fmt.Errorf("registering file tool: %w", err)
@@ -2288,10 +2497,15 @@ func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config,
 		return nil, err
 	}
 
-	if cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
+	if lspManager, cleanup, err := wireLSPTools(cfg, registry, toolsCfg, cwd); err != nil {
 		return nil, err
-	} else if cleanup != nil {
-		result.cleanups = append(result.cleanups, cleanup)
+	} else {
+		if cleanup != nil {
+			result.cleanups = append(result.cleanups, cleanup)
+		}
+		if lspManager != nil && fileTool != nil {
+			fileTool.SetLSPNotifier(&lsp.ManagerNotifier{Manager: lspManager})
+		}
 	}
 
 	return result, nil
@@ -2805,6 +3019,52 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 		}
 	}
 
+	return nil
+}
+
+// runWikiHeadless runs the wiki generation pipeline directly without an agent loop.
+// It creates an LLM provider, a parser, and delegates to wiki.Run, emitting
+// progress updates to stderr.
+func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency int) error {
+	p, err := provider.NewProviderWithDebug(cfg, debugMode)
+	if err != nil {
+		return fmt.Errorf("creating provider: %w", err)
+	}
+
+	llm := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	par := parser.NewParser()
+
+	wikiCfg := wiki.Config{
+		Dir:         cwd,
+		OutputDir:   outDir,
+		Format:      format,
+		Concurrency: concurrency,
+		ProgressFunc: func(stage string, current, total int) {
+			if total > 0 {
+				fmt.Fprintf(os.Stderr, "[%s] %d/%d\n", stage, current, total)
+			} else {
+				fmt.Fprintf(os.Stderr, "[%s]\n", stage)
+			}
+		},
+	}
+
+	result, err := wiki.Run(context.Background(), wikiCfg, llm, par)
+	if err != nil {
+		return err
+	}
+
+	switch outputFlag {
+	case "json":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(result); encErr != nil {
+			return fmt.Errorf("encoding wiki result: %w", encErr)
+		}
+	default:
+		fmt.Fprintf(os.Stdout, "Wiki generated: %d documents, %d diagrams — output: %s (format: %s, %.1fs)\n",
+			result.Documents, result.Diagrams, result.OutputDir, result.Format,
+			float64(result.DurationMs)/1000)
+	}
 	return nil
 }
 

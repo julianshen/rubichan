@@ -265,7 +265,8 @@ func TestStreamAPIError(t *testing.T) {
 
 	_, err := p.Stream(context.Background(), req)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "429")
+	assert.Contains(t, err.Error(), "Rate limited")
+	assert.Contains(t, err.Error(), "Rate limit exceeded")
 }
 
 func TestMessageConversion(t *testing.T) {
@@ -733,6 +734,25 @@ func TestToolDefinitionsSortedAlphabetically(t *testing.T) {
 	assert.Equal(t, "file", parsed.Tools[0].Function.Name)
 	assert.Equal(t, "search", parsed.Tools[1].Function.Name)
 	assert.Equal(t, "shell", parsed.Tools[2].Function.Name)
+}
+
+func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
+	p := &Provider{}
+
+	msg := provider.Message{
+		Role: "user",
+		Content: []provider.ContentBlock{
+			{Type: "text", Text: "hello"},
+			{Type: "text", Text: ""},
+			{Type: "text", Text: "world"},
+		},
+	}
+
+	msgs := p.convertUserMessages(msg)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "user", msgs[0].Role)
+	// Empty text block should be filtered; result is "helloworld" not "helloworld".
+	assert.Equal(t, "helloworld", msgs[0].Content)
 }
 
 func floatPtr(f float64) *float64 { return &f }

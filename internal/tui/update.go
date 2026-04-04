@@ -239,8 +239,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Ctrl+T toggles collapse/expand on all tool results.
-	if msg.Type == tea.KeyCtrlT && m.state == StateInput && m.content.ToolResultCount() > 0 {
+	// Ctrl+T toggles collapse/expand on all tool results and thinking blocks.
+	if msg.Type == tea.KeyCtrlT && m.state == StateInput && m.content.HasCollapsible() {
 		m.content.ToggleAllToolResults()
 		m.viewport.SetContent(m.viewportContent())
 		return m, nil
@@ -255,6 +255,13 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if msg.Type == tea.KeyCtrlG && m.state == StateInput && strings.TrimSpace(m.diffSummary) != "" {
 		m.diffExpanded = !m.diffExpanded
+		m.viewport.SetContent(m.viewportContent())
+		return m, nil
+	}
+
+	// Ctrl+A toggles the running agents detail panel.
+	if msg.Type == tea.KeyCtrlA && m.state == StateInput {
+		m.agentPanelVisible = !m.agentPanelVisible
 		m.viewport.SetContent(m.viewportContent())
 		return m, nil
 	}
@@ -284,6 +291,51 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setContentAndAutoScroll()
 			cmd := m.handleCommandParts(directive.Command, directive.Args)
 			return m, cmd
+		}
+
+		// Shell escape: "! command" runs directly and shows output as tool result.
+		if strings.HasPrefix(text, "!") {
+			shellCmd := strings.TrimSpace(text[1:])
+			if shellCmd != "" {
+				result := ExecuteShellCommand(shellCmd)
+
+				lineCount := strings.Count(result.Output, "\n") + 1
+				if result.Output == "" {
+					lineCount = 0
+				}
+				cr := CollapsibleToolResult{
+					Name:      "shell",
+					Args:      fmt.Sprintf(`{"command":"%s"}`, shellCmd),
+					Content:   result.Output,
+					LineCount: lineCount,
+					IsError:   result.IsError,
+					Collapsed: false,
+					ToolType:  ToolTypeShell,
+				}
+				m.content.AppendToolResult(cr)
+
+				// Emit session event so event logs capture the shell escape.
+				m.emitSessionEvent(session.NewToolResultEvent(
+					fmt.Sprintf("shell-escape-%d", m.content.ToolResultCount()-1),
+					"shell",
+					result.Output,
+					result.IsError,
+				))
+
+				// Inject into conversation so the LLM sees it on subsequent turns.
+				if m.agent != nil {
+					contextMsg := fmt.Sprintf("[User ran shell command]\n$ %s\n[Output]\n%s", shellCmd, result.Output)
+					if result.IsError {
+						contextMsg += fmt.Sprintf("\n[Exit code: %d]", result.ExitCode)
+					}
+					m.agent.InjectUserContext(contextMsg)
+				}
+
+				m.setContentAndAutoScroll()
+				return m, nil
+			}
+			// Bare "!" with no command — ignore.
+			return m, nil
 		}
 
 		if strings.HasPrefix(text, "/") {
@@ -412,7 +464,29 @@ func (m *Model) setContentAndAutoScroll() {
 // handleTurnEvent processes a streaming TurnEvent from the agent.
 func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
+	case "thinking_delta":
+		// Discard late thinking deltas that arrive after text output.
+		if m.rawAssistant.Len() > 0 {
+			return m, m.waitForEvent()
+		}
+		if m.rawThinking.Len() == 0 {
+			header := styleTextDim.Render("💭 Thinking...")
+			m.content.WriteString("\n" + header + "\n")
+			m.thinkingStartIdx = m.content.LenWithWidth(m.width)
+			m.thinkingEndIdx = m.thinkingStartIdx
+			m.thinkingActive = true
+		}
+		m.rawThinking.WriteString(msg.Text)
+		rendered := styleTextDim.Render(m.rawThinking.String())
+		m.replaceContentRange(&m.thinkingStartIdx, &m.thinkingEndIdx, rendered)
+		m.setContentAndAutoScroll()
+		return m, m.waitForEvent()
+
 	case "text_delta":
+		// Finalize thinking section into a collapsible block when text output begins.
+		if m.thinkingActive && m.rawAssistant.Len() == 0 {
+			m.finalizeThinking()
+		}
 		if m.rawAssistant.Len() == 0 {
 			m.assistantStartIdx = m.content.LenWithWidth(m.width)
 			m.assistantEndIdx = m.assistantStartIdx
@@ -426,6 +500,9 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "tool_call":
+		if m.thinkingActive {
+			m.finalizeThinking()
+		}
 		name := ""
 		args := ""
 		if msg.ToolCall != nil {
@@ -558,6 +635,14 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if msg.Error != nil {
 			errMsg = msg.Error.Error()
 		}
+		// Remove streaming thinking indicator if active.
+		if m.thinkingActive {
+			m.replaceContentRange(&m.thinkingStartIdx, &m.thinkingEndIdx, "")
+		}
+		m.thinkingActive = false
+		m.rawThinking.Reset()
+		m.thinkingStartIdx = 0
+		m.thinkingEndIdx = 0
 		m.rawAssistant.Reset()
 		m.content.WriteString(persona.ErrorMessage(errMsg))
 		m.setContentAndAutoScroll()
@@ -572,6 +657,12 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 			m.statusBar.SetElapsed(time.Since(m.turnStartTime))
 			m.turnStartTime = time.Time{}
 		}
+		if m.thinkingActive {
+			m.finalizeThinking()
+		}
+		m.rawThinking.Reset()
+		m.thinkingStartIdx = 0
+		m.thinkingEndIdx = 0
 		raw := m.rawAssistant.String()
 		visible := SanitizeAssistantOutput(raw)
 		m.renderAssistantMarkdown()
@@ -654,19 +745,39 @@ func (m *Model) renderAssistantMarkdown() {
 // replaceAssistantContent swaps only the assistant's display slice, preserving
 // any tool output appended after the assistant started streaming.
 func (m *Model) replaceAssistantContent(text string) {
-	contentStr := m.content.Render(m.width)
-	if m.assistantStartIdx > len(contentStr) {
+	m.replaceContentRange(&m.assistantStartIdx, &m.assistantEndIdx, text)
+}
+
+// replaceContentRange replaces a tracked content slice identified by start/end
+// index pointers. Bounds clamping is handled by ReplaceTextRangeWithWidth.
+func (m *Model) replaceContentRange(startIdx, endIdx *int, text string) {
+	m.content.ReplaceTextRangeWithWidth(m.width, *startIdx, *endIdx, text)
+	*endIdx = *startIdx + len(text)
+}
+
+// finalizeThinking replaces the streaming "💭 Thinking..." indicator with a
+// collapsible thinking block. The block defaults to collapsed so the user sees
+// a compact summary and can expand it on demand.
+func (m *Model) finalizeThinking() {
+	m.thinkingActive = false
+	thinkingText := m.rawThinking.String()
+	m.rawThinking.Reset()
+
+	// Remove the streaming indicator text by replacing it with empty string.
+	m.replaceContentRange(&m.thinkingStartIdx, &m.thinkingEndIdx, "")
+
+	if thinkingText == "" {
 		return
 	}
-	if m.assistantEndIdx < m.assistantStartIdx {
-		m.assistantEndIdx = len(contentStr)
-	}
-	if m.assistantEndIdx > len(contentStr) {
-		m.assistantEndIdx = len(contentStr)
-	}
 
-	m.content.ReplaceTextRangeWithWidth(m.width, m.assistantStartIdx, m.assistantEndIdx, text)
-	m.assistantEndIdx = m.assistantStartIdx + len(text)
+	lineCount := strings.Count(thinkingText, "\n") + 1
+	ct := CollapsibleThinking{
+		Content:   thinkingText,
+		LineCount: lineCount,
+		Collapsed: true,
+	}
+	m.content.AppendThinking(ct)
+	m.setContentAndAutoScroll()
 }
 
 func (m *Model) advanceRalphLoop(raw string) tea.Cmd {

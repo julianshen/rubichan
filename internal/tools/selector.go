@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -28,6 +29,7 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 	// Collect recent text for keyword analysis.
 	recentText := ts.collectRecentText(messages)
 	recentToolNames := ts.collectRecentToolNames(messages)
+	isExploration := containsAny(recentText, explorationKeywords)
 
 	var selected []provider.ToolDef
 	nonCoreMatched := false
@@ -40,24 +42,30 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 			selected = append(selected, tool)
 
 		case cat == CategoryFileSystem:
-			if containsFileKeywords(recentText) || recentToolNames[tool.Name] {
+			if containsAny(recentText, fileKeywords) || isExploration || recentToolNames[tool.Name] {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
 
 		case cat == CategoryPlatform:
-			if containsPlatformKeywords(recentText) || recentToolNames[tool.Name] {
+			if containsAny(recentText, platformKeywords) || recentToolNames[tool.Name] {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
 
 		case cat == CategoryLSP:
-			if containsLSPKeywords(recentText) || recentToolNames[tool.Name] {
+			if containsAny(recentText, lspKeywords) || recentToolNames[tool.Name] {
 				selected = append(selected, tool)
 				nonCoreMatched = true
 			}
 
-		case cat == CategoryGit || cat == CategoryNet || cat == CategoryMCP || cat == CategorySkill:
+		case cat == CategoryGit:
+			if isExploration || recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
+				selected = append(selected, tool)
+				nonCoreMatched = true
+			}
+
+		case cat == CategoryNet || cat == CategoryMCP || cat == CategorySkill:
 			if recentToolNames[tool.Name] || containsToolNameKeyword(recentText, tool.Name) {
 				selected = append(selected, tool)
 				nonCoreMatched = true
@@ -70,17 +78,64 @@ func (ts *ToolSelector) Select(messages []provider.Message, allTools []provider.
 		return selectSafeBaseline(allTools)
 	}
 
+	// Sort deterministically by name for prompt cache stability.
+	sortToolDefs(selected)
 	return selected
+}
+
+// isAlwaysIncluded reports whether a tool should always be exposed regardless
+// of context filtering or budget trimming.
+func isAlwaysIncluded(name string) bool {
+	return Categorize(name) == CategoryCore || name == "tool_search"
 }
 
 func selectSafeBaseline(allTools []provider.ToolDef) []provider.ToolDef {
 	var selected []provider.ToolDef
 	for _, tool := range allTools {
-		if Categorize(tool.Name) == CategoryCore || tool.Name == "tool_search" {
+		if isAlwaysIncluded(tool.Name) {
 			selected = append(selected, tool)
 		}
 	}
+	// Sort deterministically by name for prompt cache stability.
+	sortToolDefs(selected)
 	return selected
+}
+
+// sortToolDefs sorts tool definitions alphabetically by name for deterministic
+// ordering, which improves prompt cache hit rates across turns.
+func sortToolDefs(defs []provider.ToolDef) {
+	sort.Slice(defs, func(i, j int) bool {
+		return defs[i].Name < defs[j].Name
+	})
+}
+
+// ApplyMaxToolCount trims tools to fit within maxCount, always preserving core
+// tools (CategoryCore) and tool_search. Non-core tools are trimmed from the end
+// of the slice. Returns tools unchanged when maxCount <= 0 or len(tools) <= maxCount.
+func ApplyMaxToolCount(tools []provider.ToolDef, maxCount int) []provider.ToolDef {
+	if maxCount <= 0 || len(tools) <= maxCount {
+		return tools
+	}
+
+	var core, nonCore []provider.ToolDef
+	for _, t := range tools {
+		if isAlwaysIncluded(t.Name) {
+			core = append(core, t)
+		} else {
+			nonCore = append(nonCore, t)
+		}
+	}
+
+	// Core tools are always kept; trim non-core from the end to fit budget.
+	nonCoreSlots := maxCount - len(core)
+	if nonCoreSlots < 0 {
+		nonCoreSlots = 0
+	}
+	if nonCoreSlots < len(nonCore) {
+		nonCore = nonCore[:nonCoreSlots]
+	}
+
+	return append(core, nonCore...)
 }
 
 // collectRecentText extracts text from the last few messages for keyword matching.
@@ -118,6 +173,19 @@ func (ts *ToolSelector) collectRecentToolNames(messages []provider.Message) map[
 	return names
 }
 
+// explorationKeywords indicate the user wants to understand or explore the
+// project. These activate both FileSystem (search) and Git tools so the LLM
+// can proactively investigate the codebase instead of responding with text only.
+var explorationKeywords = []string{
+	"analyze", "analyse", "review", "brief", "overview", "explain",
+	"describe", "summarize", "summary", "understand", "explore",
+	"structure", "architecture", "codebase", "project", "feature",
+	"features", "module", "modules", "component", "components",
+	"how does", "how do", "what does", "what do", "what is",
+	"walk me through", "tell me about", "show me",
+	"audit", "inspect", "examine", "assessment",
+}
+
 var fileKeywords = []string{
 	"file", "path", "directory", "folder", "read", "write", "search",
 	"find", "grep", "code", "source", ".go", ".py", ".js", ".ts",
@@ -131,17 +199,9 @@ var platformKeywords = []string{
 	"xcodebuild", ".xcodeproj", ".xcworkspace",
 }
 
-func containsFileKeywords(text string) bool {
-	for _, kw := range fileKeywords {
-		if strings.Contains(text, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsPlatformKeywords(text string) bool {
-	for _, kw := range platformKeywords {
+// containsAny returns true if text contains any of the keywords.
+func containsAny(text string, keywords []string) bool {
+	for _, kw := range keywords {
 		if strings.Contains(text, kw) {
 			return true
 		}
@@ -154,15 +214,6 @@ var lspKeywords = []string{
 	"diagnostics", "completions", "rename", "code action", "symbol",
 	"call hierarchy", "type signature", "go to definition", "find references",
 	"compiler error", "compile error",
-}
-
-func containsLSPKeywords(text string) bool {
-	for _, kw := range lspKeywords {
-		if strings.Contains(text, kw) {
-			return true
-		}
-	}
-	return false
 }
 
 func containsToolNameKeyword(text, toolName string) bool {

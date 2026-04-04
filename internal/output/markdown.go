@@ -2,6 +2,7 @@
 package output
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -46,7 +47,12 @@ func (f *MarkdownFormatter) Format(result *RunResult) ([]byte, error) {
 			if tc.IsError {
 				status = "error"
 			}
-			b.WriteString(fmt.Sprintf("%d. **%s** (%s)\n", i+1, tc.Name, status))
+			summary := formatToolCallSummary(tc)
+			if summary != "" {
+				b.WriteString(fmt.Sprintf("%d. **%s** %s (%s)\n", i+1, tc.Name, summary, status))
+			} else {
+				b.WriteString(fmt.Sprintf("%d. **%s** (%s)\n", i+1, tc.Name, status))
+			}
 		}
 	}
 
@@ -85,4 +91,61 @@ func (f *MarkdownFormatter) Format(result *RunResult) ([]byte, error) {
 		result.TurnCount, turnLabel, durationStr))
 
 	return []byte(b.String()), nil
+}
+
+// formatToolCallSummary extracts a concise description from a tool call's
+// JSON input for display in the markdown tool call list.
+func formatToolCallSummary(tc ToolCallLog) string {
+	if len(tc.Input) == 0 {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(tc.Input, &obj); err != nil {
+		return ""
+	}
+
+	// Pick the most informative field based on tool name.
+	switch tc.Name {
+	case "shell":
+		return mdQuote(jsonString(obj["command"]))
+	case "file":
+		op := jsonString(obj["operation"])
+		path := jsonString(obj["path"])
+		if op != "" && path != "" {
+			return fmt.Sprintf("%s `%s`", op, path)
+		}
+		return mdQuote(path)
+	case "search":
+		pattern := jsonString(obj["pattern"])
+		if pattern != "" {
+			return fmt.Sprintf("`%s`", pattern)
+		}
+	}
+
+	// For prefixed tools, try common field names.
+	for _, key := range []string{"command", "path", "url", "query", "pattern", "ref", "file"} {
+		if v := jsonString(obj[key]); v != "" {
+			return mdQuote(v)
+		}
+	}
+	return ""
+}
+
+func jsonString(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return ""
+}
+
+func mdQuote(s string) string {
+	if s == "" {
+		return ""
+	}
+	const maxLen = 80
+	if len(s) > maxLen {
+		s = s[:maxLen] + "…"
+	}
+	return fmt.Sprintf("`%s`", s)
 }

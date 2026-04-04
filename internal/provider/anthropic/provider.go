@@ -20,9 +20,15 @@ func init() {
 
 // Provider implements the LLMProvider interface for the Anthropic API.
 type Provider struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	baseURL     string
+	apiKey      string
+	client      *http.Client
+	debugLogger provider.DebugLogger
+}
+
+// SetDebugLogger enables debug logging for API requests and responses.
+func (p *Provider) SetDebugLogger(logger provider.DebugLogger) {
+	p.debugLogger = logger
 }
 
 // New creates a new Anthropic provider.
@@ -105,7 +111,9 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := p.client.Do(httpReq)
+	provider.LogRequest(p.debugLogger, httpReq, body)
+
+	resp, err := provider.DoWithRetry(ctx, p.client, httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
@@ -113,7 +121,12 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
+		return nil, provider.FormatAPIError(resp.StatusCode, respBody, httpReq)
+	}
+
+	if p.debugLogger != nil {
+		p.debugLogger("[DEBUG] <<< HTTP Response: %d %s (streaming)", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
 	ch := make(chan provider.StreamEvent)
@@ -198,9 +211,13 @@ func buildCachedSystemBlocks(system string, breakpoints []int) []apiSystemBlock 
 // apiContentBlock. For tool_result blocks, the text is placed in the "content"
 // field (which is what the Anthropic API expects) instead of "text".
 func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
-	out := make([]apiContentBlock, len(blocks))
-	for i, b := range blocks {
-		out[i] = apiContentBlock{
+	var out []apiContentBlock
+	for _, b := range blocks {
+		// Skip empty text blocks — Anthropic rejects them.
+		if b.Type == "text" && b.Text == "" {
+			continue
+		}
+		cb := apiContentBlock{
 			Type:      b.Type,
 			ID:        b.ID,
 			Name:      b.Name,
@@ -208,11 +225,14 @@ func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
 			ToolUseID: b.ToolUseID,
 			IsError:   b.IsError,
 		}
-		if b.Type == "tool_result" {
-			out[i].Content = b.Text
-		} else {
-			out[i].Text = b.Text
+		switch b.Type {
+		case "tool_result":
+			cb.Content = b.Text
+		default:
+			// text, thinking, and tool_use blocks all use the "text" field.
+			cb.Text = b.Text
 		}
+		out = append(out, cb)
 	}
 	return out
 }
@@ -284,7 +304,8 @@ func (p *Provider) handleContentBlockStart(data string) *provider.StreamEvent {
 		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing content_block_start: %w", err)}
 	}
 
-	if parsed.ContentBlock.Type == "tool_use" {
+	switch parsed.ContentBlock.Type {
+	case "tool_use":
 		return &provider.StreamEvent{
 			Type: "tool_use",
 			ToolUse: &provider.ToolUseBlock{
@@ -292,9 +313,12 @@ func (p *Provider) handleContentBlockStart(data string) *provider.StreamEvent {
 				Name: parsed.ContentBlock.Name,
 			},
 		}
+	case "thinking":
+		// Thinking content arrives via content_block_delta events; no event needed at start.
+		return nil
+	default:
+		return nil
 	}
-
-	return nil
 }
 
 func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
@@ -302,6 +326,7 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 		Delta struct {
 			Type        string `json:"type"`
 			Text        string `json:"text"`
+			Thinking    string `json:"thinking"`
 			PartialJSON string `json:"partial_json"`
 		} `json:"delta"`
 	}
@@ -315,6 +340,11 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 		return &provider.StreamEvent{
 			Type: "text_delta",
 			Text: parsed.Delta.Text,
+		}
+	case "thinking_delta":
+		return &provider.StreamEvent{
+			Type: "thinking_delta",
+			Text: parsed.Delta.Thinking,
 		}
 	case "input_json_delta":
 		// Emit JSON input deltas as text_delta - the agent layer accumulates the JSON

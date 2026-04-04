@@ -442,6 +442,50 @@ func TestTurnTextOnly(t *testing.T) {
 	assert.Equal(t, "Hello world!", msgs[1].Content[0].Text)
 }
 
+func TestTurnEmptyResponseEmitsError(t *testing.T) {
+	// When the LLM returns an empty response (no text, no tool calls),
+	// the agent should emit an error event before the done event and
+	// add a placeholder assistant message to keep the conversation valid.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(mp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "say hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have: error, done
+	require.GreaterOrEqual(t, len(events), 2)
+
+	// There should be an error event indicating empty response.
+	var hasError bool
+	for _, ev := range events {
+		if ev.Type == "error" && ev.Error != nil {
+			hasError = true
+			assert.Contains(t, ev.Error.Error(), "empty response")
+		}
+	}
+	assert.True(t, hasError, "expected an error event for empty LLM response")
+
+	// Last event should be done.
+	assert.Equal(t, "done", events[len(events)-1].Type)
+
+	// Conversation should still have an assistant message to avoid dangling user message.
+	msgs := agent.conversation.Messages()
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
+}
+
 func TestTurnStreamErrorDiscardsPartialBlocks(t *testing.T) {
 	// Simulate a stream that emits partial text then an error.
 	// The agent should NOT add the partial blocks to conversation.
@@ -663,6 +707,101 @@ func TestTurnWithToolCall(t *testing.T) {
 	assert.True(t, hasToolResult, "should have tool_result event")
 	assert.True(t, hasDone, "should have done event")
 	assert.Equal(t, "hello from file", toolResultContent)
+}
+
+func TestTurnWithInlineToolUseInput(t *testing.T) {
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:    "tool_inline_1",
+					Name:  "echo_inline",
+					Input: json.RawMessage(`{"k":"v"}`),
+				}},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "done"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	echoInlineTool := &mockTool{
+		name:        "echo_inline",
+		description: "echoes raw input",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, input json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: string(input)}, nil
+		},
+	}
+	require.NoError(t, reg.Register(echoInlineTool))
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "run inline tool")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+
+	require.Len(t, toolResults, 1)
+	require.NotNil(t, toolResults[0].ToolResult)
+	assert.Equal(t, `{"k":"v"}`, toolResults[0].ToolResult.Content)
+}
+
+func TestTurnWithDeltaInputOverridesInlineToolUseSeed(t *testing.T) {
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:    "tool_inline_seed_1",
+					Name:  "echo_inline",
+					Input: json.RawMessage(`{}`),
+				}},
+				{Type: "text_delta", Text: `{"k":"delta"}`},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "done"},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	echoInlineTool := &mockTool{
+		name:        "echo_inline",
+		description: "echoes raw input",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, input json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: string(input)}, nil
+		},
+	}
+	require.NoError(t, reg.Register(echoInlineTool))
+
+	cfg := config.DefaultConfig()
+	agent := New(dmp, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "run inline tool")
+	require.NoError(t, err)
+
+	var toolResults []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			toolResults = append(toolResults, ev)
+		}
+	}
+
+	require.Len(t, toolResults, 1)
+	require.NotNil(t, toolResults[0].ToolResult)
+	assert.Equal(t, `{"k":"delta"}`, toolResults[0].ToolResult.Content)
 }
 
 func TestTurnWithStreamingToolProgress(t *testing.T) {

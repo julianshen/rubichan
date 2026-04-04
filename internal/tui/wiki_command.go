@@ -180,7 +180,7 @@ func (m *Model) startWikiGeneration(wf *WikiForm) tea.Cmd {
 
 	return func() tea.Msg {
 		p := parser.NewParser()
-		err := wiki.Run(ctx, cfg, m.wikiCfg.LLM, p)
+		_, err := wiki.Run(ctx, cfg, m.wikiCfg.LLM, p)
 		return wikiDoneMsg{Err: err}
 	}
 }

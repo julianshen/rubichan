@@ -158,3 +158,84 @@ func TestContentBufferReplaceTextRangeWithWidthPreservesToolResultSegments(t *te
 	require.Len(t, results, 1, "tool-result segments should survive width-aware replacement")
 	assert.True(t, buf.ToggleToolResult(results[0].ID), "tool-result should remain interactive")
 }
+
+func TestContentBuffer_AppendThinking(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendText("before\n")
+	buf.AppendThinking(CollapsibleThinking{
+		Content:   "I need to analyze this code...",
+		LineCount: 1,
+		Collapsed: true,
+	})
+	buf.AppendText("after\n")
+
+	rendered := buf.Render(100)
+	assert.Contains(t, rendered, "before")
+	assert.Contains(t, rendered, "Thinking")
+	assert.Contains(t, rendered, "after")
+	// Collapsed thinking should NOT show the content.
+	assert.NotContains(t, rendered, "I need to analyze")
+}
+
+func TestContentBuffer_AppendThinking_Expanded(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendThinking(CollapsibleThinking{
+		Content:   "Deep reasoning here",
+		LineCount: 1,
+		Collapsed: false,
+	})
+
+	rendered := buf.Render(100)
+	assert.Contains(t, rendered, "Deep reasoning here")
+}
+
+func TestContentBuffer_ThinkingIDsDoNotCollideWithToolResults(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendToolResult(CollapsibleToolResult{Name: "shell", Content: "ok", LineCount: 1})
+	buf.AppendThinking(CollapsibleThinking{Content: "thinking", LineCount: 1, Collapsed: true})
+	buf.AppendToolResult(CollapsibleToolResult{Name: "file_read", Content: "data", LineCount: 1})
+
+	// IDs should be 0, 1, 2 — no collisions.
+	require.Len(t, buf.segments, 3)
+	assert.Equal(t, 0, buf.segments[0].ToolResult.ID)
+	assert.Equal(t, 1, buf.segments[1].Thinking.ID)
+	assert.Equal(t, 2, buf.segments[2].ToolResult.ID)
+}
+
+func TestToggleAllCollapsible_IncludesThinking(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendToolResult(CollapsibleToolResult{Name: "shell", Content: "ok", LineCount: 1, Collapsed: true})
+	buf.AppendThinking(CollapsibleThinking{Content: "thinking", LineCount: 1, Collapsed: true})
+
+	// Both are collapsed; toggling should expand both.
+	buf.ToggleAllToolResults()
+	assert.False(t, buf.segments[0].ToolResult.Collapsed)
+	assert.False(t, buf.segments[1].Thinking.Collapsed)
+
+	// Now both are expanded; toggling should collapse both.
+	buf.ToggleAllToolResults()
+	assert.True(t, buf.segments[0].ToolResult.Collapsed)
+	assert.True(t, buf.segments[1].Thinking.Collapsed)
+}
+
+func TestCollapseAllToolResults_IncludesThinking(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendToolResult(CollapsibleToolResult{Name: "shell", Content: "ok", LineCount: 1, Collapsed: false})
+	buf.AppendThinking(CollapsibleThinking{Content: "thinking", LineCount: 1, Collapsed: false})
+
+	buf.CollapseAllToolResults()
+	assert.True(t, buf.segments[0].ToolResult.Collapsed)
+	assert.True(t, buf.segments[1].Thinking.Collapsed)
+}
+
+func TestHasCollapsible_EmptyBuffer(t *testing.T) {
+	buf := NewContentBuffer()
+	assert.False(t, buf.HasCollapsible())
+}
+
+func TestHasCollapsible_WithThinkingOnly(t *testing.T) {
+	buf := NewContentBuffer()
+	buf.AppendText("text\n")
+	buf.AppendThinking(CollapsibleThinking{Content: "thought", LineCount: 1, Collapsed: true})
+	assert.True(t, buf.HasCollapsible())
+}

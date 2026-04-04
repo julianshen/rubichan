@@ -95,7 +95,8 @@ func TestStreamAPIError(t *testing.T) {
 
 	_, err := p.Stream(context.Background(), req)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "500")
+	assert.Contains(t, err.Error(), "Server error")
+	assert.Contains(t, err.Error(), "model not found")
 }
 
 func TestProviderRegistration(t *testing.T) {
@@ -807,4 +808,39 @@ func TestKeepAliveDefault(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &parsed))
 	// Default: "5m"
 	assert.Equal(t, "5m", parsed["keep_alive"])
+}
+
+func TestConvertAssistantMessageStripsEmptyText(t *testing.T) {
+	p := New("http://localhost:11434")
+
+	msg := provider.Message{
+		Role: "assistant",
+		Content: []provider.ContentBlock{
+			{Type: "text", Text: ""},
+			{Type: "text", Text: "hello"},
+		},
+	}
+
+	apiMsg := p.convertAssistantMessage(msg)
+	assert.Equal(t, "assistant", apiMsg.Role)
+	// Empty text block should be filtered out; only "hello" remains.
+	assert.Equal(t, "hello", apiMsg.Content)
+}
+
+func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
+	p := New("http://localhost:11434")
+
+	msg := provider.Message{
+		Role: "user",
+		Content: []provider.ContentBlock{
+			{Type: "text", Text: "hello"},
+			{Type: "text", Text: ""},
+			{Type: "text", Text: "world"},
+		},
+	}
+
+	msgs := p.convertUserMessages(msg)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "helloworld", msgs[0].Content)
 }

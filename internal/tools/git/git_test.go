@@ -116,6 +116,7 @@ func initRepo(t *testing.T) string {
 	_, _ = run(t, dir, "init")
 	_, _ = run(t, dir, "config", "user.email", "test@example.com")
 	_, _ = run(t, dir, "config", "user.name", "Test User")
+	_, _ = run(t, dir, "config", "commit.gpgsign", "false")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644))
 	_, _ = run(t, dir, "add", "README.md")
 	_, _ = run(t, dir, "commit", "-m", "initial commit")

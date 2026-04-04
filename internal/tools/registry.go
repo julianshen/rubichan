@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -107,11 +108,15 @@ func (r *Registry) All() []provider.ToolDef {
 
 	var defs []provider.ToolDef
 	for _, t := range r.tools {
-		defs = append(defs, provider.ToolDef{
+		td := provider.ToolDef{
 			Name:        t.Name(),
 			Description: t.Description(),
 			InputSchema: t.InputSchema(),
-		})
+		}
+		if hinter, ok := t.(SearchHinter); ok {
+			td.SearchHint = hinter.SearchHint()
+		}
+		defs = append(defs, td)
 	}
 	return defs
 }
@@ -182,6 +187,8 @@ func (r *Registry) RegisterDefaultAliases() {
 		{"bash", "shell"},
 		{"terminal", "shell"},
 		{"exec", "shell"},
+		{"tool_shell", "shell"},
+		{"execute_command", "shell"},
 
 		// File tool aliases — common in other agent frameworks.
 		{"write_file", "file"},
@@ -190,6 +197,7 @@ func (r *Registry) RegisterDefaultAliases() {
 		{"file_read", "file"},
 		{"edit_file", "file"},
 		{"create_file", "file"},
+		{"tool_file", "file"},
 
 		// Search tool aliases.
 		{"grep", "search"},
@@ -199,8 +207,11 @@ func (r *Registry) RegisterDefaultAliases() {
 		// Process tool aliases.
 		{"process_manager", "process"},
 		{"bg_process", "process"},
+		{"tool_process", "process"},
 	}
 	for _, a := range aliases {
-		_ = r.RegisterAlias(a[0], a[1])
+		if err := r.RegisterAlias(a[0], a[1]); err != nil {
+			log.Printf("warning: alias %q -> %q: %v", a[0], a[1], err)
+		}
 	}
 }

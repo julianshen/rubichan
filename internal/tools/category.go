@@ -19,7 +19,7 @@ const (
 // Categorize assigns a ToolCategory to a tool based on its name.
 func Categorize(name string) ToolCategory {
 	switch {
-	case name == "shell" || name == "file" || name == "process":
+	case name == "shell" || name == "file" || name == "process" || name == TaskCompleteName:
 		return CategoryCore
 	case name == "search":
 		return CategoryFileSystem

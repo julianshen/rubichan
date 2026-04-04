@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -9,13 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // TurnEvent represents a streaming event from the agent.
 type TurnEvent struct {
-	Type     string // "text_delta", "tool_call", "tool_result", "done", "error"
+	Type     string // EventTextDelta, EventToolCall, EventToolResult, EventDone, EventError
 	Text     string
-	ToolName string // populated for "tool_call" events
+	ToolName string // populated for EventToolCall events
 }
 
 // AgentTurnFunc executes a single agent turn and streams events.
@@ -32,18 +32,25 @@ var ErrExit = errors.New("exit")
 
 // ShellHost runs the shell mode REPL loop.
 type ShellHost struct {
-	classifier      *InputClassifier
-	history         *CommandHistory
-	ctxTracker      *ContextTracker
-	prompt          *PromptRenderer
-	agentTurn       AgentTurnFunc
-	shellExec       ShellExecFunc
-	slashCommandFn  SlashCommandFunc
-	workDir         string
-	stdin           io.Reader
-	stdout          io.Writer
-	stderr          io.Writer
-	gitBranchFn     func(string) string // returns git branch for a directory
+	classifier       *InputClassifier
+	history          *CommandHistory
+	ctxTracker       *ContextTracker
+	prompt           *PromptRenderer
+	agentTurn        AgentTurnFunc
+	shellExec        ShellExecFunc
+	slashCommandFn   SlashCommandFunc
+	errorAnalyzer    *ErrorAnalyzer
+	scriptGen        *ScriptGenerator
+	intentClassifier *IntentClassifier
+	scriptApprovalFn func(ctx context.Context, script string) (bool, string, error)
+	pkgInstaller     *PackageInstaller
+	statusLine       *StatusLine
+	lineReader       LineReader
+	workDir          string
+	stdin            io.Reader
+	stdout           io.Writer
+	stderr           io.Writer
+	gitBranchFn      func(string) string
 }
 
 // ShellHostConfig configures the shell host.
@@ -59,6 +66,12 @@ type ShellHostConfig struct {
 	Stdout         io.Writer
 	Stderr         io.Writer
 	GitBranchFn    func(string) string
+	ErrorAnalysis     bool
+	ScriptApprovalFn  func(ctx context.Context, script string) (bool, string, error)
+	PackageManager    *PackageManager
+	InstallApprovalFn func(ctx context.Context, action string) (bool, error)
+	StatusLine        bool
+	LineReader        LineReader
 }
 
 // NewShellHost creates a new shell host with the given configuration.
@@ -79,20 +92,58 @@ func NewShellHost(cfg ShellHostConfig) *ShellHost {
 		cfg.GitBranchFn = func(string) string { return "" }
 	}
 
-	return &ShellHost{
-		classifier:     NewInputClassifier(cfg.Executables),
-		history:        NewCommandHistory(cfg.MaxHistory),
-		ctxTracker:     NewContextTracker(4096),
-		prompt:         NewPromptRenderer(cfg.HomeDir),
-		agentTurn:      cfg.AgentTurn,
-		shellExec:      cfg.ShellExec,
-		slashCommandFn: cfg.SlashCommandFn,
-		workDir:        cfg.WorkDir,
-		stdin:          cfg.Stdin,
-		stdout:         cfg.Stdout,
-		stderr:         cfg.Stderr,
-		gitBranchFn:    cfg.GitBranchFn,
+	var ea *ErrorAnalyzer
+	if cfg.ErrorAnalysis && cfg.AgentTurn != nil {
+		ea = NewErrorAnalyzer(cfg.AgentTurn, 4096)
 	}
+
+	var pi *PackageInstaller
+	if cfg.PackageManager != nil {
+		pi = NewPackageInstaller(cfg.PackageManager, cfg.AgentTurn, cfg.ShellExec, cfg.InstallApprovalFn)
+	}
+
+	pr := NewPromptRenderer(cfg.HomeDir)
+
+	var sl *StatusLine
+	if cfg.StatusLine {
+		sl = NewStatusLine(80)
+		sl.homeDir = cfg.HomeDir
+		sl.UpdateCWD(cfg.WorkDir)
+		pr.statusLine = sl
+	}
+
+	// When no LineReader is provided, wrap Stdin in a SimpleLineReader
+	lr := cfg.LineReader
+	if lr == nil {
+		lr = NewSimpleLineReader(cfg.Stdin)
+	}
+
+	h := &ShellHost{
+		classifier:       NewInputClassifier(cfg.Executables),
+		history:          NewCommandHistory(cfg.MaxHistory),
+		ctxTracker:       NewContextTracker(4096),
+		prompt:           pr,
+		agentTurn:        cfg.AgentTurn,
+		shellExec:        cfg.ShellExec,
+		slashCommandFn:   cfg.SlashCommandFn,
+		errorAnalyzer:    ea,
+		scriptApprovalFn: cfg.ScriptApprovalFn,
+		pkgInstaller:     pi,
+		statusLine:       sl,
+		lineReader:       lr,
+		workDir:          cfg.WorkDir,
+		stdin:            cfg.Stdin,
+		stdout:           cfg.Stdout,
+		stderr:           cfg.Stderr,
+		gitBranchFn:      cfg.GitBranchFn,
+	}
+
+	if cfg.ScriptApprovalFn != nil && cfg.AgentTurn != nil {
+		h.intentClassifier = NewIntentClassifier(cfg.AgentTurn)
+		h.scriptGen = NewScriptGenerator(cfg.AgentTurn, cfg.ShellExec, &h.workDir)
+	}
+
+	return h
 }
 
 // Mode returns the agent mode label for shell mode.
@@ -102,8 +153,7 @@ func (h *ShellHost) Mode() string {
 
 // Run starts the REPL loop. It blocks until EOF, exit, or context cancellation.
 func (h *ShellHost) Run(ctx context.Context) error {
-	scanner := bufio.NewScanner(h.stdin)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	defer h.lineReader.Close()
 
 	for {
 		select {
@@ -112,39 +162,37 @@ func (h *ShellHost) Run(ctx context.Context) error {
 		default:
 		}
 
-		// Render prompt
 		branch := h.gitBranchFn(h.workDir)
+		if h.statusLine != nil {
+			h.statusLine.Update(SegmentBranch, branch)
+		}
 		promptStr := h.prompt.Render(h.workDir, branch)
-		fmt.Fprint(h.stdout, promptStr)
-
-		// Read input
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return fmt.Errorf("reading shell input: %w", err)
-			}
-			// EOF (Ctrl-D)
-			fmt.Fprintln(h.stdout)
-			return nil
+		if !h.lineReader.HandlesPrompt() {
+			fmt.Fprint(h.stdout, promptStr)
 		}
 
-		line := scanner.Text()
+		line, err := h.lineReader.ReadLine(promptStr)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Fprintln(h.stdout)
+				return nil
+			}
+			return fmt.Errorf("reading shell input: %w", err)
+		}
+
 		input := h.classifier.Classify(line)
 
 		switch input.Classification {
 		case ClassEmpty:
 			continue
-
 		case ClassBuiltinCommand:
 			if err := h.handleBuiltin(input); err != nil {
 				return err
 			}
-
 		case ClassShellCommand:
 			h.handleShellCommand(ctx, input)
-
 		case ClassLLMQuery:
 			h.handleLLMQuery(ctx, input)
-
 		case ClassSlashCommand:
 			if quit := h.handleSlashCommand(ctx, input); quit {
 				return ErrExit
@@ -169,7 +217,6 @@ func (h *ShellHost) handleCD(args []string) error {
 	}
 	target := args[0]
 
-	// Resolve relative to current workDir
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(h.workDir, target)
 	}
@@ -182,6 +229,13 @@ func (h *ShellHost) handleCD(args []string) error {
 	}
 
 	h.workDir = target
+
+	if h.statusLine != nil {
+		h.statusLine.UpdateCWD(target)
+		branch := h.gitBranchFn(target)
+		h.statusLine.Update(SegmentBranch, branch)
+	}
+
 	return nil
 }
 
@@ -199,31 +253,57 @@ func (h *ShellHost) handleShellCommand(ctx context.Context, input ClassifiedInpu
 		return
 	}
 
-	if stdout != "" {
-		fmt.Fprint(h.stdout, stdout)
-		if !strings.HasSuffix(stdout, "\n") {
-			fmt.Fprintln(h.stdout)
-		}
-	}
-	if stderr != "" {
-		fmt.Fprint(h.stderr, stderr)
-		if !strings.HasSuffix(stderr, "\n") {
-			fmt.Fprintln(h.stderr)
-		}
-	}
+	writeOutput(h.stdout, stdout)
+	writeOutput(h.stderr, stderr)
 
-	// Record in context tracker for potential LLM follow-up
 	combined := stdout
 	if stderr != "" {
 		combined += stderr
 	}
 	h.ctxTracker.Record(input.Command, combined, exitCode)
+
+	if h.statusLine != nil {
+		h.statusLine.UpdateExitCode(exitCode)
+		if strings.HasPrefix(input.Command, "git ") {
+			branch := h.gitBranchFn(h.workDir)
+			h.statusLine.Update(SegmentBranch, branch)
+		}
+	}
+
+	if exitCode != 0 && h.pkgInstaller != nil {
+		handled, err := h.pkgInstaller.HandleCommandNotFound(ctx, input.Command, stderr, exitCode, h.workDir, h.stdout, h.stderr)
+		if err != nil {
+			fmt.Fprintf(h.stderr, "package installer error: %v\n", err)
+		}
+		if handled {
+			return
+		}
+	}
+
+	if exitCode != 0 && h.errorAnalyzer != nil {
+		fmt.Fprintf(h.stderr, "\n> Analyzing error...\n")
+		events, analysisErr := h.errorAnalyzer.Analyze(ctx, input.Command, stdout, stderr, exitCode)
+		if analysisErr != nil {
+			fmt.Fprintf(h.stderr, "analysis error: %v\n", analysisErr)
+		} else if events != nil {
+			for event := range events {
+				switch event.Type {
+				case EventTextDelta:
+					fmt.Fprint(h.stdout, event.Text)
+				case EventDone:
+					fmt.Fprintln(h.stdout)
+				case EventError:
+					fmt.Fprintf(h.stderr, "analysis error: %s\n", event.Text)
+				}
+			}
+		}
+	}
 }
 
 func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
-	// Strip force prefix (?) from the query text sent to the LLM.
 	query := strings.TrimSpace(input.Raw)
-	if strings.HasPrefix(query, "?") {
+	isForceQuery := strings.HasPrefix(query, "?")
+	if isForceQuery {
 		query = strings.TrimSpace(query[1:])
 	}
 
@@ -234,7 +314,15 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
 		return
 	}
 
-	// Build the message with optional context from last shell command
+	// Smart script: for ?-prefixed input, classify intent and potentially generate a script
+	if isForceQuery && h.scriptGen != nil && h.intentClassifier != nil {
+		intent, _ := h.intentClassifier.Classify(ctx, query)
+		if intent == IntentAction {
+			h.handleSmartScript(ctx, query)
+			return
+		}
+	}
+
 	message := query
 	ctxMsg := h.ctxTracker.ContextMessage()
 	if ctxMsg != "" {
@@ -247,24 +335,72 @@ func (h *ShellHost) handleLLMQuery(ctx context.Context, input ClassifiedInput) {
 		return
 	}
 
-	// Clear context only after successful turn initiation
 	if ctxMsg != "" {
 		h.ctxTracker.Clear()
 	}
 
+	h.streamEvents(events)
+}
+
+func (h *ShellHost) handleSmartScript(ctx context.Context, query string) {
+	script, err := h.scriptGen.Generate(ctx, query)
+	if err != nil {
+		fmt.Fprintf(h.stderr, "error generating script: %v\n", err)
+		return
+	}
+
+	fmt.Fprintf(h.stdout, "\nGenerated script:\n```\n%s\n```\n\n", script)
+
+	approved, editedScript, err := h.scriptApprovalFn(ctx, script)
+	if err != nil {
+		fmt.Fprintf(h.stderr, "error: %v\n", err)
+		return
+	}
+
+	if !approved {
+		fmt.Fprintln(h.stderr, "Script discarded.")
+		return
+	}
+
+	runScript := script
+	if editedScript != "" {
+		runScript = editedScript
+	}
+
+	stdout, stderr, exitCode, err := h.scriptGen.Execute(ctx, runScript)
+	if err != nil {
+		fmt.Fprintf(h.stderr, "error: %v\n", err)
+		return
+	}
+
+	writeOutput(h.stdout, stdout)
+	writeOutput(h.stderr, stderr)
+
+	combined := stdout
+	if stderr != "" {
+		combined += stderr
+	}
+	h.ctxTracker.Record(runScript, combined, exitCode)
+
+	if h.statusLine != nil {
+		h.statusLine.UpdateExitCode(exitCode)
+	}
+}
+
+func (h *ShellHost) streamEvents(events <-chan TurnEvent) {
 	for event := range events {
 		switch event.Type {
-		case "text_delta":
+		case EventTextDelta:
 			fmt.Fprint(h.stdout, event.Text)
-		case "tool_call":
+		case EventToolCall:
 			fmt.Fprintf(h.stderr, "[Running: %s]\n", event.ToolName)
-		case "tool_result":
+		case EventToolResult:
 			if event.Text != "" {
 				fmt.Fprintf(h.stderr, "[Result: %s]\n", truncateForDisplay(event.Text, 200))
 			}
-		case "done":
+		case EventDone:
 			fmt.Fprintln(h.stdout)
-		case "error":
+		case EventError:
 			fmt.Fprintf(h.stderr, "error: %s\n", event.Text)
 		}
 	}
@@ -287,11 +423,11 @@ func (h *ShellHost) handleSlashCommand(ctx context.Context, input ClassifiedInpu
 	return quit
 }
 
-// truncateForDisplay truncates a string to maxLen, adding ellipsis if needed.
+// truncateForDisplay truncates a string to maxLen runes, adding ellipsis if needed.
 func truncateForDisplay(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= maxLen {
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return truncateRunes(s, maxLen) + "..."
 }

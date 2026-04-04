@@ -54,6 +54,9 @@ type serverInit struct {
 	err    error
 }
 
+// Registry returns the server registry for language detection queries.
+func (m *Manager) Registry() *Registry { return m.registry }
+
 // NewManager creates a new manager for the given workspace root.
 // When autoInstall is true the manager will attempt to install missing
 // language server binaries before returning ErrServerNotInstalled.

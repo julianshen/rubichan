@@ -22,10 +22,16 @@ func init() {
 
 // Provider implements the LLMProvider interface for Ollama (local LLM server).
 type Provider struct {
-	baseURL    string
-	client     *http.Client
-	nextToolID atomic.Int64
-	keepAlive  string
+	baseURL     string
+	client      *http.Client
+	nextToolID  atomic.Int64
+	keepAlive   string
+	debugLogger provider.DebugLogger
+}
+
+// SetDebugLogger enables debug logging for API requests and responses.
+func (p *Provider) SetDebugLogger(logger provider.DebugLogger) {
+	p.debugLogger = logger
 }
 
 // New creates a new Ollama provider.
@@ -132,7 +138,9 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(httpReq)
+	provider.LogRequest(p.debugLogger, httpReq, body)
+
+	resp, err := provider.DoWithRetry(ctx, p.client, httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
@@ -140,7 +148,12 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
+		return nil, provider.FormatAPIError(resp.StatusCode, respBody, httpReq)
+	}
+
+	if p.debugLogger != nil {
+		p.debugLogger("[DEBUG] <<< HTTP Response: %d %s (streaming)", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
 	ch := make(chan provider.StreamEvent)
@@ -230,7 +243,9 @@ func (p *Provider) convertAssistantMessage(msg provider.Message) apiMessage {
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
-			text += block.Text
+			if block.Text != "" {
+				text += block.Text
+			}
 		case "tool_use":
 			toolCalls = append(toolCalls, apiToolCall{
 				Function: apiCallFunc{
@@ -266,7 +281,9 @@ func (p *Provider) convertUserMessages(msg provider.Message) []apiMessage {
 				ToolCallID: block.ToolUseID,
 			})
 		case "text":
-			texts = append(texts, block.Text)
+			if block.Text != "" {
+				texts = append(texts, block.Text)
+			}
 		}
 	}
 

@@ -160,6 +160,45 @@ func TestStreamEventFields(t *testing.T) {
 	assert.Equal(t, tu, ev2.ToolUse)
 }
 
+func TestContentBlockThinkingType(t *testing.T) {
+	cb := ContentBlock{
+		Type: BlockTypeThinking,
+		Text: "Let me reason about this...",
+	}
+
+	data, err := json.Marshal(cb)
+	require.NoError(t, err)
+
+	var got ContentBlock
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, "thinking", got.Type)
+	assert.Equal(t, "Let me reason about this...", got.Text)
+}
+
+func TestStreamEventThinkingDeltaType(t *testing.T) {
+	ev := StreamEvent{
+		Type: EventThinkingDelta,
+		Text: "reasoning fragment",
+	}
+	assert.Equal(t, "thinking_delta", ev.Type)
+	assert.Equal(t, "reasoning fragment", ev.Text)
+}
+
+func TestBlockTypeConstants(t *testing.T) {
+	assert.Equal(t, "text", BlockTypeText)
+	assert.Equal(t, "tool_use", BlockTypeToolUse)
+	assert.Equal(t, "tool_result", BlockTypeToolResult)
+	assert.Equal(t, "thinking", BlockTypeThinking)
+}
+
+func TestEventTypeConstants(t *testing.T) {
+	assert.Equal(t, "text_delta", EventTextDelta)
+	assert.Equal(t, "thinking_delta", EventThinkingDelta)
+	assert.Equal(t, "tool_use", EventToolUse)
+	assert.Equal(t, "stop", EventStop)
+	assert.Equal(t, "error", EventError)
+}
+
 func TestCompletionRequestOmitsEmptyFields(t *testing.T) {
 	req := CompletionRequest{
 		Model:     "claude-sonnet-4-20250514",

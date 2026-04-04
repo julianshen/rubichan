@@ -50,7 +50,7 @@ func Hello() {
 	}
 
 	p := parser.NewParser()
-	err := Run(context.Background(), cfg, llm, p)
+	_, err := Run(context.Background(), cfg, llm, p)
 	require.NoError(t, err)
 
 	assertFileExists(t, filepath.Join(outDir, "_index.md"))
@@ -84,7 +84,7 @@ func Main() {}
 	}
 
 	p := parser.NewParser()
-	err := Run(context.Background(), cfg, llm, p)
+	_, err := Run(context.Background(), cfg, llm, p)
 	require.NoError(t, err)
 
 	assertFileExists(t, filepath.Join(outDir, "config.toml"))
@@ -118,7 +118,7 @@ func Main() {}
 	}
 
 	p := parser.NewParser()
-	err := Run(context.Background(), cfg, llm, p)
+	_, err := Run(context.Background(), cfg, llm, p)
 	require.NoError(t, err)
 
 	assertFileExists(t, filepath.Join(outDir, "docusaurus.config.js"))
@@ -137,7 +137,7 @@ func TestRunCallsProgressFunc(t *testing.T) {
 	}
 
 	// Run will fail at scan (empty dir), but ProgressFunc should be called for stage 1.
-	_ = Run(context.Background(), cfg, nil, nil)
+	_, _ = Run(context.Background(), cfg, nil, nil)
 	assert.Contains(t, stages, "scanning")
 }
 
@@ -160,7 +160,7 @@ func TestRunPipelineEmptyDir(t *testing.T) {
 	}
 
 	p := parser.NewParser()
-	err := Run(context.Background(), cfg, llm, p)
+	_, err := Run(context.Background(), cfg, llm, p)
 	require.NoError(t, err)
 
 	assertFileExists(t, filepath.Join(outDir, "_index.md"))
@@ -187,8 +187,44 @@ func TestRunPipelineCancellation(t *testing.T) {
 
 	p := parser.NewParser()
 
-	err := Run(ctx, cfg, &cancelingLLMCompleter{}, p)
+	_, err := Run(ctx, cfg, &cancelingLLMCompleter{}, p)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRunCallsSpecializedAnalysisStage(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {}\n")
+	gitAdd(t, dir, "main.go")
+
+	outDir := t.TempDir()
+
+	var stages []string
+	llm := &mockLLMCompleter{
+		responses: map[string]string{
+			"root": "Summary: Main module\nKeyTypes: none\nPatterns: none\nConcerns: none",
+		},
+	}
+
+	cfg := Config{
+		Dir:         dir,
+		OutputDir:   outDir,
+		Format:      "raw-md",
+		DiagramFmt:  "mermaid",
+		Concurrency: 1,
+		ProgressFunc: func(stage string, current, total int) {
+			stages = append(stages, stage)
+		},
+	}
+
+	p := parser.NewParser()
+	_, err := Run(context.Background(), cfg, llm, p)
+	require.NoError(t, err)
+
+	assert.Contains(t, stages, "analyzing")
+	assert.Contains(t, stages, "specialized-analysis")
+	assert.Contains(t, stages, "assembling")
+	assert.Contains(t, stages, "rendering")
 }
 
 func TestRunPipelineIntegration(t *testing.T) {
@@ -235,7 +271,7 @@ func ToUpper(s string) string {
 
 	p := parser.NewParser()
 
-	err := Run(context.Background(), Config{
+	_, err := Run(context.Background(), Config{
 		Dir:         srcDir,
 		OutputDir:   outDir,
 		Format:      "raw-md",
