@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
@@ -534,6 +535,42 @@ func TestToolCallLooksLikeDependencyResolutionRecognizesSharedPatterns(t *testin
 func TestExtractEmbeddedCommandHandlesEscapedQuotes(t *testing.T) {
 	args := `{"command":"echo \"hi\" && npm install"}`
 	assert.Equal(t, `echo "hi" && npm install`, extractEmbeddedCommand(args))
+}
+
+func TestStateRecordsToolVerdicts(t *testing.T) {
+	s := NewState()
+	s.ResetForPrompt("test")
+
+	v := Verdict{
+		ToolName:  "shell",
+		Command:   "ls",
+		Status:    "success",
+		Timestamp: time.Now(),
+	}
+	s.VerdictHistory().Record(v)
+
+	verdicts := s.VerdictHistory().Verdicts()
+	assert.Len(t, verdicts, 1)
+	assert.Equal(t, "shell", verdicts[0].ToolName)
+}
+
+func TestStatePreservesVerdictHistoryAcrossPrompts(t *testing.T) {
+	s := NewState()
+	s.ResetForPrompt("first prompt")
+
+	s.VerdictHistory().Record(Verdict{
+		ToolName:  "shell",
+		Command:   "ls",
+		Status:    "success",
+		Timestamp: time.Now(),
+	})
+
+	// Reset for new prompt
+	s.ResetForPrompt("second prompt")
+
+	// Verdict history should persist
+	verdicts := s.VerdictHistory().Verdicts()
+	assert.Len(t, verdicts, 1)
 }
 
 func TestStateBuildVerificationSnapshotDependencyFailureReasonDetails(t *testing.T) {
