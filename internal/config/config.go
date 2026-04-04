@@ -204,6 +204,7 @@ type ProviderConfig struct {
 	Anthropic AnthropicProviderConfig  `toml:"anthropic"`
 	OpenAI    []OpenAICompatibleConfig `toml:"openai_compatible"`
 	Ollama    OllamaProviderConfig     `toml:"ollama"`
+	Zai       ZaiProviderConfig        `toml:"zai"`
 }
 
 // AnthropicProviderConfig holds Anthropic-specific provider settings.
@@ -224,6 +225,14 @@ type OpenAICompatibleConfig struct {
 // OllamaProviderConfig holds Ollama-specific provider settings.
 type OllamaProviderConfig struct {
 	BaseURL string `toml:"base_url"`
+}
+
+// ZaiProviderConfig holds Z.ai-specific provider settings.
+type ZaiProviderConfig struct {
+	APIKeySource string `toml:"api_key_source"`
+	APIKey       string `toml:"api_key"`
+	BaseURL      string `toml:"base_url"`
+	Model        string `toml:"model"`
 }
 
 // AgentConfig holds settings for the agent behavior.
