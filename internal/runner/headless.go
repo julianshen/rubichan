@@ -11,6 +11,7 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/internal/verification"
 )
 
 // TurnFunc matches the signature of agent.Agent.Turn.
@@ -209,6 +210,9 @@ func backendVerificationVerdict(toolCalls []output.ToolCallLog) (string, string)
 		return "failed", reason
 	}
 	if !hasSuccessfulDependencyResolution(toolCalls) {
+		if unknown := lastDependencyIntentWithoutMatch(toolCalls); unknown != "" {
+			return "failed", fmt.Sprintf("dependency resolution command unrecognized (%s)", unknown)
+		}
 		return "failed", "no dependency resolution evidence"
 	}
 	if !hasSuccessfulBackendValidationAfterLastEdit(toolCalls) && !hasBackendRuntimeAndAPIAfterLastEdit(toolCalls) {
@@ -277,9 +281,9 @@ func backendDependencyFailureReason(toolCalls []output.ToolCallLog) string {
 			return ""
 		}
 		if snippet := extractBuildFailureSnippet(tc.Result); snippet != "" {
-			return snippet
+			return fmt.Sprintf("dependency resolution command errored (%s): %s", compactCommand(commandString(tc)), snippet)
 		}
-		return "dependency resolution failed"
+		return fmt.Sprintf("dependency resolution command errored (%s)", compactCommand(commandString(tc)))
 	}
 	return ""
 }
@@ -791,29 +795,38 @@ func isBackendValidationCommand(tc output.ToolCallLog) bool {
 }
 
 func isDependencyResolutionCommand(tc output.ToolCallLog) bool {
-	command := commandString(tc)
-	for _, needle := range []string{
-		"npm ci",
-		"npm install",
-		"pnpm install",
-		"yarn install",
-		"go get",
-		"go mod tidy",
-		"mvn ",
-		"gradle build",
-		"./gradlew build",
-		"pip install",
-		"uv sync",
-		"poetry install",
-	} {
-		if strings.Contains(command, needle) {
-			if needle == "mvn " && !strings.Contains(command, "dependency:resolve") && !strings.Contains(command, "compile") && !strings.Contains(command, "package") && !strings.Contains(command, "test") {
-				continue
-			}
-			return true
+	return verification.DependencyResolutionCommand(commandString(tc)) != ""
+}
+
+func lastDependencyIntentWithoutMatch(toolCalls []output.ToolCallLog) string {
+	for i := len(toolCalls) - 1; i >= 0; i-- {
+		command := commandString(toolCalls[i])
+		if command == "" {
+			continue
 		}
+		if !verification.LooksLikeDependencyCommandIntent(command) {
+			continue
+		}
+		if isDependencyResolutionCommand(toolCalls[i]) {
+			continue
+		}
+		return compactCommand(command)
 	}
-	return false
+	return ""
+}
+
+const MaxCommandDisplayLen = 120
+
+func compactCommand(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "unknown"
+	}
+	if len(command) <= MaxCommandDisplayLen {
+		return command
+	}
+	ellipsis := "..."
+	return command[:MaxCommandDisplayLen-len(ellipsis)] + ellipsis
 }
 
 func commandString(tc output.ToolCallLog) string {
