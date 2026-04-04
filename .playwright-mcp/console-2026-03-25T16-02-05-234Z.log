@@ -1,0 +1,26 @@
+[   46443ms] [ERROR] Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem. @ http://localhost:5199/@vite/client:509
+[   46450ms] [ERROR] Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem. @ http://localhost:5199/@vite/client:509
+[   46464ms] TypeError: Cannot read properties of null (reading 'useState')
+    at exports.useState (http://localhost:5199/node_modules/.vite/deps/react-CTe6PVTc.js?v=6641e501:748:30)
+    at useUncontrolledState (http://localhost:5199/node_modules/.vite/deps/@radix-ui_react-checkbox.js?v=cb0bff10:113:41)
+    at useControllableState (http://localhost:5199/node_modules/.vite/deps/@radix-ui_react-checkbox.js?v=cb0bff10:86:63)
+    at CheckboxProvider (http://localhost:5199/node_modules/.vite/deps/@radix-ui_react-checkbox.js?v=cb0bff10:587:32)
+    at Object.react_stack_bottom_frame (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=ab7bd2dc:12868:12)
+    at renderWithHooks (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=ab7bd2dc:4213:19)
+    at updateFunctionComponent (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=ab7bd2dc:5569:16)
+    at beginWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=ab7bd2dc:6140:20)
+    at runWithFiberInDEV (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=ab7bd2dc:851:66)
+    at performUnitOfWork (http://localhost:5199/node_modules/.vite/deps/react-dom_client.js?v=ab7bd2dc:8429:92)
+[   46458ms] [WARNING] %s
+
+%s
+ An error occurred in the <CheckboxProvider> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5199/@vite/client:509

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/evaluator"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/session"
 )
@@ -784,4 +785,38 @@ type errMaxTurnsExceededStub struct{}
 
 func (errMaxTurnsExceededStub) Error() string {
 	return "max turns (12) exceeded"
+}
+
+func TestHeadlessRunnerWithEvaluatorRejectsInvalidToolCalls(t *testing.T) {
+	mockTurn := func(ctx context.Context, msg string) (<-chan agent.TurnEvent, error) {
+		return makeEventCh(
+			agent.TurnEvent{Type: "text_delta", Text: "I'll list files"},
+			agent.TurnEvent{
+				Type: "tool_call",
+				ToolCall: &agent.ToolCallEvent{
+					ID:    "t1",
+					Name:  "shell",
+					Input: []byte(`{"missing_command":true}`), // Invalid: missing required field
+				},
+			},
+			agent.TurnEvent{Type: "done"},
+		), nil
+	}
+
+	// Create validator that requires "command" field
+	validator := evaluator.NewSchemaValidator(map[string]evaluator.ToolSchema{
+		"shell": {
+			RequiredFields: []string{"command"},
+		},
+	})
+
+	runner := NewHeadlessRunner(mockTurn)
+	runner.SetToolEvaluator(validator)
+
+	result, err := runner.Run(context.Background(), "list files", "headless")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	// The tool call should be rejected before execution
+	assert.Contains(t, result.Error, "missing required field")
 }

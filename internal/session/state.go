@@ -39,16 +39,18 @@ type PlanItem struct {
 // It is intentionally small: enough to support verification/debugging and
 // future event-log/reducer work without depending on TUI rendering types.
 type State struct {
-	lastPrompt   string
-	toolCalls    []ToolCall
-	toolCallArgs map[string]json.RawMessage
-	plan         []PlanItem
+	lastPrompt     string
+	toolCalls      []ToolCall
+	toolCallArgs   map[string]json.RawMessage
+	plan           []PlanItem
+	verdictHistory *VerdictHistory
 }
 
 // NewState creates an empty session state.
 func NewState() *State {
 	return &State{
-		toolCallArgs: make(map[string]json.RawMessage),
+		toolCallArgs:   make(map[string]json.RawMessage),
+		verdictHistory: NewVerdictHistory(),
 	}
 }
 
@@ -58,6 +60,7 @@ func (s *State) ResetForPrompt(prompt string) {
 	s.toolCalls = nil
 	s.plan = nil
 	clear(s.toolCallArgs)
+	// NOTE: verdictHistory is NOT cleared - it persists across turns
 	if looksLikeBackendVerificationPrompt(prompt) {
 		s.plan = []PlanItem{{
 			Step:   "Backend verification",
@@ -81,6 +84,11 @@ func (s *State) Plan() []PlanItem {
 	out := make([]PlanItem, len(s.plan))
 	copy(out, s.plan)
 	return out
+}
+
+// VerdictHistory returns the verdict history for this session.
+func (s *State) VerdictHistory() *VerdictHistory {
+	return s.verdictHistory
 }
 
 // ApplyEvent folds a single turn event into the current session state.

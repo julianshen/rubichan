@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/evaluator"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/verification"
@@ -19,9 +20,10 @@ type TurnFunc func(ctx context.Context, msg string) (<-chan agent.TurnEvent, err
 
 // HeadlessRunner executes a single agent turn and collects the result.
 type HeadlessRunner struct {
-	turn      TurnFunc
-	eventSink session.EventSink
-	modelName string
+	turn          TurnFunc
+	eventSink     session.EventSink
+	modelName     string
+	toolEvaluator evaluator.Evaluator
 }
 
 // NewHeadlessRunner creates a new HeadlessRunner with the given turn function.
@@ -37,6 +39,11 @@ func (r *HeadlessRunner) SetEventSink(sink session.EventSink) {
 // SetModelName sets the model label used in turn_started events.
 func (r *HeadlessRunner) SetModelName(name string) {
 	r.modelName = strings.TrimSpace(name)
+}
+
+// SetToolEvaluator configures an evaluator for tool calls.
+func (r *HeadlessRunner) SetToolEvaluator(eval evaluator.Evaluator) {
+	r.toolEvaluator = eval
 }
 
 // Run executes the agent with the given prompt and collects a RunResult.
@@ -72,6 +79,28 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 		case "tool_call":
 			if evt.ToolCall != nil {
 				state.ApplyEvent(evt)
+
+				// Evaluate the tool call before recording it
+				if r.toolEvaluator != nil {
+					evalResult, _ := r.toolEvaluator.Evaluate(ctx, evaluator.EvaluationRequest{
+						ToolName: evt.ToolCall.Name,
+						Input:    evt.ToolCall.Input,
+						Context:  prompt,
+					})
+					if !evalResult.Approved() {
+						// Evaluation failed: emit error result and continue without executing
+						lastErr = fmt.Sprintf("tool evaluation rejected: %s", evalResult.Reason)
+						r.emitEvent(session.NewToolResultEvent(
+							evt.ToolCall.ID,
+							evt.ToolCall.Name,
+							lastErr,
+							true, // isError
+						))
+						continue
+					}
+				}
+
+				// Tool call approved: record it
 				r.emitEvent(session.NewToolCallEvent(evt.ToolCall.ID, evt.ToolCall.Name, evt.ToolCall.Input))
 				toolCalls = append(toolCalls, output.ToolCallLog{
 					ID:    evt.ToolCall.ID,
@@ -128,6 +157,10 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 	if shouldTreatToolOnlyMaxTurnsAsIncompleteSuccess(prompt, response, toolCalls, lastErr) {
 		lastErr = ""
 		summary = fmt.Sprintf("Run completed through tool evidence after %d tool call(s), but the model produced no final textual response.", len(toolCalls))
+	}
+	// When there's no textual response but a summary was generated, use the summary as the response
+	if strings.TrimSpace(response) == "" && strings.TrimSpace(summary) != "" {
+		response = summary
 	}
 	r.emitEvent(session.NewTurnCompletedEvent(doneDiffSummary, doneInputTokens, doneOutputTokens))
 

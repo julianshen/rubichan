@@ -1,0 +1,10 @@
+[     368ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5201/favicon.ico:0
+[  291550ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ chrome-error://chromewebdata/:0
+[  464816ms] ReferenceError: __HMR_CONFIG_NAME__ is not defined
+    at http://localhost:5201/@vite/client:228:23
+[  464985ms] ReferenceError: __HMR_CONFIG_NAME__ is not defined
+    at http://localhost:5201/@vite/client:228:23
+[  469962ms] ReferenceError: __HMR_CONFIG_NAME__ is not defined
+    at http://localhost:5201/@vite/client:228:23
+[  469984ms] ReferenceError: __HMR_CONFIG_NAME__ is not defined
+    at http://localhost:5201/@vite/client:228:23
