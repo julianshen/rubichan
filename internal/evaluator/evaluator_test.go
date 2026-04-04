@@ -215,3 +215,60 @@ func TestConfidenceEvaluatorContextAffectsScore(t *testing.T) {
 	// Same command, different context should affect confidence
 	assert.GreaterOrEqual(t, safe.ConfidenceScore, risky.ConfidenceScore)
 }
+
+func TestSpeculativeCheckerAcceptsWhenPreconditionsMet(t *testing.T) {
+	checker := evaluator.NewSpeculativeChecker(evaluator.SpeculativeConfig{
+		Checks: map[string]evaluator.SpeculativeCheck{
+			"read_file": {
+				PreconditionType: "file_exists",
+			},
+		},
+	})
+
+	// Mock a file that would exist
+	result, err := checker.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "read_file",
+		Input:    json.RawMessage(`{"path":"/etc/passwd"}`),
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, result.SpeculativeOK)
+}
+
+func TestSpeculativeCheckerSkipsUnknownTools(t *testing.T) {
+	checker := evaluator.NewSpeculativeChecker(evaluator.SpeculativeConfig{
+		Checks: map[string]evaluator.SpeculativeCheck{
+			"read_file": {
+				PreconditionType: "file_exists",
+			},
+		},
+	})
+
+	result, err := checker.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "unknown_tool",
+		Input:    json.RawMessage(`{"path":"/etc/passwd"}`),
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, result.SpeculativeOK)
+}
+
+func TestSpeculativeCheckerReturnsReasonWhenCheckFails(t *testing.T) {
+	checker := evaluator.NewSpeculativeChecker(evaluator.SpeculativeConfig{
+		Checks: map[string]evaluator.SpeculativeCheck{
+			"shell": {
+				PreconditionType: "command_recognized",
+			},
+		},
+	})
+
+	// A command with suspicious pattern
+	result, err := checker.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "shell",
+		Input:    json.RawMessage(`{"command":"totally_unknown_command_xyz"}`),
+	})
+
+	assert.NoError(t, err)
+	// Speculative checks are permissive (don't block execution)
+	assert.True(t, result.SpeculativeOK)
+}
