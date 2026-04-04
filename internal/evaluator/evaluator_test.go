@@ -2,6 +2,7 @@ package evaluator_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/evaluator"
@@ -87,4 +88,72 @@ func TestEvaluationResultReasonDescribesFailure(t *testing.T) {
 	}
 	result.Approved()
 	assert.Contains(t, result.Reason, "schema")
+}
+
+func TestSchemaValidatorRejectsInvalidJSON(t *testing.T) {
+	validator := evaluator.NewSchemaValidator(map[string]evaluator.ToolSchema{
+		"shell": {
+			RequiredFields: []string{"command"},
+		},
+	})
+
+	result, err := validator.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "shell",
+		Input:    json.RawMessage("invalid json"),
+	})
+
+	assert.NoError(t, err)
+	assert.False(t, result.SchemaValid)
+	assert.NotEmpty(t, result.SchemaError)
+	assert.Contains(t, result.SchemaError, "invalid JSON")
+}
+
+func TestSchemaValidatorAcceptsMissingOptionalFields(t *testing.T) {
+	validator := evaluator.NewSchemaValidator(map[string]evaluator.ToolSchema{
+		"shell": {
+			RequiredFields: []string{"command"},
+		},
+	})
+
+	result, err := validator.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "shell",
+		Input:    json.RawMessage(`{"command":"ls"}`),
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, result.SchemaValid)
+	assert.Empty(t, result.SchemaError)
+}
+
+func TestSchemaValidatorRejectsMissingRequiredFields(t *testing.T) {
+	validator := evaluator.NewSchemaValidator(map[string]evaluator.ToolSchema{
+		"shell": {
+			RequiredFields: []string{"command"},
+		},
+	})
+
+	result, err := validator.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "shell",
+		Input:    json.RawMessage(`{}`),
+	})
+
+	assert.NoError(t, err)
+	assert.False(t, result.SchemaValid)
+	assert.Contains(t, result.SchemaError, "command")
+}
+
+func TestSchemaValidatorPassesThroughUnknownTools(t *testing.T) {
+	validator := evaluator.NewSchemaValidator(map[string]evaluator.ToolSchema{
+		"shell": {
+			RequiredFields: []string{"command"},
+		},
+	})
+
+	result, err := validator.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "unknown_tool",
+		Input:    json.RawMessage(`{}`),
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, result.SchemaValid)
 }

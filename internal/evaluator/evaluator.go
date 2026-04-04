@@ -62,6 +62,55 @@ func (r *EvaluationResult) Approved() bool {
 	return approved
 }
 
+// ToolSchema describes the structure of a tool's input.
+type ToolSchema struct {
+	RequiredFields []string
+}
+
+// SchemaValidator checks whether JSON input matches a tool's schema.
+type SchemaValidator struct {
+	schemas map[string]ToolSchema
+}
+
+// NewSchemaValidator creates a schema validator with the given tool schemas.
+func NewSchemaValidator(schemas map[string]ToolSchema) *SchemaValidator {
+	return &SchemaValidator{schemas: schemas}
+}
+
+// Evaluate checks if the input is valid JSON and contains all required fields.
+func (v *SchemaValidator) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error) {
+	schema, found := v.schemas[req.ToolName]
+	if !found {
+		// Unknown tools pass validation (assume they handle their own schema)
+		return EvaluationResult{
+			SchemaValid: true,
+		}, nil
+	}
+
+	// Parse JSON
+	var input map[string]interface{}
+	if err := json.Unmarshal(req.Input, &input); err != nil {
+		return EvaluationResult{
+			SchemaValid: false,
+			SchemaError: fmt.Sprintf("invalid JSON: %v", err),
+		}, nil
+	}
+
+	// Check required fields
+	for _, field := range schema.RequiredFields {
+		if _, ok := input[field]; !ok {
+			return EvaluationResult{
+				SchemaValid: false,
+				SchemaError: fmt.Sprintf("missing required field: %s", field),
+			}, nil
+		}
+	}
+
+	return EvaluationResult{
+		SchemaValid: true,
+	}, nil
+}
+
 // CompositeEvaluator runs multiple evaluators and combines their results.
 // It fails fast: if any evaluator rejects the call, it returns that rejection.
 type CompositeEvaluator struct {
