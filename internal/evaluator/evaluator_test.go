@@ -157,3 +157,61 @@ func TestSchemaValidatorPassesThroughUnknownTools(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, result.SchemaValid)
 }
+
+func TestConfidenceEvaluatorHighConfidenceOnSafeTools(t *testing.T) {
+	conf := evaluator.NewConfidenceEvaluator(evaluator.ConfidenceConfig{
+		HighRiskTools: []string{"shell", "write_file"},
+		Threshold:     0.7,
+	})
+
+	result, err := conf.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "read_file",
+		Input:    json.RawMessage(`{"path":"/etc/passwd"}`),
+		Context:  "read configuration file",
+	})
+
+	assert.NoError(t, err)
+	assert.True(t, result.ConfidentEnough)
+	assert.GreaterOrEqual(t, result.ConfidenceScore, 0.9)
+}
+
+func TestConfidenceEvaluatorLowConfidenceOnHighRiskTools(t *testing.T) {
+	conf := evaluator.NewConfidenceEvaluator(evaluator.ConfidenceConfig{
+		HighRiskTools: []string{"shell", "write_file"},
+		Threshold:     0.7,
+	})
+
+	result, err := conf.Evaluate(context.Background(), evaluator.EvaluationRequest{
+		ToolName: "shell",
+		Input:    json.RawMessage(`{"command":"rm -rf /"}`),
+		Context:  "delete everything",
+	})
+
+	assert.NoError(t, err)
+	assert.False(t, result.ConfidentEnough)
+}
+
+func TestConfidenceEvaluatorContextAffectsScore(t *testing.T) {
+	conf := evaluator.NewConfidenceEvaluator(evaluator.ConfidenceConfig{
+		HighRiskTools: []string{"shell"},
+		Threshold:     0.7,
+	})
+
+	safableRequest := evaluator.EvaluationRequest{
+		ToolName: "shell",
+		Input:    json.RawMessage(`{"command":"ls"}`),
+		Context:  "list directory contents",
+	}
+
+	riskyRequest := evaluator.EvaluationRequest{
+		ToolName: "shell",
+		Input:    json.RawMessage(`{"command":"ls"}`),
+		Context:  "perform arbitrary shell operation",
+	}
+
+	safe, _ := conf.Evaluate(context.Background(), safableRequest)
+	risky, _ := conf.Evaluate(context.Background(), riskyRequest)
+
+	// Same command, different context should affect confidence
+	assert.GreaterOrEqual(t, safe.ConfidenceScore, risky.ConfidenceScore)
+}
