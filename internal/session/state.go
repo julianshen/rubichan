@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/julianshen/rubichan/internal/depcheck"
+	"github.com/julianshen/rubichan/internal/verification"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
@@ -136,18 +136,15 @@ func BuildVerificationSnapshot(prompt string, toolCalls []ToolCall) string {
 }
 
 type verificationEval struct {
-	applicable            bool
-	dependency            bool
-	dependencyErr         bool
-	schema                bool
-	runtime               bool
-	api                   bool
-	invalidated           bool
-	gate                  string
-	verdict               string
-	reason                string
-	lastDependencyCommand string
-	lastDependencyUnknown string
+	applicable  bool
+	dependency  bool
+	schema      bool
+	runtime     bool
+	api         bool
+	invalidated bool
+	gate        string
+	verdict     string
+	reason      string
 }
 
 func evaluateVerification(prompt string, toolCalls []ToolCall) verificationEval {
@@ -158,20 +155,21 @@ func evaluateVerification(prompt string, toolCalls []ToolCall) verificationEval 
 	eval.applicable = true
 	lastVerification := -1
 	lastEdit := -1
+	var lastDependencyCommand string
+	var lastDependencyUnknown string
+	var lastDependencyErr bool
 
 	for i, tc := range toolCalls {
 		args := strings.ToLower(string(tc.Input))
 		content := strings.ToLower(tc.Result)
 		cmd := strings.TrimSpace(extractEmbeddedCommand(args))
-		if depcheck.LooksLikeDependencyCommandIntent(cmd) {
-			eval.lastDependencyUnknown = cmd
+		if verification.LooksLikeDependencyCommandIntent(cmd) {
+			lastDependencyUnknown = cmd
 		}
-		if toolCallLooksLikeDependencyResolution(args, content, tc.IsError) {
-			eval.lastDependencyCommand = dependencyResolutionCommandFromArgs(args)
+		if toolCallLooksLikeDependencyResolution(args) {
+			lastDependencyCommand = dependencyResolutionCommandFromArgs(args)
 			eval.dependency = eval.dependency || !tc.IsError
-			if tc.IsError {
-				eval.dependencyErr = true
-			}
+			lastDependencyErr = tc.IsError
 			if !tc.IsError {
 				lastVerification = i
 			}
@@ -212,10 +210,10 @@ func evaluateVerification(prompt string, toolCalls []ToolCall) verificationEval 
 		eval.gate = "hard_fail"
 		eval.verdict = "failed"
 		switch {
-		case eval.lastDependencyCommand != "" && eval.dependencyErr:
-			eval.reason = fmt.Sprintf("dependency resolution command errored (%s)", eval.lastDependencyCommand)
-		case eval.lastDependencyUnknown != "":
-			eval.reason = fmt.Sprintf("dependency resolution command unrecognized (%s)", eval.lastDependencyUnknown)
+		case lastDependencyCommand != "" && lastDependencyErr:
+			eval.reason = fmt.Sprintf("dependency resolution command errored (%s)", lastDependencyCommand)
+		case lastDependencyUnknown != "":
+			eval.reason = fmt.Sprintf("dependency resolution command unrecognized (%s)", lastDependencyUnknown)
 		default:
 			eval.reason = "missing dependency resolution evidence"
 		}
@@ -300,7 +298,7 @@ func looksLikeBackendVerificationPrompt(prompt string) bool {
 	return false
 }
 
-func toolCallLooksLikeDependencyResolution(args, _ string, _ bool) bool {
+func toolCallLooksLikeDependencyResolution(args string) bool {
 	return dependencyResolutionCommandFromArgs(args) != ""
 }
 
@@ -309,41 +307,17 @@ func dependencyResolutionCommandFromArgs(args string) string {
 	if command == "" {
 		command = args
 	}
-	switch {
-	case strings.Contains(command, "npm ci"),
-		strings.Contains(command, "npm install"),
-		strings.Contains(command, "pnpm install"),
-		strings.Contains(command, "yarn install"),
-		strings.Contains(command, "go get"),
-		strings.Contains(command, "go mod tidy"),
-		strings.Contains(command, "pip install"),
-		strings.Contains(command, "python -m pip install"),
-		strings.Contains(command, "python3 -m pip install"),
-		strings.Contains(command, "uv sync"),
-		strings.Contains(command, "poetry install"):
-		return command
-	case strings.Contains(command, "mvn "):
-		if strings.Contains(command, "dependency:resolve") ||
-			strings.Contains(command, "compile") ||
-			strings.Contains(command, "package") ||
-			strings.Contains(command, "test") {
-			return command
-		}
-	case strings.Contains(command, "gradle build"),
-		strings.Contains(command, "./gradlew build"):
-		return command
-	}
-	return ""
+	return verification.DependencyResolutionCommand(command)
 }
 
 func extractEmbeddedCommand(args string) string {
-	var parsed struct {
+	var in struct {
 		Command string `json:"command"`
 	}
-	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(args), &in); err != nil {
 		return ""
 	}
-	return parsed.Command
+	return in.Command
 }
 
 func toolCallLooksLikeSchemaEvidence(args, content string) bool {

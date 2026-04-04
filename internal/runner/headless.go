@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/agent"
-	"github.com/julianshen/rubichan/internal/depcheck"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/session"
+	"github.com/julianshen/rubichan/internal/verification"
 )
 
 // TurnFunc matches the signature of agent.Agent.Turn.
@@ -67,8 +67,6 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 
 	for evt := range ch {
 		switch evt.Type {
-		case "thinking_delta":
-			// Thinking is displayed in the TUI but suppressed in headless mode.
 		case "text_delta":
 			textBuf.WriteString(evt.Text)
 		case "tool_call":
@@ -132,13 +130,6 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 		summary = fmt.Sprintf("Run completed through tool evidence after %d tool call(s), but the model produced no final textual response.", len(toolCalls))
 	}
 	r.emitEvent(session.NewTurnCompletedEvent(doneDiffSummary, doneInputTokens, doneOutputTokens))
-
-	// When the model produced no textual response but tool calls completed,
-	// populate Response with the summary so downstream consumers (JSON, PR
-	// comments) receive useful output instead of an empty string.
-	if strings.TrimSpace(response) == "" && summary != "" {
-		response = summary
-	}
 
 	return &output.RunResult{
 		Prompt:          prompt,
@@ -721,9 +712,9 @@ func buildHeadlessSummary(response string, toolCalls []output.ToolCallLog, lastE
 	case backendFailure != "":
 		return fmt.Sprintf("Run ended with a backend validation failure: %s", backendFailure)
 	case lastErr != "" && len(toolCalls) > 0:
-		return fmt.Sprintf("Run failed after %d tool call(s); %d returned errors. Last error: %s", len(toolCalls), toolErrors, lastErr)
+		return fmt.Sprintf("Run failed after %d tool call(s); %d returned errors.", len(toolCalls), toolErrors)
 	case lastErr != "":
-		return fmt.Sprintf("Run failed before producing a textual response. Error: %s", lastErr)
+		return "Run failed before producing a textual response."
 	case len(toolCalls) > 0:
 		return fmt.Sprintf("Run completed without a textual response after %d tool call(s); %d returned errors.", len(toolCalls), toolErrors)
 	default:
@@ -804,31 +795,7 @@ func isBackendValidationCommand(tc output.ToolCallLog) bool {
 }
 
 func isDependencyResolutionCommand(tc output.ToolCallLog) bool {
-	command := commandString(tc)
-	for _, needle := range []string{
-		"npm ci",
-		"npm install",
-		"pnpm install",
-		"yarn install",
-		"go get",
-		"go mod tidy",
-		"mvn ",
-		"gradle build",
-		"./gradlew build",
-		"pip install",
-		"python -m pip install",
-		"python3 -m pip install",
-		"uv sync",
-		"poetry install",
-	} {
-		if strings.Contains(command, needle) {
-			if needle == "mvn " && !strings.Contains(command, "dependency:resolve") && !strings.Contains(command, "compile") && !strings.Contains(command, "package") && !strings.Contains(command, "test") {
-				continue
-			}
-			return true
-		}
-	}
-	return false
+	return verification.DependencyResolutionCommand(commandString(tc)) != ""
 }
 
 func lastDependencyIntentWithoutMatch(toolCalls []output.ToolCallLog) string {
@@ -837,7 +804,7 @@ func lastDependencyIntentWithoutMatch(toolCalls []output.ToolCallLog) string {
 		if command == "" {
 			continue
 		}
-		if !depcheck.LooksLikeDependencyCommandIntent(command) {
+		if !verification.LooksLikeDependencyCommandIntent(command) {
 			continue
 		}
 		if isDependencyResolutionCommand(toolCalls[i]) {
@@ -848,15 +815,18 @@ func lastDependencyIntentWithoutMatch(toolCalls []output.ToolCallLog) string {
 	return ""
 }
 
+const MaxCommandDisplayLen = 120
+
 func compactCommand(command string) string {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return "unknown"
 	}
-	if len(command) <= 120 {
+	if len(command) <= MaxCommandDisplayLen {
 		return command
 	}
-	return command[:117] + "..."
+	ellipsis := "..."
+	return command[:MaxCommandDisplayLen-len(ellipsis)] + ellipsis
 }
 
 func commandString(tc output.ToolCallLog) string {

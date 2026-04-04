@@ -523,11 +523,17 @@ func TestToolCallLooksLikeDependencyResolutionRecognizesSharedPatterns(t *testin
 		`{"command":"go mod tidy"}`,
 		`{"command":"python -m pip install -r requirements.txt"}`,
 		`{"command":"python3 -m pip install fastapi uvicorn"}`,
+		`{"command":"./gradlew build"}`,
 		`{"command":"uv sync"}`,
 		`{"command":"poetry install --no-interaction"}`,
 	} {
-		assert.True(t, toolCallLooksLikeDependencyResolution(command, "", false), command)
+		assert.True(t, toolCallLooksLikeDependencyResolution(command), command)
 	}
+}
+
+func TestExtractEmbeddedCommandHandlesEscapedQuotes(t *testing.T) {
+	args := `{"command":"echo \"hi\" && npm install"}`
+	assert.Equal(t, `echo "hi" && npm install`, extractEmbeddedCommand(args))
 }
 
 func TestStateBuildVerificationSnapshotDependencyFailureReasonDetails(t *testing.T) {
