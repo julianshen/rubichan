@@ -1,0 +1,1204 @@
+=== RUN   TestEvaluatorInterfaceExists
+--- PASS: TestEvaluatorInterfaceExists (0.00s)
+=== RUN   TestEvaluationResultApprovedWhenAllChecksPassed
+--- PASS: TestEvaluationResultApprovedWhenAllChecksPassed (0.00s)
+=== RUN   TestEvaluationResultRejectedWhenAnyCheckFailed
+=== RUN   TestEvaluationResultRejectedWhenAnyCheckFailed/schema_invalid
+=== RUN   TestEvaluationResultRejectedWhenAnyCheckFailed/low_confidence
+=== RUN   TestEvaluationResultRejectedWhenAnyCheckFailed/speculative_check_failed
+--- PASS: TestEvaluationResultRejectedWhenAnyCheckFailed (0.00s)
+    --- PASS: TestEvaluationResultRejectedWhenAnyCheckFailed/schema_invalid (0.00s)
+    --- PASS: TestEvaluationResultRejectedWhenAnyCheckFailed/low_confidence (0.00s)
+    --- PASS: TestEvaluationResultRejectedWhenAnyCheckFailed/speculative_check_failed (0.00s)
+=== RUN   TestEvaluationResultReasonIsEmpty_WhenApproved
+--- PASS: TestEvaluationResultReasonIsEmpty_WhenApproved (0.00s)
+=== RUN   TestEvaluationResultReasonDescribesFailure
+--- PASS: TestEvaluationResultReasonDescribesFailure (0.00s)
+=== RUN   TestSchemaValidatorRejectsInvalidJSON
+--- PASS: TestSchemaValidatorRejectsInvalidJSON (0.00s)
+=== RUN   TestSchemaValidatorAcceptsMissingOptionalFields
+--- PASS: TestSchemaValidatorAcceptsMissingOptionalFields (0.00s)
+=== RUN   TestSchemaValidatorRejectsMissingRequiredFields
+--- PASS: TestSchemaValidatorRejectsMissingRequiredFields (0.00s)
+=== RUN   TestSchemaValidatorPassesThroughUnknownTools
+--- PASS: TestSchemaValidatorPassesThroughUnknownTools (0.00s)
+=== RUN   TestConfidenceEvaluatorHighConfidenceOnSafeTools
+--- PASS: TestConfidenceEvaluatorHighConfidenceOnSafeTools (0.00s)
+=== RUN   TestConfidenceEvaluatorLowConfidenceOnHighRiskTools
+--- PASS: TestConfidenceEvaluatorLowConfidenceOnHighRiskTools (0.00s)
+=== RUN   TestConfidenceEvaluatorContextAffectsScore
+--- PASS: TestConfidenceEvaluatorContextAffectsScore (0.00s)
+=== RUN   TestSpeculativeCheckerAcceptsWhenPreconditionsMet
+--- PASS: TestSpeculativeCheckerAcceptsWhenPreconditionsMet (0.00s)
+=== RUN   TestSpeculativeCheckerSkipsUnknownTools
+--- PASS: TestSpeculativeCheckerSkipsUnknownTools (0.00s)
+=== RUN   TestSpeculativeCheckerReturnsReasonWhenCheckFails
+--- PASS: TestSpeculativeCheckerReturnsReasonWhenCheckFails (0.00s)
+PASS
+coverage: 69.2% of statements
+ok  	github.com/julianshen/rubichan/internal/evaluator	0.200s	coverage: 69.2% of statements
+=== RUN   TestParseVerificationSnapshot
+--- PASS: TestParseVerificationSnapshot (0.00s)
+=== RUN   TestNewLogSinkEmitsJSON
+--- PASS: TestNewLogSinkEmitsJSON (0.00s)
+=== RUN   TestNewJSONLSinkEmitsOneLinePerEvent
+--- PASS: TestNewJSONLSinkEmitsOneLinePerEvent (0.00s)
+=== RUN   TestNewTurnAndToolEvents
+--- PASS: TestNewTurnAndToolEvents (0.00s)
+=== RUN   TestWithActorPreservesExistingActorFields
+--- PASS: TestWithActorPreservesExistingActorFields (0.00s)
+=== RUN   TestNewJSONLSinkLogsEncodeError
+--- PASS: TestNewJSONLSinkLogsEncodeError (0.00s)
+=== RUN   TestMultiSinkBroadcastsToAllSinks
+--- PASS: TestMultiSinkBroadcastsToAllSinks (0.00s)
+=== RUN   TestMultiSinkSkipsNilEntries
+--- PASS: TestMultiSinkSkipsNilEntries (0.00s)
+=== RUN   TestSinkFuncNilDoesNotPanic
+--- PASS: TestSinkFuncNilDoesNotPanic (0.00s)
+=== RUN   TestNewJSONLSinkNilWriterReturnsNoOp
+--- PASS: TestNewJSONLSinkNilWriterReturnsNoOp (0.00s)
+=== RUN   TestNewLogSinkNilLoggerUsesDefault
+--- PASS: TestNewLogSinkNilLoggerUsesDefault (0.00s)
+=== RUN   TestNormalizeToolInputEdgeCases
+--- PASS: TestNormalizeToolInputEdgeCases (0.00s)
+=== RUN   TestStateBuildVerificationSnapshotPassed
+--- PASS: TestStateBuildVerificationSnapshotPassed (0.00s)
+=== RUN   TestLooksLikeBackendVerificationPromptIgnoresFrontendTodoPrompt
+--- PASS: TestLooksLikeBackendVerificationPromptIgnoresFrontendTodoPrompt (0.00s)
+=== RUN   TestToolCallLooksLikeEditIgnoresReadOperation
+--- PASS: TestToolCallLooksLikeEditIgnoresReadOperation (0.00s)
+=== RUN   TestToolCallLooksLikeEditRecognizesShellMutationPatterns
+--- PASS: TestToolCallLooksLikeEditRecognizesShellMutationPatterns (0.00s)
+=== RUN   TestStateBuildVerificationSnapshotInvalidated
+--- PASS: TestStateBuildVerificationSnapshotInvalidated (0.00s)
+=== RUN   TestStateBuildVerificationSnapshotTreatsProcessRunAsRuntimeEvidence
+--- PASS: TestStateBuildVerificationSnapshotTreatsProcessRunAsRuntimeEvidence (0.00s)
+=== RUN   TestStateBuildVerificationSnapshotRecognizesNpmCiAndPythonAPIEvidence
+--- PASS: TestStateBuildVerificationSnapshotRecognizesNpmCiAndPythonAPIEvidence (0.00s)
+=== RUN   TestStatePlanTransitionsToCompleted
+--- PASS: TestStatePlanTransitionsToCompleted (0.00s)
+=== RUN   TestStatePlanTransitionsToReverifyRequiredAfterEdit
+--- PASS: TestStatePlanTransitionsToReverifyRequiredAfterEdit (0.00s)
+=== RUN   TestStateBuildVerificationSnapshotSchemaMissingIsSoftFail
+--- PASS: TestStateBuildVerificationSnapshotSchemaMissingIsSoftFail (0.00s)
+=== RUN   TestToolCallLooksLikeDependencyResolutionRecognizesSharedPatterns
+--- PASS: TestToolCallLooksLikeDependencyResolutionRecognizesSharedPatterns (0.00s)
+=== RUN   TestExtractEmbeddedCommandHandlesEscapedQuotes
+--- PASS: TestExtractEmbeddedCommandHandlesEscapedQuotes (0.00s)
+=== RUN   TestStateRecordsToolVerdicts
+--- PASS: TestStateRecordsToolVerdicts (0.00s)
+=== RUN   TestStatePreservesVerdictHistoryAcrossPrompts
+--- PASS: TestStatePreservesVerdictHistoryAcrossPrompts (0.00s)
+=== RUN   TestStateBuildVerificationSnapshotDependencyFailureReasonDetails
+--- PASS: TestStateBuildVerificationSnapshotDependencyFailureReasonDetails (0.00s)
+=== RUN   TestStateBuildVerificationSnapshotDependencyUnrecognizedReasonDetails
+--- PASS: TestStateBuildVerificationSnapshotDependencyUnrecognizedReasonDetails (0.00s)
+=== RUN   TestDecodeJSONLEvents
+--- PASS: TestDecodeJSONLEvents (0.00s)
+=== RUN   TestDecodeJSONLEventsAcceptsLargeLines
+--- PASS: TestDecodeJSONLEventsAcceptsLargeLines (0.00s)
+=== RUN   TestBuildTranscript
+--- PASS: TestBuildTranscript (0.00s)
+=== RUN   TestBuildTranscriptUsesRawInputFallback
+--- PASS: TestBuildTranscriptUsesRawInputFallback (0.00s)
+=== RUN   TestBuildSummary
+--- PASS: TestBuildSummary (0.00s)
+=== RUN   TestBuildSummaryDerivesVerificationFromToolEvidence
+--- PASS: TestBuildSummaryDerivesVerificationFromToolEvidence (0.00s)
+=== RUN   TestMarshalSummaryJSON
+--- PASS: TestMarshalSummaryJSON (0.00s)
+=== RUN   TestBuildTranscriptIncludesPlanGateAndCheckpointEvents
+--- PASS: TestBuildTranscriptIncludesPlanGateAndCheckpointEvents (0.00s)
+=== RUN   TestVerdictHistoryEmpty_OnInit
+--- PASS: TestVerdictHistoryEmpty_OnInit (0.00s)
+=== RUN   TestVerdictHistoryRecordsSuccess
+--- PASS: TestVerdictHistoryRecordsSuccess (0.00s)
+=== RUN   TestVerdictHistoryLimitedSize
+--- PASS: TestVerdictHistoryLimitedSize (0.00s)
+=== RUN   TestVerdictHistorySummaryByTool
+--- PASS: TestVerdictHistorySummaryByTool (0.00s)
+PASS
+coverage: 88.1% of statements
+ok  	github.com/julianshen/rubichan/internal/session	0.300s	coverage: 88.1% of statements
+=== RUN   TestWithCompactionStrategies
+--- PASS: TestWithCompactionStrategies (0.00s)
+=== RUN   TestWithSummarizer
+--- PASS: TestWithSummarizer (0.00s)
+=== RUN   TestWithMemoryStoreLoadOnStart
+--- PASS: TestWithMemoryStoreLoadOnStart (0.00s)
+=== RUN   TestWithMemoryStoreEmptyNoSection
+--- PASS: TestWithMemoryStoreEmptyNoSection (0.00s)
+=== RUN   TestSaveMemoriesNilStore
+--- PASS: TestSaveMemoriesNilStore (0.00s)
+=== RUN   TestSaveMemoriesNilSummarizer
+--- PASS: TestSaveMemoriesNilSummarizer (0.00s)
+=== RUN   TestSaveMemoriesExtractsAndSaves
+--- PASS: TestSaveMemoriesExtractsAndSaves (0.00s)
+=== RUN   TestSaveMemoriesReturnsStoreError
+--- PASS: TestSaveMemoriesReturnsStoreError (0.00s)
+=== RUN   TestScratchpadAccessMethod
+--- PASS: TestScratchpadAccessMethod (0.00s)
+=== RUN   TestBuildSystemPromptWithScratchpad
+--- PASS: TestBuildSystemPromptWithScratchpad (0.00s)
+=== RUN   TestBuildSystemPromptEmptyScratchpad
+--- PASS: TestBuildSystemPromptEmptyScratchpad (0.00s)
+=== RUN   TestLLMSummarizerSummarize
+--- PASS: TestLLMSummarizerSummarize (0.00s)
+=== RUN   TestLLMSummarizerStreamError
+--- PASS: TestLLMSummarizerStreamError (0.00s)
+=== RUN   TestAgentWithSkillRuntime
+--- PASS: TestAgentWithSkillRuntime (0.00s)
+=== RUN   TestAgentBeforeToolCallHook
+--- PASS: TestAgentBeforeToolCallHook (0.00s)
+=== RUN   TestAgentAfterToolResultHook
+--- PASS: TestAgentAfterToolResultHook (0.00s)
+=== RUN   TestAgentPromptInjection
+--- PASS: TestAgentPromptInjection (0.00s)
+=== RUN   TestAgentBeforePromptBuildHookCanModifyPrompt
+--- PASS: TestAgentBeforePromptBuildHookCanModifyPrompt (0.00s)
+=== RUN   TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder
+=== RUN   TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder/replace_then_append_preserves_order
+=== RUN   TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder/explicit_empty_replacement_clears_fragments
+=== RUN   TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder/chained_hooks_preserve_prior_mutations_when_later_hook_is_noop
+--- PASS: TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder (0.00s)
+    --- PASS: TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder/replace_then_append_preserves_order (0.00s)
+    --- PASS: TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder/explicit_empty_replacement_clears_fragments (0.00s)
+    --- PASS: TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder/chained_hooks_preserve_prior_mutations_when_later_hook_is_noop (0.00s)
+=== RUN   TestAgentTurnEvaluatesKeywordTriggersForPromptSkills
+--- PASS: TestAgentTurnEvaluatesKeywordTriggersForPromptSkills (0.00s)
+=== RUN   TestAgentTurnEvaluatesKeywordTriggersForToolContributions
+--- PASS: TestAgentTurnEvaluatesKeywordTriggersForToolContributions (0.00s)
+=== RUN   TestApprovalToolErrorResult
+=== RUN   TestApprovalToolErrorResult/without_wrapped_error
+=== RUN   TestApprovalToolErrorResult/with_wrapped_error
+2026/04/05 01:10:18 ERROR: approval failure for tool file (tool-1): approval service unavailable
+--- PASS: TestApprovalToolErrorResult (0.00s)
+    --- PASS: TestApprovalToolErrorResult/without_wrapped_error (0.00s)
+    --- PASS: TestApprovalToolErrorResult/with_wrapped_error (0.00s)
+=== RUN   TestNewAgent
+--- PASS: TestNewAgent (0.00s)
+=== RUN   TestNewAgentSystemPrompt
+--- PASS: TestNewAgentSystemPrompt (0.00s)
+=== RUN   TestNewAgentSkipsPreRegisteredTools
+--- PASS: TestNewAgentSkipsPreRegisteredTools (0.00s)
+=== RUN   TestWithWorkingDir
+--- PASS: TestWithWorkingDir (0.00s)
+=== RUN   TestWithWorkingDir_Fallback
+--- PASS: TestWithWorkingDir_Fallback (0.00s)
+=== RUN   TestWithAgentMD
+--- PASS: TestWithAgentMD (0.00s)
+=== RUN   TestWithExtraSystemPrompt
+--- PASS: TestWithExtraSystemPrompt (0.00s)
+=== RUN   TestWithExtraSystemPromptMultiple
+--- PASS: TestWithExtraSystemPromptMultiple (0.00s)
+=== RUN   TestWithExtraSystemPromptAfterAgentMD
+--- PASS: TestWithExtraSystemPromptAfterAgentMD (0.00s)
+=== RUN   TestWithAgentMD_Empty
+--- PASS: TestWithAgentMD_Empty (0.00s)
+=== RUN   TestWithIdentityMD
+--- PASS: TestWithIdentityMD (0.00s)
+=== RUN   TestWithSoulMD
+--- PASS: TestWithSoulMD (0.00s)
+=== RUN   TestPromptSectionOrderWithIdentityAndSoul
+--- PASS: TestPromptSectionOrderWithIdentityAndSoul (0.00s)
+=== RUN   TestBuildSystemPromptWithFragmentsDoesNotNestStaticSections
+--- PASS: TestBuildSystemPromptWithFragmentsDoesNotNestStaticSections (0.00s)
+=== RUN   TestTurnTextOnly
+--- PASS: TestTurnTextOnly (0.00s)
+=== RUN   TestTurnEmptyResponseEmitsError
+--- PASS: TestTurnEmptyResponseEmitsError (0.00s)
+=== RUN   TestTurnStreamErrorDiscardsPartialBlocks
+--- PASS: TestTurnStreamErrorDiscardsPartialBlocks (0.00s)
+=== RUN   TestSetModelRaceSafety
+--- PASS: TestSetModelRaceSafety (0.00s)
+=== RUN   TestTurnMaxTurnsExceeded
+--- PASS: TestTurnMaxTurnsExceeded (0.00s)
+=== RUN   TestTurnDetectsRepeatedToolOnlyNoProgress
+--- PASS: TestTurnDetectsRepeatedToolOnlyNoProgress (0.00s)
+=== RUN   TestTurnWithToolCall
+--- PASS: TestTurnWithToolCall (0.00s)
+=== RUN   TestTurnWithInlineToolUseInput
+--- PASS: TestTurnWithInlineToolUseInput (0.00s)
+=== RUN   TestTurnWithDeltaInputOverridesInlineToolUseSeed
+--- PASS: TestTurnWithDeltaInputOverridesInlineToolUseSeed (0.00s)
+=== RUN   TestTurnWithStreamingToolProgress
+--- PASS: TestTurnWithStreamingToolProgress (0.00s)
+=== RUN   TestTurnWithDeniedTool
+--- PASS: TestTurnWithDeniedTool (0.00s)
+=== RUN   TestTurnWithUnknownTool
+--- PASS: TestTurnWithUnknownTool (0.00s)
+=== RUN   TestTurnWithStreamInitError
+--- PASS: TestTurnWithStreamInitError (0.00s)
+=== RUN   TestTurnWithApprovalError
+2026/04/05 01:10:18 ERROR: approval failure for tool file (tool_err): approval service unavailable
+--- PASS: TestTurnWithApprovalError (0.00s)
+=== RUN   TestTurnWithUIRequestApproval
+--- PASS: TestTurnWithUIRequestApproval (0.00s)
+=== RUN   TestTurnWithUIRequestApprovalError
+2026/04/05 01:10:18 ERROR: approval failure for tool file (tool_ui_err): ui unavailable
+--- PASS: TestTurnWithUIRequestApprovalError (0.00s)
+=== RUN   TestTurnWithUIRequestIDMismatch
+2026/04/05 01:10:18 ERROR: approval failure for tool file (tool_ui_mismatch): unexpected UI response id "different-id" for request "tool_ui_mismatch"
+--- PASS: TestTurnWithUIRequestIDMismatch (0.00s)
+=== RUN   TestTurnWithToolExecutionError
+--- PASS: TestTurnWithToolExecutionError (0.00s)
+=== RUN   TestTurnWithProviderError
+--- PASS: TestTurnWithProviderError (0.00s)
+=== RUN   TestClearConversation
+--- PASS: TestClearConversation (0.00s)
+=== RUN   TestSetModel
+--- PASS: TestSetModel (0.00s)
+=== RUN   TestWithStoreOption
+--- PASS: TestWithStoreOption (0.00s)
+=== RUN   TestAgentWithStorePersistsMessages
+--- PASS: TestAgentWithStorePersistsMessages (0.00s)
+=== RUN   TestWithResumeSession
+--- PASS: TestWithResumeSession (0.00s)
+=== RUN   TestWithResumeSessionNotFound
+2026/04/05 01:10:18 WARN: failed to resume session nonexistent: <nil>
+--- PASS: TestWithResumeSessionNotFound (0.00s)
+=== RUN   TestAgentWithoutStoreStillWorks
+--- PASS: TestAgentWithoutStoreStillWorks (0.00s)
+=== RUN   TestTurnContextCancelledDuringToolLoop
+--- PASS: TestTurnContextCancelledDuringToolLoop (0.00s)
+=== RUN   TestTurnWithToolExecuteGoError
+--- PASS: TestTurnWithToolExecuteGoError (0.00s)
+=== RUN   TestAgentPersistMessageErrorIsNonFatal
+2026/04/05 01:10:18 WARN: failed to persist message: append message: sql: database is closed
+2026/04/05 01:10:18 WARN: failed to save snapshot: save snapshot: sql: database is closed
+2026/04/05 01:10:18 WARN: failed to persist message: append message: sql: database is closed
+--- PASS: TestAgentPersistMessageErrorIsNonFatal (0.00s)
+=== RUN   TestToolResultEventCarriesDisplayContent
+--- PASS: TestToolResultEventCarriesDisplayContent (0.00s)
+=== RUN   TestToolResultEventEmptyDisplayContent
+--- PASS: TestToolResultEventEmptyDisplayContent (0.00s)
+=== RUN   TestTurnDoneEventCarriesTokenUsage
+--- PASS: TestTurnDoneEventCarriesTokenUsage (0.00s)
+=== RUN   TestTurnDoneEventAccumulatesTokensAcrossEvents
+--- PASS: TestTurnDoneEventAccumulatesTokensAcrossEvents (0.00s)
+=== RUN   TestAlwaysAutoApproveReturnsTrue
+--- PASS: TestAlwaysAutoApproveReturnsTrue (0.00s)
+=== RUN   TestAllowAllParallelReturnsTrue
+--- PASS: TestAllowAllParallelReturnsTrue (0.00s)
+=== RUN   TestToolParallelPolicyRestricts
+--- PASS: TestToolParallelPolicyRestricts (0.00s)
+=== RUN   TestParallelToolExecutionAutoApproved
+--- PASS: TestParallelToolExecutionAutoApproved (0.00s)
+=== RUN   TestParallelPolicyRestrictsParallelization
+--- PASS: TestParallelPolicyRestrictsParallelization (0.00s)
+=== RUN   TestParallelResultsAddedInOrder
+--- PASS: TestParallelResultsAddedInOrder (0.00s)
+=== RUN   TestSequentialFallbackForNonAutoApproved
+--- PASS: TestSequentialFallbackForNonAutoApproved (0.00s)
+=== RUN   TestSingleAutoApprovedToolDoesNotRequireApprovalFunc
+--- PASS: TestSingleAutoApprovedToolDoesNotRequireApprovalFunc (0.00s)
+=== RUN   TestMissingApprovalFuncReturnsToolError
+--- PASS: TestMissingApprovalFuncReturnsToolError (0.00s)
+=== RUN   TestMissingApprovalFuncWithApprovalCheckerReturnsToolError
+--- PASS: TestMissingApprovalFuncWithApprovalCheckerReturnsToolError (0.00s)
+=== RUN   TestExecutePlannedToolsSequentialUsesPrecomputedApprovalResults
+--- PASS: TestExecutePlannedToolsSequentialUsesPrecomputedApprovalResults (0.00s)
+=== RUN   TestExecuteToolsWithoutApprovalCheckerUsesSequentialPlan
+--- PASS: TestExecuteToolsWithoutApprovalCheckerUsesSequentialPlan (0.00s)
+=== RUN   TestMixedParallelAndSequential
+--- PASS: TestMixedParallelAndSequential (0.00s)
+=== RUN   TestMixedParallelReversedOrder
+--- PASS: TestMixedParallelReversedOrder (0.00s)
+=== RUN   TestAgentNewWithContextEnhancements
+--- PASS: TestAgentNewWithContextEnhancements (0.00s)
+=== RUN   TestAgentNewWithoutStoreNoResultStore
+--- PASS: TestAgentNewWithoutStoreNoResultStore (0.00s)
+=== RUN   TestAgentToolResultOffloading
+--- PASS: TestAgentToolResultOffloading (0.00s)
+=== RUN   TestAgentToolResultOffloadingSkipsSmallResults
+--- PASS: TestAgentToolResultOffloadingSkipsSmallResults (0.00s)
+=== RUN   TestAgentToolResultOffloadingSkipsErrors
+--- PASS: TestAgentToolResultOffloadingSkipsErrors (0.00s)
+=== RUN   TestAgentSavesSnapshotAfterCompaction
+--- PASS: TestAgentSavesSnapshotAfterCompaction (0.00s)
+=== RUN   TestAgentSaveSnapshotIfNeededWithoutStore
+--- PASS: TestAgentSaveSnapshotIfNeededWithoutStore (0.00s)
+=== RUN   TestWithDiffTrackerOption
+--- PASS: TestWithDiffTrackerOption (0.00s)
+=== RUN   TestDiffTrackerResetOnTurn
+--- PASS: TestDiffTrackerResetOnTurn (0.00s)
+=== RUN   TestDiffSummaryInDoneEvent
+--- PASS: TestDiffSummaryInDoneEvent (0.00s)
+=== RUN   TestDiffSummaryEmptyWhenNoChanges
+--- PASS: TestDiffSummaryEmptyWhenNoChanges (0.00s)
+=== RUN   TestNoDiffTrackerNoPanic
+--- PASS: TestNoDiffTrackerNoPanic (0.00s)
+=== RUN   TestAgentWithWakeManager
+--- PASS: TestAgentWithWakeManager (0.00s)
+=== RUN   TestAgentDrainWakeEventsNilManager
+--- PASS: TestAgentDrainWakeEventsNilManager (0.00s)
+=== RUN   TestAgentDrainWakeEventsWithPending
+--- PASS: TestAgentDrainWakeEventsWithPending (0.00s)
+=== RUN   TestAgentDrainWakeEventsNoPending
+--- PASS: TestAgentDrainWakeEventsNoPending (0.00s)
+=== RUN   TestAgentRunLoopDrainsWakeAfterTools
+--- PASS: TestAgentRunLoopDrainsWakeAfterTools (0.00s)
+=== RUN   TestSnapshotSavedAfterToolResults
+--- PASS: TestSnapshotSavedAfterToolResults (0.00s)
+=== RUN   TestWakeEventsPersisted
+--- PASS: TestWakeEventsPersisted (0.00s)
+=== RUN   TestTurnPanicRecovery
+2026/04/05 01:10:18 ERROR: tool panicker panicked: deliberate test panic
+goroutine 248 [running]:
+runtime/debug.Stack()
+	/Users/julianshen/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/src/runtime/debug/stack.go:26 +0x64
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeSingleTool.func1()
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1710 +0x60
+panic({0x1034031e0?, 0x1034c4030?})
+	/Users/julianshen/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/src/runtime/panic.go:860 +0x12c
+github.com/julianshen/rubichan/internal/agent.TestTurnPanicRecovery.func1({0x66dad615a388?, 0x102c0a150?}, {0x66dad615a468?, 0x102c99edc?, 0x66dad615a3e8?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent_test.go:2967 +0x3c
+github.com/julianshen/rubichan/internal/agent.(*mockTool).Execute(0x66dad619d020?, {0x1034cb710?, 0x66dad619d320?}, {0x0?, 0x100?, 0x0?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent_test.go:90 +0x58
+github.com/julianshen/rubichan/internal/agent.New.RegistryExecutor.func6({0x1034cb710, 0x66dad619d320}, {{0x102ed5d6f, 0x6}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/executor.go:52 +0x324
+github.com/julianshen/rubichan/internal/agent.New.PostHookMiddleware.func4.1({0x1034cb710, 0x66dad619d320}, {{0x102ed5d6f, 0x6}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/middleware.go:57 +0x6c
+github.com/julianshen/rubichan/internal/agent.New.HookMiddleware.func2.1({0x1034cb710, 0x66dad619d320}, {{0x102ed5d6f, 0x6}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/middleware.go:44 +0xe4
+github.com/julianshen/rubichan/internal/toolexec.(*Pipeline).Execute(0x66dad5fcae40, {0x1034cb710, 0x66dad619d320}, {{0x102ed5d6f, 0x6}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/pipeline.go:54 +0xc0
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeSingleTool(0x66dad612ee00, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05730, {{0x102ed5d6f, 0x6}, {0x102ed6af7, _}, {_, _, ...}})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1733 +0x258
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeSingleToolWithApproval(0x66dad612ee00, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05730, {{0x102ed5d6f, 0x6}, {0x102ed6af7, _}, {_, _, ...}}, ...)
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1641 +0x3b4
+github.com/julianshen/rubichan/internal/agent.(*Agent).executePlannedToolsSequential(0x66dad612ee00, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05730, {0x66dad60571d0?, 0x102a45420?, 0x66dad5cc2fe8?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1603 +0x278
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeTools(0x66dad612ee00, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05730, {0x66dad5cfc580?, 0x1?, 0x1?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1446 +0xf4
+github.com/julianshen/rubichan/internal/agent.(*Agent).runLoop(0x66dad612ee00, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05730, 0x0?, {0x102ed99bd?, 0xd?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1317 +0x2614
+github.com/julianshen/rubichan/internal/agent.(*Agent).Turn.func1()
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:793 +0xb0
+created by github.com/julianshen/rubichan/internal/agent.(*Agent).Turn in goroutine 247
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:770 +0x344
+--- PASS: TestTurnPanicRecovery (0.00s)
+=== RUN   TestToolPanicAddsErrorToolResult
+2026/04/05 01:10:18 ERROR: tool panicker panicked: deliberate tool panic
+goroutine 250 [running]:
+runtime/debug.Stack()
+	/Users/julianshen/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/src/runtime/debug/stack.go:26 +0x64
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeSingleTool.func1()
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1710 +0x60
+panic({0x1034031e0?, 0x1034c4020?})
+	/Users/julianshen/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/src/runtime/panic.go:860 +0x12c
+github.com/julianshen/rubichan/internal/agent.TestToolPanicAddsErrorToolResult.func1({0x66dad615a388?, 0x102c0a150?}, {0x66dad615a468?, 0x102c99edc?, 0x66dad615a3e8?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent_test.go:3022 +0x3c
+github.com/julianshen/rubichan/internal/agent.(*mockTool).Execute(0x66dad619d530?, {0x1034cb710?, 0x66dad619d830?}, {0x0?, 0x100?, 0x0?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent_test.go:90 +0x58
+github.com/julianshen/rubichan/internal/agent.New.RegistryExecutor.func6({0x1034cb710, 0x66dad619d830}, {{0x102ed7c59, 0xa}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/executor.go:52 +0x324
+github.com/julianshen/rubichan/internal/agent.New.PostHookMiddleware.func4.1({0x1034cb710, 0x66dad619d830}, {{0x102ed7c59, 0xa}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/middleware.go:57 +0x6c
+github.com/julianshen/rubichan/internal/agent.New.HookMiddleware.func2.1({0x1034cb710, 0x66dad619d830}, {{0x102ed7c59, 0xa}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/middleware.go:44 +0xe4
+github.com/julianshen/rubichan/internal/toolexec.(*Pipeline).Execute(0x66dad5fcaf80, {0x1034cb710, 0x66dad619d830}, {{0x102ed7c59, 0xa}, {0x102ed6af7, 0x8}, {0x0, 0x0, 0x0}})
+	/Users/julianshen/prj/rubichan/internal/toolexec/pipeline.go:54 +0xc0
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeSingleTool(0x66dad612f000, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05b20, {{0x102ed7c59, 0xa}, {0x102ed6af7, _}, {_, _, ...}})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1733 +0x258
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeSingleToolWithApproval(0x66dad612f000, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05b20, {{0x102ed7c59, 0xa}, {0x102ed6af7, _}, {_, _, ...}}, ...)
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1641 +0x3b4
+github.com/julianshen/rubichan/internal/agent.(*Agent).executePlannedToolsSequential(0x66dad612f000, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05b20, {0x66dad6057c70?, 0x102a45420?, 0x66dad5cc2fe8?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1603 +0x278
+github.com/julianshen/rubichan/internal/agent.(*Agent).executeTools(0x66dad612f000, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05b20, {0x66dad5cfc740?, 0x1?, 0x1?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1446 +0xf4
+github.com/julianshen/rubichan/internal/agent.(*Agent).runLoop(0x66dad612f000, {0x1034cb3c8, 0x10357d200}, 0x66dad5e05b20, 0x0?, {0x102ed99bd?, 0xd?})
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:1317 +0x2614
+github.com/julianshen/rubichan/internal/agent.(*Agent).Turn.func1()
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:793 +0xb0
+created by github.com/julianshen/rubichan/internal/agent.(*Agent).Turn in goroutine 249
+	/Users/julianshen/prj/rubichan/internal/agent/agent.go:770 +0x344
+--- PASS: TestToolPanicAddsErrorToolResult (0.00s)
+=== RUN   TestTurnNilToolUseEvent
+--- PASS: TestTurnNilToolUseEvent (0.00s)
+=== RUN   TestClearConversationRaceSafety
+--- PASS: TestClearConversationRaceSafety (0.00s)
+=== RUN   TestAgentCheckpointMethods
+=== RUN   TestAgentCheckpointMethods/no_manager_returns_errors
+=== RUN   TestAgentCheckpointMethods/with_manager
+--- PASS: TestAgentCheckpointMethods (0.00s)
+    --- PASS: TestAgentCheckpointMethods/no_manager_returns_errors (0.00s)
+    --- PASS: TestAgentCheckpointMethods/with_manager (0.00s)
+=== RUN   TestAgentForkSession
+=== RUN   TestAgentForkSession/no_store_returns_error
+=== RUN   TestAgentForkSession/with_store_forks_session_and_returns_new_id
+--- PASS: TestAgentForkSession (0.00s)
+    --- PASS: TestAgentForkSession/no_store_returns_error (0.00s)
+    --- PASS: TestAgentForkSession/with_store_forks_session_and_returns_new_id (0.00s)
+=== RUN   TestAgentContextBudget
+=== RUN   TestAgentContextBudget/returns_budget
+=== RUN   TestAgentContextBudget/force_compact_returns_result
+--- PASS: TestAgentContextBudget (0.00s)
+    --- PASS: TestAgentContextBudget/returns_budget (0.00s)
+    --- PASS: TestAgentContextBudget/force_compact_returns_result (0.00s)
+=== RUN   TestAgentDefRegistryRegisterAndGet
+--- PASS: TestAgentDefRegistryRegisterAndGet (0.00s)
+=== RUN   TestAgentDefRegistryDuplicateError
+--- PASS: TestAgentDefRegistryDuplicateError (0.00s)
+=== RUN   TestAgentDefRegistryAll
+--- PASS: TestAgentDefRegistryAll (0.00s)
+=== RUN   TestAgentDefRegistryUnregister
+--- PASS: TestAgentDefRegistryUnregister (0.00s)
+=== RUN   TestAgentDefRegistryUnregisterNotFound
+--- PASS: TestAgentDefRegistryUnregisterNotFound (0.00s)
+=== RUN   TestAgentDefRegistryGetNotFound
+--- PASS: TestAgentDefRegistryGetNotFound (0.00s)
+=== RUN   TestApprovalResultConstants
+--- PASS: TestApprovalResultConstants (0.00s)
+=== RUN   TestApprovalResultString
+--- PASS: TestApprovalResultString (0.00s)
+=== RUN   TestTrustRuleMatchesSimplePrefix
+--- PASS: TestTrustRuleMatchesSimplePrefix (0.00s)
+=== RUN   TestTrustRuleNoMatchDifferentTool
+--- PASS: TestTrustRuleNoMatchDifferentTool (0.00s)
+=== RUN   TestTrustRuleNoMatchDifferentInput
+--- PASS: TestTrustRuleNoMatchDifferentInput (0.00s)
+=== RUN   TestTrustRuleWildcardTool
+--- PASS: TestTrustRuleWildcardTool (0.00s)
+=== RUN   TestTrustRuleInvalidRegex
+--- PASS: TestTrustRuleInvalidRegex (0.00s)
+=== RUN   TestTrustRuleCheckerAllowRule
+--- PASS: TestTrustRuleCheckerAllowRule (0.00s)
+=== RUN   TestTrustRuleCheckerDenyRule
+--- PASS: TestTrustRuleCheckerDenyRule (0.00s)
+=== RUN   TestTrustRuleCheckerNoMatchFallsThrough
+--- PASS: TestTrustRuleCheckerNoMatchFallsThrough (0.00s)
+=== RUN   TestTrustRuleCheckerDenyTakesPrecedence
+--- PASS: TestTrustRuleCheckerDenyTakesPrecedence (0.00s)
+=== RUN   TestTrustRuleCheckerMultipleRules
+=== RUN   TestTrustRuleCheckerMultipleRules/go_test_allowed
+=== RUN   TestTrustRuleCheckerMultipleRules/go_build_allowed
+=== RUN   TestTrustRuleCheckerMultipleRules/golangci-lint_allowed
+=== RUN   TestTrustRuleCheckerMultipleRules/gofmt_allowed
+=== RUN   TestTrustRuleCheckerMultipleRules/file_ops_allowed
+=== RUN   TestTrustRuleCheckerMultipleRules/unknown_shell_cmd_needs_approval
+=== RUN   TestTrustRuleCheckerMultipleRules/unknown_tool_needs_approval
+--- PASS: TestTrustRuleCheckerMultipleRules (0.00s)
+    --- PASS: TestTrustRuleCheckerMultipleRules/go_test_allowed (0.00s)
+    --- PASS: TestTrustRuleCheckerMultipleRules/go_build_allowed (0.00s)
+    --- PASS: TestTrustRuleCheckerMultipleRules/golangci-lint_allowed (0.00s)
+    --- PASS: TestTrustRuleCheckerMultipleRules/gofmt_allowed (0.00s)
+    --- PASS: TestTrustRuleCheckerMultipleRules/file_ops_allowed (0.00s)
+    --- PASS: TestTrustRuleCheckerMultipleRules/unknown_shell_cmd_needs_approval (0.00s)
+    --- PASS: TestTrustRuleCheckerMultipleRules/unknown_tool_needs_approval (0.00s)
+=== RUN   TestTrustRuleCheckerInvalidPatternSkipped
+--- PASS: TestTrustRuleCheckerInvalidPatternSkipped (0.00s)
+=== RUN   TestAlwaysAutoApproveImplementsApprovalChecker
+--- PASS: TestAlwaysAutoApproveImplementsApprovalChecker (0.00s)
+=== RUN   TestAutoApproveAdapterWrapsLegacyChecker
+--- PASS: TestAutoApproveAdapterWrapsLegacyChecker (0.00s)
+=== RUN   TestCompositeApprovalCheckerFirstWins
+--- PASS: TestCompositeApprovalCheckerFirstWins (0.00s)
+=== RUN   TestCompositeApprovalCheckerAutoDeniedShortCircuits
+--- PASS: TestCompositeApprovalCheckerAutoDeniedShortCircuits (0.00s)
+=== RUN   TestCompositeApprovalCheckerEmpty
+--- PASS: TestCompositeApprovalCheckerEmpty (0.00s)
+=== RUN   TestValidateTrustRulesValid
+--- PASS: TestValidateTrustRulesValid (0.00s)
+=== RUN   TestValidateTrustRulesInvalidAction
+--- PASS: TestValidateTrustRulesInvalidAction (0.00s)
+=== RUN   TestValidateTrustRulesInvalidPattern
+--- PASS: TestValidateTrustRulesInvalidPattern (0.00s)
+=== RUN   TestValidateTrustRulesEmpty
+--- PASS: TestValidateTrustRulesEmpty (0.00s)
+=== RUN   TestApprovalResultStringUnknown
+--- PASS: TestApprovalResultStringUnknown (0.00s)
+=== RUN   TestTrustRuleMatchesArrayInput
+--- PASS: TestTrustRuleMatchesArrayInput (0.00s)
+=== RUN   TestTrustRuleMatchesNestedInput
+--- PASS: TestTrustRuleMatchesNestedInput (0.00s)
+=== RUN   TestTrustRuleCheckerNonStringInputNoMatch
+--- PASS: TestTrustRuleCheckerNonStringInputNoMatch (0.00s)
+=== RUN   TestTrustRuleCheckerNilInput
+--- PASS: TestTrustRuleCheckerNilInput (0.00s)
+=== RUN   TestTrustRuleCheckerEmptyInput
+--- PASS: TestTrustRuleCheckerEmptyInput (0.00s)
+=== RUN   TestTrustRuleCheckerWithGlobRules
+--- PASS: TestTrustRuleCheckerWithGlobRules (0.00s)
+=== RUN   TestTrustRuleCheckerMixedRegexAndGlob
+--- PASS: TestTrustRuleCheckerMixedRegexAndGlob (0.00s)
+=== RUN   TestValidateTrustRulesWithGlobs
+--- PASS: TestValidateTrustRulesWithGlobs (0.00s)
+=== RUN   TestValidateTrustRulesInvalidGlobAction
+--- PASS: TestValidateTrustRulesInvalidGlobAction (0.00s)
+=== RUN   TestValidateTrustRulesInvalidGlobPattern
+--- PASS: TestValidateTrustRulesInvalidGlobPattern (0.00s)
+=== RUN   TestSecurityAwareApprovalCheckerAllowsWhenBothPass
+--- PASS: TestSecurityAwareApprovalCheckerAllowsWhenBothPass (0.00s)
+=== RUN   TestSecurityAwareApprovalCheckerBlocksWhenSecurityFails
+--- PASS: TestSecurityAwareApprovalCheckerBlocksWhenSecurityFails (0.00s)
+=== RUN   TestSecurityAwareApprovalCheckerSkipsSecurityIfBaseDenied
+--- PASS: TestSecurityAwareApprovalCheckerSkipsSecurityIfBaseDenied (0.00s)
+=== RUN   TestSecurityAwareApprovalCheckerIgnoresScanErrors
+--- PASS: TestSecurityAwareApprovalCheckerIgnoresScanErrors (0.00s)
+=== RUN   TestSecurityAwareApprovalCheckerApprovalRequired
+--- PASS: TestSecurityAwareApprovalCheckerApprovalRequired (0.00s)
+=== RUN   TestSecurityAwareApprovalCheckerAutoApproved
+--- PASS: TestSecurityAwareApprovalCheckerAutoApproved (0.00s)
+=== RUN   TestSecurityAwareApprovalCheckerBlocksAutoApprovedIfSecurityFails
+--- PASS: TestSecurityAwareApprovalCheckerBlocksAutoApprovedIfSecurityFails (0.00s)
+=== RUN   TestParseGlobRule
+=== RUN   TestParseGlobRule/simple_wildcard
+=== RUN   TestParseGlobRule/question_mark
+=== RUN   TestParseGlobRule/character_class
+=== RUN   TestParseGlobRule/wildcard_tool
+=== RUN   TestParseGlobRule/missing_parens
+=== RUN   TestParseGlobRule/empty_pattern
+--- PASS: TestParseGlobRule (0.00s)
+    --- PASS: TestParseGlobRule/simple_wildcard (0.00s)
+    --- PASS: TestParseGlobRule/question_mark (0.00s)
+    --- PASS: TestParseGlobRule/character_class (0.00s)
+    --- PASS: TestParseGlobRule/wildcard_tool (0.00s)
+    --- PASS: TestParseGlobRule/missing_parens (0.00s)
+    --- PASS: TestParseGlobRule/empty_pattern (0.00s)
+=== RUN   TestComputeSignalsEmpty
+--- PASS: TestComputeSignalsEmpty (0.00s)
+=== RUN   TestComputeSignalsNoErrors
+--- PASS: TestComputeSignalsNoErrors (0.00s)
+=== RUN   TestComputeSignalsAllErrors
+--- PASS: TestComputeSignalsAllErrors (0.00s)
+=== RUN   TestComputeSignalsMixedErrors
+--- PASS: TestComputeSignalsMixedErrors (0.00s)
+=== RUN   TestComputeSignalsToolDensity
+--- PASS: TestComputeSignalsToolDensity (0.00s)
+=== RUN   TestComputeSignalsMessageCount
+--- PASS: TestComputeSignalsMessageCount (0.00s)
+=== RUN   TestSummarizationStrategyName
+--- PASS: TestSummarizationStrategyName (0.00s)
+=== RUN   TestSummarizationCalledWhenThresholdExceeded
+--- PASS: TestSummarizationCalledWhenThresholdExceeded (0.00s)
+=== RUN   TestSummarizationSkippedWhenBelowThreshold
+--- PASS: TestSummarizationSkippedWhenBelowThreshold (0.00s)
+=== RUN   TestSummarizationSkippedWhenNilSummarizer
+--- PASS: TestSummarizationSkippedWhenNilSummarizer (0.00s)
+=== RUN   TestSummarizationMessageFormat
+--- PASS: TestSummarizationMessageFormat (0.00s)
+=== RUN   TestSummarizationReceivesOldestMessages
+--- PASS: TestSummarizationReceivesOldestMessages (0.00s)
+=== RUN   TestSummarizationErrorReturnsOriginal
+--- PASS: TestSummarizationErrorReturnsOriginal (0.00s)
+=== RUN   TestSummarizationSplitAvoidsOrphanedToolResult
+--- PASS: TestSummarizationSplitAvoidsOrphanedToolResult (0.00s)
+=== RUN   TestSummarizationSplitSafeWhenNoToolPairs
+--- PASS: TestSummarizationSplitSafeWhenNoToolPairs (0.00s)
+=== RUN   TestSummarizationSplitMovesBackwardPastToolUse
+--- PASS: TestSummarizationSplitMovesBackwardPastToolUse (0.00s)
+=== RUN   TestFindSafeSplitPoint
+=== RUN   TestFindSafeSplitPoint/safe_target_stays_unchanged
+=== RUN   TestFindSafeSplitPoint/tool_result_at_target_moves_backward_past_tool_use_too
+=== RUN   TestFindSafeSplitPoint/tool_use_at_target_moves_backward
+=== RUN   TestFindSafeSplitPoint/consecutive_tool_pairs_move_past_both
+=== RUN   TestFindSafeSplitPoint/target_at_0_clamps_to_2
+=== RUN   TestFindSafeSplitPoint/target_at_1_clamps_to_2
+=== RUN   TestFindSafeSplitPoint/target_beyond_length_clamps_to_last_index
+=== RUN   TestFindSafeSplitPoint/all_tool_messages_clamps_to_2
+--- PASS: TestFindSafeSplitPoint (0.00s)
+    --- PASS: TestFindSafeSplitPoint/safe_target_stays_unchanged (0.00s)
+    --- PASS: TestFindSafeSplitPoint/tool_result_at_target_moves_backward_past_tool_use_too (0.00s)
+    --- PASS: TestFindSafeSplitPoint/tool_use_at_target_moves_backward (0.00s)
+    --- PASS: TestFindSafeSplitPoint/consecutive_tool_pairs_move_past_both (0.00s)
+    --- PASS: TestFindSafeSplitPoint/target_at_0_clamps_to_2 (0.00s)
+    --- PASS: TestFindSafeSplitPoint/target_at_1_clamps_to_2 (0.00s)
+    --- PASS: TestFindSafeSplitPoint/target_beyond_length_clamps_to_last_index (0.00s)
+    --- PASS: TestFindSafeSplitPoint/all_tool_messages_clamps_to_2 (0.00s)
+=== RUN   TestSummarizationRejectsInflatedSummary
+--- PASS: TestSummarizationRejectsInflatedSummary (0.00s)
+=== RUN   TestSummarizationAcceptsShorterSummary
+--- PASS: TestSummarizationAcceptsShorterSummary (0.00s)
+=== RUN   TestSummarizationSkipsAfterFailure
+--- PASS: TestSummarizationSkipsAfterFailure (0.00s)
+=== RUN   TestSummarizationRetriesAfterNewMessages
+--- PASS: TestSummarizationRetriesAfterNewMessages (0.00s)
+=== RUN   TestSummarizationResetsOnSuccess
+--- PASS: TestSummarizationResetsOnSuccess (0.00s)
+=== RUN   TestCompactionStrategyInterface
+--- PASS: TestCompactionStrategyInterface (0.00s)
+=== RUN   TestCompactRunsStrategiesInOrder
+--- PASS: TestCompactRunsStrategiesInOrder (0.00s)
+=== RUN   TestCompactFallsBackToTruncation
+--- PASS: TestCompactFallsBackToTruncation (0.00s)
+=== RUN   TestCompactEmptyStrategiesUsesTruncation
+--- PASS: TestCompactEmptyStrategiesUsesTruncation (0.00s)
+=== RUN   TestCompactNoOpWhenWithinBudget
+--- PASS: TestCompactNoOpWhenWithinBudget (0.00s)
+=== RUN   TestCompactStopsWhenUnderBudget
+--- PASS: TestCompactStopsWhenUnderBudget (0.00s)
+=== RUN   TestTruncateStrategyPreservesMinMessages
+--- PASS: TestTruncateStrategyPreservesMinMessages (0.00s)
+=== RUN   TestTruncateStrategyRemovesOldMessages
+--- PASS: TestTruncateStrategyRemovesOldMessages (0.00s)
+=== RUN   TestShouldCompactAt95Percent
+--- PASS: TestShouldCompactAt95Percent (0.00s)
+=== RUN   TestShouldCompactFalseBelow95Percent
+--- PASS: TestShouldCompactFalseBelow95Percent (0.00s)
+=== RUN   TestCompactTriggersProactively
+--- PASS: TestCompactTriggersProactively (0.00s)
+=== RUN   TestCompactCustomTriggerRatio
+--- PASS: TestCompactCustomTriggerRatio (0.00s)
+=== RUN   TestTruncateStrategySkipsLeadingToolResults
+--- PASS: TestTruncateStrategySkipsLeadingToolResults (0.00s)
+=== RUN   TestToolResultClearingStrategyName
+--- PASS: TestToolResultClearingStrategyName (0.00s)
+=== RUN   TestToolResultClearingLargeResultsCleared
+--- PASS: TestToolResultClearingLargeResultsCleared (0.00s)
+=== RUN   TestToolResultClearingSmallResultsPreserved
+--- PASS: TestToolResultClearingSmallResultsPreserved (0.00s)
+=== RUN   TestToolResultClearingRecentResultsUntouched
+--- PASS: TestToolResultClearingRecentResultsUntouched (0.00s)
+=== RUN   TestToolResultClearingThresholdConfigurable
+--- PASS: TestToolResultClearingThresholdConfigurable (0.00s)
+=== RUN   TestToolResultClearingBytesCountAccurate
+--- PASS: TestToolResultClearingBytesCountAccurate (0.00s)
+=== RUN   TestToolResultClearingDefaultThreshold
+--- PASS: TestToolResultClearingDefaultThreshold (0.00s)
+=== RUN   TestToolResultClearingNonToolResultsUntouched
+--- PASS: TestToolResultClearingNonToolResultsUntouched (0.00s)
+=== RUN   TestToolClearingImplementsSignalAware
+--- PASS: TestToolClearingImplementsSignalAware (0.00s)
+=== RUN   TestToolClearingWithoutSignals
+--- PASS: TestToolClearingWithoutSignals (0.00s)
+=== RUN   TestToolClearingHighToolDensity
+--- PASS: TestToolClearingHighToolDensity (0.00s)
+=== RUN   TestToolClearingHighErrorDensity
+--- PASS: TestToolClearingHighErrorDensity (0.00s)
+=== RUN   TestToolClearingBothSignals
+--- PASS: TestToolClearingBothSignals (0.00s)
+=== RUN   TestToolResultClearingIntegrationWithCompact
+--- PASS: TestToolResultClearingIntegrationWithCompact (0.00s)
+=== RUN   TestContextManagerEstimateTokens
+--- PASS: TestContextManagerEstimateTokens (0.00s)
+=== RUN   TestContextManagerExceedsBudget
+--- PASS: TestContextManagerExceedsBudget (0.00s)
+=== RUN   TestContextManagerExceedsBudgetNotExceeded
+--- PASS: TestContextManagerExceedsBudgetNotExceeded (0.00s)
+=== RUN   TestContextManagerTruncate
+--- PASS: TestContextManagerTruncate (0.00s)
+=== RUN   TestContextManagerSmallConversationNoTruncation
+--- PASS: TestContextManagerSmallConversationNoTruncation (0.00s)
+=== RUN   TestContextManagerTruncateSkipsLeadingToolResult
+--- PASS: TestContextManagerTruncateSkipsLeadingToolResult (0.00s)
+=== RUN   TestContextManagerTruncateAllToolResults
+--- PASS: TestContextManagerTruncateAllToolResults (0.00s)
+=== RUN   TestHasToolResult
+--- PASS: TestHasToolResult (0.00s)
+=== RUN   TestContextBudgetEffectiveWindow
+--- PASS: TestContextBudgetEffectiveWindow (0.00s)
+=== RUN   TestContextBudgetEffectiveWindowZeroOutput
+--- PASS: TestContextBudgetEffectiveWindowZeroOutput (0.00s)
+=== RUN   TestContextBudgetUsedTokens
+--- PASS: TestContextBudgetUsedTokens (0.00s)
+=== RUN   TestContextBudgetRemainingTokens
+--- PASS: TestContextBudgetRemainingTokens (0.00s)
+=== RUN   TestContextBudgetUsedPercentage
+--- PASS: TestContextBudgetUsedPercentage (0.00s)
+=== RUN   TestContextBudgetUsedPercentageZeroWindow
+--- PASS: TestContextBudgetUsedPercentageZeroWindow (0.00s)
+=== RUN   TestNewContextManagerWithBudget
+--- PASS: TestNewContextManagerWithBudget (0.00s)
+=== RUN   TestContextManagerShouldCompactAt95Percent
+--- PASS: TestContextManagerShouldCompactAt95Percent (0.00s)
+=== RUN   TestContextManagerIsBlocked
+--- PASS: TestContextManagerIsBlocked (0.00s)
+=== RUN   TestContextManagerMeasureUsage
+--- PASS: TestContextManagerMeasureUsage (0.00s)
+=== RUN   TestMeasureUsageSkillPromptsNotDoubleCounted
+--- PASS: TestMeasureUsageSkillPromptsNotDoubleCounted (0.00s)
+=== RUN   TestVerdictContextBlockNil
+--- PASS: TestVerdictContextBlockNil (0.00s)
+=== RUN   TestVerdictContextBlockEmpty
+--- PASS: TestVerdictContextBlockEmpty (0.00s)
+=== RUN   TestVerdictContextBlockSingleTool
+--- PASS: TestVerdictContextBlockSingleTool (0.00s)
+=== RUN   TestVerdictContextBlockMultipleTools
+--- PASS: TestVerdictContextBlockMultipleTools (0.00s)
+=== RUN   TestVerdictContextBlockAllFailures
+--- PASS: TestVerdictContextBlockAllFailures (0.00s)
+=== RUN   TestConversationSystemPrompt
+--- PASS: TestConversationSystemPrompt (0.00s)
+=== RUN   TestConversationAddUser
+--- PASS: TestConversationAddUser (0.00s)
+=== RUN   TestConversationAddAssistant
+--- PASS: TestConversationAddAssistant (0.00s)
+=== RUN   TestConversationAddToolResult
+--- PASS: TestConversationAddToolResult (0.00s)
+=== RUN   TestConversationAddToolResultError
+--- PASS: TestConversationAddToolResultError (0.00s)
+=== RUN   TestConversationLoadFromStored
+--- PASS: TestConversationLoadFromStored (0.00s)
+=== RUN   TestConversationLoadFromStoredEmpty
+--- PASS: TestConversationLoadFromStoredEmpty (0.00s)
+=== RUN   TestConversationClear
+--- PASS: TestConversationClear (0.00s)
+=== RUN   TestForceCompactResult
+--- PASS: TestForceCompactResult (0.00s)
+=== RUN   TestForceCompactEmptyConversation
+--- PASS: TestForceCompactEmptyConversation (0.00s)
+=== RUN   TestIntegrationFileReadWriteFlow
+--- PASS: TestIntegrationFileReadWriteFlow (0.01s)
+=== RUN   TestMemoryExtractorWithMockSummarizer
+--- PASS: TestMemoryExtractorWithMockSummarizer (0.00s)
+=== RUN   TestMemoryExtractorNilSummarizer
+--- PASS: TestMemoryExtractorNilSummarizer (0.00s)
+=== RUN   TestMemoryExtractorTooFewMessages
+--- PASS: TestMemoryExtractorTooFewMessages (0.00s)
+=== RUN   TestMemoryExtractorSummarizerError
+--- PASS: TestMemoryExtractorSummarizerError (0.00s)
+=== RUN   TestParseMemories
+--- PASS: TestParseMemories (0.00s)
+=== RUN   TestParseMemoriesEmpty
+--- PASS: TestParseMemoriesEmpty (0.00s)
+=== RUN   TestParseMemoriesMissingFields
+--- PASS: TestParseMemoriesMissingFields (0.00s)
+=== RUN   TestRemoveOrphanedToolCalls_NoOrphans
+--- PASS: TestRemoveOrphanedToolCalls_NoOrphans (0.00s)
+=== RUN   TestRemoveOrphanedToolCalls_RemovesOrphans
+--- PASS: TestRemoveOrphanedToolCalls_RemovesOrphans (0.00s)
+=== RUN   TestRemoveOrphanedToolCalls_RemovesAssistantMessageWhenAllBlocksOrphaned
+--- PASS: TestRemoveOrphanedToolCalls_RemovesAssistantMessageWhenAllBlocksOrphaned (0.00s)
+=== RUN   TestRemoveOrphanedToolCalls_MixedOrphanedAndMatched
+--- PASS: TestRemoveOrphanedToolCalls_MixedOrphanedAndMatched (0.00s)
+=== RUN   TestRemoveOrphanedToolCalls_EmptyMessages
+--- PASS: TestRemoveOrphanedToolCalls_EmptyMessages (0.00s)
+=== RUN   TestRemoveOrphanedToolCalls_ToolUseWithEmptyID
+--- PASS: TestRemoveOrphanedToolCalls_ToolUseWithEmptyID (0.00s)
+=== RUN   TestMergeConsecutiveAssistant_NoConsecutive
+--- PASS: TestMergeConsecutiveAssistant_NoConsecutive (0.00s)
+=== RUN   TestMergeConsecutiveAssistant_MergesTwo
+--- PASS: TestMergeConsecutiveAssistant_MergesTwo (0.00s)
+=== RUN   TestMergeConsecutiveAssistant_MergesThree
+--- PASS: TestMergeConsecutiveAssistant_MergesThree (0.00s)
+=== RUN   TestMergeConsecutiveAssistant_DoesNotMergeConsecutiveUser
+--- PASS: TestMergeConsecutiveAssistant_DoesNotMergeConsecutiveUser (0.00s)
+=== RUN   TestMergeConsecutiveAssistant_EmptyAndSingle
+--- PASS: TestMergeConsecutiveAssistant_EmptyAndSingle (0.00s)
+=== RUN   TestNormalizeMessages_CombinesBothPasses
+--- PASS: TestNormalizeMessages_CombinesBothPasses (0.00s)
+=== RUN   TestNormalizeMessages_PreservesValidConversation
+--- PASS: TestNormalizeMessages_PreservesValidConversation (0.00s)
+=== RUN   TestProgressTracker_Record
+=== PAUSE TestProgressTracker_Record
+=== RUN   TestProgressTracker_MaxEntries
+=== PAUSE TestProgressTracker_MaxEntries
+=== RUN   TestProgressTracker_Render_Empty
+=== PAUSE TestProgressTracker_Render_Empty
+=== RUN   TestProgressTracker_Render
+=== PAUSE TestProgressTracker_Render
+=== RUN   TestProgressTracker_Render_EscapesPipes
+=== PAUSE TestProgressTracker_Render_EscapesPipes
+=== RUN   TestProgressTracker_Render_EscapesNewlines
+=== PAUSE TestProgressTracker_Render_EscapesNewlines
+=== RUN   TestProgressTracker_Render_TurnNumberAfterTrimming
+=== PAUSE TestProgressTracker_Render_TurnNumberAfterTrimming
+=== RUN   TestClassifyToolAction_File
+=== PAUSE TestClassifyToolAction_File
+=== RUN   TestClassifyToolAction_Shell
+=== PAUSE TestClassifyToolAction_Shell
+=== RUN   TestClassifyToolAction_Search
+=== PAUSE TestClassifyToolAction_Search
+=== RUN   TestClassifyToolAction_Task
+=== PAUSE TestClassifyToolAction_Task
+=== RUN   TestClassifyToolAction_TaskComplete
+=== PAUSE TestClassifyToolAction_TaskComplete
+=== RUN   TestClassifyToolAction_Unknown
+=== PAUSE TestClassifyToolAction_Unknown
+=== RUN   TestClassifyToolAction_InvalidJSON
+=== PAUSE TestClassifyToolAction_InvalidJSON
+=== RUN   TestTruncateResult
+=== PAUSE TestTruncateResult
+=== RUN   TestTruncateResult_UTF8Safe
+=== PAUSE TestTruncateResult_UTF8Safe
+=== RUN   TestClassifyToolAction_Git
+=== PAUSE TestClassifyToolAction_Git
+=== RUN   TestClassifyToolAction_Process
+=== PAUSE TestClassifyToolAction_Process
+=== RUN   TestClassifyToolAction_Notes
+=== PAUSE TestClassifyToolAction_Notes
+=== RUN   TestPromptBuilderEmptyBuild
+--- PASS: TestPromptBuilderEmptyBuild (0.00s)
+=== RUN   TestPromptBuilderOrdersCacheableFirst
+--- PASS: TestPromptBuilderOrdersCacheableFirst (0.00s)
+=== RUN   TestPromptBuilderBreakpointAfterCacheable
+--- PASS: TestPromptBuilderBreakpointAfterCacheable (0.00s)
+=== RUN   TestPromptBuilderAllCacheableNoBreakpoint
+--- PASS: TestPromptBuilderAllCacheableNoBreakpoint (0.00s)
+=== RUN   TestPromptBuilderAllDynamicNoBreakpoint
+--- PASS: TestPromptBuilderAllDynamicNoBreakpoint (0.00s)
+=== RUN   TestNewSharedRateLimiterNilWhenZero
+--- PASS: TestNewSharedRateLimiterNilWhenZero (0.00s)
+=== RUN   TestNewSharedRateLimiterNonNil
+--- PASS: TestNewSharedRateLimiterNonNil (0.00s)
+=== RUN   TestSharedRateLimiterWaitNil
+--- PASS: TestSharedRateLimiterWaitNil (0.00s)
+=== RUN   TestSharedRateLimiterWaitPermits
+--- PASS: TestSharedRateLimiterWaitPermits (0.00s)
+=== RUN   TestSharedRateLimiterAllowNowFresh
+=== PAUSE TestSharedRateLimiterAllowNowFresh
+=== RUN   TestSharedRateLimiterAllowNowExhausted
+=== PAUSE TestSharedRateLimiterAllowNowExhausted
+=== RUN   TestSharedRateLimiterAllowNowNil
+=== PAUSE TestSharedRateLimiterAllowNowNil
+=== RUN   TestSharedRateLimiterWaitCancelledContext
+--- PASS: TestSharedRateLimiterWaitCancelledContext (0.00s)
+=== RUN   TestResultStoreOffloadBelowThreshold
+--- PASS: TestResultStoreOffloadBelowThreshold (0.00s)
+=== RUN   TestResultStoreOffloadAboveThreshold
+--- PASS: TestResultStoreOffloadAboveThreshold (0.00s)
+=== RUN   TestResultStoreRetrieve
+--- PASS: TestResultStoreRetrieve (0.00s)
+=== RUN   TestScratchpadSetAndGet
+--- PASS: TestScratchpadSetAndGet (0.00s)
+=== RUN   TestScratchpadGetMissing
+--- PASS: TestScratchpadGetMissing (0.00s)
+=== RUN   TestScratchpadSetOverwrites
+--- PASS: TestScratchpadSetOverwrites (0.00s)
+=== RUN   TestScratchpadDelete
+--- PASS: TestScratchpadDelete (0.00s)
+=== RUN   TestScratchpadDeleteNonexistent
+--- PASS: TestScratchpadDeleteNonexistent (0.00s)
+=== RUN   TestScratchpadAll
+--- PASS: TestScratchpadAll (0.00s)
+=== RUN   TestScratchpadRenderEmpty
+--- PASS: TestScratchpadRenderEmpty (0.00s)
+=== RUN   TestScratchpadRenderFormat
+--- PASS: TestScratchpadRenderFormat (0.00s)
+=== RUN   TestScratchpadRenderSortedTags
+--- PASS: TestScratchpadRenderSortedTags (0.00s)
+=== RUN   TestScratchpadThreadSafety
+--- PASS: TestScratchpadThreadSafety (0.00s)
+=== RUN   TestScratchpadImplementsAccess
+--- PASS: TestScratchpadImplementsAccess (0.00s)
+=== RUN   TestSkillManagerAdapterSearch
+--- PASS: TestSkillManagerAdapterSearch (0.01s)
+=== RUN   TestSkillManagerAdapterList
+--- PASS: TestSkillManagerAdapterList (0.01s)
+=== RUN   TestSkillManagerAdapterInstallFromLocal
+--- PASS: TestSkillManagerAdapterInstallFromLocal (0.01s)
+=== RUN   TestSkillManagerAdapterRemove
+--- PASS: TestSkillManagerAdapterRemove (0.01s)
+=== RUN   TestSkillManagerAdapterRemoveNotInstalled
+--- PASS: TestSkillManagerAdapterRemoveNotInstalled (0.01s)
+=== RUN   TestSkillManagerAdapterRemoveInvalidName
+--- PASS: TestSkillManagerAdapterRemoveInvalidName (0.01s)
+=== RUN   TestSkillManagerAdapterInstallActivatesSkill
+--- PASS: TestSkillManagerAdapterInstallActivatesSkill (0.01s)
+=== RUN   TestSkillManagerAdapterInstallActivationFailureNonFatal
+--- PASS: TestSkillManagerAdapterInstallActivationFailureNonFatal (0.01s)
+=== RUN   TestSkillManagerAdapterInstallWithoutActivator
+--- PASS: TestSkillManagerAdapterInstallWithoutActivator (0.01s)
+=== RUN   TestInstallGitURLNotMisroutedToLocal
+--- PASS: TestInstallGitURLNotMisroutedToLocal (0.00s)
+=== RUN   TestIsLocalPathAdapter
+--- PASS: TestIsLocalPathAdapter (0.00s)
+=== RUN   TestIsGitURL
+--- PASS: TestIsGitURL (0.00s)
+=== RUN   TestParseNameVersionAdapter
+--- PASS: TestParseNameVersionAdapter (0.00s)
+=== RUN   TestValidateSkillNameAdapter
+--- PASS: TestValidateSkillNameAdapter (0.00s)
+=== RUN   TestAgentRegistersSkillManagerTool
+--- PASS: TestAgentRegistersSkillManagerTool (0.01s)
+=== RUN   TestAgentSkipSkillManagerWithoutStore
+--- PASS: TestAgentSkipSkillManagerWithoutStore (0.00s)
+=== RUN   TestSubagentConfigDefaults
+--- PASS: TestSubagentConfigDefaults (0.00s)
+=== RUN   TestSubagentResultFields
+--- PASS: TestSubagentResultFields (0.00s)
+=== RUN   TestDefaultSubagentSpawnerMaxDepth
+--- PASS: TestDefaultSubagentSpawnerMaxDepth (0.00s)
+=== RUN   TestDefaultSubagentSpawnerNoProvider
+--- PASS: TestDefaultSubagentSpawnerNoProvider (0.00s)
+=== RUN   TestMockSpawnerSatisfiesInterface
+--- PASS: TestMockSpawnerSatisfiesInterface (0.00s)
+=== RUN   TestDefaultSubagentSpawnerWorktreeIsolation_NoProvider
+--- PASS: TestDefaultSubagentSpawnerWorktreeIsolation_NoProvider (0.00s)
+=== RUN   TestDefaultSubagentSpawnerWorktreeIsolation_Success
+--- PASS: TestDefaultSubagentSpawnerWorktreeIsolation_Success (0.00s)
+=== RUN   TestDefaultSubagentSpawnerWorktreeIsolation_PreserveDirty
+--- PASS: TestDefaultSubagentSpawnerWorktreeIsolation_PreserveDirty (0.00s)
+=== RUN   TestSpawnParallelEmptyRequests
+--- PASS: TestSpawnParallelEmptyRequests (0.00s)
+=== RUN   TestSpawnParallelErrorPropagation
+--- PASS: TestSpawnParallelErrorPropagation (0.00s)
+=== RUN   TestDefaultSubagentSpawnerSkillSnapshotFiltering
+--- PASS: TestDefaultSubagentSpawnerSkillSnapshotFiltering (0.00s)
+=== RUN   TestClassifyErrorToolResult
+--- PASS: TestClassifyErrorToolResult (0.00s)
+=== RUN   TestClassifyLargeSuccessResult
+--- PASS: TestClassifyLargeSuccessResult (0.00s)
+=== RUN   TestClassifySmallSuccessResult
+--- PASS: TestClassifySmallSuccessResult (0.00s)
+=== RUN   TestClassifyToolUse
+--- PASS: TestClassifyToolUse (0.00s)
+=== RUN   TestClassifyShortUserText
+--- PASS: TestClassifyShortUserText (0.00s)
+=== RUN   TestClassifyLongUserText
+--- PASS: TestClassifyLongUserText (0.00s)
+=== RUN   TestClassifyAssistantText
+--- PASS: TestClassifyAssistantText (0.00s)
+=== RUN   TestClassifyMixedBlocksHighestWins
+--- PASS: TestClassifyMixedBlocksHighestWins (0.00s)
+=== RUN   TestClassifyEmptyContent
+--- PASS: TestClassifyEmptyContent (0.00s)
+=== RUN   TestSummarizeIncludesImportanceTags
+--- PASS: TestSummarizeIncludesImportanceTags (0.00s)
+=== RUN   TestSummarizePromptMentionsImportance
+--- PASS: TestSummarizePromptMentionsImportance (0.00s)
+=== RUN   TestTextFallback_RenderAndParse_RoundTrip
+--- PASS: TestTextFallback_RenderAndParse_RoundTrip (0.00s)
+=== RUN   TestTextFallback_NoToolCallsInResponse
+--- PASS: TestTextFallback_NoToolCallsInResponse (0.00s)
+=== RUN   TestTextFallback_MultipleToolCalls
+--- PASS: TestTextFallback_MultipleToolCalls (0.00s)
+=== RUN   TestWakeManagerSubmitAndComplete
+--- PASS: TestWakeManagerSubmitAndComplete (0.00s)
+=== RUN   TestWakeManagerStatus
+--- PASS: TestWakeManagerStatus (0.00s)
+=== RUN   TestWakeManagerPendingCount
+--- PASS: TestWakeManagerPendingCount (0.00s)
+=== RUN   TestWakeManagerCompleteUnknownID
+--- PASS: TestWakeManagerCompleteUnknownID (0.00s)
+=== RUN   TestPhase2HarnessIntegration_EvaluatorRejectsInvalidInput
+--- PASS: TestPhase2HarnessIntegration_EvaluatorRejectsInvalidInput (0.00s)
+=== RUN   TestPhase2HarnessIntegration_VerdictHistoryTracksOutcomes
+--- PASS: TestPhase2HarnessIntegration_VerdictHistoryTracksOutcomes (0.00s)
+=== RUN   TestPhase2HarnessIntegration_VerdictContextExposedToAgent
+--- PASS: TestPhase2HarnessIntegration_VerdictContextExposedToAgent (0.00s)
+=== RUN   TestPhase2HarnessIntegration_SecurityAwareApprovalBlocks
+--- PASS: TestPhase2HarnessIntegration_SecurityAwareApprovalBlocks (0.00s)
+=== RUN   TestPhase2HarnessIntegration_SecurityAwareApprovalAllows
+--- PASS: TestPhase2HarnessIntegration_SecurityAwareApprovalAllows (0.00s)
+=== RUN   TestPhase2HarnessIntegration_CompositeEvaluatorFailsFast
+--- PASS: TestPhase2HarnessIntegration_CompositeEvaluatorFailsFast (0.00s)
+=== RUN   TestPhase2HarnessIntegration_VerdictHistoryEmptyContextBlock
+--- PASS: TestPhase2HarnessIntegration_VerdictHistoryEmptyContextBlock (0.00s)
+=== RUN   TestPhase2HarnessIntegration_VerdictHistoryWithNilReturnsEmpty
+--- PASS: TestPhase2HarnessIntegration_VerdictHistoryWithNilReturnsEmpty (0.00s)
+=== RUN   TestPhase2HarnessIntegration_FullStackTurnExecution
+--- PASS: TestPhase2HarnessIntegration_FullStackTurnExecution (0.00s)
+=== RUN   TestSubagentIntegration
+--- PASS: TestSubagentIntegration (0.00s)
+=== CONT  TestProgressTracker_Record
+=== CONT  TestClassifyToolAction_TaskComplete
+=== CONT  TestProgressTracker_Render
+=== CONT  TestClassifyToolAction_Task
+=== CONT  TestProgressTracker_Render_TurnNumberAfterTrimming
+=== CONT  TestProgressTracker_Render_EscapesNewlines
+=== CONT  TestProgressTracker_Render_EscapesPipes
+=== CONT  TestProgressTracker_Render_Empty
+=== CONT  TestSharedRateLimiterAllowNowNil
+=== CONT  TestProgressTracker_MaxEntries
+=== CONT  TestSharedRateLimiterAllowNowExhausted
+=== CONT  TestClassifyToolAction_Search
+=== CONT  TestClassifyToolAction_Shell
+--- PASS: TestProgressTracker_Record (0.00s)
+=== CONT  TestClassifyToolAction_Git
+=== CONT  TestSharedRateLimiterAllowNowFresh
+=== CONT  TestClassifyToolAction_Notes
+=== CONT  TestClassifyToolAction_Process
+=== CONT  TestTruncateResult
+=== CONT  TestTruncateResult_UTF8Safe
+=== CONT  TestClassifyToolAction_InvalidJSON
+=== CONT  TestClassifyToolAction_Unknown
+=== CONT  TestClassifyToolAction_File
+--- PASS: TestProgressTracker_Render (0.00s)
+--- PASS: TestProgressTracker_Render_TurnNumberAfterTrimming (0.00s)
+--- PASS: TestProgressTracker_Render_EscapesNewlines (0.00s)
+--- PASS: TestProgressTracker_Render_EscapesPipes (0.00s)
+--- PASS: TestClassifyToolAction_TaskComplete (0.00s)
+--- PASS: TestProgressTracker_Render_Empty (0.00s)
+--- PASS: TestSharedRateLimiterAllowNowNil (0.00s)
+--- PASS: TestClassifyToolAction_Task (0.00s)
+--- PASS: TestSharedRateLimiterAllowNowExhausted (0.00s)
+--- PASS: TestClassifyToolAction_Search (0.00s)
+--- PASS: TestProgressTracker_MaxEntries (0.00s)
+--- PASS: TestClassifyToolAction_Shell (0.00s)
+--- PASS: TestClassifyToolAction_Git (0.00s)
+--- PASS: TestSharedRateLimiterAllowNowFresh (0.00s)
+--- PASS: TestClassifyToolAction_Notes (0.00s)
+--- PASS: TestClassifyToolAction_Process (0.00s)
+--- PASS: TestTruncateResult (0.00s)
+--- PASS: TestTruncateResult_UTF8Safe (0.00s)
+--- PASS: TestClassifyToolAction_InvalidJSON (0.00s)
+--- PASS: TestClassifyToolAction_Unknown (0.00s)
+--- PASS: TestClassifyToolAction_File (0.00s)
+PASS
+coverage: 86.0% of statements
+ok  	github.com/julianshen/rubichan/internal/agent	0.528s	coverage: 86.0% of statements
+=== RUN   TestExitCodeFromFindings_NoFindings
+--- PASS: TestExitCodeFromFindings_NoFindings (0.00s)
+=== RUN   TestExitCodeFromFindings_BelowThreshold
+--- PASS: TestExitCodeFromFindings_BelowThreshold (0.00s)
+=== RUN   TestExitCodeFromFindings_AtThreshold
+--- PASS: TestExitCodeFromFindings_AtThreshold (0.00s)
+=== RUN   TestExitCodeFromFindings_AboveThreshold
+--- PASS: TestExitCodeFromFindings_AboveThreshold (0.00s)
+=== RUN   TestExitCodeFromFindings_MixedSeverities
+--- PASS: TestExitCodeFromFindings_MixedSeverities (0.00s)
+=== RUN   TestExitCodeFromFindings_CriticalThreshold
+--- PASS: TestExitCodeFromFindings_CriticalThreshold (0.00s)
+=== RUN   TestExitCodeFromFindings_EmptyFailOn
+--- PASS: TestExitCodeFromFindings_EmptyFailOn (0.00s)
+=== RUN   TestExitCodeFromFindings_InvalidThreshold
+--- PASS: TestExitCodeFromFindings_InvalidThreshold (0.00s)
+=== RUN   TestExitError
+--- PASS: TestExitError (0.00s)
+=== RUN   TestHeadlessRunnerBasic
+--- PASS: TestHeadlessRunnerBasic (0.00s)
+=== RUN   TestHeadlessRunnerWithToolCalls
+--- PASS: TestHeadlessRunnerWithToolCalls (0.00s)
+=== RUN   TestHeadlessRunnerError
+--- PASS: TestHeadlessRunnerError (0.00s)
+=== RUN   TestHeadlessRunnerTimeout
+--- PASS: TestHeadlessRunnerTimeout (0.05s)
+=== RUN   TestHeadlessRunnerSummaryForToolOnlyRun
+    headless_test.go:128: 
+        	Error Trace:	/Users/julianshen/prj/rubichan/internal/runner/headless_test.go:128
+        	Error:      	Not equal: 
+        	            	expected: "Run completed without a textual response after 1 tool call(s); 0 returned errors."
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-Run completed without a textual response after 1 tool call(s); 0 returned errors.
+        	            	+
+        	Test:       	TestHeadlessRunnerSummaryForToolOnlyRun
+--- FAIL: TestHeadlessRunnerSummaryForToolOnlyRun (0.00s)
+=== RUN   TestHeadlessRunnerTreatsToolOnlyMaxTurnsAsIncompleteSuccess
+    headless_test.go:152: 
+        	Error Trace:	/Users/julianshen/prj/rubichan/internal/runner/headless_test.go:152
+        	Error:      	Not equal: 
+        	            	expected: "Run completed through tool evidence after 1 tool call(s), but the model produced no final textual response."
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-Run completed through tool evidence after 1 tool call(s), but the model produced no final textual response.
+        	            	+
+        	Test:       	TestHeadlessRunnerTreatsToolOnlyMaxTurnsAsIncompleteSuccess
+--- FAIL: TestHeadlessRunnerTreatsToolOnlyMaxTurnsAsIncompleteSuccess (0.00s)
+=== RUN   TestHeadlessRunnerFrontendTaskRequiresBuildEvidenceForToolOnlySuccess
+    headless_test.go:175: 
+        	Error Trace:	/Users/julianshen/prj/rubichan/internal/runner/headless_test.go:175
+        	Error:      	Not equal: 
+        	            	expected: "Run failed after 1 tool call(s); 0 returned errors."
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-Run failed after 1 tool call(s); 0 returned errors.
+        	            	+
+        	Test:       	TestHeadlessRunnerFrontendTaskRequiresBuildEvidenceForToolOnlySuccess
+--- FAIL: TestHeadlessRunnerFrontendTaskRequiresBuildEvidenceForToolOnlySuccess (0.00s)
+=== RUN   TestHeadlessRunnerFrontendTaskAllowsToolOnlySuccessWithBuildEvidence
+    headless_test.go:198: 
+        	Error Trace:	/Users/julianshen/prj/rubichan/internal/runner/headless_test.go:198
+        	Error:      	Not equal: 
+        	            	expected: "Run completed through tool evidence after 1 tool call(s), but the model produced no final textual response."
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-Run completed through tool evidence after 1 tool call(s), but the model produced no final textual response.
+        	            	+
+        	Test:       	TestHeadlessRunnerFrontendTaskAllowsToolOnlySuccessWithBuildEvidence
+--- FAIL: TestHeadlessRunnerFrontendTaskAllowsToolOnlySuccessWithBuildEvidence (0.00s)
+=== RUN   TestHeadlessRunnerFrontendTaskRequiresBuildAfterLatestEdit
+    headless_test.go:227: 
+        	Error Trace:	/Users/julianshen/prj/rubichan/internal/runner/headless_test.go:227
+        	Error:      	Not equal: 
+        	            	expected: "Run failed after 2 tool call(s); 0 returned errors."
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-Run failed after 2 tool call(s); 0 returned errors.
+        	            	+
+        	Test:       	TestHeadlessRunnerFrontendTaskRequiresBuildAfterLatestEdit
+--- FAIL: TestHeadlessRunnerFrontendTaskRequiresBuildAfterLatestEdit (0.00s)
+=== RUN   TestHeadlessRunnerSummarizesFrontendBuildFailure
+--- PASS: TestHeadlessRunnerSummarizesFrontendBuildFailure (0.00s)
+=== RUN   TestHeadlessRunnerBuildsFrontendEvidenceSummary
+--- PASS: TestHeadlessRunnerBuildsFrontendEvidenceSummary (0.00s)
+=== RUN   TestHeadlessRunnerBuildsFrontendEvidenceSummaryWithoutBuildEvidence
+--- PASS: TestHeadlessRunnerBuildsFrontendEvidenceSummaryWithoutBuildEvidence (0.00s)
+=== RUN   TestHeadlessRunnerEmitsStructuredSessionEvents
+--- PASS: TestHeadlessRunnerEmitsStructuredSessionEvents (0.00s)
+=== RUN   TestHeadlessRunnerTurnCompletedPreservesDonePayload
+--- PASS: TestHeadlessRunnerTurnCompletedPreservesDonePayload (0.00s)
+=== RUN   TestFrontendVerificationVerdictRequiresBuildAfterLatestEdit
+--- PASS: TestFrontendVerificationVerdictRequiresBuildAfterLatestEdit (0.00s)
+=== RUN   TestFindFrontendBuildFailureIgnoresEarlierFailureAfterSuccessfulRetry
+--- PASS: TestFindFrontendBuildFailureIgnoresEarlierFailureAfterSuccessfulRetry (0.00s)
+=== RUN   TestFindBackendValidationFailureIgnoresEarlierFailureAfterSuccessfulRetry
+--- PASS: TestFindBackendValidationFailureIgnoresEarlierFailureAfterSuccessfulRetry (0.00s)
+=== RUN   TestBackendDependencyFailureReasonIgnoresEarlierFailureAfterSuccessfulRetry
+--- PASS: TestBackendDependencyFailureReasonIgnoresEarlierFailureAfterSuccessfulRetry (0.00s)
+=== RUN   TestBackendValidationEvidenceLineUsesOnlyPostEditCalls
+--- PASS: TestBackendValidationEvidenceLineUsesOnlyPostEditCalls (0.00s)
+=== RUN   TestFrontendBuildEvidenceLineUsesOnlyPostEditCalls
+--- PASS: TestFrontendBuildEvidenceLineUsesOnlyPostEditCalls (0.00s)
+=== RUN   TestLooksLikeBackendFullstackTaskDoesNotClassifyGenericCrudFrontendPrompt
+--- PASS: TestLooksLikeBackendFullstackTaskDoesNotClassifyGenericCrudFrontendPrompt (0.00s)
+=== RUN   TestIsFileModificationRecognizesExtendedFileOperations
+--- PASS: TestIsFileModificationRecognizesExtendedFileOperations (0.00s)
+=== RUN   TestBackendAPIEvidenceAcceptsSingleQuotedPythonTranscript
+--- PASS: TestBackendAPIEvidenceAcceptsSingleQuotedPythonTranscript (0.00s)
+=== RUN   TestHeadlessRunnerBackendTaskRequiresAPIRoundTripForToolOnlySuccess
+--- PASS: TestHeadlessRunnerBackendTaskRequiresAPIRoundTripForToolOnlySuccess (0.00s)
+=== RUN   TestHeadlessRunnerBackendVerificationInvalidatedByLaterEdit
+--- PASS: TestHeadlessRunnerBackendVerificationInvalidatedByLaterEdit (0.00s)
+=== RUN   TestHeadlessRunnerBuildsBackendEvidenceSummary
+--- PASS: TestHeadlessRunnerBuildsBackendEvidenceSummary (0.00s)
+=== RUN   TestHeadlessRunnerAllowsBackendPassFromRuntimeAndAPIRoundTrip
+--- PASS: TestHeadlessRunnerAllowsBackendPassFromRuntimeAndAPIRoundTrip (0.00s)
+=== RUN   TestHeadlessRunnerRecognizesMavenCommandsWithFlags
+--- PASS: TestHeadlessRunnerRecognizesMavenCommandsWithFlags (0.00s)
+=== RUN   TestHeadlessRunnerSummarizesBackendValidationFailure
+--- PASS: TestHeadlessRunnerSummarizesBackendValidationFailure (0.00s)
+=== RUN   TestIsDependencyResolutionCommandRecognizesNpmCI
+--- PASS: TestIsDependencyResolutionCommandRecognizesNpmCI (0.00s)
+=== RUN   TestIsDependencyResolutionCommandRecognizesSharedPatterns
+--- PASS: TestIsDependencyResolutionCommandRecognizesSharedPatterns (0.00s)
+=== RUN   TestBackendDependencyFailureReasonIncludesCommandAndErrorSnippet
+--- PASS: TestBackendDependencyFailureReasonIncludesCommandAndErrorSnippet (0.00s)
+=== RUN   TestBackendVerificationVerdictDependencyUnrecognizedReason
+--- PASS: TestBackendVerificationVerdictDependencyUnrecognizedReason (0.00s)
+=== RUN   TestHeadlessRunnerWithEvaluatorRejectsInvalidToolCalls
+--- PASS: TestHeadlessRunnerWithEvaluatorRejectsInvalidToolCalls (0.00s)
+=== RUN   TestResolveInputFromPromptFlag
+--- PASS: TestResolveInputFromPromptFlag (0.00s)
+=== RUN   TestResolveInputFromFile
+--- PASS: TestResolveInputFromFile (0.00s)
+=== RUN   TestResolveInputFromStdin
+--- PASS: TestResolveInputFromStdin (0.00s)
+=== RUN   TestResolveInputPromptTakesPrecedence
+--- PASS: TestResolveInputPromptTakesPrecedence (0.00s)
+=== RUN   TestResolveInputFileTakesPrecedenceOverStdin
+--- PASS: TestResolveInputFileTakesPrecedenceOverStdin (0.00s)
+=== RUN   TestResolveInputNoInput
+--- PASS: TestResolveInputNoInput (0.00s)
+=== RUN   TestResolveInputFileMissing
+--- PASS: TestResolveInputFileMissing (0.00s)
+=== RUN   TestResolveInputEmptyPrompt
+--- PASS: TestResolveInputEmptyPrompt (0.00s)
+=== RUN   TestResolveInputEmptyFile
+--- PASS: TestResolveInputEmptyFile (0.00s)
+FAIL
+coverage: 90.8% of statements
+FAIL	github.com/julianshen/rubichan/internal/runner	0.298s
+FAIL

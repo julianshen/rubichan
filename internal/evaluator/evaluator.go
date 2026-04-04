@@ -122,20 +122,30 @@ func NewCompositeEvaluator(evals ...Evaluator) *CompositeEvaluator {
 	return &CompositeEvaluator{evaluators: evals}
 }
 
-// Evaluate runs each evaluator in sequence, failing fast on first rejection.
+// Evaluate runs each evaluator in sequence, accumulating results.
 func (c *CompositeEvaluator) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error) {
+	accumulated := EvaluationResult{}
 	for _, e := range c.evaluators {
 		result, err := e.Evaluate(ctx, req)
 		if err != nil {
 			return EvaluationResult{}, fmt.Errorf("evaluator failed: %w", err)
 		}
-		if !result.Approved() {
-			return result, nil
+		// Merge results: collect all checks from all evaluators
+		if result.SchemaValid {
+			accumulated.SchemaValid = true
+		} else if !accumulated.SchemaValid && result.SchemaError != "" {
+			accumulated.SchemaError = result.SchemaError
+		}
+		if result.ConfidentEnough {
+			accumulated.ConfidentEnough = true
+		} else if !accumulated.ConfidentEnough {
+			accumulated.ConfidenceScore = result.ConfidenceScore
+		}
+		if result.SpeculativeOK {
+			accumulated.SpeculativeOK = true
+		} else if !accumulated.SpeculativeOK && result.SpeculativeReason != "" {
+			accumulated.SpeculativeReason = result.SpeculativeReason
 		}
 	}
-	return EvaluationResult{
-		SchemaValid:     true,
-		ConfidentEnough: true,
-		SpeculativeOK:   true,
-	}, nil
+	return accumulated, nil
 }

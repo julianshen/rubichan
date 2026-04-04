@@ -158,6 +158,10 @@ func (r *HeadlessRunner) Run(ctx context.Context, prompt, mode string) (*output.
 		lastErr = ""
 		summary = fmt.Sprintf("Run completed through tool evidence after %d tool call(s), but the model produced no final textual response.", len(toolCalls))
 	}
+	// When there's no textual response but a summary was generated, use the summary as the response
+	if strings.TrimSpace(response) == "" && strings.TrimSpace(summary) != "" {
+		response = summary
+	}
 	r.emitEvent(session.NewTurnCompletedEvent(doneDiffSummary, doneInputTokens, doneOutputTokens))
 
 	return &output.RunResult{
