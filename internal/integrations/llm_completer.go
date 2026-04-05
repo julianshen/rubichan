@@ -37,7 +37,11 @@ func (c *LLMCompleter) Complete(ctx context.Context, prompt string) (string, err
 		select {
 		case evt, ok := <-ch:
 			if !ok {
-				return strings.Join(parts, ""), nil
+				result := strings.Join(parts, "")
+				if strings.TrimSpace(result) == "" {
+					return "", fmt.Errorf("empty response from model")
+				}
+				return result, nil
 			}
 			switch evt.Type {
 			case "text_delta":
