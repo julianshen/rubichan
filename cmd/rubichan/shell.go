@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/julianshen/rubichan/internal/agent"
@@ -109,7 +110,7 @@ func runShell() error {
 			agent.NewCompositeApprovalChecker(agent.AlwaysAutoApprove{}),
 		))
 	} else {
-		approvalFunc = makeShellApprovalFunc(os.Stderr)
+		approvalFunc = makeHuhApprovalFunc()
 	}
 
 	// Create skill runtime.
@@ -169,6 +170,19 @@ func runShell() error {
 		fmt.Fprintf(os.Stderr, "warning: could not determine home directory: %v\n", err)
 	}
 
+	// Create completer for raw line reader
+	slashCommandNames := func() []string {
+		var names []string
+		for _, cmd := range cmdRegistry.All() {
+			names = append(names, cmd.Name())
+		}
+		return names
+	}
+	completer := shell.NewCompleter(executables, &cwd, slashCommandNames, nil)
+
+	// Create raw line reader with completion support
+	rawReader := shell.NewRawLineReaderWithIO(completer, os.Stdin, os.Stdout, os.Stderr)
+
 	host := shell.NewShellHost(shell.ShellHostConfig{
 		WorkDir:        cwd,
 		HomeDir:        homeDir,
@@ -180,6 +194,8 @@ func runShell() error {
 		Stdout:         os.Stdout,
 		Stderr:         os.Stderr,
 		GitBranchFn:    gitBranchFn,
+		LineReader:     rawReader,
+		ScriptApprovalFn: makeHuhScriptApprovalFunc(),
 	})
 
 	err = host.Run(ctx)
@@ -211,6 +227,82 @@ func makeShellApprovalFunc(promptWriter *os.File) agent.ApprovalFunc {
 		}
 		response := strings.TrimSpace(strings.ToLower(string(buf[:n])))
 		return response == "y" || response == "yes", nil
+	}
+}
+
+// makeHuhApprovalFunc creates a huh-based approval form for shell mode tool calls.
+// Displays tool name and formatted arguments in an interactive form.
+func makeHuhApprovalFunc() agent.ApprovalFunc {
+	return func(_ context.Context, toolName string, inputJSON json.RawMessage) (bool, error) {
+		// Parse tool arguments for display
+		var input map[string]interface{}
+		if err := json.Unmarshal(inputJSON, &input); err != nil {
+			// If parse fails, just show tool name
+			input = make(map[string]interface{})
+		}
+
+		// Extract command/description for display
+		detail := ""
+		if cmd, ok := input["command"]; ok {
+			detail = fmt.Sprintf("command = %q", cmd)
+		} else if desc, ok := input["description"]; ok {
+			detail = fmt.Sprintf("description = %q", desc)
+		}
+
+		// Create the form
+		var choice string
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewNote().
+					Title("Tool Approval").
+					Description(fmt.Sprintf("Tool: %s\n%s", toolName, detail)),
+				huh.NewSelect[string]().
+					Title("Approve?").
+					Options(
+						huh.NewOption("Yes", "yes"),
+						huh.NewOption("No", "no"),
+					).
+					Value(&choice),
+			),
+		)
+
+		// Run the form as a standalone program
+		if err := form.Run(); err != nil {
+			// If form fails, deny by default
+			return false, nil
+		}
+
+		return choice == "yes", nil
+	}
+}
+
+// makeHuhScriptApprovalFunc creates a huh-based form for script approval.
+// Displays generated script content and allows user to edit before execution.
+func makeHuhScriptApprovalFunc() func(context.Context, string) (bool, string, error) {
+	return func(_ context.Context, script string) (bool, string, error) {
+		var scriptEdit string = script
+		var approved bool
+
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewNote().
+					Title("Execute Script?").
+					Description("The AI generated the following script:"),
+				huh.NewText().
+					Title("Script").
+					Value(&scriptEdit).
+					CharLimit(10000),
+				huh.NewConfirm().
+					Title("Run script?").
+					Value(&approved),
+			),
+		)
+
+		if err := form.Run(); err != nil {
+			return false, "", err
+		}
+
+		return approved, scriptEdit, nil
 	}
 }
 
