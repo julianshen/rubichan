@@ -1166,7 +1166,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		finalizeText := func() {
-			if currentTextBuf != "" {
+			if strings.TrimSpace(currentTextBuf) != "" {
 				blocks = append(blocks, provider.ContentBlock{
 					Type: "text",
 					Text: currentTextBuf,
