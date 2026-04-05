@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	gitlab "github.com/xanzy/go-gitlab"
+	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
 // GitLabClient implements Platform using the go-gitlab SDK.
@@ -35,7 +35,7 @@ func (g *GitLabClient) Name() string { return "gitlab" }
 
 func (g *GitLabClient) PostPRComment(ctx context.Context, repo string, prNum int, body string) error {
 	opts := &gitlab.CreateMergeRequestNoteOptions{Body: gitlab.Ptr(body)}
-	_, _, err := g.client.Notes.CreateMergeRequestNote(repo, prNum, opts, gitlab.WithContext(ctx))
+	_, _, err := g.client.Notes.CreateMergeRequestNote(repo, int64(prNum), opts, gitlab.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("gitlab: posting MR comment: %w", err)
 	}
@@ -78,7 +78,7 @@ type diffPosition struct {
 
 // latestDiffPosition fetches the latest MR diff version SHAs.
 func (g *GitLabClient) latestDiffPosition(ctx context.Context, repo string, prNum int) (diffPosition, error) {
-	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, prNum, nil, gitlab.WithContext(ctx))
+	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, int64(prNum), nil, gitlab.WithContext(ctx))
 	if err != nil {
 		return diffPosition{}, err
 	}
@@ -101,10 +101,10 @@ func (g *GitLabClient) postDiscussion(ctx context.Context, repo string, prNum in
 			StartSHA:     gitlab.Ptr(pos.StartSHA),
 			PositionType: gitlab.Ptr("text"),
 			NewPath:      gitlab.Ptr(c.Path),
-			NewLine:      gitlab.Ptr(c.Line),
+			NewLine:      gitlab.Ptr(int64(c.Line)),
 		},
 	}
-	_, _, err := g.client.Discussions.CreateMergeRequestDiscussion(repo, prNum, opts, gitlab.WithContext(ctx))
+	_, _, err := g.client.Discussions.CreateMergeRequestDiscussion(repo, int64(prNum), opts, gitlab.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("gitlab: creating discussion: %w", err)
 	}
@@ -112,7 +112,7 @@ func (g *GitLabClient) postDiscussion(ctx context.Context, repo string, prNum in
 }
 
 func (g *GitLabClient) GetPRDiff(ctx context.Context, repo string, prNum int) (string, error) {
-	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, prNum, nil, gitlab.WithContext(ctx))
+	versions, _, err := g.client.MergeRequests.GetMergeRequestDiffVersions(repo, int64(prNum), nil, gitlab.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("gitlab: getting MR diff versions: %w", err)
 	}
@@ -122,7 +122,7 @@ func (g *GitLabClient) GetPRDiff(ctx context.Context, repo string, prNum int) (s
 
 	// Use the latest diff version.
 	latest := versions[0]
-	version, _, err := g.client.MergeRequests.GetSingleMergeRequestDiffVersion(repo, prNum, latest.ID, nil, gitlab.WithContext(ctx))
+	version, _, err := g.client.MergeRequests.GetSingleMergeRequestDiffVersion(repo, int64(prNum), latest.ID, nil, gitlab.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("gitlab: getting MR diff: %w", err)
 	}
@@ -135,23 +135,23 @@ func (g *GitLabClient) GetPRDiff(ctx context.Context, repo string, prNum int) (s
 }
 
 func (g *GitLabClient) ListPRFiles(ctx context.Context, repo string, prNum int) ([]PRFile, error) {
-	changes, _, err := g.client.MergeRequests.GetMergeRequestChanges(repo, prNum, nil, gitlab.WithContext(ctx))
+	diffs, _, err := g.client.MergeRequests.ListMergeRequestDiffs(repo, int64(prNum), nil, gitlab.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("gitlab: listing MR files: %w", err)
 	}
 
-	files := make([]PRFile, len(changes.Changes))
-	for i, c := range changes.Changes {
+	files := make([]PRFile, len(diffs))
+	for i, d := range diffs {
 		status := FileStatusModified
-		if c.NewFile {
+		if d.NewFile {
 			status = FileStatusAdded
-		} else if c.DeletedFile {
+		} else if d.DeletedFile {
 			status = FileStatusRemoved
 		}
 		files[i] = PRFile{
-			Filename: c.NewPath,
+			Filename: d.NewPath,
 			Status:   status,
-			Patch:    c.Diff,
+			Patch:    d.Diff,
 		}
 	}
 	return files, nil
