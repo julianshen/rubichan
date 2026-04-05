@@ -158,11 +158,14 @@ func (g *KnowledgeGraph) Put(ctx context.Context, e *kg.Entity) error {
 	g.cache[e.ID] = e
 
 	// Upsert into SQLite
-	tagsJSON, _ := json.Marshal(e.Tags)
+	tagsJSON, err := json.Marshal(e.Tags)
+	if err != nil {
+		return fmt.Errorf("Put: marshal tags: %w", err)
+	}
 	stmt := `INSERT OR REPLACE INTO entities(id, kind, title, tags_json, body, source, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := g.db.ExecContext(ctx, stmt,
+	_, err = g.db.ExecContext(ctx, stmt,
 		e.ID, string(e.Kind), e.Title, string(tagsJSON), e.Body, string(e.Source),
 		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339),
 	)
@@ -232,7 +235,9 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 
 	// Parse tags
 	var tags []string
-	json.Unmarshal([]byte(tagsJSON), &tags)
+	if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
+		return nil, fmt.Errorf("Get: unmarshal tags: %w", err)
+	}
 
 	// Load relationships
 	rows, err := g.db.QueryContext(ctx,
@@ -374,8 +379,11 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 
 	// Insert all entities
 	for _, e := range entities {
-		tagsJSON, _ := json.Marshal(e.Tags)
-		_, err := tx.ExecContext(ctx,
+		tagsJSON, err := json.Marshal(e.Tags)
+		if err != nil {
+			return fmt.Errorf("rebuildIndex: marshal tags for entity %s: %w", e.ID, err)
+		}
+		_, err = tx.ExecContext(ctx,
 			`INSERT INTO entities(id, kind, title, tags_json, body, source, created_at, updated_at)
 			 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.ID, string(e.Kind), e.Title, string(tagsJSON), e.Body, string(e.Source),
@@ -396,11 +404,12 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 		}
 
 		// Populate FTS (must do within transaction using same connection)
-		tags := ""
-		json.Unmarshal([]byte(string(tagsJSON)), &tags)
+		var tagList []string
+		_ = json.Unmarshal([]byte(string(tagsJSON)), &tagList)
+		tagsStr := strings.Join(tagList, " ")
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO entities_fts(id, title, body, tags) VALUES(?, ?, ?, ?)`,
-			e.ID, e.Title, e.Body, tags,
+			e.ID, e.Title, e.Body, tagsStr,
 		); err != nil {
 			return fmt.Errorf("rebuildIndex: insert FTS: %w", err)
 		}
