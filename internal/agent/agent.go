@@ -1166,6 +1166,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
+		// finalizeText commits accumulated text to the blocks list, but only if
+		// the text is not purely whitespace. This prevents whitespace-only responses
+		// from polluting the conversation. Note: LLMCompleter.Complete() also validates
+		// empty responses at its layer, failing fast with an error. The agent handles
+		// empty responses gracefully (falling through to line 1287 where a placeholder
+		// message is added), allowing the turn to continue. This design enables callers
+		// of Complete() to fail fast (e.g., wiki diagram generation), while agent turns
+		// can recover with a placeholder message to keep conversation valid.
 		finalizeText := func() {
 			if !text.IsEmptyResponse(currentTextBuf) {
 				blocks = append(blocks, provider.ContentBlock{

@@ -39,6 +39,10 @@ func (c *LLMCompleter) Complete(ctx context.Context, prompt string) (string, err
 		case evt, ok := <-ch:
 			if !ok {
 				result := strings.Join(parts, "")
+				// Fail fast on empty/whitespace-only responses. This pushes responsibility
+				// to callers to decide how to handle empty responses: agent turns can use
+				// placeholder messages to keep conversation valid, while other callers
+				// (e.g., wiki diagram generation) can skip the operation with a warning.
 				if text.IsEmptyResponse(result) {
 					return "", fmt.Errorf("empty response from model")
 				}
