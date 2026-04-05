@@ -68,6 +68,7 @@ func (i *LLMIngestor) extractionPrompt(text string) string {
 For each entity, provide:
 - id: unique identifier (kebab-case, e.g., adr-001-go-language)
 - kind: one of: architecture, decision, gotcha, pattern, module, integration
+- layer: optional scope - "base" (shared), "team" (team-specific), or "session" (ephemeral). Defaults to "base"
 - title: short descriptive title
 - tags: list of relevant tags
 - body: detailed content (2-3 sentences)
@@ -78,6 +79,7 @@ Return a JSON array of entities with this structure:
   {
     "id": "string",
     "kind": "string",
+    "layer": "base|team|session",
     "title": "string",
     "tags": ["string"],
     "body": "string",
@@ -98,11 +100,12 @@ Extract only entities that are explicitly mentioned or strongly implied. Return 
 
 func (i *LLMIngestor) parseYAMLResponse(response string, source kg.UpdateSource) ([]*kg.Entity, error) {
 	var parsed []struct {
-		ID            string `json:"id"`
-		Kind          string `json:"kind"`
-		Title         string `json:"title"`
+		ID            string   `json:"id"`
+		Kind          string   `json:"kind"`
+		Layer         string   `json:"layer"`
+		Title         string   `json:"title"`
 		Tags          []string `json:"tags"`
-		Body          string `json:"body"`
+		Body          string   `json:"body"`
 		Relationships []struct {
 			Kind   string `json:"kind"`
 			Target string `json:"target"`
@@ -132,6 +135,7 @@ func (i *LLMIngestor) parseYAMLResponse(response string, source kg.UpdateSource)
 		entities = append(entities, &kg.Entity{
 			ID:            p.ID,
 			Kind:          kg.EntityKind(p.Kind),
+			Layer:         kg.EntityLayer(p.Layer),
 			Title:         p.Title,
 			Tags:          p.Tags,
 			Body:          p.Body,
@@ -276,7 +280,7 @@ func readEntityFromBytes(data []byte) (*kg.Entity, error) {
 		return nil, fmt.Errorf("malformed frontmatter: no closing delimiter")
 	}
 
-	frontmatterStr := string(data[frontmatterStart : frontmatterEnd])
+	frontmatterStr := string(data[frontmatterStart:frontmatterEnd])
 	bodyStart := frontmatterEnd + 5 // Skip "\n---\n"
 	bodyStr := string(data[bodyStart:])
 
@@ -293,6 +297,8 @@ func readEntityFromBytes(data []byte) (*kg.Entity, error) {
 				e.ID = val
 			case "kind":
 				e.Kind = kg.EntityKind(val)
+			case "layer":
+				e.Layer = kg.EntityLayer(val)
 			case "title":
 				e.Title = val
 			case "source":

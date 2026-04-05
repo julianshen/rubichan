@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
-	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
 // mockCompleter returns fixed responses for testing
@@ -162,10 +162,10 @@ func TestFileIngestor(t *testing.T) {
 
 func TestParseYAMLLine(t *testing.T) {
 	tests := []struct {
-		line     string
-		wantKey  string
-		wantVal  string
-		wantOk   bool
+		line    string
+		wantKey string
+		wantVal string
+		wantOk  bool
 	}{
 		{"id: test-entity", "id", "test-entity", true},
 		{"kind: architecture", "kind", "architecture", true},
@@ -183,13 +183,75 @@ func TestParseYAMLLine(t *testing.T) {
 	}
 }
 
+func TestLLMIngestorParsesLayer(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// LLM response with layer field
+	response := `[
+  {
+    "id": "team-001",
+    "kind": "decision",
+    "layer": "team",
+    "title": "Team Decision",
+    "tags": ["team"],
+    "body": "A team-specific decision.",
+    "relationships": []
+  }
+]`
+
+	completer := &mockCompleter{response: response}
+	ingestor := NewLLMIngestor(completer)
+
+	count, err := ingestor.Ingest(context.Background(), g.(*KnowledgeGraph), "test text", kg.SourceLLM)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	// Verify entity has correct layer
+	e, err := g.Get(context.Background(), "team-001")
+	require.NoError(t, err)
+	require.Equal(t, kg.EntityLayerTeam, e.Layer)
+}
+
+func TestManualIngestorParsesLayerFrontmatter(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Create a file with layer in frontmatter
+	filePath := filepath.Join(tmpDir, "session-entity.md")
+	content := `---
+id: session-001
+kind: gotcha
+layer: session
+title: Session Gotcha
+---
+This is a session-specific gotcha.`
+
+	err = os.WriteFile(filePath, []byte(content), 0o644)
+	require.NoError(t, err)
+
+	ingestor := NewManualIngestor()
+	count, err := ingestor.Ingest(context.Background(), g.(*KnowledgeGraph), filePath)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	// Verify entity has correct layer
+	e, err := g.Get(context.Background(), "session-001")
+	require.NoError(t, err)
+	require.Equal(t, kg.EntityLayerSession, e.Layer)
+}
+
 func TestReadEntityFromBytes(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantID    string
-		wantKind  string
-		wantErr   bool
+		name     string
+		input    string
+		wantID   string
+		wantKind string
+		wantErr  bool
 	}{
 		{
 			name: "valid entity",
