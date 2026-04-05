@@ -571,6 +571,25 @@ func (g *KnowledgeGraph) Stats(ctx context.Context) (*kg.KnowledgeStats, error) 
 		stats.ByKind[kg.EntityKind(kind)] = count
 	}
 
+	// Get breakdown by layer
+	stats.ByLayer = make(map[kg.EntityLayer]int)
+	rows, err = g.db.QueryContext(ctx, `
+		SELECT layer, COUNT(*) as count FROM entities GROUP BY layer
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("Stats: counting by layer: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var layer string
+		var count int
+		if err := rows.Scan(&layer, &count); err != nil {
+			return nil, err
+		}
+		stats.ByLayer[kg.EntityLayer(layer)] = count
+	}
+
 	// Get orphaned relationships count
 	err = g.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM relationships
@@ -584,7 +603,7 @@ func (g *KnowledgeGraph) Stats(ctx context.Context) (*kg.KnowledgeStats, error) 
 	var totalConfidence float64
 	var confidenceCount int
 	err = g.db.QueryRowContext(ctx, `
-		SELECT SUM(confidence), COUNT(*) FROM entities WHERE confidence > 0
+		SELECT COALESCE(SUM(confidence), 0), COUNT(*) FROM entities WHERE confidence > 0
 	`).Scan(&totalConfidence, &confidenceCount)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("Stats: computing confidence metrics: %w", err)

@@ -313,6 +313,45 @@ func TestStatsBasic(t *testing.T) {
 	require.Equal(t, 1, neverUsedCount)
 }
 
+func TestStatsHasLayerBreakdown(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	g := &KnowledgeGraph{
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
+	}
+
+	// Insert entities with different layers
+	_, err := db.Exec(`
+		INSERT INTO entities(id, kind, layer, title)
+		VALUES(?, ?, ?, ?)
+	`, "base-001", "architecture", "base", "Base Arch")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		INSERT INTO entities(id, kind, layer, title)
+		VALUES(?, ?, ?, ?)
+	`, "team-001", "decision", "team", "Team Decision")
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		INSERT INTO entities(id, kind, layer, title)
+		VALUES(?, ?, ?, ?)
+	`, "session-001", "gotcha", "session", "Session Gotcha")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	stats, err := g.Stats(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, stats.ByLayer)
+	require.Equal(t, 1, stats.ByLayer[kg.EntityLayerBase], "should have 1 base entity")
+	require.Equal(t, 1, stats.ByLayer[kg.EntityLayerTeam], "should have 1 team entity")
+	require.Equal(t, 1, stats.ByLayer[kg.EntityLayerSession], "should have 1 session entity")
+}
+
 func TestRecordEntityMentions(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
