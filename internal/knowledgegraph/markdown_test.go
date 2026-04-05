@@ -220,3 +220,178 @@ func TestEntityWithSpecialCharacters(t *testing.T) {
 	require.Equal(t, e.Title, read.Title)
 	require.Equal(t, e.Body, read.Body)
 }
+
+func TestEntityToPathBaseLayer(t *testing.T) {
+	e := &kg.Entity{
+		ID:    "adr-001",
+		Kind:  kg.KindArchitecture,
+		Layer: kg.EntityLayerBase,
+	}
+
+	path := entityToPath("/knowledge", e)
+	expected := filepath.Join("/knowledge", "architecture", "adr-001.md")
+	require.Equal(t, expected, path)
+}
+
+func TestEntityToPathEmptyLayerIsSameAsBase(t *testing.T) {
+	e := &kg.Entity{
+		ID:    "adr-001",
+		Kind:  kg.KindArchitecture,
+		Layer: kg.EntityLayer(""), // empty should behave like base
+	}
+
+	path := entityToPath("/knowledge", e)
+	expected := filepath.Join("/knowledge", "architecture", "adr-001.md")
+	require.Equal(t, expected, path)
+}
+
+func TestEntityToPathTeamLayer(t *testing.T) {
+	e := &kg.Entity{
+		ID:    "adr-002",
+		Kind:  kg.KindDecision,
+		Layer: kg.EntityLayerTeam,
+	}
+
+	path := entityToPath("/knowledge", e)
+	expected := filepath.Join("/knowledge", "team", "decision", "adr-002.md")
+	require.Equal(t, expected, path)
+}
+
+func TestEntityToPathSessionLayer(t *testing.T) {
+	e := &kg.Entity{
+		ID:    "adr-003",
+		Kind:  kg.KindPattern,
+		Layer: kg.EntityLayerSession,
+	}
+
+	path := entityToPath("/knowledge", e)
+	expected := filepath.Join("/knowledge", "session", "pattern", "adr-003.md")
+	require.Equal(t, expected, path)
+}
+
+func TestWriteReadEntityTeamLayer(t *testing.T) {
+	dir := tempDir(t)
+	now := time.Now().Round(0)
+
+	e := &kg.Entity{
+		ID:      "team-001",
+		Kind:    kg.KindGotcha,
+		Title:   "Team Gotcha",
+		Layer:   kg.EntityLayerTeam,
+		Tags:    []string{"team", "convention"},
+		Body:    "This is a team-specific gotcha.",
+		Source:  kg.SourceManual,
+		Created: now,
+		Updated: now,
+	}
+
+	// Write entity
+	err := writeEntityFile(dir, e)
+	require.NoError(t, err)
+
+	// Verify file exists at team-prefixed path
+	expectedPath := filepath.Join(dir, "team", "gotcha", "team-001.md")
+	_, err = os.Stat(expectedPath)
+	require.NoError(t, err)
+
+	// Read it back
+	read, err := readEntityFile(expectedPath)
+	require.NoError(t, err)
+
+	// Verify all fields including Layer
+	require.Equal(t, e.ID, read.ID)
+	require.Equal(t, e.Kind, read.Kind)
+	require.Equal(t, e.Title, read.Title)
+	require.Equal(t, kg.EntityLayerTeam, read.Layer)
+	require.Equal(t, e.Tags, read.Tags)
+	require.Equal(t, e.Body, read.Body)
+}
+
+func TestWriteReadEntitySessionLayer(t *testing.T) {
+	dir := tempDir(t)
+	now := time.Now().Round(0)
+
+	e := &kg.Entity{
+		ID:      "session-001",
+		Kind:    kg.KindModule,
+		Title:   "Session-Specific Module",
+		Layer:   kg.EntityLayerSession,
+		Body:    "Ephemeral session finding.",
+		Source:  kg.SourceLLM,
+		Created: now,
+		Updated: now,
+	}
+
+	// Write entity
+	err := writeEntityFile(dir, e)
+	require.NoError(t, err)
+
+	// Verify file exists at session-prefixed path
+	expectedPath := filepath.Join(dir, "session", "module", "session-001.md")
+	_, err = os.Stat(expectedPath)
+	require.NoError(t, err)
+
+	// Read it back
+	read, err := readEntityFile(expectedPath)
+	require.NoError(t, err)
+
+	// Verify Layer field
+	require.Equal(t, kg.EntityLayerSession, read.Layer)
+}
+
+func TestWalkKnowledgeDirFindsAllLayers(t *testing.T) {
+	dir := tempDir(t)
+
+	// Create entities in all three layers
+	baseEntity := &kg.Entity{
+		ID:      "base-001",
+		Kind:    kg.KindArchitecture,
+		Title:   "Base Architecture",
+		Layer:   kg.EntityLayerBase,
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+
+	teamEntity := &kg.Entity{
+		ID:      "team-001",
+		Kind:    kg.KindDecision,
+		Title:   "Team Decision",
+		Layer:   kg.EntityLayerTeam,
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+
+	sessionEntity := &kg.Entity{
+		ID:      "session-001",
+		Kind:    kg.KindGotcha,
+		Title:   "Session Gotcha",
+		Layer:   kg.EntityLayerSession,
+		Source:  kg.SourceLLM,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+
+	for _, e := range []*kg.Entity{baseEntity, teamEntity, sessionEntity} {
+		err := writeEntityFile(dir, e)
+		require.NoError(t, err)
+	}
+
+	// Walk directory (should recursively find all layers)
+	read, err := walkKnowledgeDir(dir)
+	require.NoError(t, err)
+
+	// Should find all three entities
+	require.Len(t, read, 3)
+
+	// Verify all IDs and layers are present
+	found := map[string]kg.EntityLayer{}
+	for _, e := range read {
+		found[e.ID] = e.Layer
+	}
+
+	require.Equal(t, kg.EntityLayerBase, found["base-001"])
+	require.Equal(t, kg.EntityLayerTeam, found["team-001"])
+	require.Equal(t, kg.EntityLayerSession, found["session-001"])
+}

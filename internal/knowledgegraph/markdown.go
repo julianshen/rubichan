@@ -16,6 +16,7 @@ import (
 type frontmatter struct {
 	ID            string                `yaml:"id"`
 	Kind          string                `yaml:"kind"`
+	Layer         string                `yaml:"layer,omitempty"` // empty = base layer
 	Title         string                `yaml:"title"`
 	Tags          []string              `yaml:"tags"`
 	Created       time.Time             `yaml:"created"`
@@ -33,9 +34,16 @@ type frontmatterRelation struct {
 }
 
 // entityToPath returns the canonical file path for an entity.
-// e.g. kind=architecture, id=adr-001 → .knowledge/architecture/adr-001.md
+// Base layer (layer="" or layer="base"): .knowledge/<kind>/<id>.md
+// Team/Session layers: .knowledge/<layer>/<kind>/<id>.md
 func entityToPath(knowledgeDir string, e *kg.Entity) string {
-	return filepath.Join(knowledgeDir, string(e.Kind), e.ID+".md")
+	layer := string(e.Layer)
+	if layer == "" || layer == string(kg.EntityLayerBase) {
+		// Base layer uses flat path (backward compatible)
+		return filepath.Join(knowledgeDir, string(e.Kind), e.ID+".md")
+	}
+	// Team/Session layers use prefixed path
+	return filepath.Join(knowledgeDir, layer, string(e.Kind), e.ID+".md")
 }
 
 // writeEntityFile serializes an entity to its canonical markdown file.
@@ -53,6 +61,7 @@ func writeEntityFile(knowledgeDir string, e *kg.Entity) error {
 	fm := frontmatter{
 		ID:         e.ID,
 		Kind:       string(e.Kind),
+		Layer:      string(e.Layer),
 		Title:      e.Title,
 		Tags:       e.Tags,
 		Created:    e.Created,
@@ -136,6 +145,7 @@ func readEntityFile(path string) (*kg.Entity, error) {
 	return &kg.Entity{
 		ID:            fm.ID,
 		Kind:          kg.EntityKind(fm.Kind),
+		Layer:         kg.EntityLayer(fm.Layer),
 		Title:         fm.Title,
 		Tags:          tags,
 		Body:          body,
