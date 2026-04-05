@@ -28,6 +28,7 @@ const (
 
 // Event is a UI-agnostic session event suitable for logging or external sinks.
 type Event struct {
+	SessionID    string                     `json:"session_id,omitempty"`
 	Timestamp    time.Time                  `json:"timestamp"`
 	Type         EventType                  `json:"type"`
 	Actor        *Actor                     `json:"actor,omitempty"`
@@ -213,6 +214,14 @@ func (e Event) WithActor(actor Actor) Event {
 	}
 	if strings.TrimSpace(e.Actor.Kind) == "" {
 		e.Actor.Kind = strings.TrimSpace(actor.Kind)
+	}
+	return e
+}
+
+// WithSessionID annotates an event with the session ID where it originated.
+func (e Event) WithSessionID(sessionID string) Event {
+	if strings.TrimSpace(e.SessionID) == "" {
+		e.SessionID = strings.TrimSpace(sessionID)
 	}
 	return e
 }

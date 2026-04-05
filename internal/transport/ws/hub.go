@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -93,6 +94,36 @@ func (h *Hub) registerClient(c *Client, sessionID string) (*SessionState, error)
 
 	h.clients[c] = ss
 	return ss, nil
+}
+
+// snapshotAndRegisterClient atomically snapshots the buffer and registers a client.
+// This prevents the race where events broadcast between snapshot and register are missed.
+func (h *Hub) snapshotAndRegisterClient(c *Client, sessionID string, lastSeq int64) ([]BufferEntry, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ss, ok := h.sessions[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("session %q not found", sessionID)
+	}
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	// Snapshot buffer while holding ss.mu.
+	entries := ss.Buffer.Since(lastSeq)
+
+	// Check for gap.
+	if lastSeq > 0 && len(entries) == 0 && ss.Buffer.Len() > 0 && ss.Buffer.OldestSeq() > lastSeq {
+		return nil, fmt.Errorf("reconnect buffer does not contain events since sequence %d", lastSeq)
+	}
+
+	// Register client while still holding ss.mu to prevent live broadcasts
+	// from arriving before registration.
+	ss.Clients[c] = struct{}{}
+	h.clients[c] = ss
+
+	return entries, nil
 }
 
 // unregisterClient removes a client from its session.
@@ -267,18 +298,35 @@ func (h *Hub) BroadcastTurnEvent(ss *SessionState, evt agentsdk.TurnEvent) {
 }
 
 // Emit implements session.EventSink — broadcasts session events to all clients.
+// If the event carries a SessionID, it is broadcast only to that session.
+// Otherwise, it is broadcast to all sessions.
 func (h *Hub) Emit(evt session.Event) {
-	// Session events don't carry a session ID directly on the Event struct.
-	// The caller must set it via the Actor or we broadcast to all sessions.
-	// In practice, the session layer sets this up per-session.
 	payload, err := json.Marshal(evt)
 	if err != nil {
 		log.Printf("ws: failed to marshal session event: type=%s err=%v", evt.Type, err)
 		return
 	}
 
-	// Snapshot sessions under lock, then broadcast outside lock to avoid
-	// nested lock acquisition (broadcastToSession also acquires h.mu.RLock).
+	// If event has a session ID, broadcast only to that session.
+	if strings.TrimSpace(evt.SessionID) != "" {
+		ss, ok := h.GetSession(evt.SessionID)
+		if !ok {
+			log.Printf("ws: Emit: session %q not found, dropping event", evt.SessionID)
+			return
+		}
+		seq := ss.seq.Add(1)
+		env := Envelope{
+			Type:      TypeEvent,
+			SessionID: ss.ID,
+			Seq:       seq,
+			Timestamp: time.Now().UTC(),
+			Payload:   payload,
+		}
+		h.broadcastToSession(ss, env)
+		return
+	}
+
+	// Fallback: broadcast to all sessions (for backward compatibility).
 	h.mu.RLock()
 	sessions := make([]*SessionState, 0, len(h.sessions))
 	for _, ss := range h.sessions {
@@ -424,6 +472,10 @@ func (h *Hub) requestFromSession(ctx context.Context, ss *SessionState, req agen
 	case resp := <-responseCh:
 		return resp, nil
 	case <-ctx.Done():
+		// Context canceled. The defer will clean up ss.uiWait[req.ID], preventing
+		// goroutine leaks if a response arrives after timeout.
+		// The buffered channel allows handleUIResponse to send without blocking.
+		log.Printf("ws: UI request timeout: id=%s session=%s", req.ID, ss.ID)
 		return agentsdk.UIResponse{}, ctx.Err()
 	}
 }
@@ -559,27 +611,19 @@ func (h *Hub) handleSessionResume(c *Client, env Envelope) {
 		return
 	}
 
-	// Look up session first without registering the client.
+	// Atomically snapshot buffer and register the client.
+	// This eliminates the race where events broadcast between snapshot and register are missed.
+	entries, err := h.snapshotAndRegisterClient(c, payload.SessionID, payload.LastSeq)
+	if err != nil {
+		h.sendError(c, "resume_failed", err.Error())
+		return
+	}
+
+	// Get session for session info response.
 	ss, ok := h.GetSession(payload.SessionID)
 	if !ok {
+		// Client is already registered; don't unregister it just for sending the response.
 		h.sendError(c, "resume_failed", fmt.Sprintf("session %q not found", payload.SessionID))
-		return
-	}
-
-	// Snapshot buffered events BEFORE registering the client, so live
-	// broadcasts cannot enqueue newer events ahead of replayed entries.
-	// Note: a narrow race remains — events broadcast between snapshot and
-	// registerClient are missed (not in snapshot, client not yet registered).
-	// Fully closing this requires atomic snapshot+register under ss.mu.
-	entries := ss.Buffer.Since(payload.LastSeq)
-	if payload.LastSeq > 0 && len(entries) == 0 && ss.Buffer.Len() > 0 && ss.Buffer.OldestSeq() > payload.LastSeq {
-		h.sendError(c, "gap_too_large", "reconnect buffer does not contain events since requested sequence")
-		return
-	}
-
-	// Now register the client (makes it eligible for live broadcasts).
-	if _, err := h.registerClient(c, payload.SessionID); err != nil {
-		h.sendError(c, "resume_failed", err.Error())
 		return
 	}
 
@@ -588,7 +632,7 @@ func (h *Hub) handleSessionResume(c *Client, env Envelope) {
 	h.sendEnvelope(c, TypeSessionInfo, ss.ID, info)
 
 	// Replay buffered events. These are already in c.send before any
-	// live broadcast can arrive (registerClient happened after snapshot).
+	// live broadcast can arrive (registration happened within ss.mu lock).
 	for _, entry := range entries {
 		c.Send(entry.Payload)
 	}
