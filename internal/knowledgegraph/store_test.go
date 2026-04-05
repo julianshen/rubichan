@@ -1,12 +1,14 @@
 package knowledgegraph
 
 import (
+	"context"
 	"database/sql"
 	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -214,4 +216,85 @@ func TestStatsBasic(t *testing.T) {
 	err = db.QueryRow(`SELECT COUNT(*) FROM entities WHERE usage_count = 0`).Scan(&neverUsedCount)
 	require.NoError(t, err)
 	require.Equal(t, 1, neverUsedCount)
+}
+
+func TestRecordEntityMentions(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Insert test entities directly into database
+	stmt := `INSERT INTO entities(id, kind, title, body, source) VALUES(?, ?, ?, ?, ?)`
+	_, err := db.Exec(stmt, "arch-001", "architecture", "Go Language Choice", "Go was chosen.", "manual")
+	require.NoError(t, err)
+	_, err = db.Exec(stmt, "decision-002", "decision", "SQLite Persistence", "SQLite for storage.", "manual")
+	require.NoError(t, err)
+
+	// Create a KnowledgeGraph with the test database
+	g := &KnowledgeGraph{
+		db:        db,
+		cache:     make(map[string]*kg.Entity),
+		fts:       &ftsSearcher{db: db},
+		embedder:  kg.NullEmbedder{},
+	}
+
+	// Simulate an LLM response that mentions both entities by ID and title
+	responseText := `
+	We chose arch-001 for our implementation. The "Go Language Choice" provides
+	excellent performance benefits. Additionally, we followed decision-002, which
+	recommends "SQLite Persistence" for state management.
+	`
+
+	err = g.RecordEntityMentions(context.Background(), responseText)
+	require.NoError(t, err)
+
+	// Verify both entities had their query_hit_count incremented
+	var hitCount1 int
+	err = db.QueryRowContext(context.Background(),
+		`SELECT COALESCE(query_hit_count, 0) FROM entity_stats WHERE entity_id='arch-001'`).Scan(&hitCount1)
+	require.NoError(t, err)
+	require.Equal(t, 1, hitCount1)
+
+	var hitCount2 int
+	err = db.QueryRowContext(context.Background(),
+		`SELECT COALESCE(query_hit_count, 0) FROM entity_stats WHERE entity_id='decision-002'`).Scan(&hitCount2)
+	require.NoError(t, err)
+	require.Equal(t, 1, hitCount2)
+
+	// Record mentions again
+	err = g.RecordEntityMentions(context.Background(), responseText)
+	require.NoError(t, err)
+
+	// Verify counts were incremented
+	err = db.QueryRowContext(context.Background(),
+		`SELECT query_hit_count FROM entity_stats WHERE entity_id='arch-001'`).Scan(&hitCount1)
+	require.NoError(t, err)
+	require.Equal(t, 2, hitCount1)
+}
+
+func TestRecordEntityMentionsCaseSensitive(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Insert entity with mixed-case title
+	_, err := db.Exec(`INSERT INTO entities(id, kind, title, source) VALUES(?, ?, ?, ?)`,
+		"pattern-mix", "pattern", "Factory Pattern Design", "manual")
+	require.NoError(t, err)
+
+	g := &KnowledgeGraph{
+		db:        db,
+		cache:     make(map[string]*kg.Entity),
+		fts:       &ftsSearcher{db: db},
+		embedder:  kg.NullEmbedder{},
+	}
+
+	// Test that search is case-insensitive
+	responseText := "The factory pattern design is very important here."
+	err = g.RecordEntityMentions(context.Background(), responseText)
+	require.NoError(t, err)
+
+	var hitCount int
+	err = db.QueryRowContext(context.Background(),
+		`SELECT COALESCE(query_hit_count, 0) FROM entity_stats WHERE entity_id='pattern-mix'`).Scan(&hitCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, hitCount)
 }
