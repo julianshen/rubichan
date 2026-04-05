@@ -16,6 +16,7 @@
   - [3.1 Architecture Overview](#31-architecture-overview)
   - [3.2 Execution Modes](#32-execution-modes)
   - [3.3 Agent Core](#33-agent-core)
+  - [3.3a Evaluator Subsystem](#33a-evaluator-subsystem)
   - [3.4 Tool Layer](#34-tool-layer)
   - [3.5 LLM Provider Layer](#35-llm-provider-layer)
   - [3.6 Agent Skills System](#36-agent-skills-system)
@@ -236,7 +237,14 @@ The system follows a layered architecture with six primary layers. The Skill Run
 │  │Plan→Act→  │  │tion Mgr  │  │ Router   │  │ Manager          │  │
 │  │Observe    │  │          │  │          │  │                  │  │
 │  └───────────┘  └──────────┘  └────┬─────┘  └──────────────────┘  │
-├────────────────────────────────────┼───────────────────────────────┤
+│  ┌──────────────────────────────────────────┐                       │
+│  │         Evaluator (On-Demand)            │                       │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ │                       │
+│  │  │ Checkers │ │ Verdicts │ │ Retry    │ │                       │
+│  │  │ Pipeline │ │ & Feedback│ │ Policy   │ │                       │
+│  │  └──────────┘ └──────────┘ └──────────┘ │                       │
+│  └──────────────────────────────────────────┘                       │
+├────────────────────────────────────────────────────────────────────┤
 │                      Tool Layer    │                                │
 │  ┌──────┐ ┌──────┐ ┌──────┐ ┌─────┴┐ ┌─────┐ ┌─────┐ ┌────────┐ │
 │  │ File │ │Shell │ │Search│ │ Git  │ │ LSP │ │ MCP │ │ Skill  │ │
@@ -317,6 +325,198 @@ Key components:
 - **Context Window Manager:** Tracks token usage. Skills declare their context budget requirements in the manifest.
 - **System Prompt Builder:** Assembles from static instructions, project rules (AGENT.md), active Prompt Skills, and skill-provided context.
 - **Approval Gate:** Mode-injected callback. Skills can register approval overrides for their own tools.
+
+### 3.3a Evaluator Subsystem
+
+The evaluator is a **separate, on-demand component** that assesses tool execution results and provides structured feedback to the agent loop. It is distinct from execution (no coupling to the executor) but integrated into the agent's decision-making flow. The agent requests evaluation when needed, receives a `Verdict`, and either continues, retries, or escalates based on the verdict status.
+
+#### Verdict Type Definition
+
+Every evaluation returns a `Verdict` that is visible to the LLM in the conversation history.
+
+```go
+type VerdictStatus string
+const (
+    VerdictSuccess  VerdictStatus = "success"   // Tool output is correct/sufficient
+    VerdictFailed   VerdictStatus = "failed"    // Output invalid, incomplete, or erroneous
+    VerdictEscalate VerdictStatus = "escalate"  // Requires human review (ambiguous/conflicting signals)
+)
+
+type Verdict struct {
+    Status       VerdictStatus
+    Confidence   float64        // 0.0–1.0: how confident in this verdict
+    Reason       string         // Why this verdict was assigned (human-readable)
+    Evidence     []string       // Specific findings (e.g., "missing field: password", "exit code 127")
+    Suggestions  []string       // Actionable next steps ("retry with --verbose", "check PATH", "try alternative tool")
+    RawOutput    string         // Original tool output (for context/audit)
+    Duration     time.Duration  // How long evaluation took
+}
+```
+
+#### Agent Loop Integration (On-Demand)
+
+On-demand evaluation means the agent can explicitly request verdict generation after certain tool calls. Integrated into step 5 of the agent core loop:
+
+```
+5. Append tool result to conversation
+   ├─ (Optional) Request evaluation if agent decides
+   │  └─ Evaluator runs composable checkers → returns Verdict
+   ├─ Append Verdict to conversation (visible to LLM)
+   ├─ If Verdict.Status == failed && retry_budget > 0
+   │  └─ Agent may retry with modified parameters (auto or LLM-decided)
+   ├─ If Verdict.Status == escalate
+   │  └─ Append escalation note; LLM sees it and decides next action
+   └─ Apply Transform Skills to output (if any)
+```
+
+**Why on-demand?** The agent (via LLM) has the best judgment about which results warrant evaluation. Not every tool call needs evaluation—shell commands that produce expected output don't need scoring. Critical operations (database migrations, destructive file writes, security decisions) benefit from evaluation. This balances efficiency with quality.
+
+#### Evaluator Interface & Composable Pipeline
+
+The evaluator is a **composable pipeline** of independent checkers. Each checker tests a specific aspect of the result. The evaluator chains them in sequence, collecting evidence, and returns a final `Verdict`.
+
+```go
+// Checker interface — each one tests a specific aspect
+interface Checker {
+    Name() string                      // e.g., "syntax", "completeness", "safety"
+    Check(result ToolResult) Evidence  // returns findings
+    Weight() float64                   // 0.0–1.0: importance in final verdict
+}
+
+// Evidence from a single checker
+type Evidence struct {
+    CheckerName  string
+    Passed       bool               // true = result passed this check
+    Severity     string             // "error", "warning", "info"
+    Finding      string             // What was found
+    Suggestion   string             // How to fix it
+}
+
+// Evaluator orchestrates checkers
+type Evaluator struct {
+    checkers []Checker
+}
+
+func (e *Evaluator) Evaluate(result ToolResult) Verdict {
+    evidence := []Evidence{}
+    for _, checker := range e.checkers {
+        evidence = append(evidence, checker.Check(result))
+    }
+    return aggregateVerdict(evidence)  // Combine evidence into final verdict
+}
+```
+
+#### Built-in Checkers
+
+| Checker | Applies To | What It Tests | Example |
+|---------|-----------|--------------|---------|
+| **Exit Code Checker** | Shell exec, Build tools | Non-zero exit = failure signal | `grep` returns 1 when pattern not found (expected) vs. 127 (command not found) |
+| **Output Syntax Checker** | JSON parsing, YAML validation, XML generation | Structural validity of produced output | JSON response must parse; XML must be well-formed |
+| **Completeness Checker** | File read, API responses, database queries | Required fields/output present | JSON must contain `status` and `data` fields |
+| **Error Pattern Checker** | Shell output, build logs, test output | Detects error keywords (fatal, panic, exception, timeout) | "fatal error" in output = failed |
+| **Timeout Checker** | Long-running operations | Execution duration within expected bounds | Build completed in < 30s (configurable per tool) |
+| **Size Checker** | File operations, API responses | Output size within reasonable bounds | File read should be < 10 MB; API response < 5 MB |
+| **Safety Checker** | Any result involving system changes | Detects unsafe patterns (hardcoded secrets, world-readable files, weak permissions) | Detects hardcoded API keys in generated code |
+| **Skill-provided checkers** | *Tool-specific* | *Defined by Security Rule and Tool Skills* | Custom validators for domain-specific output |
+
+#### Verdict Aggregation Logic
+
+Evidence from multiple checkers is combined into a final `Verdict`:
+
+```
+For each Evidence:
+  - If Severity == "error" → increment failed_count
+  - If Severity == "warning" → increment warning_count
+  - Collect all suggestions
+
+Final Verdict:
+  - If failed_count > 0
+    └─ Status = Failed, Confidence = high (0.8–1.0)
+  - Else if warning_count > 0 AND confidence < threshold
+    └─ Status = Escalate, Confidence = medium (0.5–0.7)
+       └─ Reason: "Multiple warnings detected; human review recommended"
+  - Else
+    └─ Status = Success, Confidence = based on checker agreement
+```
+
+#### Automatic Retry Policy
+
+When `Verdict.Status == Failed`, the evaluator can suggest retry parameters. The agent decides whether to retry:
+
+```
+Retry Budget (configurable, default 3):
+  └─ On first failure, agent can retry with:
+     ├─ Suggested parameters from Verdict.Suggestions
+     ├─ More verbose output (--verbose, --debug)
+     ├─ Alternative tools (if available)
+     ├─ Different timeout/resource limits
+     └─ LLM-generated revised parameters (if agent samples for suggestions)
+  └─ Track retry count; escalate to user after budget exhausted
+```
+
+Example: A shell command fails with exit code 127 (command not found). The evaluator suggests "add /usr/local/bin to PATH" or "verify tool installation." Agent retries with modified environment.
+
+#### LLM Integration
+
+The `Verdict` is **always appended to the conversation history** as a new message when evaluation is requested:
+
+```
+User: "Find all Python files in the repo"
+Agent: [tool_call: search_files(pattern="*.py")]
+System: [tool_result: found 42 files]
+System: [verdict: success, confidence=0.95, reason="Complete file list returned with expected fields"]
+
+Agent: [text: "Found 42 Python files..."]
+```
+
+The LLM sees:
+- Original tool result
+- Evaluation verdict + evidence
+- Suggestions from evaluator
+
+This allows the LLM to **reason about evaluation** ("The verdict says it failed because of missing field X; let me try adding it") rather than blindly following evaluator directives.
+
+#### Extensibility via Skills
+
+Skills can register custom checkers:
+
+```yaml
+# In SKILL.yaml for a "Python Linter" skill
+security_rules:
+  evaluators:
+    - name: python-syntax-checker
+      type: checker
+      entrypoint: evaluators/syntax.star
+      applies_to: ["python_lint", "python_format"]
+```
+
+The Starlark script implements the `Checker` interface:
+
+```python
+# evaluators/syntax.star
+def check(result):
+  if not result.exit_code == 0:
+    return evidence("error", "Syntax check failed", result.stderr)
+  
+  if "SyntaxError" in result.stdout:
+    return evidence("error", "Invalid Python syntax", extract_error_line(result.stdout))
+  
+  return evidence("ok", "Syntax valid", "")
+```
+
+#### When to Request Evaluation
+
+The agent requests evaluation in these scenarios:
+
+1. **Critical operations:** File write, database changes, security configurations
+2. **Uncertain results:** Ambiguous exit codes, partial output, tool-specific edge cases
+3. **High-stakes decisions:** Code review findings, security audit results
+4. **Integration points:** After tool chains (e.g., "build + test" succeeds only if test verdicts are all Success)
+5. **User-triggered:** `/eval` command in interactive mode for inspection
+
+Decision logic is **LLM-driven**: The agent decides when to request evaluation based on the task and context.
+
+---
 
 ### 3.4 Tool Layer
 

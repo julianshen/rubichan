@@ -19,6 +19,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/evaluator"
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/provider"
@@ -455,6 +456,14 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 
 		// Post-hook middleware for after-tool-result dispatch.
 		middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
+
+		// Verdict middleware evaluates results for critical tools and appends
+		// structured feedback to conversation content (visible to LLM).
+		criticalTools := []string{"shell", "write_file", "patch_file"}
+		middlewares = append(middlewares, toolexec.VerdictMiddleware(
+			evaluator.DefaultCheckerPipeline(),
+			criticalTools...,
+		))
 
 		// Output offloader middleware when persistence is available.
 		if a.resultStore != nil {
