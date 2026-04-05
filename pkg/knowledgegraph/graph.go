@@ -27,6 +27,9 @@ type Graph interface {
 	// LintGraph checks for structural issues: orphaned relationships, duplicate titles, etc.
 	LintGraph(ctx context.Context) (*LintReport, error)
 
+	// Stats returns knowledge graph metrics and quality indicators.
+	Stats(ctx context.Context) (*KnowledgeStats, error)
+
 	// Close closes the underlying database connection.
 	Close() error
 }
@@ -70,4 +73,16 @@ type OrphanedRelationship struct {
 type DuplicateTitle struct {
 	Title string
 	IDs   []string
+}
+
+// KnowledgeStats provides metrics on the knowledge graph's coverage and quality.
+type KnowledgeStats struct {
+	TotalEntities      int       // total entities in graph
+	ByKind             map[EntityKind]int // breakdown by entity kind
+	OrphanedRels       int       // orphaned relationships (broken links)
+	TotalInjections    int       // cumulative injection_count across all entities
+	AvgScore           float64   // average confidence across entities with non-zero confidence
+	HighConfidenceCount int      // entities with confidence >= 0.8
+	NeverUsedCount     int       // entities with usage_count == 0
+	StaleSinceDays     int       // entities with last_used_at > N days old (30 by default)
 }

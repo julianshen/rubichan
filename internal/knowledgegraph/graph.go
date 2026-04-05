@@ -514,6 +514,90 @@ func (g *KnowledgeGraph) LintGraph(ctx context.Context) (*kg.LintReport, error) 
 	return report, nil
 }
 
+// Stats returns knowledge graph metrics and quality indicators.
+func (g *KnowledgeGraph) Stats(ctx context.Context) (*kg.KnowledgeStats, error) {
+	stats := &kg.KnowledgeStats{
+		ByKind: make(map[kg.EntityKind]int),
+	}
+
+	// Get total entity count and breakdown by kind
+	rows, err := g.db.QueryContext(ctx, `
+		SELECT kind, COUNT(*) as count FROM entities GROUP BY kind
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("Stats: counting by kind: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return nil, err
+		}
+		stats.TotalEntities += count
+		stats.ByKind[kg.EntityKind(kind)] = count
+	}
+
+	// Get orphaned relationships count
+	err = g.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM relationships
+		WHERE target_id NOT IN (SELECT id FROM entities)
+	`).Scan(&stats.OrphanedRels)
+	if err != nil {
+		return nil, fmt.Errorf("Stats: counting orphaned rels: %w", err)
+	}
+
+	// Get confidence metrics (average and high-confidence count)
+	var totalConfidence float64
+	var confidenceCount int
+	err = g.db.QueryRowContext(ctx, `
+		SELECT SUM(confidence), COUNT(*) FROM entities WHERE confidence > 0
+	`).Scan(&totalConfidence, &confidenceCount)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("Stats: computing confidence metrics: %w", err)
+	}
+	if confidenceCount > 0 {
+		stats.AvgScore = totalConfidence / float64(confidenceCount)
+	}
+
+	// High confidence count (>= 0.8)
+	err = g.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM entities WHERE confidence >= 0.8
+	`).Scan(&stats.HighConfidenceCount)
+	if err != nil {
+		return nil, fmt.Errorf("Stats: counting high confidence: %w", err)
+	}
+
+	// Total injections (usage_count sum)
+	err = g.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(usage_count), 0) FROM entities
+	`).Scan(&stats.TotalInjections)
+	if err != nil {
+		return nil, fmt.Errorf("Stats: counting injections: %w", err)
+	}
+
+	// Never used count (usage_count == 0)
+	err = g.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM entities WHERE usage_count = 0
+	`).Scan(&stats.NeverUsedCount)
+	if err != nil {
+		return nil, fmt.Errorf("Stats: counting never used: %w", err)
+	}
+
+	// Stale entities (last_used_at > 30 days old)
+	err = g.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM entities
+		WHERE last_used_at IS NOT NULL
+		AND datetime(last_used_at) < datetime('now', '-30 days')
+	`).Scan(&stats.StaleSinceDays)
+	if err != nil {
+		return nil, fmt.Errorf("Stats: counting stale: %w", err)
+	}
+
+	return stats, nil
+}
+
 // Close closes the database connection.
 func (g *KnowledgeGraph) Close() error {
 	return g.db.Close()
