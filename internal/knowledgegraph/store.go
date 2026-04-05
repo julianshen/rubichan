@@ -79,6 +79,14 @@ func createTables(db *sql.DB) error {
 	if err := addColumnIfMissing(db, "entities", "last_used_at", "ALTER TABLE entities ADD COLUMN last_used_at TEXT"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(db, "entities", "layer", "ALTER TABLE entities ADD COLUMN layer TEXT DEFAULT ''"); err != nil {
+		return err
+	}
+
+	// Create index on layer column for efficient filtering
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_entities_layer ON entities(layer)`); err != nil {
+		return fmt.Errorf("createTables: %w", err)
+	}
 
 	return nil
 }

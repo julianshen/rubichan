@@ -6,9 +6,9 @@ import (
 	"math"
 	"testing"
 
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
-	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -173,6 +173,48 @@ func TestAddColumnIfMissing(t *testing.T) {
 	require.Equal(t, 3, count)
 }
 
+func TestLayerColumnExists(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Verify layer column exists after createTables
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name='layer'`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+}
+
+func TestLayerColumnDefaultIsEmpty(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Insert entity without specifying layer
+	_, err := db.Exec(
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-001", "architecture", "Test", "Body",
+	)
+	require.NoError(t, err)
+
+	// Verify layer defaults to empty string
+	var layer string
+	err = db.QueryRow(`SELECT layer FROM entities WHERE id='test-001'`).Scan(&layer)
+	require.NoError(t, err)
+	require.Equal(t, "", layer)
+}
+
+func TestLayerColumnIndex(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Verify layer index exists
+	var count int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_entities_layer'`,
+	).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+}
+
 func TestStatsBasic(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
@@ -231,10 +273,10 @@ func TestRecordEntityMentions(t *testing.T) {
 
 	// Create a KnowledgeGraph with the test database
 	g := &KnowledgeGraph{
-		db:        db,
-		cache:     make(map[string]*kg.Entity),
-		fts:       &ftsSearcher{db: db},
-		embedder:  kg.NullEmbedder{},
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
 	}
 
 	// Simulate an LLM response that mentions both entities by ID and title
@@ -281,10 +323,10 @@ func TestRecordEntityMentionsCaseSensitive(t *testing.T) {
 	require.NoError(t, err)
 
 	g := &KnowledgeGraph{
-		db:        db,
-		cache:     make(map[string]*kg.Entity),
-		fts:       &ftsSearcher{db: db},
-		embedder:  kg.NullEmbedder{},
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
 	}
 
 	// Test that search is case-insensitive
