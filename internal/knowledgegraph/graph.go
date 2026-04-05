@@ -569,30 +569,20 @@ func (g *KnowledgeGraph) Stats(ctx context.Context) (*kg.KnowledgeStats, error) 
 		return nil, fmt.Errorf("Stats: counting high confidence: %w", err)
 	}
 
-	// Total injections (usage_count sum)
+	// Total injections, never-used count, and stale count from entity_stats table
+	// (injection tracking happens via RecordUsage in entity_stats.injection_count, not entities.usage_count)
 	err = g.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(usage_count), 0) FROM entities
-	`).Scan(&stats.TotalInjections)
+		SELECT
+			COALESCE(SUM(injection_count), 0),
+			(SELECT COUNT(*) FROM entities WHERE id NOT IN
+				(SELECT entity_id FROM entity_stats WHERE injection_count > 0)),
+			COUNT(CASE WHEN last_accessed_at IS NOT NULL
+				AND datetime(last_accessed_at) < datetime('now', '-30 days')
+				THEN 1 END)
+		FROM entity_stats
+	`).Scan(&stats.TotalInjections, &stats.NeverUsedCount, &stats.StaleSinceDays)
 	if err != nil {
-		return nil, fmt.Errorf("Stats: counting injections: %w", err)
-	}
-
-	// Never used count (usage_count == 0)
-	err = g.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM entities WHERE usage_count = 0
-	`).Scan(&stats.NeverUsedCount)
-	if err != nil {
-		return nil, fmt.Errorf("Stats: counting never used: %w", err)
-	}
-
-	// Stale entities (last_used_at > 30 days old)
-	err = g.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM entities
-		WHERE last_used_at IS NOT NULL
-		AND datetime(last_used_at) < datetime('now', '-30 days')
-	`).Scan(&stats.StaleSinceDays)
-	if err != nil {
-		return nil, fmt.Errorf("Stats: counting stale: %w", err)
+		return nil, fmt.Errorf("Stats: counting usage metrics: %w", err)
 	}
 
 	return stats, nil
@@ -611,6 +601,7 @@ func (g *KnowledgeGraph) RecordEntityMentions(ctx context.Context, responseText 
 	defer rows.Close()
 
 	mentioned := make(map[string]bool) // Track which entities we've already bumped
+	responseLower := strings.ToLower(responseText)
 
 	for rows.Next() {
 		var id, title string
@@ -627,7 +618,6 @@ func (g *KnowledgeGraph) RecordEntityMentions(ctx context.Context, responseText 
 		// Uses case-insensitive search
 		idLower := strings.ToLower(id)
 		titleLower := strings.ToLower(title)
-		responseLower := strings.ToLower(responseText)
 
 		if strings.Contains(responseLower, idLower) || strings.Contains(responseLower, titleLower) {
 			// Bump query_hit_count for this entity
