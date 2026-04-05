@@ -60,33 +60,33 @@ func (s *contextSelector) selectByScore(ctx context.Context, query string, budge
 // selectByRecency ranks recently updated entities higher.
 func (s *contextSelector) selectByRecency(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
 	// For now, use score-based results but could weight by updated_at timestamp
-	results, err := s.selectByScore(ctx, query, 0) // Get all results
+	results, err := s.selectByScore(ctx, query, budget)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Sort by updated_at DESC and apply budget
+	// TODO: Sort by updated_at DESC before applying budget
 	return results, nil
 }
 
 // selectByUsage ranks high-usage entities (injection_count + query_hit_count) higher.
 func (s *contextSelector) selectByUsage(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
 	// For now, use score-based results but could weight by usage metrics
-	results, err := s.selectByScore(ctx, query, 0) // Get all results
+	results, err := s.selectByScore(ctx, query, budget)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Sort by (injection_count + query_hit_count) DESC and apply budget
+	// TODO: Sort by (injection_count + query_hit_count) DESC before applying budget
 	return results, nil
 }
 
 // selectByConfidence ranks high-confidence entities higher.
 func (s *contextSelector) selectByConfidence(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
 	// For now, use score-based results but could weight by confidence field
-	results, err := s.selectByScore(ctx, query, 0) // Get all results
+	results, err := s.selectByScore(ctx, query, budget)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Sort by confidence DESC and apply budget
+	// TODO: Sort by confidence DESC before applying budget
 	return results, nil
 }
 
