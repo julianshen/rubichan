@@ -58,6 +58,16 @@ func openGraph(ctx context.Context, projectRoot string, opts []kg.Option) (kg.Gr
 		}
 	}
 
+	// Create layer subdirectories (team and session layers; base uses flat layout)
+	for _, layerDir := range []string{"team", "session"} {
+		for _, kind := range []string{"architecture", "decisions", "gotchas", "patterns", "modules", "integrations"} {
+			fullDir := filepath.Join(knowledgeDir, layerDir, kind)
+			if err := os.MkdirAll(fullDir, 0o755); err != nil {
+				return nil, fmt.Errorf("Open: creating layer dir %s: %w", fullDir, err)
+			}
+		}
+	}
+
 	// Create .knowledge/.gitignore
 	gitignorePath := filepath.Join(knowledgeDir, ".gitignore")
 	gitignoreContent := ".index.db\n"
@@ -162,11 +172,11 @@ func (g *KnowledgeGraph) Put(ctx context.Context, e *kg.Entity) error {
 	if err != nil {
 		return fmt.Errorf("Put: marshal tags: %w", err)
 	}
-	stmt := `INSERT OR REPLACE INTO entities(id, kind, title, tags_json, body, source, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`
+	stmt := `INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = g.db.ExecContext(ctx, stmt,
-		e.ID, string(e.Kind), e.Title, string(tagsJSON), e.Body, string(e.Source),
+		e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
 		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339),
 	)
 	if err != nil {
@@ -210,11 +220,11 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 	g.mu.RUnlock()
 
 	// Query from database
-	var kind, title, body, source, tagsJSON, createdStr, updatedStr string
+	var kind, layer, title, body, source, tagsJSON, createdStr, updatedStr string
 	err := g.db.QueryRowContext(ctx,
-		`SELECT kind, title, body, source, tags_json, created_at, updated_at FROM entities WHERE id = ?`,
+		`SELECT kind, layer, title, body, source, tags_json, created_at, updated_at FROM entities WHERE id = ?`,
 		id,
-	).Scan(&kind, &title, &body, &source, &tagsJSON, &createdStr, &updatedStr)
+	).Scan(&kind, &layer, &title, &body, &source, &tagsJSON, &createdStr, &updatedStr)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -260,6 +270,7 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 	e := &kg.Entity{
 		ID:            id,
 		Kind:          kg.EntityKind(kind),
+		Layer:         kg.EntityLayer(layer),
 		Title:         title,
 		Body:          body,
 		Source:        kg.UpdateSource(source),
@@ -280,14 +291,20 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 // Delete removes an entity from markdown and database.
 func (g *KnowledgeGraph) Delete(ctx context.Context, id string) error {
 	// Delete markdown file
-	var kind string
-	err := g.db.QueryRowContext(ctx, `SELECT kind FROM entities WHERE id = ?`, id).Scan(&kind)
+	var kind, layer string
+	err := g.db.QueryRowContext(ctx, `SELECT kind, layer FROM entities WHERE id = ?`, id).Scan(&kind, &layer)
 	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("Delete: query kind: %w", err)
+		return fmt.Errorf("Delete: query kind/layer: %w", err)
 	}
 
 	if err != sql.ErrNoRows {
-		path := filepath.Join(g.knowledgeDir, kind, id+".md")
+		// Reconstruct entity to get correct path using entityToPath
+		e := &kg.Entity{
+			ID:    id,
+			Kind:  kg.EntityKind(kind),
+			Layer: kg.EntityLayer(layer),
+		}
+		path := entityToPath(g.knowledgeDir, e)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			// Log but don't fail if file doesn't exist
 		}
@@ -315,6 +332,17 @@ func (g *KnowledgeGraph) List(ctx context.Context, filter kg.ListFilter) ([]*kg.
 		query += ` AND kind IN (` + repeatedPlaceholder(len(filter.Kinds)) + `)`
 		for _, k := range filter.Kinds {
 			args = append(args, string(k))
+		}
+	}
+
+	if len(filter.Layers) > 0 {
+		normalized := make([]string, len(filter.Layers))
+		for i, l := range filter.Layers {
+			normalized[i] = normalizedLayer(l)
+		}
+		query += ` AND layer IN (` + repeatedPlaceholder(len(normalized)) + `)`
+		for _, l := range normalized {
+			args = append(args, l)
 		}
 	}
 
@@ -384,9 +412,9 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 			return fmt.Errorf("rebuildIndex: marshal tags for entity %s: %w", e.ID, err)
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO entities(id, kind, title, tags_json, body, source, created_at, updated_at)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-			e.ID, string(e.Kind), e.Title, string(tagsJSON), e.Body, string(e.Source),
+			`INSERT INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
 			e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339),
 		)
 		if err != nil {
@@ -681,7 +709,7 @@ func (g *KnowledgeGraph) vectorSearch(ctx context.Context, queryVec []float32, r
 		return scoredResults[i].score > scoredResults[j].score
 	})
 
-	// Convert to ScoredEntity
+	// Convert to ScoredEntity with post-fetch filtering
 	var results []kg.ScoredEntity
 	for _, s := range scoredResults {
 		e, err := g.Get(ctx, s.id)
@@ -689,6 +717,14 @@ func (g *KnowledgeGraph) vectorSearch(ctx context.Context, queryVec []float32, r
 			continue
 		}
 		if e != nil {
+			// Apply KindFilter
+			if len(req.KindFilter) > 0 && !containsKind(req.KindFilter, e.Kind) {
+				continue
+			}
+			// Apply LayerFilter
+			if len(req.LayerFilter) > 0 && !containsLayer(req.LayerFilter, e.Layer) {
+				continue
+			}
 			results = append(results, kg.ScoredEntity{
 				Entity:          e,
 				Score:           s.score,
@@ -721,6 +757,14 @@ func (g *KnowledgeGraph) ftsSearch(ctx context.Context, query string, req kg.Que
 			continue
 		}
 		if e != nil {
+			// Apply KindFilter
+			if len(req.KindFilter) > 0 && !containsKind(req.KindFilter, e.Kind) {
+				continue
+			}
+			// Apply LayerFilter
+			if len(req.LayerFilter) > 0 && !containsLayer(req.LayerFilter, e.Layer) {
+				continue
+			}
 			results = append(results, kg.ScoredEntity{
 				Entity:          e,
 				Score:           0.5, // FTS doesn't provide scores; use neutral value
@@ -746,6 +790,38 @@ func (g *KnowledgeGraph) embedAndStore(ctx context.Context, entityID string, tex
 }
 
 // Utility functions
+
+// normalizedLayer converts EntityLayer to normalized string for storage.
+// Empty layer is treated as "base" for SQL consistency.
+func normalizedLayer(l kg.EntityLayer) string {
+	if l == "" {
+		return string(kg.EntityLayerBase)
+	}
+	return string(l)
+}
+
+// containsKind checks if a kind is in the filter list.
+func containsKind(kinds []kg.EntityKind, k kg.EntityKind) bool {
+	for _, kind := range kinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+// containsLayer checks if a layer is in the filter list.
+// Treats empty layer as base for matching purposes.
+func containsLayer(layers []kg.EntityLayer, l kg.EntityLayer) bool {
+	normalizedL := normalizedLayer(l)
+	for _, layer := range layers {
+		normalizedFilter := normalizedLayer(layer)
+		if normalizedFilter == normalizedL {
+			return true
+		}
+	}
+	return false
+}
 
 func repeatedPlaceholder(count int) string {
 	result := ""
