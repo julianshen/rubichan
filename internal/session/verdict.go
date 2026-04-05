@@ -36,9 +36,9 @@ type ToolSummary struct {
 type VerdictHistory struct {
 	mu       sync.RWMutex
 	verdicts []Verdict
-	size     int   // Current number of verdicts in buffer
-	pos      int   // Write position in circular buffer
-	maxSize  int   // Maximum capacity
+	size     int // Current number of verdicts in buffer
+	pos      int // Write position in circular buffer
+	maxSize  int // Maximum capacity
 }
 
 // NewVerdictHistory creates an empty verdict history with default max size of 100.

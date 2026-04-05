@@ -9,8 +9,8 @@ import (
 
 // Check type constants for precondition validation
 const (
-	CheckTypeFileExists    = "file_exists"
-	CheckTypeDirectoryExists = "directory_exists"
+	CheckTypeFileExists        = "file_exists"
+	CheckTypeDirectoryExists   = "directory_exists"
 	CheckTypeCommandRecognized = "command_recognized"
 )
 
