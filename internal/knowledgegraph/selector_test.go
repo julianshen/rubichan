@@ -139,6 +139,122 @@ func TestSelectByRecencySortsNewest(t *testing.T) {
 	require.Equal(t, "old-001", results[2].Entity.ID, "third result (oldest) should be old-001")
 }
 
+func TestSelectByConfidenceSortsHigherFirst(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Create entities with different confidence levels
+	entities := []*kg.Entity{
+		{
+			ID:         "low-conf",
+			Kind:       kg.KindArchitecture,
+			Title:      "Low Confidence",
+			Body:       "This is uncertain",
+			Source:     kg.SourceManual,
+			Created:    time.Now(),
+			Updated:    time.Now(),
+			Confidence: 0.3,
+		},
+		{
+			ID:         "high-conf",
+			Kind:       kg.KindArchitecture,
+			Title:      "High Confidence",
+			Body:       "This is very certain",
+			Source:     kg.SourceManual,
+			Created:    time.Now(),
+			Updated:    time.Now(),
+			Confidence: 0.95,
+		},
+		{
+			ID:         "mid-conf",
+			Kind:       kg.KindArchitecture,
+			Title:      "Mid Confidence",
+			Body:       "This is moderately confident",
+			Source:     kg.SourceManual,
+			Created:    time.Now(),
+			Updated:    time.Now(),
+			Confidence: 0.65,
+		},
+	}
+
+	for _, e := range entities {
+		err := g.Put(context.Background(), e)
+		require.NoError(t, err)
+	}
+
+	kg_inst := g.(*KnowledgeGraph)
+	selector := NewContextSelectorWithStrategy(kg_inst, kg.SelectorByConfidence)
+
+	results, err := selector.Select(context.Background(), "confidence", 0)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(results), 3)
+
+	// Highest confidence should come first
+	require.Equal(t, "high-conf", results[0].Entity.ID, "first result should be high-conf (0.95)")
+	require.Equal(t, "mid-conf", results[1].Entity.ID, "second result should be mid-conf (0.65)")
+	require.Equal(t, "low-conf", results[2].Entity.ID, "third result should be low-conf (0.3)")
+}
+
+func TestSelectByUsageSortsMostUsedFirst(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Create entities with different usage counts
+	entities := []*kg.Entity{
+		{
+			ID:         "no-use",
+			Kind:       kg.KindArchitecture,
+			Title:      "No Usage",
+			Body:       "Never used",
+			Source:     kg.SourceManual,
+			Created:    time.Now(),
+			Updated:    time.Now(),
+			UsageCount: 0,
+		},
+		{
+			ID:         "high-use",
+			Kind:       kg.KindArchitecture,
+			Title:      "High Usage",
+			Body:       "Used very often",
+			Source:     kg.SourceManual,
+			Created:    time.Now(),
+			Updated:    time.Now(),
+			UsageCount: 50,
+		},
+		{
+			ID:         "mid-use",
+			Kind:       kg.KindArchitecture,
+			Title:      "Mid Usage",
+			Body:       "Used sometimes",
+			Source:     kg.SourceManual,
+			Created:    time.Now(),
+			Updated:    time.Now(),
+			UsageCount: 20,
+		},
+	}
+
+	for _, e := range entities {
+		err := g.Put(context.Background(), e)
+		require.NoError(t, err)
+	}
+
+	kg_inst := g.(*KnowledgeGraph)
+	selector := NewContextSelectorWithStrategy(kg_inst, kg.SelectorByUsage)
+
+	results, err := selector.Select(context.Background(), "usage", 0)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(results), 3)
+
+	// Most used should come first
+	require.Equal(t, "high-use", results[0].Entity.ID, "first result should be high-use (50 uses)")
+	require.Equal(t, "mid-use", results[1].Entity.ID, "second result should be mid-use (20 uses)")
+	require.Equal(t, "no-use", results[2].Entity.ID, "third result should be no-use (0 uses)")
+}
+
 func TestContextSelectorWithBudget(t *testing.T) {
 	tmpDir := t.TempDir()
 	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
