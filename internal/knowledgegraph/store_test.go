@@ -215,6 +215,59 @@ func TestLayerColumnIndex(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
+func TestGetReadsConfidence(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Create a minimal KnowledgeGraph with test DB
+	g := &KnowledgeGraph{
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
+	}
+
+	// Insert entity with confidence value directly into DB
+	_, err := db.Exec(`
+		INSERT INTO entities(id, kind, layer, title, body, confidence)
+		VALUES(?, ?, ?, ?, ?, ?)
+	`, "test-conf-001", "architecture", "base", "Test Confidence", "Body", 0.95)
+	require.NoError(t, err)
+
+	// Get should read back confidence value
+	ctx := context.Background()
+	e, err := g.Get(ctx, "test-conf-001")
+	require.NoError(t, err)
+	require.NotNil(t, e)
+	require.Equal(t, 0.95, e.Confidence)
+}
+
+func TestGetReadsUsageCount(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	g := &KnowledgeGraph{
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
+	}
+
+	// Insert entity with usage_count value directly into DB
+	_, err := db.Exec(`
+		INSERT INTO entities(id, kind, layer, title, body, usage_count)
+		VALUES(?, ?, ?, ?, ?, ?)
+	`, "test-usage-001", "decision", "base", "Test Usage", "Body", 42)
+	require.NoError(t, err)
+
+	// Get should read back usage_count value
+	ctx := context.Background()
+	e, err := g.Get(ctx, "test-usage-001")
+	require.NoError(t, err)
+	require.NotNil(t, e)
+	require.Equal(t, 42, e.UsageCount)
+}
+
 func TestStatsBasic(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()

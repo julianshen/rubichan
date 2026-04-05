@@ -221,10 +221,12 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 
 	// Query from database
 	var kind, layer, title, body, source, tagsJSON, createdStr, updatedStr string
+	var confidence float64
+	var usageCount int
 	err := g.db.QueryRowContext(ctx,
-		`SELECT kind, layer, title, body, source, tags_json, created_at, updated_at FROM entities WHERE id = ?`,
+		`SELECT kind, layer, title, body, source, tags_json, created_at, updated_at, confidence, usage_count FROM entities WHERE id = ?`,
 		id,
-	).Scan(&kind, &layer, &title, &body, &source, &tagsJSON, &createdStr, &updatedStr)
+	).Scan(&kind, &layer, &title, &body, &source, &tagsJSON, &createdStr, &updatedStr, &confidence, &usageCount)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -278,6 +280,8 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 		Relationships: rels,
 		Created:       created,
 		Updated:       updated,
+		Confidence:    confidence,
+		UsageCount:    usageCount,
 	}
 
 	// Update cache
