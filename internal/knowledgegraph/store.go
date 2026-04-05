@@ -50,6 +50,14 @@ func createTables(db *sql.DB) error {
 			body,
 			tags
 		)`,
+
+		// Runtime metrics table (SQLite-only, not committed to git)
+		`CREATE TABLE IF NOT EXISTS entity_stats (
+			entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+			injection_count INTEGER DEFAULT 0,
+			last_accessed_at TEXT,
+			query_hit_count INTEGER DEFAULT 0
+		)`,
 	}
 
 	for _, stmt := range stmts {
@@ -58,8 +66,38 @@ func createTables(db *sql.DB) error {
 		}
 	}
 
-	// Schema migrations would go here via addColumnIfMissing() like in internal/store
+	// Schema migrations: add lifecycle columns if missing (user-editable, git-committed)
+	if err := addColumnIfMissing(db, "entities", "version", "ALTER TABLE entities ADD COLUMN version TEXT DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "entities", "confidence", "ALTER TABLE entities ADD COLUMN confidence REAL DEFAULT 0.0"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "entities", "usage_count", "ALTER TABLE entities ADD COLUMN usage_count INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "entities", "last_used_at", "ALTER TABLE entities ADD COLUMN last_used_at TEXT"); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+// addColumnIfMissing checks whether a column exists in the given table and, if
+// not, executes the provided ALTER TABLE statement. This is the idiomatic way to
+// perform additive schema migrations in SQLite, which has no IF NOT EXISTS
+// clause for ALTER TABLE … ADD COLUMN.
+func addColumnIfMissing(db *sql.DB, table, column, alterStmt string) error {
+	var count int
+	_ = db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, column,
+	).Scan(&count)
+	if count > 0 {
+		return nil
+	}
+	if _, err := db.Exec(alterStmt); err != nil {
+		return fmt.Errorf("migrate %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 

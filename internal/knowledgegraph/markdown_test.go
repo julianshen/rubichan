@@ -74,6 +74,43 @@ func TestWriteReadEntity(t *testing.T) {
 	require.Equal(t, "test-002", read.Relationships[0].Target)
 }
 
+func TestWriteReadEntityWithLifecycleFields(t *testing.T) {
+	dir := tempDir(t)
+	now := time.Now().Round(0)
+
+	e := &kg.Entity{
+		ID:         "lifecycle-001",
+		Kind:       kg.KindArchitecture,
+		Title:      "Entity with Lifecycle",
+		Tags:       []string{"versioned"},
+		Body:       "Body content.",
+		Source:     kg.SourceManual,
+		Created:    now,
+		Updated:    now,
+		Version:    "1.0.0",
+		Confidence: 0.95,
+		// UsageCount and LastUsed are runtime-only, not persisted in markdown
+	}
+
+	// Write entity
+	err := writeEntityFile(dir, e)
+	require.NoError(t, err)
+
+	// Read it back
+	expectedPath := filepath.Join(dir, "architecture", "lifecycle-001.md")
+	read, err := readEntityFile(expectedPath)
+	require.NoError(t, err)
+
+	// Verify lifecycle fields (Version and Confidence go to markdown)
+	require.Equal(t, e.ID, read.ID)
+	require.Equal(t, e.Version, read.Version)
+	require.Equal(t, e.Confidence, read.Confidence)
+
+	// UsageCount and LastUsed should be zero/nil from markdown read
+	require.Equal(t, 0, read.UsageCount)
+	require.True(t, read.LastUsed.IsZero())
+}
+
 func TestWriteReadEntityMinimal(t *testing.T) {
 	dir := tempDir(t)
 

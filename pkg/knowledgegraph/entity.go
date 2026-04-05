@@ -54,4 +54,10 @@ type Entity struct {
 	Source        UpdateSource
 	Created       time.Time
 	Updated       time.Time
+	// Lifecycle fields (user-editable, in frontmatter)
+	Version    string    // optional user-set version label
+	Confidence float64   // 0.0 = unset, 1.0 = high confidence
+	// Runtime metrics (SQLite-only, not committed)
+	UsageCount int       // times entity was returned in query results
+	LastUsed   time.Time // last time entity was injected into a prompt
 }
