@@ -33,6 +33,10 @@ import (
 // ApprovalChecker, etc.), and other shared types are defined in
 // pkg/agentsdk/ and re-exported via sdk_aliases.go.
 
+// Critical tools requiring evaluation on execution.
+// These tools are watched by the evaluator middleware to append verdict feedback.
+var criticalToolsForEvaluation = []string{"shell", "write_file", "patch_file"}
+
 // AgentOption is a functional option for configuring an Agent.
 type AgentOption func(*Agent)
 
@@ -459,10 +463,9 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 
 		// Verdict middleware evaluates results for critical tools and appends
 		// structured feedback to conversation content (visible to LLM).
-		criticalTools := []string{"shell", "write_file", "patch_file"}
 		middlewares = append(middlewares, toolexec.VerdictMiddleware(
 			evaluator.DefaultCheckerPipeline(),
-			criticalTools...,
+			criticalToolsForEvaluation...,
 		))
 
 		// Output offloader middleware when persistence is available.

@@ -26,7 +26,7 @@ func TestErrorStatusCheckerPassesWhenNoError(t *testing.T) {
 	})
 
 	assert.True(t, ev.Passed)
-	assert.Equal(t, "info", ev.Severity)
+	assert.Equal(t, evaluator.SeverityInfo, ev.Severity)
 	assert.Contains(t, ev.Finding, "without error")
 }
 
@@ -40,7 +40,7 @@ func TestErrorStatusCheckerFailsWhenError(t *testing.T) {
 	})
 
 	assert.False(t, ev.Passed)
-	assert.Equal(t, "error", ev.Severity)
+	assert.Equal(t, evaluator.SeverityError, ev.Severity)
 	assert.NotEmpty(t, ev.Suggestion)
 }
 
@@ -55,7 +55,7 @@ func TestErrorPatternCheckerPassesWhenNoPatterns(t *testing.T) {
 	})
 
 	assert.True(t, ev.Passed)
-	assert.Equal(t, "info", ev.Severity)
+	assert.Equal(t, evaluator.SeverityInfo, ev.Severity)
 }
 
 func TestErrorPatternCheckerDetectsFatalError(t *testing.T) {
@@ -68,7 +68,7 @@ func TestErrorPatternCheckerDetectsFatalError(t *testing.T) {
 	})
 
 	assert.False(t, ev.Passed)
-	assert.Equal(t, "warning", ev.Severity)
+	assert.Equal(t, evaluator.SeverityWarning, ev.Severity)
 	assert.Contains(t, ev.Finding, "fatal error")
 }
 
@@ -135,7 +135,7 @@ func TestOutputSizeCheckerPassesWhenSmall(t *testing.T) {
 	})
 
 	assert.True(t, ev.Passed)
-	assert.Equal(t, "info", ev.Severity)
+	assert.Equal(t, evaluator.SeverityInfo, ev.Severity)
 }
 
 func TestOutputSizeCheckerFailsWhenLarge(t *testing.T) {
@@ -149,7 +149,7 @@ func TestOutputSizeCheckerFailsWhenLarge(t *testing.T) {
 	})
 
 	assert.False(t, ev.Passed)
-	assert.Equal(t, "warning", ev.Severity)
+	assert.Equal(t, evaluator.SeverityWarning, ev.Severity)
 	assert.Contains(t, ev.Finding, "exceeds limit")
 	assert.NotEmpty(t, ev.Suggestion)
 }

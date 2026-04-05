@@ -40,12 +40,12 @@ func TestVerdictPipelineMultipleWarnings(t *testing.T) {
 	t.Parallel()
 	c1 := &mockCheckerWithSeverity{
 		mockChecker: mockChecker{name: "c1", pass: false},
-		severity:    "warning",
+		severity:    evaluator.SeverityWarning,
 		suggestion:  "fix1",
 	}
 	c2 := &mockCheckerWithSeverity{
 		mockChecker: mockChecker{name: "c2", pass: false},
-		severity:    "warning",
+		severity:    evaluator.SeverityWarning,
 		suggestion:  "fix2",
 	}
 	pipeline := evaluator.NewCheckerPipeline(c1, c2)
@@ -55,16 +55,6 @@ func TestVerdictPipelineMultipleWarnings(t *testing.T) {
 	assert.Equal(t, evaluator.VerdictEscalate, v.Status)
 	assert.LessOrEqual(t, v.Confidence, 0.7)
 	assert.Len(t, v.Suggestions, 2)
-}
-
-func TestCheckerPipelineTracksExecutionTime(t *testing.T) {
-	t.Parallel()
-	c1 := &mockChecker{name: "c1", pass: true}
-	pipeline := evaluator.NewCheckerPipeline(c1)
-
-	v := pipeline.Evaluate(evaluator.ToolOutput{ToolName: "test", Content: "output", IsError: false})
-
-	assert.True(t, v.Duration > 0, "Duration should be non-zero")
 }
 
 func TestFormatVerdictSuccessFormat(t *testing.T) {
@@ -89,7 +79,7 @@ func TestFormatVerdictFailedIncludesFindings(t *testing.T) {
 		Confidence: 0.85,
 		Reason:     "check failed",
 		Evidence: []evaluator.Evidence{
-			{CheckerName: "c1", Passed: false, Severity: "error", Finding: "error text"},
+			{CheckerName: "c1", Passed: false, Severity: evaluator.SeverityError, Finding: "error text"},
 		},
 		Suggestions: []string{"retry"},
 	}
@@ -110,7 +100,7 @@ func (m *mockChecker) Check(output evaluator.ToolOutput) evaluator.Evidence {
 	return evaluator.Evidence{
 		CheckerName: m.name,
 		Passed:      m.pass,
-		Severity:    "info",
+		Severity:    evaluator.SeverityInfo,
 	}
 }
 
@@ -123,7 +113,7 @@ func (m *mockCheckerWithSuggestion) Check(output evaluator.ToolOutput) evaluator
 	return evaluator.Evidence{
 		CheckerName: m.name,
 		Passed:      m.pass,
-		Severity:    "error",
+		Severity:    evaluator.SeverityError,
 		Finding:     "error found",
 		Suggestion:  m.suggestion,
 	}
@@ -131,7 +121,7 @@ func (m *mockCheckerWithSuggestion) Check(output evaluator.ToolOutput) evaluator
 
 type mockCheckerWithSeverity struct {
 	mockChecker
-	severity   string
+	severity   evaluator.SeverityLevel
 	suggestion string
 }
 

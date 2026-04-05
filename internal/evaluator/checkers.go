@@ -5,6 +5,17 @@ import (
 	"strings"
 )
 
+// Error pattern constants for common tool failures.
+const (
+	errorPatternFatalError  = "fatal error"
+	errorPatternPanic       = "panic:"
+	errorPatternSegfault    = "segmentation fault"
+	errorPatternPermDenied  = "permission denied"
+	errorPatternCmdNotFound = "command not found"
+	errorPatternNoFile      = "no such file or directory"
+	errorPatternConnRefused = "connection refused"
+)
+
 // ErrorStatusChecker passes when IsError is false.
 type ErrorStatusChecker struct{}
 
@@ -24,14 +35,14 @@ func (c *ErrorStatusChecker) Check(o ToolOutput) Evidence {
 		return Evidence{
 			CheckerName: c.Name(),
 			Passed:      true,
-			Severity:    "info",
+			Severity:    SeverityInfo,
 			Finding:     "tool completed without error",
 		}
 	}
 	return Evidence{
 		CheckerName: c.Name(),
 		Passed:      false,
-		Severity:    "error",
+		Severity:    SeverityError,
 		Finding:     "tool reported an error",
 		Suggestion:  "review error content and retry with corrected parameters",
 	}
@@ -43,9 +54,9 @@ type ErrorPatternChecker struct {
 }
 
 var defaultErrorPatterns = []string{
-	"fatal error", "panic:", "segmentation fault",
-	"permission denied", "command not found",
-	"no such file or directory", "connection refused",
+	errorPatternFatalError, errorPatternPanic, errorPatternSegfault,
+	errorPatternPermDenied, errorPatternCmdNotFound,
+	errorPatternNoFile, errorPatternConnRefused,
 }
 
 // NewErrorPatternChecker creates a new error pattern checker with default patterns.
@@ -74,7 +85,7 @@ func (c *ErrorPatternChecker) Check(o ToolOutput) Evidence {
 			return Evidence{
 				CheckerName: c.Name(),
 				Passed:      false,
-				Severity:    "warning",
+				Severity:    SeverityWarning,
 				Finding:     fmt.Sprintf("detected error pattern: %q", p),
 				Suggestion:  "review output for the flagged pattern",
 			}
@@ -83,7 +94,7 @@ func (c *ErrorPatternChecker) Check(o ToolOutput) Evidence {
 	return Evidence{
 		CheckerName: c.Name(),
 		Passed:      true,
-		Severity:    "info",
+		Severity:    SeverityInfo,
 		Finding:     "no error patterns detected",
 	}
 }
@@ -116,7 +127,7 @@ func (c *OutputSizeChecker) Check(o ToolOutput) Evidence {
 		return Evidence{
 			CheckerName: c.Name(),
 			Passed:      false,
-			Severity:    "warning",
+			Severity:    SeverityWarning,
 			Finding:     fmt.Sprintf("output size %d bytes exceeds limit %d", n, c.maxBytes),
 			Suggestion:  "use pagination or filter to reduce output size",
 		}
@@ -124,7 +135,7 @@ func (c *OutputSizeChecker) Check(o ToolOutput) Evidence {
 	return Evidence{
 		CheckerName: c.Name(),
 		Passed:      true,
-		Severity:    "info",
+		Severity:    SeverityInfo,
 		Finding:     fmt.Sprintf("output size %d bytes within limit", n),
 	}
 }

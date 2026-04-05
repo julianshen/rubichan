@@ -3,7 +3,6 @@ package evaluator
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // VerdictStatus is the outcome of a post-execution evaluation.
@@ -15,11 +14,27 @@ const (
 	VerdictEscalate VerdictStatus = "escalate"
 )
 
+// SeverityLevel indicates the severity of an evidence finding.
+type SeverityLevel string
+
+const (
+	SeverityError   SeverityLevel = "error"
+	SeverityWarning SeverityLevel = "warning"
+	SeverityInfo    SeverityLevel = "info"
+)
+
+// Confidence value constants for verdict aggregation.
+const (
+	confidenceFailedCheck  = 0.9
+	confidenceMultiWarning = 0.6
+	confidenceAllPassed    = 0.95
+)
+
 // Evidence is the output of a single Checker.
 type Evidence struct {
 	CheckerName string
 	Passed      bool
-	Severity    string // "error" | "warning" | "info"
+	Severity    SeverityLevel
 	Finding     string
 	Suggestion  string
 }
@@ -31,7 +46,6 @@ type Verdict struct {
 	Reason      string
 	Evidence    []Evidence
 	Suggestions []string
-	Duration    time.Duration
 }
 
 // ToolOutput carries a tool's execution result to checkers.
@@ -59,14 +73,11 @@ func NewCheckerPipeline(checkers ...Checker) *CheckerPipeline {
 
 // Evaluate runs all checkers on the tool output and returns an aggregated Verdict.
 func (p *CheckerPipeline) Evaluate(output ToolOutput) Verdict {
-	start := time.Now()
 	ev := make([]Evidence, 0, len(p.checkers))
 	for _, c := range p.checkers {
 		ev = append(ev, c.Check(output))
 	}
-	v := aggregateVerdict(ev)
-	v.Duration = time.Since(start)
-	return v
+	return aggregateVerdict(ev)
 }
 
 // FormatVerdict returns a concise text block suitable for injection into LLM conversation.
@@ -94,9 +105,9 @@ func aggregateVerdict(ev []Evidence) Verdict {
 	)
 	for _, e := range ev {
 		if !e.Passed {
-			if e.Severity == "error" {
+			if e.Severity == SeverityError {
 				errorCount++
-			} else if e.Severity == "warning" {
+			} else if e.Severity == SeverityWarning {
 				warningCount++
 			}
 			if e.Suggestion != "" {
@@ -109,7 +120,7 @@ func aggregateVerdict(ev []Evidence) Verdict {
 	case errorCount > 0:
 		return Verdict{
 			Status:      VerdictFailed,
-			Confidence:  0.9,
+			Confidence:  confidenceFailedCheck,
 			Reason:      "one or more critical checks failed",
 			Evidence:    ev,
 			Suggestions: suggestions,
@@ -117,7 +128,7 @@ func aggregateVerdict(ev []Evidence) Verdict {
 	case warningCount > 1:
 		return Verdict{
 			Status:      VerdictEscalate,
-			Confidence:  0.6,
+			Confidence:  confidenceMultiWarning,
 			Reason:      "multiple warnings detected; review recommended",
 			Evidence:    ev,
 			Suggestions: suggestions,
@@ -125,7 +136,7 @@ func aggregateVerdict(ev []Evidence) Verdict {
 	default:
 		return Verdict{
 			Status:      VerdictSuccess,
-			Confidence:  0.95,
+			Confidence:  confidenceAllPassed,
 			Reason:      "all checks passed",
 			Evidence:    ev,
 			Suggestions: suggestions,
