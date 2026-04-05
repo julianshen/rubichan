@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -118,20 +119,26 @@ func OptionsForRisk(tool, args string) []ApprovalResult {
 // It displays the tool name, arguments, risk level, and only the
 // allowed approval options — like Claude Code's permission prompt.
 type ApprovalPrompt struct {
-	tool    string
-	args    string
-	workDir string
-	options []ApprovalResult
-	result  ApprovalResult
-	done    bool
-	box     lipgloss.Style
+	tool          string
+	args          string
+	workDir       string
+	options       []ApprovalResult
+	result        ApprovalResult
+	done          bool
+	box           lipgloss.Style
+	argsViewport  viewport.Model
+	useViewport   bool // true when formatted args > 5 lines
+	showBatchHint bool // true when batch hint should be displayed
+	hasAlways     bool // cached: true if ApprovalAlways is in options
+	hasDenyAlways bool // cached: true if ApprovalDenyAlways is in options
 }
 
 // NewApprovalPrompt creates a new approval prompt for the given tool and args.
 // The width parameter controls the box width. The options parameter specifies
 // which approval choices to display. If options is nil, defaults are chosen
-// based on risk level.
-func NewApprovalPrompt(tool, args, workDir string, width int, options []ApprovalResult) *ApprovalPrompt {
+// based on risk level. showBatchHint indicates whether to offer batch approval
+// for repeated tools.
+func NewApprovalPrompt(tool, args, workDir string, width int, options []ApprovalResult, showBatchHint bool) *ApprovalPrompt {
 	boxWidth := width - 4
 	if boxWidth < 20 {
 		boxWidth = 20
@@ -142,12 +149,40 @@ func NewApprovalPrompt(tool, args, workDir string, width int, options []Approval
 		options = OptionsForRisk(tool, args)
 	}
 
+	// Detect if formatted args need viewport scrolling (> 5 lines).
+	formatted := formatToolArgs(tool, args)
+	argLines := strings.Split(formatted, "\n")
+	useViewport := len(argLines) > 5
+
+	var argsViewport viewport.Model
+	if useViewport {
+		argsViewport = viewport.New(boxWidth-4, 8)
+		argsViewport.SetContent(formatted)
+	}
+
+	// Cache presence of Always and DenyAlways options to avoid repeated scans in View().
+	hasAlways := false
+	hasDenyAlways := false
+	for _, opt := range options {
+		if opt == ApprovalAlways {
+			hasAlways = true
+		}
+		if opt == ApprovalDenyAlways {
+			hasDenyAlways = true
+		}
+	}
+
 	return &ApprovalPrompt{
-		tool:    tool,
-		args:    args,
-		workDir: workDir,
-		options: options,
-		box:     box,
+		tool:          tool,
+		args:          args,
+		workDir:       workDir,
+		options:       options,
+		box:           box,
+		argsViewport:  argsViewport,
+		useViewport:   useViewport,
+		showBatchHint: showBatchHint,
+		hasAlways:     hasAlways,
+		hasDenyAlways: hasDenyAlways,
 	}
 }
 
@@ -174,10 +209,29 @@ func (a *ApprovalPrompt) hasOption(opt ApprovalResult) bool {
 }
 
 // HandleKey processes a single keypress for the approval prompt.
-// Returns true if the key was handled (approval decision made).
+// Returns true if the key was handled (approval decision made or viewport scrolled).
 // Only accepts keys for options that are currently displayed.
 func (a *ApprovalPrompt) HandleKey(msg tea.KeyMsg) bool {
+	// When viewport is active, forward navigation keys to it.
+	if a.useViewport {
+		switch msg.Type {
+		case tea.KeyUp:
+			a.argsViewport.ScrollUp(1)
+			return true
+		case tea.KeyDown:
+			a.argsViewport.ScrollDown(1)
+			return true
+		case tea.KeyPgUp:
+			a.argsViewport.HalfPageUp()
+			return true
+		case tea.KeyPgDown:
+			a.argsViewport.HalfPageDown()
+			return true
+		}
+	}
+
 	var target ApprovalResult
+	var isBatchKey bool
 	switch msg.String() {
 	case "y", "Y":
 		target = ApprovalYes
@@ -187,11 +241,19 @@ func (a *ApprovalPrompt) HandleKey(msg tea.KeyMsg) bool {
 		target = ApprovalAlways
 	case "d", "D":
 		target = ApprovalDenyAlways
+	case "b", "B":
+		if !a.showBatchHint {
+			return false
+		}
+		// Batch approve maps to ApprovalAlways.
+		target = ApprovalAlways
+		isBatchKey = true
 	default:
 		return false
 	}
 
-	if !a.hasOption(target) {
+	// Batch key bypasses hasOption check; all other keys must be in options.
+	if !isBatchKey && !a.hasOption(target) {
 		return false
 	}
 
@@ -402,9 +464,9 @@ type ApprovalOverlay struct {
 }
 
 // NewApprovalOverlay creates an overlay for tool approval.
-func NewApprovalOverlay(tool, args, workDir string, width int, options []ApprovalResult) *ApprovalOverlay {
+func NewApprovalOverlay(tool, args, workDir string, width int, options []ApprovalResult, showBatchHint bool) *ApprovalOverlay {
 	return &ApprovalOverlay{
-		prompt: NewApprovalPrompt(tool, args, workDir, width, options),
+		prompt: NewApprovalPrompt(tool, args, workDir, width, options, showBatchHint),
 	}
 }
 
@@ -451,14 +513,19 @@ func (a *ApprovalPrompt) View() string {
 
 	header := fmt.Sprintf("  %s %s", icon, styleApprovalKey.Render(displayName))
 
-	// Format args as human-readable description instead of raw JSON.
-	formatted := formatToolArgs(sanitizedTool, sanitizedArgs)
-	// Indent each line of the formatted args.
-	lines := strings.Split(formatted, "\n")
-	for i := range lines {
-		lines[i] = "    " + lines[i]
+	// Format args: use viewport if available, otherwise inline.
+	var detail string
+	if a.useViewport {
+		detail = styleTextDim.Render("    [use ↑↓ to scroll]\n") + "    " + a.argsViewport.View()
+	} else {
+		// Inline args — indent each line.
+		formatted := formatToolArgs(sanitizedTool, sanitizedArgs)
+		lines := strings.Split(formatted, "\n")
+		for i := range lines {
+			lines[i] = "    " + lines[i]
+		}
+		detail = styleSectionLabel.Render(strings.Join(lines, "\n"))
 	}
-	detail := styleSectionLabel.Render(strings.Join(lines, "\n"))
 
 	// Show working directory for shell/exec tools.
 	if a.workDir != "" && risk == RiskHigh {
@@ -481,6 +548,16 @@ func (a *ApprovalPrompt) View() string {
 	}
 	if len(optParts) > 0 {
 		body += "\n\n  " + strings.Join(optParts, "  ")
+
+		// Add tip text when both Always and DenyAlways options are available.
+		if a.hasAlways && a.hasDenyAlways {
+			body += "\n" + styleTextDim.Render("  A = allow for this session · D = deny always")
+		}
+	}
+
+	// Add batch hint if applicable.
+	if a.showBatchHint {
+		body += "\n" + styleTextDim.Render("  B = batch allow all")
 	}
 
 	return a.box.Render(body) + "\n"

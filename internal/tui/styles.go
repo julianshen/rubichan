@@ -177,4 +177,19 @@ var (
 	// Dim text for secondary information.
 	styleTextDim = lipgloss.NewStyle().
 			Foreground(colorTextDim)
+
+	// Error display styles.
+	styleErrorBadge = lipgloss.NewStyle().
+			Foreground(colorDanger).
+			Bold(true)
+
+	styleErrorIcon = lipgloss.NewStyle().
+			Foreground(colorDanger).
+			Bold(true)
+
+	// Plan panel border.
+	stylePlanPanel = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorInfo).
+			Padding(0, 1)
 )

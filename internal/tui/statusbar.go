@@ -40,6 +40,7 @@ type StatusBar struct {
 	turn          int
 	maxTurns      int
 	cost          float64
+	errorCount    int
 	wikiStage     string
 	gitBranch     string
 	elapsed       time.Duration
@@ -85,6 +86,15 @@ func (s *StatusBar) ClearElapsed() { s.elapsed = 0 }
 // SetSkillSummary sets the active skill summary for display.
 func (s *StatusBar) SetSkillSummary(summary string) { s.skillSummary = summary }
 
+// IncrementErrorCount increments the error count.
+func (s *StatusBar) IncrementErrorCount() { s.errorCount++ }
+
+// ClearErrorCount resets the error count to zero.
+func (s *StatusBar) ClearErrorCount() { s.errorCount = 0 }
+
+// ErrorCount returns the current error count.
+func (s *StatusBar) ErrorCount() int { return s.errorCount }
+
 // SetSubagent sets the currently running subagent name for display.
 // Pass empty string to clear.
 func (s *StatusBar) SetSubagent(name string) { s.subagentName = name }
@@ -114,6 +124,12 @@ func (s *StatusBar) View() string {
 		{styleTextDim.Render(fmt.Sprintf("%s/%s", formatTokens(s.inputTokens), formatTokens(s.maxTokens))), priorityHigh},
 		{styleStatusValue.Render(fmt.Sprintf("Turn %d/%d", s.turn, s.maxTurns)), priorityAlways},
 		{styleTextDim.Render(fmt.Sprintf("~$%.2f", s.cost)), priorityHigh},
+	}
+
+	// Add error badge if there are errors.
+	if s.errorCount > 0 {
+		badge := styleErrorBadge.Render(fmt.Sprintf("⚠ %d", s.errorCount))
+		segments = append(segments, statusSegment{badge, priorityAlways})
 	}
 	if s.gitBranch != "" {
 		segments = append(segments, statusSegment{

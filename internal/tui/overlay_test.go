@@ -43,7 +43,7 @@ func TestOverlayNilResultOnCancel(t *testing.T) {
 
 func TestApprovalOverlayImplementsOverlay(t *testing.T) {
 	o := NewApprovalOverlay("shell", `command="ls"`, "/tmp", 80,
-		[]ApprovalResult{ApprovalYes, ApprovalNo, ApprovalAlways})
+		[]ApprovalResult{ApprovalYes, ApprovalNo, ApprovalAlways}, false)
 	var _ Overlay = o // compile-time check
 	assert.False(t, o.Done())
 	assert.Contains(t, o.View(), "Bash") // "shell" tool displays as "Bash"
@@ -51,7 +51,7 @@ func TestApprovalOverlayImplementsOverlay(t *testing.T) {
 
 func TestApprovalOverlayHandlesYes(t *testing.T) {
 	o := NewApprovalOverlay("shell", `command="ls"`, "/tmp", 80,
-		[]ApprovalResult{ApprovalYes, ApprovalNo})
+		[]ApprovalResult{ApprovalYes, ApprovalNo}, false)
 	updated, _ := o.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	overlay := updated.(*ApprovalOverlay)
 	assert.True(t, overlay.Done())
@@ -60,7 +60,7 @@ func TestApprovalOverlayHandlesYes(t *testing.T) {
 
 func TestApprovalOverlayRejectsDisallowedKey(t *testing.T) {
 	o := NewApprovalOverlay("shell", `command="rm -rf /"`, "/tmp", 80,
-		[]ApprovalResult{ApprovalYes, ApprovalNo}) // no Always for destructive
+		[]ApprovalResult{ApprovalYes, ApprovalNo}, false) // no Always for destructive
 	updated, _ := o.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	overlay := updated.(*ApprovalOverlay)
 	assert.False(t, overlay.Done()) // 'a' not allowed
