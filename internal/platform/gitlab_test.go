@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	gitlab "github.com/xanzy/go-gitlab"
+	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
 func newTestGitLabClient(t *testing.T, handler http.Handler) *GitLabClient {
@@ -124,7 +124,7 @@ func TestGitLabGetMRDiff(t *testing.T) {
 
 func TestGitLabListMRFiles(t *testing.T) {
 	client := newTestGitLabClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"changes":[{"old_path":"a.go","new_path":"a.go","diff":"@@","new_file":false,"renamed_file":false,"deleted_file":false}]}`))
+		w.Write([]byte(`[{"old_path":"a.go","new_path":"a.go","diff":"@@","new_file":false,"renamed_file":false,"deleted_file":false}]`))
 	}))
 
 	files, err := client.ListPRFiles(context.Background(), "g/r", 1)
@@ -155,10 +155,10 @@ func TestGitLabGetMRDiff_EmptyVersions(t *testing.T) {
 
 func TestGitLabListMRFiles_StatusMapping(t *testing.T) {
 	client := newTestGitLabClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"changes":[
+		w.Write([]byte(`[
 			{"old_path":"new.go","new_path":"new.go","diff":"@@","new_file":true,"renamed_file":false,"deleted_file":false},
 			{"old_path":"del.go","new_path":"del.go","diff":"@@","new_file":false,"renamed_file":false,"deleted_file":true}
-		]}`))
+		]`))
 	}))
 
 	files, err := client.ListPRFiles(context.Background(), "g/r", 1)
