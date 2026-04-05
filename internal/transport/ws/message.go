@@ -97,7 +97,8 @@ func (e Envelope) ParsePayload(target any) error {
 // The default encoding/json behavior already handles json.RawMessage correctly,
 // so this is provided for documentation clarity — the struct tags are sufficient.
 
-// Validate checks that the envelope has a non-empty type.
+// Validate checks that the envelope has required fields.
+// This is a minimal structural check; semantic validation happens at the handler level.
 func (e Envelope) Validate() error {
 	if e.Type == "" {
 		return fmt.Errorf("envelope: missing type")

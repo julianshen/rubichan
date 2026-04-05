@@ -48,8 +48,21 @@ func newClient(hub *Hub, conn net.Conn, claims AuthClaims) *Client {
 	}
 }
 
+// sendError sends an error response to the client.
+func (c *Client) sendError(code, message string) {
+	errPayload, _ := json.Marshal(ErrorPayload{Code: code, Message: message})
+	data, _ := json.Marshal(Envelope{
+		Type:      TypeError,
+		Timestamp: time.Now().UTC(),
+		Payload:   errPayload,
+	})
+	c.Send(data)
+}
+
 // Send enqueues a message for delivery. Returns false if the client is closed
 // or the send buffer is full (slow client).
+// When the buffer fills, the client is closed to prevent memory buildup,
+// and a warning is logged.
 func (c *Client) Send(data []byte) bool {
 	select {
 	case <-c.done:
@@ -62,8 +75,9 @@ func (c *Client) Send(data []byte) bool {
 	case <-c.done:
 		return false
 	default:
-		// Buffer full — close the slow client.
-		log.Printf("ws: closing slow client: send buffer full (capacity=%d)", sendBufferSize)
+		// Buffer full — close the slow client to prevent unbounded memory growth.
+		// The client's readPump defers cleanup on connection close.
+		log.Printf("ws: closing slow client: send buffer is full (capacity=%d)", sendBufferSize)
 		c.close()
 		return false
 	}
@@ -135,17 +149,13 @@ func (c *Client) readPump() {
 
 		var env Envelope
 		if err := json.Unmarshal(msg, &env); err != nil {
-			errPayload, _ := json.Marshal(ErrorPayload{
-				Code:    "invalid_json",
-				Message: "invalid JSON message",
-			})
-			errEnv := Envelope{
-				Type:      TypeError,
-				Timestamp: time.Now().UTC(),
-				Payload:   errPayload,
-			}
-			data, _ := json.Marshal(errEnv)
-			c.Send(data)
+			c.sendError("invalid_json", "invalid JSON message")
+			continue
+		}
+
+		// Validate envelope structure (type must be known).
+		if err := env.Validate(); err != nil {
+			c.sendError("invalid_envelope", err.Error())
 			continue
 		}
 

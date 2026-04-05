@@ -237,3 +237,19 @@ func TestNormalizeToolInputEdgeCases(t *testing.T) {
 func sprintf(format string, args ...any) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.TrimSpace(fmt.Sprintf(format, args...)), "\n", " "))
 }
+
+func TestWithSessionID(t *testing.T) {
+	evt := NewTurnStartedEvent("prompt", "model")
+	assert.Empty(t, evt.SessionID)
+
+	withSession := evt.WithSessionID("session-123")
+	assert.Equal(t, "session-123", withSession.SessionID)
+
+	// Calling again with non-empty session ID should preserve the original
+	withSession2 := withSession.WithSessionID("session-456")
+	assert.Equal(t, "session-123", withSession2.SessionID)
+
+	// Whitespace-only session ID should not override
+	withSession3 := evt.WithSessionID("   ")
+	assert.Empty(t, withSession3.SessionID)
+}
