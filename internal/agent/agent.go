@@ -25,6 +25,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/text"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -1166,7 +1167,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		finalizeText := func() {
-			if strings.TrimSpace(currentTextBuf) != "" {
+			if !text.IsEmptyResponse(currentTextBuf) {
 				blocks = append(blocks, provider.ContentBlock{
 					Type: "text",
 					Text: currentTextBuf,

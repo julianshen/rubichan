@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/text"
 )
 
 // LLMCompleter wraps an LLMProvider to collect streamed text into a single string.
@@ -38,7 +39,7 @@ func (c *LLMCompleter) Complete(ctx context.Context, prompt string) (string, err
 		case evt, ok := <-ch:
 			if !ok {
 				result := strings.Join(parts, "")
-				if strings.TrimSpace(result) == "" {
+				if text.IsEmptyResponse(result) {
 					return "", fmt.Errorf("empty response from model")
 				}
 				return result, nil

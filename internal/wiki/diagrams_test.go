@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/julianshen/rubichan/internal/text"
 )
 
 func TestDefaultDiagramConfig(t *testing.T) {
@@ -204,7 +206,7 @@ func (m *validatingLLMCompleter) Complete(ctx context.Context, prompt string) (s
 	for key, resp := range m.responses {
 		if strings.Contains(prompt, key) {
 			// Mimic the real LLMCompleter behavior: return error for empty/whitespace responses
-			if strings.TrimSpace(resp) == "" {
+			if text.IsEmptyResponse(resp) {
 				return "", fmt.Errorf("empty response from model")
 			}
 			return resp, nil
