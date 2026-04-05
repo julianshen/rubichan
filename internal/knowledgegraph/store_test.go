@@ -134,3 +134,39 @@ func TestRebuildFTS(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, id == "test-001" || id == "test-002")
 }
+
+func TestAddColumnIfMissing(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Test 1: Add a column that doesn't exist
+	err := addColumnIfMissing(db, "entities", "version", "ALTER TABLE entities ADD COLUMN version TEXT DEFAULT ''")
+	require.NoError(t, err)
+
+	// Verify column exists
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name='version'`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	// Test 2: Call again with the same column (should be idempotent)
+	err = addColumnIfMissing(db, "entities", "version", "ALTER TABLE entities ADD COLUMN version TEXT DEFAULT ''")
+	require.NoError(t, err)
+
+	// Verify column still exists (unchanged)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name='version'`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	// Test 3: Add multiple different columns
+	err = addColumnIfMissing(db, "entities", "usage_count", "ALTER TABLE entities ADD COLUMN usage_count INTEGER DEFAULT 0")
+	require.NoError(t, err)
+
+	err = addColumnIfMissing(db, "entities", "confidence", "ALTER TABLE entities ADD COLUMN confidence REAL DEFAULT 0.0")
+	require.NoError(t, err)
+
+	// Verify all columns exist
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entities') WHERE name IN ('version', 'usage_count', 'confidence')`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 3, count)
+}

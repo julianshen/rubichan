@@ -22,6 +22,9 @@ type frontmatter struct {
 	Updated       time.Time             `yaml:"updated"`
 	Source        string                `yaml:"source"`
 	Relationships []frontmatterRelation `yaml:"relationships"`
+	// Lifecycle fields (user-editable in markdown)
+	Version    string  `yaml:"version"`
+	Confidence float64 `yaml:"confidence"`
 }
 
 type frontmatterRelation struct {
@@ -48,13 +51,15 @@ func writeEntityFile(knowledgeDir string, e *kg.Entity) error {
 
 	// Build frontmatter
 	fm := frontmatter{
-		ID:      e.ID,
-		Kind:    string(e.Kind),
-		Title:   e.Title,
-		Tags:    e.Tags,
-		Created: e.Created,
-		Updated: e.Updated,
-		Source:  string(e.Source),
+		ID:         e.ID,
+		Kind:       string(e.Kind),
+		Title:      e.Title,
+		Tags:       e.Tags,
+		Created:    e.Created,
+		Updated:    e.Updated,
+		Source:     string(e.Source),
+		Version:    e.Version,
+		Confidence: e.Confidence,
 	}
 
 	// Convert relationships
@@ -138,6 +143,8 @@ func readEntityFile(path string) (*kg.Entity, error) {
 		Source:        kg.UpdateSource(fm.Source),
 		Created:       fm.Created,
 		Updated:       fm.Updated,
+		Version:       fm.Version,
+		Confidence:    fm.Confidence,
 	}, nil
 }
 
