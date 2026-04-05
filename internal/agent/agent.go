@@ -28,6 +28,7 @@ import (
 	"github.com/julianshen/rubichan/internal/text"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
 // Event types (TurnEvent, ToolCallEvent, etc.), approval types (ApprovalFunc,
@@ -295,9 +296,10 @@ type Agent struct {
 	extraPrompts     []namedPrompt
 	summarizer       Summarizer
 	scratchpad       *Scratchpad
-	memoryStore      MemoryStore
-	customStrategies bool
-	resultStore      *ResultStore
+	memoryStore       MemoryStore
+	knowledgeSelector kg.ContextSelector
+	customStrategies  bool
+	resultStore       *ResultStore
 	promptBuilder    *PromptBuilder
 	deferral         *tools.DeferralManager
 	diffTracker      *tools.DiffTracker
@@ -829,7 +831,7 @@ func (a *Agent) ForceCompact(ctx context.Context) (agentsdk.CompactResult, error
 // cache breakpoint offsets, and the final skill prompt fragment text used
 // for telemetry. Cacheable (static) sections are placed first for optimal
 // provider caching.
-func (a *Agent) buildSystemPromptWithFragments(ctx context.Context) (string, []int, string) {
+func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMessage string) (string, []int, string) {
 	type skillPromptFragmentData struct {
 		SkillName string `json:"skill_name"`
 		Prompt    string `json:"prompt"`
@@ -1018,6 +1020,22 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context) (string, []i
 		}
 	}
 
+	// Project Knowledge — injected from knowledge graph if selector available
+	if a.knowledgeSelector != nil && lastUserMessage != "" {
+		budget := a.context.Budget()
+		entities, err := a.knowledgeSelector.Select(ctx, lastUserMessage, budget.SkillPrompts)
+		if err == nil && len(entities) > 0 {
+			knowledge := renderKnowledgeSection(entities)
+			if knowledge != "" {
+				pb.AddSection(PromptSection{
+					Name:      "Project Knowledge",
+					Content:   knowledge,
+					Cacheable: false,
+				})
+			}
+		}
+	}
+
 	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
 		for _, f := range builtFragments {
@@ -1073,7 +1091,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		// Build the system prompt with cache breakpoints.
-		systemPrompt, cacheBreakpoints, skillPromptText := a.buildSystemPromptWithFragments(ctx)
+		systemPrompt, cacheBreakpoints, skillPromptText := a.buildSystemPromptWithFragments(ctx, lastUserMessage)
 
 		// Select tools via DeferralManager to stay within budget.
 		allToolDefs := a.tools.SelectForContext(a.conversation.Messages())
