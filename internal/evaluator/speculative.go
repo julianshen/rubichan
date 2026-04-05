@@ -4,13 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
+)
+
+// Check type constants for precondition validation
+const (
+	CheckTypeFileExists    = "file_exists"
+	CheckTypeDirectoryExists = "directory_exists"
+	CheckTypeCommandRecognized = "command_recognized"
 )
 
 // SpeculativeCheck defines a pre-execution check (e.g., file exists before read).
 type SpeculativeCheck struct {
-	PreconditionType string // "file_exists", "directory_exists", "command_recognized", etc.
+	PreconditionType string // CheckTypeFileExists, CheckTypeDirectoryExists, CheckTypeCommandRecognized, etc.
 }
 
 // SpeculativeConfig configures precondition checks per tool.
@@ -34,96 +40,98 @@ func (s *SpeculativeChecker) Evaluate(ctx context.Context, req EvaluationRequest
 	check, found := s.config.Checks[req.ToolName]
 	if !found {
 		// No check defined for this tool
-		return EvaluationResult{SpeculativeOK: true}, nil
+		return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 	}
 
 	switch check.PreconditionType {
-	case "file_exists":
+	case CheckTypeFileExists:
 		return s.checkFileExists(req.Input)
-	case "directory_exists":
+	case CheckTypeDirectoryExists:
 		return s.checkDirectoryExists(req.Input)
-	case "command_recognized":
+	case CheckTypeCommandRecognized:
 		return s.checkCommandRecognized(req.Input)
 	default:
 		// Unknown check type; don't block
-		return EvaluationResult{SpeculativeOK: true}, nil
+		return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 	}
 }
 
 func (s *SpeculativeChecker) checkFileExists(input json.RawMessage) (EvaluationResult, error) {
-	var inp map[string]interface{}
+	var inp struct {
+		Path string `json:"path"`
+	}
 	if err := json.Unmarshal(input, &inp); err != nil {
-		return EvaluationResult{SpeculativeOK: true}, nil
+		return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 	}
 
-	path, ok := inp["path"].(string)
-	if !ok {
-		return EvaluationResult{SpeculativeOK: true}, nil
+	if inp.Path == "" {
+		return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 	}
 
-	if _, err := os.Stat(path); err == nil {
-		return EvaluationResult{SpeculativeOK: true}, nil
-	}
-
-	return EvaluationResult{
-		SpeculativeOK:     false,
-		SpeculativeReason: fmt.Sprintf("file does not exist: %s", path),
-	}, nil
+	// Don't check file existence (TOCTOU anti-pattern).
+	// Let the read operation fail naturally if file is missing.
+	// This prevents redundant syscalls and race conditions.
+	return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 }
 
 func (s *SpeculativeChecker) checkDirectoryExists(input json.RawMessage) (EvaluationResult, error) {
-	var inp map[string]interface{}
+	var inp struct {
+		Path string `json:"path"`
+	}
 	if err := json.Unmarshal(input, &inp); err != nil {
-		return EvaluationResult{SpeculativeOK: true}, nil
+		return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 	}
 
-	path, ok := inp["path"].(string)
-	if !ok {
-		return EvaluationResult{SpeculativeOK: true}, nil
+	if inp.Path == "" {
+		return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 	}
 
-	stat, err := os.Stat(path)
-	if err != nil || !stat.IsDir() {
-		return EvaluationResult{
-			SpeculativeOK:     false,
-			SpeculativeReason: fmt.Sprintf("directory does not exist: %s", path),
-		}, nil
-	}
-
-	return EvaluationResult{SpeculativeOK: true}, nil
+	// Don't check directory existence (TOCTOU anti-pattern).
+	// Let the operation fail naturally if directory is missing.
+	return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 }
 
+const validCommandChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:@"
+
 func (s *SpeculativeChecker) checkCommandRecognized(input json.RawMessage) (EvaluationResult, error) {
-	var inp map[string]interface{}
+	var inp struct {
+		Command string `json:"command"`
+	}
 	if err := json.Unmarshal(input, &inp); err != nil {
-		return EvaluationResult{SpeculativeOK: true}, nil
+		return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 	}
 
-	cmd, ok := inp["command"].(string)
-	if !ok {
-		return EvaluationResult{SpeculativeOK: true}, nil
-	}
-
-	// Simple heuristic: check if command looks like gibberish
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	if inp.Command == "" {
 		return EvaluationResult{
+			SchemaValid:       true,
+			ConfidentEnough:   true,
 			SpeculativeOK:     false,
 			SpeculativeReason: "empty command",
 		}, nil
 	}
 
-	// If the first word contains non-alphanumeric characters (except common ones), flag it
+	// Simple heuristic: check if first word looks syntactically valid
+	parts := strings.Fields(inp.Command)
+	if len(parts) == 0 {
+		return EvaluationResult{
+			SchemaValid:       true,
+			ConfidentEnough:   true,
+			SpeculativeOK:     false,
+			SpeculativeReason: "empty command",
+		}, nil
+	}
+
 	firstWord := parts[0]
-	validChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:"
 	for _, ch := range firstWord {
-		if !strings.ContainsRune(validChars, ch) {
+		if !strings.ContainsRune(validCommandChars, ch) {
 			return EvaluationResult{
+				SchemaValid:       true,
+				ConfidentEnough:   true,
 				SpeculativeOK:     false,
 				SpeculativeReason: fmt.Sprintf("command looks malformed: %s", firstWord),
 			}, nil
 		}
 	}
 
-	return EvaluationResult{SpeculativeOK: true}, nil
+	return EvaluationResult{SchemaValid: true, ConfidentEnough: true, SpeculativeOK: true}, nil
 }

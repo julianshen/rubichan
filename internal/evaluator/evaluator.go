@@ -83,7 +83,9 @@ func (v *SchemaValidator) Evaluate(ctx context.Context, req EvaluationRequest) (
 	if !found {
 		// Unknown tools pass validation (assume they handle their own schema)
 		return EvaluationResult{
-			SchemaValid: true,
+			SchemaValid:     true,
+			ConfidentEnough: true,
+			SpeculativeOK:   true,
 		}, nil
 	}
 
@@ -107,7 +109,9 @@ func (v *SchemaValidator) Evaluate(ctx context.Context, req EvaluationRequest) (
 	}
 
 	return EvaluationResult{
-		SchemaValid: true,
+		SchemaValid:     true,
+		ConfidentEnough: true,
+		SpeculativeOK:   true,
 	}, nil
 }
 
@@ -122,28 +126,31 @@ func NewCompositeEvaluator(evals ...Evaluator) *CompositeEvaluator {
 	return &CompositeEvaluator{evaluators: evals}
 }
 
-// Evaluate runs each evaluator in sequence, accumulating results.
+// Evaluate runs each evaluator in sequence, ensuring all checks pass.
+// Returns approval only if ALL evaluators pass their checks (AND logic).
 func (c *CompositeEvaluator) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error) {
-	accumulated := EvaluationResult{}
+	accumulated := EvaluationResult{
+		SchemaValid:     true,
+		ConfidentEnough: true,
+		SpeculativeOK:   true,
+	}
 	for _, e := range c.evaluators {
 		result, err := e.Evaluate(ctx, req)
 		if err != nil {
 			return EvaluationResult{}, fmt.Errorf("evaluator failed: %w", err)
 		}
-		// Merge results: collect all checks from all evaluators
-		if result.SchemaValid {
-			accumulated.SchemaValid = true
-		} else if !accumulated.SchemaValid && result.SchemaError != "" {
+		// Merge results: ALL checks must pass (AND logic)
+		accumulated.SchemaValid = accumulated.SchemaValid && result.SchemaValid
+		if !result.SchemaValid && accumulated.SchemaError == "" {
 			accumulated.SchemaError = result.SchemaError
 		}
-		if result.ConfidentEnough {
-			accumulated.ConfidentEnough = true
-		} else if !accumulated.ConfidentEnough {
+		accumulated.ConfidentEnough = accumulated.ConfidentEnough && result.ConfidentEnough
+		// Keep lowest confidence score
+		if result.ConfidenceScore < accumulated.ConfidenceScore {
 			accumulated.ConfidenceScore = result.ConfidenceScore
 		}
-		if result.SpeculativeOK {
-			accumulated.SpeculativeOK = true
-		} else if !accumulated.SpeculativeOK && result.SpeculativeReason != "" {
+		accumulated.SpeculativeOK = accumulated.SpeculativeOK && result.SpeculativeOK
+		if !result.SpeculativeOK && accumulated.SpeculativeReason == "" {
 			accumulated.SpeculativeReason = result.SpeculativeReason
 		}
 	}

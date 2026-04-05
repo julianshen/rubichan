@@ -18,14 +18,14 @@ func TestVerdictHistoryRecordsSuccess(t *testing.T) {
 	hist.Record(session.Verdict{
 		ToolName:  "shell",
 		Command:   "ls",
-		Status:    "success",
+		Status:    session.VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 
 	verdicts := hist.Verdicts()
 	assert.Len(t, verdicts, 1)
 	assert.Equal(t, "shell", verdicts[0].ToolName)
-	assert.Equal(t, "success", verdicts[0].Status)
+	assert.Equal(t, session.VerdictStatusSuccess, verdicts[0].Status)
 }
 
 func TestVerdictHistoryLimitedSize(t *testing.T) {
@@ -35,7 +35,7 @@ func TestVerdictHistoryLimitedSize(t *testing.T) {
 		hist.Record(session.Verdict{
 			ToolName:  "shell",
 			Command:   "echo",
-			Status:    "success",
+			Status:    session.VerdictStatusSuccess,
 			Timestamp: time.Now(),
 		})
 	}
@@ -49,19 +49,19 @@ func TestVerdictHistorySummaryByTool(t *testing.T) {
 	hist.Record(session.Verdict{
 		ToolName:  "shell",
 		Command:   "ls",
-		Status:    "success",
+		Status:    session.VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
 		ToolName:  "shell",
 		Command:   "cd /nonexistent",
-		Status:    "error",
+		Status:    session.VerdictStatusError,
 		Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
 		ToolName:  "read_file",
 		Command:   "read",
-		Status:    "success",
+		Status:    session.VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 

@@ -35,7 +35,9 @@ func (c *ConfidenceEvaluator) Evaluate(ctx context.Context, req EvaluationReques
 	if !isHighRisk {
 		// Safe tools get high confidence by default
 		return EvaluationResult{
+			SchemaValid:     true, // Not checked by confidence evaluator; pass-through
 			ConfidentEnough: true,
+			SpeculativeOK:   true, // Not checked by confidence evaluator; pass-through
 			ConfidenceScore: 0.95,
 		}, nil
 	}
@@ -55,7 +57,9 @@ func (c *ConfidenceEvaluator) Evaluate(ctx context.Context, req EvaluationReques
 	}
 
 	return EvaluationResult{
+		SchemaValid:     true, // Not checked by confidence evaluator; pass-through
 		ConfidentEnough: score >= c.config.Threshold,
+		SpeculativeOK:   true, // Not checked by confidence evaluator; pass-through
 		ConfidenceScore: score,
 	}, nil
 }

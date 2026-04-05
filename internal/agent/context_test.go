@@ -289,13 +289,13 @@ func TestVerdictContextBlockSingleTool(t *testing.T) {
 	hist.Record(session.Verdict{
 		ToolName:  "shell",
 		Command:   "go test",
-		Status:    "success",
+		Status:    session.VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
 		ToolName:    "shell",
 		Command:     "go build",
-		Status:      "error",
+		Status:      session.VerdictStatusError,
 		ErrorReason: "build failed",
 		Timestamp:   time.Now(),
 	})
@@ -312,21 +312,21 @@ func TestVerdictContextBlockMultipleTools(t *testing.T) {
 
 	// Shell verdicts: 3 total, 2 success = 67%
 	hist.Record(session.Verdict{
-		ToolName: "shell", Status: "success", Timestamp: time.Now(),
+		ToolName: "shell", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
-		ToolName: "shell", Status: "success", Timestamp: time.Now(),
+		ToolName: "shell", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
-		ToolName: "shell", Status: "error", Timestamp: time.Now(),
+		ToolName: "shell", Status: session.VerdictStatusError, Timestamp: time.Now(),
 	})
 
 	// File verdicts: 2 total, 2 success = 100%
 	hist.Record(session.Verdict{
-		ToolName: "file", Status: "success", Timestamp: time.Now(),
+		ToolName: "file", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
-		ToolName: "file", Status: "success", Timestamp: time.Now(),
+		ToolName: "file", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
 	})
 
 	result := VerdictContextBlock(hist)
@@ -342,10 +342,10 @@ func TestVerdictContextBlockMultipleTools(t *testing.T) {
 func TestVerdictContextBlockAllFailures(t *testing.T) {
 	hist := session.NewVerdictHistory()
 	hist.Record(session.Verdict{
-		ToolName: "broken_tool", Status: "error", Timestamp: time.Now(),
+		ToolName: "broken_tool", Status: session.VerdictStatusError, Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
-		ToolName: "broken_tool", Status: "timeout", Timestamp: time.Now(),
+		ToolName: "broken_tool", Status: session.VerdictStatusTimeout, Timestamp: time.Now(),
 	})
 
 	result := VerdictContextBlock(hist)

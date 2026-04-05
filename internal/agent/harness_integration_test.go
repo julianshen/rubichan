@@ -65,7 +65,7 @@ func TestPhase2HarnessIntegration_VerdictHistoryTracksOutcomes(t *testing.T) {
 	state.VerdictHistory().Record(session.Verdict{
 		ToolName:  "shell",
 		Command:   "ls",
-		Status:    "success",
+		Status:    session.VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 
@@ -73,7 +73,7 @@ func TestPhase2HarnessIntegration_VerdictHistoryTracksOutcomes(t *testing.T) {
 	state.VerdictHistory().Record(session.Verdict{
 		ToolName:    "shell",
 		Command:     "cd /nonexistent",
-		Status:      "error",
+		Status:      session.VerdictStatusError,
 		ErrorReason: "directory not found",
 		Timestamp:   time.Now(),
 	})
@@ -84,8 +84,8 @@ func TestPhase2HarnessIntegration_VerdictHistoryTracksOutcomes(t *testing.T) {
 	// Verdicts should persist
 	verdicts := state.VerdictHistory().Verdicts()
 	assert.Len(t, verdicts, 2)
-	assert.Equal(t, "success", verdicts[0].Status)
-	assert.Equal(t, "error", verdicts[1].Status)
+	assert.Equal(t, session.VerdictStatusSuccess, verdicts[0].Status)
+	assert.Equal(t, session.VerdictStatusError, verdicts[1].Status)
 
 	// Summary should show success rates
 	summary := state.VerdictHistory().SummaryByTool()
@@ -101,19 +101,19 @@ func TestPhase2HarnessIntegration_VerdictContextExposedToAgent(t *testing.T) {
 	hist.Record(session.Verdict{
 		ToolName:  "shell",
 		Command:   "ls",
-		Status:    "success",
+		Status:    session.VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
 		ToolName:  "shell",
 		Command:   "cd /nonexistent",
-		Status:    "error",
+		Status:    session.VerdictStatusError,
 		Timestamp: time.Now(),
 	})
 	hist.Record(session.Verdict{
 		ToolName:  "read_file",
 		Command:   "read /etc/passwd",
-		Status:    "success",
+		Status:    session.VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 
@@ -250,7 +250,7 @@ func TestPhase2HarnessIntegration_FullStackTurnExecution(t *testing.T) {
 			state.VerdictHistory().Record(session.Verdict{
 				ToolName:  evt.ToolCall.Name,
 				Command:   string(evt.ToolCall.Input),
-				Status:    "success",
+				Status:    session.VerdictStatusSuccess,
 				Timestamp: time.Now(),
 			})
 		}

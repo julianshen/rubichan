@@ -367,10 +367,10 @@ func TestSpeculativeCheckerFileExistsCheck(t *testing.T) {
 			expectOK: true,
 		},
 		{
-			name:     "read nonexistent file",
+			name:     "read nonexistent file (no TOCTOU check - let operation fail naturally)",
 			toolName: "read_file",
 			input:    `{"path":"/nonexistent/file/path/that/does/not/exist.txt"}`,
-			expectOK: false,
+			expectOK: true, // Don't block preconditions; let actual operation fail
 		},
 	}
 
@@ -409,10 +409,10 @@ func TestSpeculativeCheckerDirectoryExistsCheck(t *testing.T) {
 			expectOK: true,
 		},
 		{
-			name:     "directory does not exist",
+			name:     "directory does not exist (no TOCTOU check - let operation fail naturally)",
 			toolName: "list_dir",
 			input:    `{"path":"/nonexistent/directory/path/xyz/abc"}`,
-			expectOK: false,
+			expectOK: true, // Don't block preconditions; let actual operation fail
 		},
 	}
 

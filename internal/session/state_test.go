@@ -544,7 +544,7 @@ func TestStateRecordsToolVerdicts(t *testing.T) {
 	v := Verdict{
 		ToolName:  "shell",
 		Command:   "ls",
-		Status:    "success",
+		Status:    VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	}
 	s.VerdictHistory().Record(v)
@@ -561,7 +561,7 @@ func TestStatePreservesVerdictHistoryAcrossPrompts(t *testing.T) {
 	s.VerdictHistory().Record(Verdict{
 		ToolName:  "shell",
 		Command:   "ls",
-		Status:    "success",
+		Status:    VerdictStatusSuccess,
 		Timestamp: time.Now(),
 	})
 

@@ -269,8 +269,13 @@ func hasToolUse(msg provider.Message) bool {
 }
 
 // VerdictContextBlock formats recent tool verdicts for agent awareness.
-// It returns a formatted string with success rates by tool, or an empty string
-// if history is nil or empty (no context to add).
+// Format (example):
+//
+//	Recent tool execution outcomes:
+//	- shell: 42 total, 95% success rate
+//	- file: 18 total, 100% success rate
+//
+// Returns an empty string if history is nil or empty (no context to add).
 func VerdictContextBlock(verdictHist *session.VerdictHistory) string {
 	if verdictHist == nil {
 		return ""
