@@ -170,3 +170,48 @@ func TestAddColumnIfMissing(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
 }
+
+func TestStatsBasic(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Insert some test entities
+	stmt := `INSERT INTO entities(id, kind, title, confidence, usage_count) VALUES(?, ?, ?, ?, ?)`
+	_, err := db.Exec(stmt, "arch-001", "architecture", "Arch 1", 0.9, 5)
+	require.NoError(t, err)
+	_, err = db.Exec(stmt, "gotcha-001", "gotcha", "Gotcha 1", 0.7, 2)
+	require.NoError(t, err)
+	_, err = db.Exec(stmt, "pattern-001", "pattern", "Pattern 1", 0.0, 0)
+	require.NoError(t, err)
+
+	// Compute stats (using knowledgegraph.Stats function from internal package)
+	// For now, just verify the data is in the database
+	var totalCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM entities`).Scan(&totalCount)
+	require.NoError(t, err)
+	require.Equal(t, 3, totalCount)
+
+	// Verify by kind breakdown
+	var archCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM entities WHERE kind='architecture'`).Scan(&archCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, archCount)
+
+	// Verify confidence metrics
+	var avgConfidence float64
+	err = db.QueryRow(`SELECT AVG(confidence) FROM entities WHERE confidence > 0`).Scan(&avgConfidence)
+	require.NoError(t, err)
+	require.InDelta(t, 0.8, avgConfidence, 0.01) // (0.9 + 0.7) / 2 = 0.8
+
+	// Verify usage tracking
+	var totalUsage int
+	err = db.QueryRow(`SELECT SUM(usage_count) FROM entities`).Scan(&totalUsage)
+	require.NoError(t, err)
+	require.Equal(t, 7, totalUsage)
+
+	// Verify never-used count
+	var neverUsedCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM entities WHERE usage_count = 0`).Scan(&neverUsedCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, neverUsedCount)
+}

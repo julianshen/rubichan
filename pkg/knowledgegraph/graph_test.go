@@ -46,6 +46,10 @@ func (m *mockGraph) LintGraph(ctx context.Context) (*LintReport, error) {
 	return nil, nil
 }
 
+func (m *mockGraph) Stats(ctx context.Context) (*KnowledgeStats, error) {
+	return nil, nil
+}
+
 func (m *mockGraph) Close() error {
 	return nil
 }
