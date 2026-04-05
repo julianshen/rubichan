@@ -9,12 +9,12 @@ import (
 
 func TestEntity(t *testing.T) {
 	e := &Entity{
-		ID:    "test-001",
-		Kind:  KindArchitecture,
-		Title: "Test Architecture",
-		Tags:  []string{"test", "architecture"},
-		Body:  "This is a test entity body.",
-		Source: SourceManual,
+		ID:      "test-001",
+		Kind:    KindArchitecture,
+		Title:   "Test Architecture",
+		Tags:    []string{"test", "architecture"},
+		Body:    "This is a test entity body.",
+		Source:  SourceManual,
 		Created: time.Now(),
 		Updated: time.Now(),
 		Relationships: []Relationship{
@@ -63,4 +63,39 @@ func TestUpdateSources(t *testing.T) {
 		SourceFile,
 	}
 	require.Len(t, sources, 4)
+}
+
+func TestEntityLayerConstants(t *testing.T) {
+	// Verify all layer constants are defined and non-empty
+	layers := []EntityLayer{
+		EntityLayerBase,
+		EntityLayerTeam,
+		EntityLayerSession,
+	}
+
+	for _, layer := range layers {
+		require.NotEmpty(t, layer)
+	}
+
+	// Verify specific values
+	require.Equal(t, EntityLayer("base"), EntityLayerBase)
+	require.Equal(t, EntityLayer("team"), EntityLayerTeam)
+	require.Equal(t, EntityLayer("session"), EntityLayerSession)
+}
+
+func TestEntityHasLayerField(t *testing.T) {
+	e := &Entity{
+		ID:    "test-001",
+		Kind:  KindArchitecture,
+		Title: "Test Architecture",
+		Layer: EntityLayerBase,
+	}
+
+	require.Equal(t, EntityLayerBase, e.Layer)
+
+	e.Layer = EntityLayerTeam
+	require.Equal(t, EntityLayerTeam, e.Layer)
+
+	e.Layer = EntityLayerSession
+	require.Equal(t, EntityLayerSession, e.Layer)
 }

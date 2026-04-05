@@ -36,6 +36,15 @@ const (
 	SourceFile   UpdateSource = "file" // AGENT.md / CLAUDE.md ingest
 )
 
+// EntityLayer organizes entities by scope.
+type EntityLayer string
+
+const (
+	EntityLayerBase    EntityLayer = "base"
+	EntityLayerTeam    EntityLayer = "team"
+	EntityLayerSession EntityLayer = "session"
+)
+
 // Relationship is a directed edge between two entities.
 type Relationship struct {
 	Kind   RelationshipKind `yaml:"kind"`
@@ -47,6 +56,7 @@ type Relationship struct {
 type Entity struct {
 	ID            string
 	Kind          EntityKind
+	Layer         EntityLayer // "" treated as base; git-committed in frontmatter
 	Title         string
 	Tags          []string
 	Body          string
@@ -55,8 +65,8 @@ type Entity struct {
 	Created       time.Time
 	Updated       time.Time
 	// Lifecycle fields (user-editable, in frontmatter)
-	Version    string    // optional user-set version label
-	Confidence float64   // 0.0 = unset, 1.0 = high confidence
+	Version    string  // optional user-set version label
+	Confidence float64 // 0.0 = unset, 1.0 = high confidence
 	// Runtime metrics (SQLite-only, not committed)
 	UsageCount int       // times entity was returned in query results
 	LastUsed   time.Time // last time entity was injected into a prompt
