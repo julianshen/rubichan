@@ -598,6 +598,55 @@ func (g *KnowledgeGraph) Stats(ctx context.Context) (*kg.KnowledgeStats, error) 
 	return stats, nil
 }
 
+// RecordEntityMentions scans responseText for entity IDs/titles from the knowledge
+// graph and increments their query_hit_count. This tracks which entities were
+// actually referenced in the assistant's response, not just injected.
+// This is a lightweight scan — O(n_entities * response_length).
+func (g *KnowledgeGraph) RecordEntityMentions(ctx context.Context, responseText string) error {
+	// Query all entity IDs and titles to scan for mentions
+	rows, err := g.db.QueryContext(ctx, `SELECT id, title FROM entities`)
+	if err != nil {
+		return fmt.Errorf("RecordEntityMentions: query entities: %w", err)
+	}
+	defer rows.Close()
+
+	mentioned := make(map[string]bool) // Track which entities we've already bumped
+
+	for rows.Next() {
+		var id, title string
+		if err := rows.Scan(&id, &title); err != nil {
+			return err
+		}
+
+		// Skip if already recorded for this response
+		if mentioned[id] {
+			continue
+		}
+
+		// Simple substring search for ID (e.g., "arch-001") or title in response
+		// Uses case-insensitive search
+		idLower := strings.ToLower(id)
+		titleLower := strings.ToLower(title)
+		responseLower := strings.ToLower(responseText)
+
+		if strings.Contains(responseLower, idLower) || strings.Contains(responseLower, titleLower) {
+			// Bump query_hit_count for this entity
+			_, err := g.db.ExecContext(ctx, `
+				INSERT INTO entity_stats(entity_id, query_hit_count)
+				VALUES(?, 1)
+				ON CONFLICT(entity_id) DO UPDATE SET
+					query_hit_count = query_hit_count + 1
+			`, id)
+			if err != nil {
+				return fmt.Errorf("RecordEntityMentions: update %s: %w", id, err)
+			}
+			mentioned[id] = true
+		}
+	}
+
+	return rows.Err()
+}
+
 // Close closes the database connection.
 func (g *KnowledgeGraph) Close() error {
 	return g.db.Close()

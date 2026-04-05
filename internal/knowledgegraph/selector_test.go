@@ -168,3 +168,78 @@ func TestNewContextSelectorReturnsInterface(t *testing.T) {
 	// Verify it implements the interface
 	var _ kg.ContextSelector = selector
 }
+
+func TestRecordUsage(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Add test entities
+	e1 := &kg.Entity{
+		ID:      "entity-1",
+		Kind:    kg.KindArchitecture,
+		Title:   "Entity 1",
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+	err = g.Put(context.Background(), e1)
+	require.NoError(t, err)
+
+	e2 := &kg.Entity{
+		ID:      "entity-2",
+		Kind:    kg.KindDecision,
+		Title:   "Entity 2",
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+	err = g.Put(context.Background(), e2)
+	require.NoError(t, err)
+
+	selector := NewContextSelector(g.(*KnowledgeGraph))
+
+	// Record usage for two entities
+	entities := []kg.ScoredEntity{
+		{Entity: e1, Score: 0.9, EstimatedTokens: 50},
+		{Entity: e2, Score: 0.8, EstimatedTokens: 60},
+	}
+
+	err = selector.RecordUsage(context.Background(), entities)
+	require.NoError(t, err)
+
+	// Verify metrics were recorded
+	var count int
+	err = g.(*KnowledgeGraph).db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM entity_stats WHERE entity_id IN ('entity-1', 'entity-2')`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+
+	// Verify injection_count was incremented
+	var injectionCount int
+	err = g.(*KnowledgeGraph).db.QueryRowContext(context.Background(),
+		`SELECT injection_count FROM entity_stats WHERE entity_id='entity-1'`).Scan(&injectionCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, injectionCount)
+
+	// Record usage again for entity-1
+	entities = []kg.ScoredEntity{
+		{Entity: e1, Score: 0.9, EstimatedTokens: 50},
+	}
+	err = selector.RecordUsage(context.Background(), entities)
+	require.NoError(t, err)
+
+	// Verify injection_count was incremented to 2
+	err = g.(*KnowledgeGraph).db.QueryRowContext(context.Background(),
+		`SELECT injection_count FROM entity_stats WHERE entity_id='entity-1'`).Scan(&injectionCount)
+	require.NoError(t, err)
+	require.Equal(t, 2, injectionCount)
+
+	// Verify last_accessed_at was updated
+	var lastAccessed string
+	err = g.(*KnowledgeGraph).db.QueryRowContext(context.Background(),
+		`SELECT last_accessed_at FROM entity_stats WHERE entity_id='entity-1'`).Scan(&lastAccessed)
+	require.NoError(t, err)
+	require.NotEmpty(t, lastAccessed)
+}

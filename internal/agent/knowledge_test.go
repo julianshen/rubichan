@@ -20,6 +20,10 @@ func (m *mockSelector) Select(ctx context.Context, query string, budget int) ([]
 	return m.results, m.err
 }
 
+func (m *mockSelector) RecordUsage(ctx context.Context, entities []kg.ScoredEntity) error {
+	return nil // no-op for testing
+}
+
 func TestWithKnowledgeGraph(t *testing.T) {
 	selector := &mockSelector{}
 	opt := WithKnowledgeGraph(selector)
@@ -197,6 +201,10 @@ func (b *budgetCapturingSelector) Select(ctx context.Context, query string, budg
 	b.selectCalled = true
 	b.capturedBudget = budget
 	return b.results, nil
+}
+
+func (b *budgetCapturingSelector) RecordUsage(ctx context.Context, entities []kg.ScoredEntity) error {
+	return nil // no-op for testing
 }
 
 func TestBuildSystemPromptBudgetPassedToSelector(t *testing.T) {

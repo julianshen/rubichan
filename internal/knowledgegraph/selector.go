@@ -35,3 +35,29 @@ func (s *contextSelector) Select(ctx context.Context, query string, budget int) 
 
 	return results, nil
 }
+
+// RecordUsage updates metrics for injected entities: increments injection_count
+// and updates last_accessed_at for each entity. This tracks which entities are
+// actually being used in prompts, enabling the knowledge graph to learn which
+// entities are most valuable.
+func (s *contextSelector) RecordUsage(ctx context.Context, entities []kg.ScoredEntity) error {
+	if len(entities) == 0 {
+		return nil
+	}
+
+	for _, se := range entities {
+		// Ensure entity_stats row exists, then update metrics
+		_, err := s.g.db.ExecContext(ctx, `
+			INSERT INTO entity_stats(entity_id, injection_count, last_accessed_at)
+			VALUES(?, 1, datetime('now'))
+			ON CONFLICT(entity_id) DO UPDATE SET
+				injection_count = injection_count + 1,
+				last_accessed_at = datetime('now')
+		`, se.Entity.ID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
