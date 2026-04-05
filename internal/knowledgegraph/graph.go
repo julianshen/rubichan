@@ -91,6 +91,10 @@ kinds:
   - pattern
   - module
   - integration
+layers:
+  base: Shared project patterns (git-committed, applies to all contexts)
+  team: Team-specific conventions (git-committed, scoped to team)
+  session: Ephemeral session findings (local only, not committed)
 relationships:
   - justifies
   - relates-to
@@ -98,6 +102,11 @@ relationships:
   - supersedes
   - conflicts-with
   - implements
+fields:
+  layer: Entity scope (base|team|session, default: base) - determines visibility and persistence
+  confidence: Certainty score 0.0-1.0 where 1.0 is high confidence (0.0 = unset)
+  version: Optional user-set version label for tracking changes
+  tags: Labels for organizing and filtering entities
 `
 			if err := os.WriteFile(schemaPath, []byte(schemaContent), 0o644); err != nil {
 				return nil, fmt.Errorf("Open: writing schema.yaml: %w", err)

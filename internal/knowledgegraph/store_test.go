@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
@@ -311,6 +313,26 @@ func TestStatsBasic(t *testing.T) {
 	err = db.QueryRow(`SELECT COUNT(*) FROM entities WHERE usage_count = 0`).Scan(&neverUsedCount)
 	require.NoError(t, err)
 	require.Equal(t, 1, neverUsedCount)
+}
+
+func TestOpenGraphSchemaYamlHasLayersSection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Open a graph to trigger schema.yaml creation
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Read schema.yaml and verify it contains layers section
+	schemaPath := filepath.Join(tmpDir, ".knowledge", "schema.yaml")
+	content, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+
+	schemaStr := string(content)
+	require.Contains(t, schemaStr, "layers:", "schema.yaml should contain layers section")
+	require.Contains(t, schemaStr, "base:", "schema.yaml should document base layer")
+	require.Contains(t, schemaStr, "team:", "schema.yaml should document team layer")
+	require.Contains(t, schemaStr, "session:", "schema.yaml should document session layer")
 }
 
 func TestStatsHasLayerBreakdown(t *testing.T) {
