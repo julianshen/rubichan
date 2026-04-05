@@ -184,17 +184,17 @@ func runShell() error {
 	rawReader := shell.NewRawLineReaderWithIO(completer, os.Stdin, os.Stdout, os.Stderr)
 
 	host := shell.NewShellHost(shell.ShellHostConfig{
-		WorkDir:        cwd,
-		HomeDir:        homeDir,
-		AgentTurn:      makeAgentTurnFunc(a),
-		ShellExec:      makeShellExecFunc(registry),
-		SlashCommandFn: makeSlashCommandFunc(cmdRegistry),
-		Executables:    executables,
-		Stdin:          os.Stdin,
-		Stdout:         os.Stdout,
-		Stderr:         os.Stderr,
-		GitBranchFn:    gitBranchFn,
-		LineReader:     rawReader,
+		WorkDir:          cwd,
+		HomeDir:          homeDir,
+		AgentTurn:        makeAgentTurnFunc(a),
+		ShellExec:        makeShellExecFunc(registry),
+		SlashCommandFn:   makeSlashCommandFunc(cmdRegistry),
+		Executables:      executables,
+		Stdin:            os.Stdin,
+		Stdout:           os.Stdout,
+		Stderr:           os.Stderr,
+		GitBranchFn:      gitBranchFn,
+		LineReader:       rawReader,
 		ScriptApprovalFn: makeHuhScriptApprovalFunc(),
 	})
 

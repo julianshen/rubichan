@@ -8,6 +8,18 @@ import (
 	"golang.org/x/term"
 )
 
+// Control character constants
+const (
+	keyEsc    = 0x1b
+	keyBacksp = 0x08
+	keyDel    = 0x7f
+	keyCtrlA  = 0x01
+	keyCtrlE  = 0x05
+	keyCtrlU  = 0x15
+	keyCtrlW  = 0x17
+	keyCtrlC  = 0x03
+)
+
 // inputMode represents the input mode (auto-detect, force shell, force query).
 type inputMode int
 
@@ -44,22 +56,24 @@ func (m inputMode) prefix() string {
 // RawLineReader provides interactive line editing with tab completion and mode switching.
 // It uses golang.org/x/term to put stdin in raw mode and handles character-by-character input.
 type RawLineReader struct {
-	fd         int
-	completer  *Completer
-	history    *CommandHistory
-	historyIdx int
-	mode       inputMode
+	fd        int
+	completer *Completer
+	history   *CommandHistory
+	mode      inputMode
 
 	// Current line buffer and cursor position
 	buf    []rune
 	cursor int
 
+	// Completion state
+	completions        []Completion
+	completionIdx      int
+	inCompletionMode   bool
+	lastCompletionRows int // Track menu height for clearing
+
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
-
-	// Original terminal state
-	oldState *term.State
 }
 
 // NewRawLineReader creates a new line reader with tab completion and raw mode editing.
@@ -102,7 +116,6 @@ func (lr *RawLineReader) ReadLine(prompt string) (string, error) {
 	}
 	defer term.Restore(lr.fd, oldState)
 
-	lr.oldState = oldState
 	lr.buf = []rune{}
 	lr.cursor = 0
 
@@ -159,8 +172,17 @@ func (lr *RawLineReader) ReadLine(prompt string) (string, error) {
 func (lr *RawLineReader) handleControlKey(key keyEvent, prompt string) keyResult {
 	switch key.code {
 	case keyEnter:
+		// If in completion mode, select current completion
+		if lr.inCompletionMode && len(lr.completions) > 0 {
+			lr.selectCompletion(lr.completions[lr.completionIdx])
+			return keyNotHandled
+		}
 		return keySubmit
 	case keyBackspace:
+		// Cancel completion menu on edit
+		if lr.inCompletionMode {
+			lr.dismissCompletion()
+		}
 		if lr.cursor > 0 {
 			lr.cursor--
 			lr.buf = append(lr.buf[:lr.cursor], lr.buf[lr.cursor+1:]...)
@@ -182,49 +204,63 @@ func (lr *RawLineReader) handleControlKey(key keyEvent, prompt string) keyResult
 	case keyControlW:
 		// Delete word backwards
 		if lr.cursor > 0 {
+			startPos := lr.cursor
 			// Skip whitespace
 			for lr.cursor > 0 && lr.buf[lr.cursor-1] == ' ' {
 				lr.cursor--
 			}
-			// Delete word
+			// Delete word (move cursor past the word)
 			for lr.cursor > 0 && lr.buf[lr.cursor-1] != ' ' {
 				lr.cursor--
 			}
-			lr.buf = append(lr.buf[:lr.cursor], lr.buf[lr.cursor+len(lr.buf):]...)
+			// Remove deleted portion from buffer
+			lr.buf = append(lr.buf[:lr.cursor], lr.buf[startPos:]...)
 		}
 	case keyControlC:
 		// Interrupt (Ctrl+C) — clear input and stay in prompt
 		lr.buf = []rune{}
 		lr.cursor = 0
 	case keyArrowUp:
-		entries := lr.history.Entries()
-		lr.historyIdx++
-		if lr.historyIdx > len(entries) {
-			lr.historyIdx = len(entries)
+		// If in completion mode, navigate up in completions
+		if lr.inCompletionMode && len(lr.completions) > 0 {
+			lr.completionIdx = (lr.completionIdx - 1 + len(lr.completions)) % len(lr.completions)
+			return keyNotHandled
 		}
-		if lr.historyIdx > 0 && len(entries) > 0 {
-			item := entries[len(entries)-lr.historyIdx]
+		// Otherwise, navigate history
+		item, ok := lr.history.Previous()
+		if ok {
 			lr.buf = []rune(item)
 			lr.cursor = len(lr.buf)
 		}
 	case keyArrowDown:
-		entries := lr.history.Entries()
-		if lr.historyIdx > 0 && len(entries) > 0 {
-			lr.historyIdx--
-			if lr.historyIdx == 0 {
-				lr.buf = []rune{}
-				lr.cursor = 0
-			} else {
-				item := entries[len(entries)-lr.historyIdx]
-				lr.buf = []rune(item)
-				lr.cursor = len(lr.buf)
-			}
+		// If in completion mode, navigate down in completions
+		if lr.inCompletionMode && len(lr.completions) > 0 {
+			lr.completionIdx = (lr.completionIdx + 1) % len(lr.completions)
+			return keyNotHandled
+		}
+		// Otherwise, navigate history
+		item, ok := lr.history.Next()
+		if ok {
+			lr.buf = []rune(item)
+			lr.cursor = len(lr.buf)
+		} else {
+			// Past the end of history
+			lr.buf = []rune{}
+			lr.cursor = 0
 		}
 	case keyArrowLeft:
+		if lr.inCompletionMode {
+			lr.dismissCompletion()
+			return keyNotHandled
+		}
 		if lr.cursor > 0 {
 			lr.cursor--
 		}
 	case keyArrowRight:
+		if lr.inCompletionMode {
+			lr.dismissCompletion()
+			return keyNotHandled
+		}
 		if lr.cursor < len(lr.buf) {
 			lr.cursor++
 		}
@@ -233,7 +269,12 @@ func (lr *RawLineReader) handleControlKey(key keyEvent, prompt string) keyResult
 	case keyEnd:
 		lr.cursor = len(lr.buf)
 	case keyEscape:
-		// Clear input on Escape
+		// If in completion mode, dismiss the menu
+		if lr.inCompletionMode {
+			lr.dismissCompletion()
+			return keyNotHandled
+		}
+		// Otherwise, clear input on Escape
 		lr.buf = []rune{}
 		lr.cursor = 0
 	}
@@ -243,16 +284,80 @@ func (lr *RawLineReader) handleControlKey(key keyEvent, prompt string) keyResult
 
 // handleTab processes Tab key for mode switching and completion.
 func (lr *RawLineReader) handleTab() {
-	// If buffer is empty, try to get completions
-	if len(lr.buf) == 0 {
+	// If already in completion mode, cycle to next completion
+	if lr.inCompletionMode && len(lr.completions) > 0 {
+		lr.completionIdx = (lr.completionIdx + 1) % len(lr.completions)
 		return
 	}
 
-	// If buffer is non-empty, cycle mode on Tab
-	if len(lr.buf) > 0 {
-		lr.mode = (lr.mode + 1) % 3
+	// Try to get completions for current input
+	completions := lr.completer.Complete(string(lr.buf), lr.cursor)
+
+	if len(completions) == 0 {
+		// No completions available, cycle mode if buffer is non-empty
+		if len(lr.buf) > 0 {
+			lr.mode = (lr.mode + 1) % 3
+		}
 		return
 	}
+
+	if len(completions) == 1 {
+		// Single completion: inline complete immediately
+		lr.selectCompletion(completions[0])
+		return
+	}
+
+	// Multiple completions: enter completion mode
+	lr.completions = completions
+	lr.completionIdx = 0
+	lr.inCompletionMode = true
+}
+
+// clearCompletionMenu clears the completion menu from the display.
+func (lr *RawLineReader) clearCompletionMenu() {
+	if lr.lastCompletionRows > 0 {
+		for i := 0; i < lr.lastCompletionRows; i++ {
+			io.WriteString(lr.stdout, "\033[B\033[K") // Move down and clear line
+		}
+		for i := 0; i < lr.lastCompletionRows; i++ {
+			io.WriteString(lr.stdout, "\033[A") // Move back up
+		}
+		lr.lastCompletionRows = 0
+	}
+}
+
+// dismissCompletion exits completion mode and clears the menu.
+func (lr *RawLineReader) dismissCompletion() {
+	lr.clearCompletionMenu()
+	lr.inCompletionMode = false
+	lr.completions = nil
+	lr.completionIdx = 0
+}
+
+// selectCompletion applies a completion to the buffer.
+func (lr *RawLineReader) selectCompletion(c Completion) {
+	lr.clearCompletionMenu()
+
+	// Replace current word with completion
+	// Find the start of the current word (last space)
+	wordStart := 0
+	for i := lr.cursor - 1; i >= 0; i-- {
+		if lr.buf[i] == ' ' {
+			wordStart = i + 1
+			break
+		}
+	}
+
+	// Build new buffer: everything before word start + completion text
+	prefix := lr.buf[:wordStart]
+	suffix := []rune(c.Text)
+	lr.buf = append(prefix, suffix...)
+	lr.cursor = len(lr.buf)
+
+	// Clear completion mode
+	lr.inCompletionMode = false
+	lr.completions = nil
+	lr.completionIdx = 0
 }
 
 // insertChar inserts a character at the cursor position.
@@ -288,6 +393,54 @@ func (lr *RawLineReader) renderPrompt(prompt string) {
 			io.WriteString(lr.stdout, "\033[D")
 		}
 	}
+
+	// Render completion menu if in completion mode
+	if lr.inCompletionMode && len(lr.completions) > 0 {
+		lr.renderCompletionMenu()
+	}
+}
+
+// renderCompletionMenu renders the completion candidate list below the input.
+func (lr *RawLineReader) renderCompletionMenu() {
+	// Clear previous menu if it exists
+	if lr.lastCompletionRows > 0 {
+		for i := 0; i < lr.lastCompletionRows; i++ {
+			io.WriteString(lr.stdout, "\033[B\033[K") // Move down and clear line
+		}
+		for i := 0; i < lr.lastCompletionRows; i++ {
+			io.WriteString(lr.stdout, "\033[A") // Move back up
+		}
+	}
+
+	// Max items to show (avoid filling screen)
+	maxItems := 5
+	if len(lr.completions) < maxItems {
+		maxItems = len(lr.completions)
+	}
+
+	// Go to next line and render completions
+	io.WriteString(lr.stdout, "\n")
+	for i := 0; i < maxItems; i++ {
+		if i == lr.completionIdx {
+			// Highlight selected item
+			io.WriteString(lr.stdout, "> ")
+		} else {
+			io.WriteString(lr.stdout, "  ")
+		}
+		io.WriteString(lr.stdout, lr.completions[i].Display)
+		if i < maxItems-1 {
+			io.WriteString(lr.stdout, "\n")
+		}
+	}
+
+	lr.lastCompletionRows = maxItems
+
+	// Return to input line
+	for i := 0; i < maxItems; i++ {
+		io.WriteString(lr.stdout, "\033[A")
+	}
+	// Move to end of input line
+	io.WriteString(lr.stdout, "\033[999C")
 }
 
 // readKey reads a single key event. Returns keyEvent and any error.
@@ -301,7 +454,7 @@ func (lr *RawLineReader) readKey() (keyEvent, error) {
 	b := buf[0]
 
 	// Check for escape sequences
-	if b == 0x1b { // ESC
+	if b == keyEsc {
 		return lr.readEscapeSequence()
 	}
 
@@ -312,26 +465,23 @@ func (lr *RawLineReader) readKey() (keyEvent, error) {
 	if b == '\t' {
 		return keyEvent{code: keyTab}, nil
 	}
-	if b == 0x08 || b == 0x7f { // Backspace
+	if b == keyBacksp || b == keyDel {
 		return keyEvent{code: keyBackspace}, nil
 	}
-	if b == 0x01 {
+	if b == keyCtrlA {
 		return keyEvent{code: keyControlA}, nil
 	}
-	if b == 0x05 {
+	if b == keyCtrlE {
 		return keyEvent{code: keyControlE}, nil
 	}
-	if b == 0x15 {
+	if b == keyCtrlU {
 		return keyEvent{code: keyControlU}, nil
 	}
-	if b == 0x17 {
+	if b == keyCtrlW {
 		return keyEvent{code: keyControlW}, nil
 	}
-	if b == 0x03 {
+	if b == keyCtrlC {
 		return keyEvent{code: keyControlC}, nil
-	}
-	if b == 0x1b {
-		return keyEvent{code: keyEscape}, nil
 	}
 
 	// Regular UTF-8 character
@@ -413,9 +563,6 @@ func (lr *RawLineReader) fallbackRead() (string, error) {
 
 // Close cleans up resources.
 func (lr *RawLineReader) Close() error {
-	if lr.oldState != nil {
-		return term.Restore(lr.fd, lr.oldState)
-	}
 	return nil
 }
 
