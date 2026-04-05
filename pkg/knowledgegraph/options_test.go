@@ -7,16 +7,16 @@ import (
 )
 
 func TestOptions(t *testing.T) {
-	c := &config{}
+	c := &OpenConfig{}
 
 	// Apply options
-	WithKnowledgeDir("/custom/path")(c)
-	require.Equal(t, "/custom/path", c.knowledgeDir)
+	WithKnowledgeDir("/custom/path").ApplyOption(c)
+	require.Equal(t, "/custom/path", c.KnowledgeDir)
 
-	WithDBPath("/db/path")(c)
-	require.Equal(t, "/db/path", c.dbPath)
+	WithDBPath("/db/path").ApplyOption(c)
+	require.Equal(t, "/db/path", c.DBPath)
 
 	e := &NullEmbedder{}
-	WithEmbedder(e)(c)
-	require.Equal(t, e, c.embedder)
+	WithEmbedder(e).ApplyOption(c)
+	require.Equal(t, e, c.Embedder)
 }
