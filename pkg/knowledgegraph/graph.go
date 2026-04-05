@@ -36,23 +36,25 @@ type Graph interface {
 
 // ListFilter narrows a List call.
 type ListFilter struct {
-	Kinds []EntityKind // empty = all kinds
-	Tags  []string     // entities must have ALL listed tags
+	Kinds  []EntityKind  // empty = all kinds
+	Layers []EntityLayer // empty = all layers
+	Tags   []string      // entities must have ALL listed tags
 }
 
 // QueryRequest is the input to a semantic search.
 type QueryRequest struct {
 	Text        string
-	TokenBudget int // max tokens the caller can accept; 0 = no limit
-	Limit       int // max results; 0 = 20
-	KindFilter  []EntityKind
+	TokenBudget int           // max tokens the caller can accept; 0 = no limit
+	Limit       int           // max results; 0 = 20
+	KindFilter  []EntityKind  // empty = all kinds
+	LayerFilter []EntityLayer // empty = all layers
 }
 
 // ScoredEntity pairs an entity with a relevance score in [0,1].
 type ScoredEntity struct {
-	Entity              *Entity
-	Score               float64 // semantic or keyword score in [0, 1]
-	EstimatedTokens     int     // estimated tokens to render in prompt
+	Entity          *Entity
+	Score           float64 // semantic or keyword score in [0, 1]
+	EstimatedTokens int     // estimated tokens to render in prompt
 }
 
 // LintReport collects structural issues found by LintGraph.
@@ -77,12 +79,12 @@ type DuplicateTitle struct {
 
 // KnowledgeStats provides metrics on the knowledge graph's coverage and quality.
 type KnowledgeStats struct {
-	TotalEntities      int       // total entities in graph
-	ByKind             map[EntityKind]int // breakdown by entity kind
-	OrphanedRels       int       // orphaned relationships (broken links)
-	TotalInjections    int       // cumulative injection_count across all entities
-	AvgScore           float64   // average confidence across entities with non-zero confidence
-	HighConfidenceCount int      // entities with confidence >= 0.8
-	NeverUsedCount     int       // entities with usage_count == 0
-	StaleSinceDays     int       // entities with last_used_at > N days old (30 by default)
+	TotalEntities       int                // total entities in graph
+	ByKind              map[EntityKind]int // breakdown by entity kind
+	OrphanedRels        int                // orphaned relationships (broken links)
+	TotalInjections     int                // cumulative injection_count across all entities
+	AvgScore            float64            // average confidence across entities with non-zero confidence
+	HighConfidenceCount int                // entities with confidence >= 0.8
+	NeverUsedCount      int                // entities with usage_count == 0
+	StaleSinceDays      int                // entities with last_used_at > N days old (30 by default)
 }

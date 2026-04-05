@@ -68,8 +68,8 @@ func TestGraph(t *testing.T) {
 func TestScoredEntity(t *testing.T) {
 	e := &Entity{ID: "test-001", Kind: KindArchitecture, Title: "Test"}
 	se := ScoredEntity{
-		Entity: e,
-		Score: 0.95,
+		Entity:          e,
+		Score:           0.95,
 		EstimatedTokens: 150,
 	}
 
@@ -80,14 +80,46 @@ func TestScoredEntity(t *testing.T) {
 
 func TestQueryRequest(t *testing.T) {
 	req := QueryRequest{
-		Text: "sqlite concurrency",
+		Text:        "sqlite concurrency",
 		TokenBudget: 2000,
-		Limit: 10,
-		KindFilter: []EntityKind{KindGotcha, KindPattern},
+		Limit:       10,
+		KindFilter:  []EntityKind{KindGotcha, KindPattern},
 	}
 
 	require.Equal(t, "sqlite concurrency", req.Text)
 	require.Equal(t, 2000, req.TokenBudget)
 	require.Equal(t, 10, req.Limit)
 	require.Len(t, req.KindFilter, 2)
+}
+
+func TestListFilterWithLayers(t *testing.T) {
+	filter := ListFilter{
+		Kinds:  []EntityKind{KindArchitecture, KindDecision},
+		Layers: []EntityLayer{EntityLayerBase, EntityLayerTeam},
+		Tags:   []string{"golang"},
+	}
+
+	require.Len(t, filter.Kinds, 2)
+	require.Len(t, filter.Layers, 2)
+	require.Len(t, filter.Tags, 1)
+	require.Equal(t, EntityLayerBase, filter.Layers[0])
+	require.Equal(t, EntityLayerTeam, filter.Layers[1])
+}
+
+func TestQueryRequestWithLayerFilter(t *testing.T) {
+	req := QueryRequest{
+		Text:        "concurrency",
+		TokenBudget: 3000,
+		Limit:       15,
+		KindFilter:  []EntityKind{KindGotcha},
+		LayerFilter: []EntityLayer{EntityLayerBase, EntityLayerSession},
+	}
+
+	require.Equal(t, "concurrency", req.Text)
+	require.Equal(t, 3000, req.TokenBudget)
+	require.Equal(t, 15, req.Limit)
+	require.Len(t, req.KindFilter, 1)
+	require.Len(t, req.LayerFilter, 2)
+	require.Equal(t, EntityLayerBase, req.LayerFilter[0])
+	require.Equal(t, EntityLayerSession, req.LayerFilter[1])
 }
