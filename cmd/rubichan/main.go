@@ -561,6 +561,7 @@ func main() {
 	rootCmd.AddCommand(skillCmd())
 	// wiki is now a built-in skill (generate_wiki tool), not a CLI subcommand.
 	rootCmd.AddCommand(ollamaCmd())
+	rootCmd.AddCommand(knowledgeCmd())
 	rootCmd.AddCommand(worktreeCmd())
 	rootCmd.AddCommand(sessionCmd())
 	rootCmd.AddCommand(initCmd())
