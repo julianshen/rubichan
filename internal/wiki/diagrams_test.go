@@ -3,6 +3,7 @@ package wiki
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"testing"
@@ -147,4 +148,67 @@ func TestGenerateDiagramsCancellationReturnsContextErrorWithoutWarnings(t *testi
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, diagrams)
 	assert.NotContains(t, logs.String(), "WARNING:")
+}
+
+func TestGenerateDiagramsEmptyLLMResponseForSequence(t *testing.T) {
+	// When the LLM returns an empty response for sequence diagram generation,
+	// the sequence diagram should be skipped with a warning, but other diagrams
+	// should still be generated.
+	files := []ScannedFile{
+		{Path: "handler.go", Language: "go", Module: "internal/handler"},
+	}
+	analysis := &AnalysisResult{
+		Modules: []ModuleAnalysis{
+			{Module: "internal/handler", Summary: "Handles HTTP requests"},
+			{Module: "internal/store", Summary: "Data store"},
+		},
+		Architecture: "A layered architecture with HTTP handlers.",
+	}
+
+	// Mock LLM that returns empty string for sequence diagram prompts.
+	// It validates empty responses just like the real LLMCompleter.
+	llm := &validatingLLMCompleter{
+		responses: map[string]string{
+			"sequenceDiagram": "", // Empty response
+		},
+	}
+
+	var logs bytes.Buffer
+	origWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(origWriter)
+
+	diagrams, err := GenerateDiagrams(context.Background(), files, analysis, llm, DefaultDiagramConfig())
+	require.NoError(t, err)
+
+	// Should have generated diagrams (architecture, dependency, dataflow) but NOT sequence
+	assert.Greater(t, len(diagrams), 0)
+	for _, diagram := range diagrams {
+		assert.NotEqual(t, "sequence", diagram.Type, "sequence diagram should be skipped for empty response")
+	}
+
+	// Should have logged a warning about sequence diagram failure
+	logOutput := logs.String()
+	assert.Contains(t, logOutput, "WARNING:")
+	assert.Contains(t, logOutput, "sequence diagram generation failed")
+	assert.Contains(t, logOutput, "empty response")
+}
+
+// validatingLLMCompleter is a mock LLM that validates empty responses,
+// matching the behavior of the real LLMCompleter.Complete().
+type validatingLLMCompleter struct {
+	responses map[string]string
+}
+
+func (m *validatingLLMCompleter) Complete(ctx context.Context, prompt string) (string, error) {
+	for key, resp := range m.responses {
+		if strings.Contains(prompt, key) {
+			// Mimic the real LLMCompleter behavior: return error for empty/whitespace responses
+			if strings.TrimSpace(resp) == "" {
+				return "", fmt.Errorf("empty response from model")
+			}
+			return resp, nil
+		}
+	}
+	return "default response", nil
 }
