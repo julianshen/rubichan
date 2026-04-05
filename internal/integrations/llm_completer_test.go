@@ -109,3 +109,30 @@ func TestLLMCompleterRespectsContext(t *testing.T) {
 	// Close the channel so drain goroutine finishes.
 	close(bp.ch)
 }
+
+func TestLLMCompleterEmptyResult(t *testing.T) {
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "stop"},
+		},
+	}
+
+	completer := NewLLMCompleter(mp, "test-model")
+	_, err := completer.Complete(context.Background(), "say something")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty response from model")
+}
+
+func TestLLMCompleterWhitespaceOnlyResult(t *testing.T) {
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "  \n  \t  "},
+			{Type: "stop"},
+		},
+	}
+
+	completer := NewLLMCompleter(mp, "test-model")
+	_, err := completer.Complete(context.Background(), "say something")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty response from model")
+}

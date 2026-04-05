@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/text"
 )
 
 // LLMCompleter wraps an LLMProvider to collect streamed text into a single string.
@@ -37,7 +38,15 @@ func (c *LLMCompleter) Complete(ctx context.Context, prompt string) (string, err
 		select {
 		case evt, ok := <-ch:
 			if !ok {
-				return strings.Join(parts, ""), nil
+				result := strings.Join(parts, "")
+				// Fail fast on empty/whitespace-only responses. This pushes responsibility
+				// to callers to decide how to handle empty responses: agent turns can use
+				// placeholder messages to keep conversation valid, while other callers
+				// (e.g., wiki diagram generation) can skip the operation with a warning.
+				if text.IsEmptyResponse(result) {
+					return "", fmt.Errorf("empty response from model")
+				}
+				return result, nil
 			}
 			switch evt.Type {
 			case "text_delta":
