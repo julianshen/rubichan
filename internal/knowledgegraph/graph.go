@@ -404,9 +404,7 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 		}
 
 		// Populate FTS (must do within transaction using same connection)
-		var tagList []string
-		_ = json.Unmarshal([]byte(string(tagsJSON)), &tagList)
-		tagsStr := strings.Join(tagList, " ")
+		tagsStr := strings.Join(e.Tags, " ")
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO entities_fts(id, title, body, tags) VALUES(?, ?, ?, ?)`,
 			e.ID, e.Title, e.Body, tagsStr,
