@@ -109,11 +109,13 @@ type Model struct {
 	skillProvider     skillSummaryProvider
 	activeSkills      []string
 	agentPanelVisible bool
+	planPanelVisible  bool
 	plainMode         bool
 	debug             bool
 	lastPrompt        string
 	sessionState      *session.State
 	eventSink         session.EventSink
+	toolApprovalCount map[string]int // per-turn count of times each tool was approved
 }
 
 type skillSummaryProvider interface {
@@ -156,27 +158,28 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
 	m := &Model{
-		agent:        a,
-		cfg:          cfg,
-		configPath:   configPath,
-		input:        ia,
-		viewport:     vp,
-		spinner:      sp,
-		mdRenderer:   mdRenderer,
-		toolBox:      NewToolBoxRenderer(80),
-		statusBar:    sb,
-		approvalCh:   make(chan approvalRequest),
-		state:        StateInput,
-		appName:      appName,
-		modelName:    modelName,
-		maxTurns:     maxTurns,
-		width:        80,
-		height:       24,
-		cmdRegistry:  cmdRegistry,
-		completion:   NewCompletionOverlay(cmdRegistry, 80),
-		history:      NewInputHistory(100),
-		sessionState: session.NewState(),
-		eventSink:    session.NewLogSink(log.Printf),
+		agent:             a,
+		cfg:               cfg,
+		configPath:        configPath,
+		input:             ia,
+		viewport:          vp,
+		spinner:           sp,
+		mdRenderer:        mdRenderer,
+		toolBox:           NewToolBoxRenderer(80),
+		statusBar:         sb,
+		approvalCh:        make(chan approvalRequest),
+		state:             StateInput,
+		appName:           appName,
+		modelName:         modelName,
+		maxTurns:          maxTurns,
+		width:             80,
+		height:            24,
+		cmdRegistry:       cmdRegistry,
+		completion:        NewCompletionOverlay(cmdRegistry, 80),
+		history:           NewInputHistory(100),
+		sessionState:      session.NewState(),
+		eventSink:         session.NewLogSink(log.Printf),
+		toolApprovalCount: make(map[string]int),
 	}
 
 	// When no registry was provided, populate with default built-in commands.
@@ -416,6 +419,12 @@ func (m *Model) headerRows() int {
 	if len(m.activeSkills) > 0 {
 		rows++
 	}
+	if m.planPanelVisible && m.sessionState != nil {
+		items := m.sessionState.Plan()
+		if len(items) > 0 {
+			rows += planPanelHeight(items) + 1 // panel + divider
+		}
+	}
 	return rows
 }
 
@@ -437,6 +446,20 @@ func (m *Model) reflowViewport() {
 	}
 	m.viewport.Width = m.width
 	m.viewport.Height = viewportHeight
+}
+
+// scrollToLastError positions the viewport at the last error message.
+// Since errors are typically recent, we approximate by scrolling to the bottom.
+func (m *Model) scrollToLastError() {
+	lastErrorIdx := m.content.LastErrorIndex()
+	if lastErrorIdx < 0 {
+		return
+	}
+
+	// For a more precise implementation, we'd need to expose segment-level
+	// rendering to compute the byte offset. For now, we approximate by
+	// scrolling to the bottom since errors are typically recent.
+	m.viewport.GotoBottom()
 }
 
 // MakeApprovalFunc returns an agent.ApprovalFunc that bridges the agent's

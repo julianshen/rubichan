@@ -536,3 +536,55 @@ func TestCollapsibleThinking_TruncatedLabel(t *testing.T) {
 	result := ct.Render(r)
 	assert.Contains(t, result, "50 lines (20 shown)")
 }
+
+func TestCollapsibleError_Collapsed(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ce := &CollapsibleError{
+		ID:        0,
+		Message:   "connection refused: failed to connect to database server",
+		Collapsed: true,
+	}
+	result := ce.Render(r)
+	// Collapsed should show ✗ and a preview.
+	assert.Contains(t, result, "✗")
+	assert.Contains(t, result, "connection refused")
+}
+
+func TestCollapsibleError_Expanded(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ce := &CollapsibleError{
+		ID:        0,
+		Message:   "connection refused: failed to connect to database server at localhost:5432",
+		Collapsed: false,
+	}
+	result := ce.Render(r)
+	// Expanded should show header and full message.
+	assert.Contains(t, result, "✗ Error")
+	assert.Contains(t, result, "connection refused")
+	assert.Contains(t, result, "localhost:5432")
+}
+
+func TestCollapsibleError_LongMessagePreview(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	longMsg := strings.Repeat("x", 100)
+	ce := &CollapsibleError{
+		ID:        0,
+		Message:   longMsg,
+		Collapsed: true,
+	}
+	result := ce.Render(r)
+	// Collapsed preview should be truncated.
+	assert.Contains(t, result, "...")
+	assert.LessOrEqual(t, len(result), len(longMsg)+50)
+}
+
+func TestCollapsibleError_EmptyMessage(t *testing.T) {
+	r := NewToolBoxRenderer(80)
+	ce := &CollapsibleError{
+		ID:        0,
+		Message:   "",
+		Collapsed: false,
+	}
+	result := ce.Render(r)
+	assert.Contains(t, result, "✗ Error")
+}

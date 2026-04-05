@@ -9,15 +9,17 @@ const (
 	SegmentTypeText SegmentType = iota
 	SegmentTypeToolResult
 	SegmentTypeThinking
+	SegmentTypeError
 )
 
-// ContentSegment stores either plain text, a collapsible tool-result, or a
-// collapsible thinking segment.
+// ContentSegment stores either plain text, a collapsible tool-result, a
+// collapsible thinking segment, or a collapsible error segment.
 type ContentSegment struct {
 	Type       SegmentType
 	Text       string
 	ToolResult *CollapsibleToolResult
 	Thinking   *CollapsibleThinking
+	Error      *CollapsibleError
 
 	dirty      bool
 	lastWidth  int
@@ -27,11 +29,13 @@ type ContentSegment struct {
 // ContentBuffer stores the rendered transcript as typed segments.
 // It owns tool-result lifecycle state (append/toggle/collapse/render cache).
 type ContentBuffer struct {
-	segments []ContentSegment
+	segments   []ContentSegment
+	maxID      int // Track max collapsible ID to avoid O(N) scans
+	errorCount int // Track number of error segments
 }
 
 func NewContentBuffer() *ContentBuffer {
-	return &ContentBuffer{}
+	return &ContentBuffer{maxID: -1}
 }
 
 // AppendText appends plain text content to the transcript.
@@ -74,23 +78,24 @@ func (b *ContentBuffer) AppendThinking(t CollapsibleThinking) {
 	})
 }
 
-// nextCollapsibleID returns a monotonically increasing ID across both tool
-// results and thinking segments so IDs never collide.
+// AppendError appends a collapsible error segment.
+func (b *ContentBuffer) AppendError(e CollapsibleError) {
+	copy := e
+	copy.ID = b.nextCollapsibleID()
+	b.segments = append(b.segments, ContentSegment{
+		Type:  SegmentTypeError,
+		Error: &copy,
+		dirty: true,
+	})
+	b.errorCount++
+}
+
+// nextCollapsibleID returns a monotonically increasing ID across tool results,
+// thinking, and error segments so IDs never collide. Uses cached maxID to avoid O(N) scans.
 func (b *ContentBuffer) nextCollapsibleID() int {
-	maxID := -1
-	for i := range b.segments {
-		if b.segments[i].Type == SegmentTypeToolResult && b.segments[i].ToolResult != nil {
-			if b.segments[i].ToolResult.ID > maxID {
-				maxID = b.segments[i].ToolResult.ID
-			}
-		}
-		if b.segments[i].Type == SegmentTypeThinking && b.segments[i].Thinking != nil {
-			if b.segments[i].Thinking.ID > maxID {
-				maxID = b.segments[i].Thinking.ID
-			}
-		}
-	}
-	return maxID + 1
+	id := b.maxID + 1
+	b.maxID = id
+	return id
 }
 
 // ToggleToolResult toggles collapsed/expanded state for a specific tool-result ID.
@@ -199,6 +204,21 @@ func (b *ContentBuffer) ToolResults() []CollapsibleToolResult {
 	return results
 }
 
+// ErrorCount returns the number of error segments in the buffer.
+func (b *ContentBuffer) ErrorCount() int {
+	return b.errorCount
+}
+
+// LastErrorIndex returns the index of the last error segment, or -1 if none exists.
+func (b *ContentBuffer) LastErrorIndex() int {
+	for i := len(b.segments) - 1; i >= 0; i-- {
+		if b.segments[i].Type == SegmentTypeError && b.segments[i].Error != nil {
+			return i
+		}
+	}
+	return -1
+}
+
 // Render returns fully rendered transcript content for the given width.
 func (b *ContentBuffer) Render(width int) string {
 	if len(b.segments) == 0 {
@@ -224,6 +244,10 @@ func (b *ContentBuffer) Render(width int) string {
 			if seg.Thinking != nil {
 				rendered = seg.Thinking.Render(renderer)
 			}
+		case SegmentTypeError:
+			if seg.Error != nil {
+				rendered = seg.Error.Render(renderer)
+			}
 		}
 		seg.lastRender = rendered
 		seg.lastWidth = width
@@ -247,6 +271,8 @@ func (b *ContentBuffer) String() string {
 
 func (b *ContentBuffer) Reset() {
 	b.segments = nil
+	b.maxID = -1
+	b.errorCount = 0
 }
 
 func (b *ContentBuffer) ReplaceTextRange(start, end int, replacement string) {

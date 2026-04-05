@@ -679,7 +679,9 @@ func TestModelHandleTurnEventError(t *testing.T) {
 	updated, _ := m.Update(evt)
 
 	um := updated.(*Model)
-	assert.Contains(t, um.content.String(), "Pigi")
+	// Error should be in an error segment, not plain text.
+	assert.Greater(t, um.content.ErrorCount(), 0)
+	assert.Contains(t, um.content.String(), "assert.AnError")
 }
 
 func TestModelHandleTurnEventDone(t *testing.T) {
@@ -839,7 +841,7 @@ func TestModelViewStreaming(t *testing.T) {
 func TestModelViewAwaitingApproval(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 80, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 80, nil, false)
 	view := m.View()
 
 	assert.Contains(t, view, "Ruby")
@@ -1011,7 +1013,8 @@ func TestModelHandleTurnEventErrorNilError(t *testing.T) {
 
 	updated, _ := m.Update(evt)
 	um := updated.(*Model)
-	assert.Contains(t, um.content.String(), "Pigi")
+	// Error should be in an error segment.
+	assert.Greater(t, um.content.ErrorCount(), 0)
 	assert.Contains(t, um.content.String(), "unknown error")
 }
 
@@ -1252,8 +1255,8 @@ func TestModelApprovalKeyYes(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil, false)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil, false)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,
@@ -1287,8 +1290,8 @@ func TestModelApprovalKeyNo(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"rm -rf /"}`, "", 60, nil)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, "", 60, nil)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"rm -rf /"}`, "", 60, nil, false)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"rm -rf /"}`, "", 60, nil, false)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"rm -rf /"}`,
@@ -1320,8 +1323,8 @@ func TestModelApprovalKeyAlways(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil, false)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil, false)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,
@@ -1354,8 +1357,8 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
+	m.activeOverlay = NewApprovalOverlay("shell", `{"command":"ls"}`, "", 60, nil, false)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil, false)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,
@@ -1382,8 +1385,8 @@ func TestModelApprovalUnhandledKey(t *testing.T) {
 func TestModelApprovalViewShowsPrompt(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	m.state = StateAwaitingApproval
-	m.activeOverlay = NewApprovalOverlay("file", `"/etc/hosts"`, "", 60, nil)
-	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, "", 60, nil)
+	m.activeOverlay = NewApprovalOverlay("file", `"/etc/hosts"`, "", 60, nil, false)
+	m.approvalPrompt = NewApprovalPrompt("file", `"/etc/hosts"`, "", 60, nil, false)
 
 	view := m.View()
 	assert.Contains(t, view, "file")
@@ -1752,7 +1755,7 @@ func TestModelCtrlCDuringApproval(t *testing.T) {
 	m.state = StateAwaitingApproval
 
 	respCh := make(chan ApprovalResult, 1)
-	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil)
+	m.approvalPrompt = NewApprovalPrompt("shell", `{"command":"ls"}`, "", 60, nil, false)
 	m.pendingApproval = &approvalRequest{
 		tool:          "shell",
 		input:         `{"command":"ls"}`,

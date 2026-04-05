@@ -213,6 +213,28 @@ func (ct *CollapsibleThinking) lineLabel() string {
 	return formatLineLabel(ct.LineCount, ct.FullyExpanded)
 }
 
+// CollapsibleError tracks an error message with collapse state.
+type CollapsibleError struct {
+	ID        int
+	Message   string
+	Collapsed bool
+}
+
+// Render returns the rendered view of an error in one of two states:
+//   - collapsed: single summary line with ✗ indicator
+//   - expanded: ✗ header + full message in error-styled box
+func (ce *CollapsibleError) Render(r *ToolBoxRenderer) string {
+	if ce.Collapsed {
+		preview := ce.Message
+		if len(preview) > 50 {
+			preview = preview[:47] + "..."
+		}
+		return styleErrorIcon.Render("✗ ") + preview + "\n"
+	}
+	header := styleErrorIcon.Render("✗ Error") + "\n"
+	return header + r.renderInBox(ce.Message, true)
+}
+
 // ColorizeDiffLines applies green/red/cyan coloring to unified diff lines.
 // Delegates to ColorizeContent for the actual colorization.
 func ColorizeDiffLines(content string) string {

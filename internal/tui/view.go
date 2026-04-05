@@ -23,7 +23,7 @@ func (m *Model) View() string {
 	// Full-screen overlays take over the entire view.
 	if m.activeOverlay != nil {
 		switch m.activeOverlay.(type) {
-		case *ConfigOverlay, *WikiOverlay, *UndoOverlay:
+		case *ConfigOverlay, *WikiOverlay, *UndoOverlay, *HelpOverlay:
 			return m.activeOverlay.View()
 		}
 	}
@@ -39,7 +39,11 @@ func (m *Model) View() string {
 			if !m.turnStartTime.IsZero() {
 				elapsed = styleTextDim.Render(fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime))))
 			}
-			b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(m.thinkingMsg), elapsed))
+			label := "Generating..."
+			if m.thinkingActive {
+				label = "Thinking..."
+			}
+			b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(label), elapsed))
 		case StateAwaitingApproval:
 			if m.activeOverlay != nil {
 				b.WriteString(m.activeOverlay.View())
@@ -74,6 +78,14 @@ func (m *Model) View() string {
 	b.WriteString(styleDivider.Render(strings.Repeat("━", dividerWidth)))
 	b.WriteString("\n")
 
+	// Plan panel
+	if m.planPanelVisible && m.sessionState != nil {
+		if items := m.sessionState.Plan(); len(items) > 0 {
+			b.WriteString(renderPlanPanel(items, m.width))
+			b.WriteString("\n")
+		}
+	}
+
 	// Viewport
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
@@ -85,7 +97,11 @@ func (m *Model) View() string {
 		if !m.turnStartTime.IsZero() {
 			elapsed = styleTextDim.Render(fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime))))
 		}
-		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(m.thinkingMsg), elapsed))
+		label := "Generating..."
+		if m.thinkingActive {
+			label = "Thinking..."
+		}
+		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(label), elapsed))
 	case StateAwaitingApproval:
 		if m.activeOverlay != nil {
 			b.WriteString(m.activeOverlay.View())

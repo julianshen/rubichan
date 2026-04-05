@@ -112,7 +112,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.agent != nil {
 			workDir = m.agent.WorkingDir()
 		}
-		m.activeOverlay = NewApprovalOverlay(msg.tool, msg.input, workDir, m.width, msg.options)
+
+		// Track approval count for batch hint.
+		m.toolApprovalCount[msg.tool]++
+		showBatchHint := m.toolApprovalCount[msg.tool] > 1
+
+		m.activeOverlay = NewApprovalOverlay(msg.tool, msg.input, workDir, m.width, msg.options, showBatchHint)
 		m.pendingApproval = &approvalRequest{
 			tool:          msg.tool,
 			input:         msg.input,
@@ -266,6 +271,26 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Ctrl+L jumps to last error when one exists.
+	if msg.Type == tea.KeyCtrlL && m.state == StateInput && m.content.ErrorCount() > 0 {
+		m.scrollToLastError()
+		return m, nil
+	}
+
+	// Ctrl+F toggles plan panel.
+	if msg.Type == tea.KeyCtrlF && m.state == StateInput {
+		m.planPanelVisible = !m.planPanelVisible
+		m.reflowViewport()
+		m.viewport.SetContent(m.viewportContent())
+		return m, nil
+	}
+
+	// ? opens help overlay.
+	if msg.String() == "?" && m.state == StateInput && m.activeOverlay == nil {
+		m.activeOverlay = NewHelpOverlay(m.width, m.height)
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyEnter:
 		if m.state != StateInput {
@@ -348,6 +373,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffSummary = ""
 		m.diffExpanded = false
 		m.toolCallArgs = nil
+		m.toolApprovalCount = make(map[string]int)
 		m.content.WriteString(styleUserPrompt.Render("❯ ") + text + "\n")
 		m.viewport.SetContent(m.viewportContent())
 		m.viewport.GotoBottom()
@@ -362,6 +388,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = StateStreaming
 		m.thinkingMsg = persona.ThinkingMessage()
 		m.statusBar.ClearElapsed()
+		m.statusBar.ClearErrorCount()
 		m.turnStartTime = time.Now()
 
 		return m, tea.Batch(m.startTurn(m.agent, text), m.spinner.Tick)
@@ -644,7 +671,8 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		m.thinkingStartIdx = 0
 		m.thinkingEndIdx = 0
 		m.rawAssistant.Reset()
-		m.content.WriteString(persona.ErrorMessage(errMsg))
+		m.content.AppendError(CollapsibleError{Message: errMsg, Collapsed: false})
+		m.statusBar.IncrementErrorCount()
 		m.setContentAndAutoScroll()
 		return m, m.waitForEvent()
 
