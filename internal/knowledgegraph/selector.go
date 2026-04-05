@@ -2,6 +2,7 @@ package knowledgegraph
 
 import (
 	"context"
+	"sort"
 
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
@@ -59,12 +60,22 @@ func (s *contextSelector) selectByScore(ctx context.Context, query string, budge
 
 // selectByRecency ranks recently updated entities higher.
 func (s *contextSelector) selectByRecency(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
-	// For now, use score-based results but could weight by updated_at timestamp
-	results, err := s.selectByScore(ctx, query, budget)
+	// Fetch score-based results without budget constraint
+	results, err := s.selectByScore(ctx, query, 0)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Sort by updated_at DESC before applying budget
+
+	// Sort by Entity.Updated descending (newest first)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Entity.Updated.After(results[j].Entity.Updated)
+	})
+
+	// Apply budget constraint
+	if budget > 0 {
+		results = trimByBudget(results, budget)
+	}
+
 	return results, nil
 }
 

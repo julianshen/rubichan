@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
-	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
 func TestContextSelector(t *testing.T) {
@@ -76,6 +76,67 @@ func TestContextSelector(t *testing.T) {
 		}
 	}
 	require.True(t, found, "should find SQLite decision entity")
+}
+
+func TestSelectByRecencySortsNewest(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	now := time.Now()
+	oldTime := now.Add(-24 * time.Hour)
+	newTime := now.Add(1 * time.Hour)
+
+	// Create entities with different Updated timestamps
+	entities := []*kg.Entity{
+		{
+			ID:      "old-001",
+			Kind:    kg.KindArchitecture,
+			Title:   "Old Architecture",
+			Body:    "This was decided a day ago",
+			Source:  kg.SourceManual,
+			Created: oldTime,
+			Updated: oldTime,
+		},
+		{
+			ID:      "new-001",
+			Kind:    kg.KindArchitecture,
+			Title:   "New Architecture",
+			Body:    "This was updated very recently",
+			Source:  kg.SourceManual,
+			Created: oldTime,
+			Updated: newTime,
+		},
+		{
+			ID:      "mid-001",
+			Kind:    kg.KindArchitecture,
+			Title:   "Mid Architecture",
+			Body:    "This is in the middle age",
+			Source:  kg.SourceManual,
+			Created: oldTime,
+			Updated: now,
+		},
+	}
+
+	for _, e := range entities {
+		err := g.Put(context.Background(), e)
+		require.NoError(t, err)
+	}
+
+	// Use selectByRecency strategy
+	kg_inst := g.(*KnowledgeGraph)
+	selector := NewContextSelectorWithStrategy(kg_inst, kg.SelectorByRecency)
+
+	results, err := selector.Select(context.Background(), "architecture", 0)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(results), 3, "should find all 3 architecture entities")
+
+	// Verify the ordering: newest should come first
+	// Assuming results are ordered by recency, check that new > mid > old
+	require.Equal(t, "new-001", results[0].Entity.ID, "first result (most recent) should be new-001")
+	require.Equal(t, "mid-001", results[1].Entity.ID, "second result should be mid-001")
+	require.Equal(t, "old-001", results[2].Entity.ID, "third result (oldest) should be old-001")
 }
 
 func TestContextSelectorWithBudget(t *testing.T) {
