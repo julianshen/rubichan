@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,13 +95,21 @@ func (h *Hub) registerClient(c *Client, sessionID string) (*SessionState, error)
 	return ss, nil
 }
 
+// snapshotAndRegisterClientResult holds the buffered events and the session state.
+type snapshotAndRegisterClientResult struct {
+	entries []BufferEntry
+	session *SessionState
+}
+
 // snapshotAndRegisterClient atomically snapshots the buffer and registers a client.
 // This prevents the race where events broadcast between snapshot and register are missed.
-func (h *Hub) snapshotAndRegisterClient(c *Client, sessionID string, lastSeq int64) ([]BufferEntry, error) {
+// Lock order: h.mu → ss.mu (matches other code paths).
+func (h *Hub) snapshotAndRegisterClient(c *Client, sessionID string, lastSeq int64) (*snapshotAndRegisterClientResult, error) {
+	// Look up session under h.mu, then release immediately.
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	ss, ok := h.sessions[sessionID]
+	h.mu.Unlock()
+
 	if !ok {
 		return nil, fmt.Errorf("session %q not found", sessionID)
 	}
@@ -121,9 +128,13 @@ func (h *Hub) snapshotAndRegisterClient(c *Client, sessionID string, lastSeq int
 	// Register client while still holding ss.mu to prevent live broadcasts
 	// from arriving before registration.
 	ss.Clients[c] = struct{}{}
-	h.clients[c] = ss
 
-	return entries, nil
+	// Register in hub's client map. Must acquire h.mu again.
+	h.mu.Lock()
+	h.clients[c] = ss
+	h.mu.Unlock()
+
+	return &snapshotAndRegisterClientResult{entries: entries, session: ss}, nil
 }
 
 // unregisterClient removes a client from its session.
@@ -308,7 +319,8 @@ func (h *Hub) Emit(evt session.Event) {
 	}
 
 	// If event has a session ID, broadcast only to that session.
-	if strings.TrimSpace(evt.SessionID) != "" {
+	// SessionID is normalized by WithSessionID() so no need to trim here.
+	if evt.SessionID != "" {
 		ss, ok := h.GetSession(evt.SessionID)
 		if !ok {
 			log.Printf("ws: Emit: session %q not found, dropping event", evt.SessionID)
@@ -613,27 +625,19 @@ func (h *Hub) handleSessionResume(c *Client, env Envelope) {
 
 	// Atomically snapshot buffer and register the client.
 	// This eliminates the race where events broadcast between snapshot and register are missed.
-	entries, err := h.snapshotAndRegisterClient(c, payload.SessionID, payload.LastSeq)
+	result, err := h.snapshotAndRegisterClient(c, payload.SessionID, payload.LastSeq)
 	if err != nil {
 		h.sendError(c, "resume_failed", err.Error())
 		return
 	}
 
-	// Get session for session info response.
-	ss, ok := h.GetSession(payload.SessionID)
-	if !ok {
-		// Client is already registered; don't unregister it just for sending the response.
-		h.sendError(c, "resume_failed", fmt.Sprintf("session %q not found", payload.SessionID))
-		return
-	}
-
 	// Send session info.
-	info := SessionInfoPayload{SessionID: ss.ID, Status: "active"}
-	h.sendEnvelope(c, TypeSessionInfo, ss.ID, info)
+	info := SessionInfoPayload{SessionID: result.session.ID, Status: "active"}
+	h.sendEnvelope(c, TypeSessionInfo, result.session.ID, info)
 
 	// Replay buffered events. These are already in c.send before any
 	// live broadcast can arrive (registration happened within ss.mu lock).
-	for _, entry := range entries {
+	for _, entry := range result.entries {
 		c.Send(entry.Payload)
 	}
 }
