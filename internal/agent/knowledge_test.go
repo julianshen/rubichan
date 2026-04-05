@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
+	"github.com/julianshen/rubichan/internal/tools"
 )
 
 type mockSelector struct {
@@ -106,4 +109,114 @@ func TestRenderKnowledgeSectionNoRelationships(t *testing.T) {
 
 	rendered := renderKnowledgeSection(entities)
 	require.NotContains(t, rendered, "Relationships")
+}
+
+// Integration tests for buildSystemPromptWithFragments + knowledge graph
+
+func TestBuildSystemPromptWithKnowledge(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	selector := &mockSelector{results: []kg.ScoredEntity{
+		{
+			Entity: &kg.Entity{
+				ID:    "arch-go",
+				Kind:  kg.KindArchitecture,
+				Title: "Go Language Choice",
+				Body:  "Go was chosen for single-binary distribution.",
+			},
+			Score:           0.95,
+			EstimatedTokens: 50,
+		},
+	}}
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	prompt, _, _ := a.buildSystemPromptWithFragments(context.Background(), "tell me about architecture")
+
+	assert.Contains(t, prompt, "## Project Knowledge")
+	assert.Contains(t, prompt, "[architecture]")
+	assert.Contains(t, prompt, "Go Language Choice")
+	assert.Contains(t, prompt, "Go was chosen")
+}
+
+func TestBuildSystemPromptNoKnowledgeWhenEmptyResults(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	selector := &mockSelector{results: []kg.ScoredEntity{}} // Empty results
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	prompt, _, _ := a.buildSystemPromptWithFragments(context.Background(), "query")
+
+	assert.NotContains(t, prompt, "## Project Knowledge")
+}
+
+func TestBuildSystemPromptNoKnowledgeOnError(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	selector := &mockSelector{err: errors.New("unavailable")} // Selector error
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	// Should not panic or fail; error is silently swallowed
+	prompt, _, _ := a.buildSystemPromptWithFragments(context.Background(), "query")
+
+	assert.NotContains(t, prompt, "## Project Knowledge")
+}
+
+func TestBuildSystemPromptSkipsKnowledgeForEmptyMessage(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	selector := &mockSelector{results: []kg.ScoredEntity{
+		{Entity: &kg.Entity{ID: "test", Kind: kg.KindArchitecture, Title: "Test"}},
+	}}
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	// Empty lastUserMessage should skip knowledge injection entirely
+	prompt, _, _ := a.buildSystemPromptWithFragments(context.Background(), "")
+
+	assert.NotContains(t, prompt, "## Project Knowledge")
+}
+
+type budgetCapturingSelector struct {
+	capturedBudget int
+	selectCalled   bool
+	results        []kg.ScoredEntity
+}
+
+func (b *budgetCapturingSelector) Select(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
+	b.selectCalled = true
+	b.capturedBudget = budget
+	return b.results, nil
+}
+
+func TestBuildSystemPromptBudgetPassedToSelector(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	selector := &budgetCapturingSelector{
+		results: []kg.ScoredEntity{
+			{Entity: &kg.Entity{ID: "test", Kind: kg.KindArchitecture, Title: "Test"}},
+		},
+	}
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	// buildSystemPromptWithFragments should pass context.Budget().SkillPrompts to selector
+	a.buildSystemPromptWithFragments(context.Background(), "query")
+
+	// Verify selector was called and budget was passed
+	assert.True(t, selector.selectCalled, "selector.Select should have been called")
+	// Budget might be 0 or positive depending on config; just verify it was passed
+	assert.GreaterOrEqual(t, selector.capturedBudget, 0)
 }

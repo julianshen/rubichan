@@ -6,10 +6,15 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
+	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/provider/ollama"
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
@@ -70,28 +75,40 @@ func knowledgeIngestCmd() *cobra.Command {
 
 			switch typ {
 			case "llm":
+				completer, err := newCompleter(cmd.Context())
+				if err != nil {
+					return fmt.Errorf("init completer: %w", err)
+				}
 				content, err := os.ReadFile(path)
 				if err != nil {
 					return fmt.Errorf("read file: %w", err)
 				}
-				ingestor := knowledgegraph.NewLLMIngestor(nil) // TODO: get from config
+				ingestor := knowledgegraph.NewLLMIngestor(completer)
 				count, err = ingestor.Ingest(context.Background(), g.(*knowledgegraph.KnowledgeGraph), string(content), kg.SourceLLM)
 				if err != nil {
 					return err
 				}
 
 			case "git":
+				completer, err := newCompleter(cmd.Context())
+				if err != nil {
+					return fmt.Errorf("init completer: %w", err)
+				}
 				if since == "" {
 					since = "1w"
 				}
-				ingestor := knowledgegraph.NewGitIngestor(nil) // TODO: get from config
+				ingestor := knowledgegraph.NewGitIngestor(completer)
 				count, err = ingestor.Ingest(context.Background(), g.(*knowledgegraph.KnowledgeGraph), ".", since)
 				if err != nil {
 					return err
 				}
 
 			case "file":
-				ingestor := knowledgegraph.NewFileIngestor(nil) // TODO: get from config
+				completer, err := newCompleter(cmd.Context())
+				if err != nil {
+					return fmt.Errorf("init completer: %w", err)
+				}
+				ingestor := knowledgegraph.NewFileIngestor(completer)
 				count, err = ingestor.Ingest(context.Background(), g.(*knowledgegraph.KnowledgeGraph), path)
 				if err != nil {
 					return err
@@ -237,14 +254,42 @@ func knowledgeLintCmd() *cobra.Command {
 	}
 }
 
+// newCompleter creates an LLMCompleter by loading the configured provider.
+// Returns an error if the provider cannot be initialized.
+func newCompleter(ctx context.Context) (knowledgegraph.LLMCompleter, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+
+	cfg, err := config.Load(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	p, err := provider.NewProvider(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("init provider: %w", err)
+	}
+
+	completer := integrations.NewLLMCompleter(p, cfg.Provider.Model)
+	return completer, nil
+}
+
 // openGraph opens the knowledge graph at the current working directory.
 // Auto-detects embedder: tries Ollama at localhost:11434, falls back to FTS5.
 func openGraph(ctx context.Context, workDir string) (kg.Graph, error) {
 	// Try to auto-detect embedder (Ollama first, fallback to NullEmbedder)
-	embedder := kg.NullEmbedder{}
+	var embedder kg.Embedder = kg.NullEmbedder{}
 
-	// TODO: In a real implementation, would try to create an OllamaEmbedder
-	// and test with HealthCheck, falling back to NullEmbedder if unavailable
+	// Probe Ollama with a short timeout; use FTS5 fallback if unavailable (silent)
+	ollamaEmbedder := knowledgegraph.NewOllamaEmbedder(ollama.DefaultBaseURL)
+	if ollamaCtx, cancel := context.WithTimeout(ctx, 2*time.Second); true {
+		defer cancel()
+		if err := ollamaEmbedder.HealthCheck(ollamaCtx); err == nil {
+			embedder = ollamaEmbedder
+		}
+	}
 
 	g, err := kg.Open(ctx, workDir,
 		kg.WithEmbedder(embedder),
