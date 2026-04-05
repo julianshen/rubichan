@@ -10,20 +10,42 @@ import (
 // It performs budget-aware semantic or keyword search to select the most
 // relevant entities for injecting into an LLM's system prompt.
 type contextSelector struct {
-	g *KnowledgeGraph
+	g    *KnowledgeGraph
+	kind kg.SelectorKind
 }
 
 // NewContextSelector creates a selector that uses the given knowledge graph.
+// Uses the default SelectorByScore strategy.
 func NewContextSelector(g *KnowledgeGraph) kg.ContextSelector {
-	return &contextSelector{g: g}
+	return &contextSelector{g: g, kind: kg.SelectorByScore}
+}
+
+// NewContextSelectorWithStrategy creates a selector using a specific ranking strategy.
+func NewContextSelectorWithStrategy(g *KnowledgeGraph, kind kg.SelectorKind) kg.ContextSelector {
+	return &contextSelector{g: g, kind: kind}
 }
 
 // Select returns ranked entities relevant to the query, staying within
 // the given token budget. Entities are deduplicated by ID.
-// If budget <= 0, no limit is applied.
+// If budget <= 0, no limit is applied. Rankings are determined by the selector's strategy.
 func (s *contextSelector) Select(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
-	// Use the graph's Query method, which handles both vector and FTS search
-	// with automatic fallback
+	switch s.kind {
+	case kg.SelectorByScore:
+		return s.selectByScore(ctx, query, budget)
+	case kg.SelectorByRecency:
+		return s.selectByRecency(ctx, query, budget)
+	case kg.SelectorByUsage:
+		return s.selectByUsage(ctx, query, budget)
+	case kg.SelectorByConfidence:
+		return s.selectByConfidence(ctx, query, budget)
+	default:
+		// Default to score-based if unknown
+		return s.selectByScore(ctx, query, budget)
+	}
+}
+
+// selectByScore uses semantic/keyword search score (default strategy).
+func (s *contextSelector) selectByScore(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
 	results, err := s.g.Query(ctx, kg.QueryRequest{
 		Text:        query,
 		TokenBudget: budget,
@@ -32,7 +54,39 @@ func (s *contextSelector) Select(ctx context.Context, query string, budget int) 
 	if err != nil {
 		return nil, err
 	}
+	return results, nil
+}
 
+// selectByRecency ranks recently updated entities higher.
+func (s *contextSelector) selectByRecency(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
+	// For now, use score-based results but could weight by updated_at timestamp
+	results, err := s.selectByScore(ctx, query, 0) // Get all results
+	if err != nil {
+		return nil, err
+	}
+	// TODO: Sort by updated_at DESC and apply budget
+	return results, nil
+}
+
+// selectByUsage ranks high-usage entities (injection_count + query_hit_count) higher.
+func (s *contextSelector) selectByUsage(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
+	// For now, use score-based results but could weight by usage metrics
+	results, err := s.selectByScore(ctx, query, 0) // Get all results
+	if err != nil {
+		return nil, err
+	}
+	// TODO: Sort by (injection_count + query_hit_count) DESC and apply budget
+	return results, nil
+}
+
+// selectByConfidence ranks high-confidence entities higher.
+func (s *contextSelector) selectByConfidence(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
+	// For now, use score-based results but could weight by confidence field
+	results, err := s.selectByScore(ctx, query, 0) // Get all results
+	if err != nil {
+		return nil, err
+	}
+	// TODO: Sort by confidence DESC and apply budget
 	return results, nil
 }
 

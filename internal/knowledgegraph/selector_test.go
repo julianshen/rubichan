@@ -169,6 +169,29 @@ func TestNewContextSelectorReturnsInterface(t *testing.T) {
 	var _ kg.ContextSelector = selector
 }
 
+func TestNewContextSelectorWithStrategy(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Test creating selectors with different strategies
+	strategies := []kg.SelectorKind{
+		kg.SelectorByScore,
+		kg.SelectorByRecency,
+		kg.SelectorByUsage,
+		kg.SelectorByConfidence,
+	}
+
+	for _, strategy := range strategies {
+		selector := NewContextSelectorWithStrategy(g.(*KnowledgeGraph), strategy)
+		require.NotNil(t, selector)
+
+		// Verify it implements the interface
+		var _ kg.ContextSelector = selector
+	}
+}
+
 func TestRecordUsage(t *testing.T) {
 	tmpDir := t.TempDir()
 	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})

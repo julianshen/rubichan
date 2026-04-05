@@ -2,6 +2,27 @@ package knowledgegraph
 
 import "context"
 
+// SelectorKind identifies the strategy for ranking entities.
+type SelectorKind string
+
+const (
+	// SelectorByScore (default): rank by semantic/keyword relevance score
+	SelectorByScore SelectorKind = "score"
+	// SelectorByRecency: prefer recently updated entities
+	SelectorByRecency SelectorKind = "recency"
+	// SelectorByUsage: prefer frequently-used entities (injection_count + query_hit_count)
+	SelectorByUsage SelectorKind = "usage"
+	// SelectorByConfidence: prefer high-confidence entities (confidence field)
+	SelectorByConfidence SelectorKind = "confidence"
+)
+
+// SelectorConfig configures entity selection behavior.
+type SelectorConfig struct {
+	Kind   SelectorKind // ranking strategy
+	Budget int          // default token budget if not specified at query time
+	Limit  int          // max results per query (0 = no limit)
+}
+
 // ContextSelector selects the most relevant entities for a query
 // while staying within a token budget. Used to inject knowledge
 // into the agent's system prompt at query time.
