@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -261,4 +262,49 @@ func (a *autoApproveAdapter) CheckApproval(tool string, _ json.RawMessage) Appro
 		return AutoApproved
 	}
 	return ApprovalRequired
+}
+
+// SecurityScanner performs security checks on tool inputs.
+type SecurityScanner interface {
+	Scan(ctx context.Context, toolName string, input json.RawMessage) (shouldBlock bool, reason string, err error)
+}
+
+// SecurityAwareApprovalChecker wraps an ApprovalChecker with security scanning.
+// Note: security scanning is synchronous during the CheckApproval call.
+type SecurityAwareApprovalChecker struct {
+	base    ApprovalChecker
+	scanner SecurityScanner
+}
+
+// NewSecurityAwareApprovalChecker creates an approval checker with security scanning.
+func NewSecurityAwareApprovalChecker(base ApprovalChecker, scanner SecurityScanner) *SecurityAwareApprovalChecker {
+	return &SecurityAwareApprovalChecker{
+		base:    base,
+		scanner: scanner,
+	}
+}
+
+// CheckApproval runs both approval and security checks.
+// It first runs the base approval check. If AutoDenied, returns immediately.
+// Otherwise, runs security scan; if security scan detects an issue, returns AutoDenied.
+// Scan errors are silently ignored (scan failures do not block approval).
+func (s *SecurityAwareApprovalChecker) CheckApproval(tool string, input json.RawMessage) ApprovalResult {
+	// Run approval check first
+	result := s.base.CheckApproval(tool, input)
+	if result == AutoDenied {
+		return result
+	}
+
+	// Run security scan (use background context since we can't pass context through interface)
+	shouldBlock, _, err := s.scanner.Scan(context.Background(), tool, input)
+	if err != nil {
+		// Scan errors don't block — proceed with original approval result
+		return result
+	}
+
+	if shouldBlock {
+		return AutoDenied
+	}
+
+	return result
 }

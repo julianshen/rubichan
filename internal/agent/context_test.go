@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/session"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -269,4 +271,85 @@ func makeStringOfTokens(n int) string {
 		chars = 0
 	}
 	return strings.Repeat("a", chars)
+}
+
+func TestVerdictContextBlockNil(t *testing.T) {
+	result := VerdictContextBlock(nil)
+	assert.Equal(t, "", result, "should return empty string for nil history")
+}
+
+func TestVerdictContextBlockEmpty(t *testing.T) {
+	hist := session.NewVerdictHistory()
+	result := VerdictContextBlock(hist)
+	assert.Equal(t, "", result, "should return empty string for empty history")
+}
+
+func TestVerdictContextBlockSingleTool(t *testing.T) {
+	hist := session.NewVerdictHistory()
+	hist.Record(session.Verdict{
+		ToolName:  "shell",
+		Command:   "go test",
+		Status:    session.VerdictStatusSuccess,
+		Timestamp: time.Now(),
+	})
+	hist.Record(session.Verdict{
+		ToolName:    "shell",
+		Command:     "go build",
+		Status:      session.VerdictStatusError,
+		ErrorReason: "build failed",
+		Timestamp:   time.Now(),
+	})
+
+	result := VerdictContextBlock(hist)
+	assert.Contains(t, result, "Recent tool execution outcomes:")
+	assert.Contains(t, result, "shell:")
+	assert.Contains(t, result, "2 total")
+	assert.Contains(t, result, "50%") // 1 success out of 2
+}
+
+func TestVerdictContextBlockMultipleTools(t *testing.T) {
+	hist := session.NewVerdictHistory()
+
+	// Shell verdicts: 3 total, 2 success = 67%
+	hist.Record(session.Verdict{
+		ToolName: "shell", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
+	})
+	hist.Record(session.Verdict{
+		ToolName: "shell", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
+	})
+	hist.Record(session.Verdict{
+		ToolName: "shell", Status: session.VerdictStatusError, Timestamp: time.Now(),
+	})
+
+	// File verdicts: 2 total, 2 success = 100%
+	hist.Record(session.Verdict{
+		ToolName: "file", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
+	})
+	hist.Record(session.Verdict{
+		ToolName: "file", Status: session.VerdictStatusSuccess, Timestamp: time.Now(),
+	})
+
+	result := VerdictContextBlock(hist)
+	assert.Contains(t, result, "Recent tool execution outcomes:")
+	assert.Contains(t, result, "shell:")
+	assert.Contains(t, result, "file:")
+	assert.Contains(t, result, "3 total") // for shell
+	assert.Contains(t, result, "2 total") // for file
+	assert.Contains(t, result, "67%")     // shell success rate
+	assert.Contains(t, result, "100%")    // file success rate
+}
+
+func TestVerdictContextBlockAllFailures(t *testing.T) {
+	hist := session.NewVerdictHistory()
+	hist.Record(session.Verdict{
+		ToolName: "broken_tool", Status: session.VerdictStatusError, Timestamp: time.Now(),
+	})
+	hist.Record(session.Verdict{
+		ToolName: "broken_tool", Status: session.VerdictStatusTimeout, Timestamp: time.Now(),
+	})
+
+	result := VerdictContextBlock(hist)
+	assert.Contains(t, result, "broken_tool:")
+	assert.Contains(t, result, "2 total")
+	assert.Contains(t, result, "0%") // no successful executions
 }

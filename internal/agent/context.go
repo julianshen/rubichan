@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/session"
 )
 
 // CompactionStrategy, ContextBudget, and CompactResult are defined in
@@ -263,4 +266,36 @@ func hasToolUse(msg provider.Message) bool {
 		}
 	}
 	return false
+}
+
+// VerdictContextBlock formats recent tool verdicts for agent awareness.
+// Format (example):
+//
+//	Recent tool execution outcomes:
+//	- shell: 42 total, 95% success rate
+//	- file: 18 total, 100% success rate
+//
+// Returns an empty string if history is nil or empty (no context to add).
+func VerdictContextBlock(verdictHist *session.VerdictHistory) string {
+	if verdictHist == nil {
+		return ""
+	}
+
+	summary := verdictHist.SummaryByTool()
+	if len(summary) == 0 {
+		return ""
+	}
+
+	var buf strings.Builder
+	buf.WriteString("Recent tool execution outcomes:\n")
+	for tool, stats := range summary {
+		successRate := 0.0
+		if stats.Total > 0 {
+			successRate = float64(stats.Successful) / float64(stats.Total) * 100
+		}
+		fmt.Fprintf(&buf, "- %s: %d total, %.0f%% success rate\n",
+			tool, stats.Total, successRate)
+	}
+
+	return buf.String()
 }
