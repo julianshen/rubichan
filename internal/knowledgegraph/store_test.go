@@ -598,3 +598,134 @@ func TestRecordEntityMentionsViaGraphInterface(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, hitCount)
 }
+
+// TestPutPersistsConfidenceToSQLite verifies that Put() writes confidence to SQLite
+func TestPutPersistsConfidenceToSQLite(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Create entity with Confidence=0.85
+	entity := &kg.Entity{
+		ID:         "test-conf-001",
+		Kind:       kg.KindArchitecture,
+		Title:      "Test Confidence",
+		Body:       "Entity with confidence value",
+		Source:     kg.SourceManual,
+		Confidence: 0.85,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	// Put the entity
+	ctx := context.Background()
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Query SQLite directly to verify confidence was persisted
+	db := g.(*KnowledgeGraph).db
+	var confidence float64
+	err = db.QueryRowContext(ctx,
+		`SELECT confidence FROM entities WHERE id=?`, "test-conf-001").Scan(&confidence)
+	require.NoError(t, err)
+	require.Equal(t, 0.85, confidence, "confidence should be persisted to SQLite")
+}
+
+// TestRebuildIndexPersistsConfidenceToSQLite verifies that RebuildIndex restores confidence
+func TestRebuildIndexPersistsConfidenceToSQLite(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Create entity with Confidence=0.75
+	entity := &kg.Entity{
+		ID:         "test-rebuild-001",
+		Kind:       kg.KindDecision,
+		Title:      "Test Rebuild",
+		Body:       "Entity for rebuild test",
+		Source:     kg.SourceManual,
+		Confidence: 0.75,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	// Put the entity
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Zero out confidence in DB to simulate corruption
+	db := g.(*KnowledgeGraph).db
+	_, err = db.ExecContext(ctx,
+		`UPDATE entities SET confidence=0 WHERE id=?`, "test-rebuild-001")
+	require.NoError(t, err)
+
+	// Verify it's zeroed
+	var confidence float64
+	err = db.QueryRowContext(ctx,
+		`SELECT confidence FROM entities WHERE id=?`, "test-rebuild-001").Scan(&confidence)
+	require.NoError(t, err)
+	require.Equal(t, 0.0, confidence)
+
+	// Call RebuildIndex to restore from cache/index
+	err = g.(*KnowledgeGraph).RebuildIndex(ctx)
+	require.NoError(t, err)
+
+	// Verify confidence was restored
+	err = db.QueryRowContext(ctx,
+		`SELECT confidence FROM entities WHERE id=?`, "test-rebuild-001").Scan(&confidence)
+	require.NoError(t, err)
+	require.Equal(t, 0.75, confidence, "confidence should be restored by RebuildIndex")
+}
+
+// TestStatAvgScoreAfterPut verifies that Stats correctly computes average confidence
+func TestStatAvgScoreAfterPut(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Put two entities with different confidence values
+	entity1 := &kg.Entity{
+		ID:         "test-stats-001",
+		Kind:       kg.KindArchitecture,
+		Title:      "Entity 1",
+		Body:       "First entity",
+		Source:     kg.SourceManual,
+		Confidence: 0.9,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	entity2 := &kg.Entity{
+		ID:         "test-stats-002",
+		Kind:       kg.KindArchitecture,
+		Title:      "Entity 2",
+		Body:       "Second entity",
+		Source:     kg.SourceManual,
+		Confidence: 0.7,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	err = g.Put(ctx, entity1)
+	require.NoError(t, err)
+	err = g.Put(ctx, entity2)
+	require.NoError(t, err)
+
+	// Get stats
+	stats, err := g.Stats(ctx)
+	require.NoError(t, err)
+
+	// Verify AvgScore (average confidence) is 0.8 = (0.9 + 0.7) / 2
+	require.InDelta(t, 0.8, stats.AvgScore, 0.01, "average score should be (0.9 + 0.7) / 2 = 0.8")
+
+	// Verify HighConfidenceCount counts entities with confidence >= 0.8
+	// Only entity1 (0.9) meets this, so count should be 1
+	require.Equal(t, 1, stats.HighConfidenceCount, "should have 1 entity with confidence >= 0.8")
+}

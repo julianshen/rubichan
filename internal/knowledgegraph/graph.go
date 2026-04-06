@@ -181,12 +181,12 @@ func (g *KnowledgeGraph) Put(ctx context.Context, e *kg.Entity) error {
 	if err != nil {
 		return fmt.Errorf("Put: marshal tags: %w", err)
 	}
-	stmt := `INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	stmt := `INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = g.db.ExecContext(ctx, stmt,
 		e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
-		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339),
+		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339), e.Confidence,
 	)
 	if err != nil {
 		return fmt.Errorf("Put: insert entity: %w", err)
@@ -462,10 +462,10 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 			return fmt.Errorf("rebuildIndex: marshal tags for entity %s: %w", e.ID, err)
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
-			e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339),
+			e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339), e.Confidence,
 		)
 		if err != nil {
 			return fmt.Errorf("rebuildIndex: insert entity: %w", err)
