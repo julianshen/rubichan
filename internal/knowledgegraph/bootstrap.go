@@ -92,6 +92,11 @@ func CollectBootstrapProfile(q Questioner) (*BootstrapProfile, error) {
 	}
 	painPoints := parseCommaSeparated(painPointsStr)
 
+	// Ensure pain points is always a slice (even if empty), never nil
+	if painPoints == nil {
+		painPoints = []string{}
+	}
+
 	// Question 8: Team size
 	teamSizeOptions := []string{"small", "medium", "large"}
 	teamSize, err := q.AskChoice("What is your team size?", teamSizeOptions)

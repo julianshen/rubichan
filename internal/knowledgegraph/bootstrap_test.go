@@ -844,3 +844,37 @@ func TestBootstrapExistingGraph(t *testing.T) {
 	_, err = os.Stat(newPath)
 	assert.NoError(t, err, "new entity should be created")
 }
+
+func TestCollectProfileEmptyProjectName(t *testing.T) {
+	mockQ := &MockQuestioner{
+		responses: map[string]interface{}{
+			"What is your project name?": "",
+		},
+	}
+
+	_, err := CollectBootstrapProfile(mockQ)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "project name")
+}
+
+func TestDiscoverModulesNonExistentPath(t *testing.T) {
+	// Non-existent directory should return empty list, not error
+	entities, err := DiscoverModules("/nonexistent/path/12345")
+	assert.NoError(t, err)
+	assert.Empty(t, entities)
+}
+
+func TestDiscoverIntegrationsNoGoFiles(t *testing.T) {
+	// Directory with no Go files should return empty list
+	tmpDir := t.TempDir()
+
+	// Create non-Go files
+	err := os.WriteFile(filepath.Join(tmpDir, "readme.txt"), []byte("readme"), 0o644)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte("config"), 0o644)
+	require.NoError(t, err)
+
+	entities, err := DiscoverIntegrations(tmpDir)
+	assert.NoError(t, err)
+	assert.Empty(t, entities)
+}
