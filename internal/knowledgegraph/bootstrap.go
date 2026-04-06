@@ -1,6 +1,143 @@
 package knowledgegraph
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Questioner is an interface for prompting the user during the bootstrap process.
+// It allows mocking for tests and decoupling from specific UI implementations.
+type Questioner interface {
+	// AskString prompts the user for a string response.
+	AskString(prompt string) (string, error)
+
+	// AskChoice prompts the user to select a single option from a list.
+	AskChoice(prompt string, options []string) (string, error)
+
+	// AskMultiSelect prompts the user to select multiple options from a list.
+	AskMultiSelect(prompt string, options []string) ([]string, error)
+}
+
+// CollectBootstrapProfile runs the interactive questionnaire to collect user responses
+// for knowledge graph initialization. It asks 10 questions in order and returns a
+// BootstrapProfile with the user's answers.
+//
+// Questions asked:
+// 1. Project name (string, must not be empty)
+// 2. Backend technologies (multi-select)
+// 3. Frontend technologies (multi-select)
+// 4. Database technologies (multi-select)
+// 5. Infrastructure technologies (multi-select)
+// 6. Architecture style (single choice)
+// 7. Pain points (comma-separated string)
+// 8. Team size (single choice)
+// 9. Team composition (single choice)
+// 10. Is existing project? (yes/no)
+func CollectBootstrapProfile(q Questioner) (*BootstrapProfile, error) {
+	// Question 1: Project name
+	projectName, err := q.AskString("What is your project name?")
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect project name: %w", err)
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return nil, fmt.Errorf("project name cannot be empty")
+	}
+
+	// Question 2: Backend technologies
+	backendOptions := []string{"Go", "Python", "Node.js", "Java", "Rust", "Other"}
+	backendTechs, err := q.AskMultiSelect("Select backend technologies:", backendOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect backend technologies: %w", err)
+	}
+
+	// Question 3: Frontend technologies
+	frontendOptions := []string{"React", "Vue", "Svelte", "Next.js", "Other"}
+	frontendTechs, err := q.AskMultiSelect("Select frontend technologies:", frontendOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect frontend technologies: %w", err)
+	}
+
+	// Question 4: Database technologies
+	databaseOptions := []string{"PostgreSQL", "MongoDB", "Redis", "SQLite", "Other"}
+	databaseTechs, err := q.AskMultiSelect("Select database technologies:", databaseOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect database technologies: %w", err)
+	}
+
+	// Question 5: Infrastructure technologies
+	infraOptions := []string{"Kubernetes", "Docker", "AWS", "GCP", "Azure", "Other"}
+	infraTechs, err := q.AskMultiSelect("Select infrastructure technologies:", infraOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect infrastructure technologies: %w", err)
+	}
+
+	// Question 6: Architecture style
+	archOptions := []string{"Monolithic", "Microservices", "Serverless", "Hybrid"}
+	archStyle, err := q.AskChoice("What is your architecture style?", archOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect architecture style: %w", err)
+	}
+
+	// Question 7: Pain points
+	painPointsStr, err := q.AskString("Describe your pain points (comma-separated):")
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect pain points: %w", err)
+	}
+	painPoints := parseCommaSeparated(painPointsStr)
+
+	// Question 8: Team size
+	teamSizeOptions := []string{"small", "medium", "large"}
+	teamSize, err := q.AskChoice("What is your team size?", teamSizeOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect team size: %w", err)
+	}
+
+	// Question 9: Team composition
+	teamCompOptions := []string{"frontend", "backend", "fullstack", "mixed"}
+	teamComp, err := q.AskChoice("What is your team composition?", teamCompOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect team composition: %w", err)
+	}
+
+	// Question 10: Is existing project?
+	existingAnswer, err := q.AskString("Is this an existing project?")
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect existing project status: %w", err)
+	}
+	isExisting := strings.ToLower(strings.TrimSpace(existingAnswer)) == "yes"
+
+	return &BootstrapProfile{
+		ProjectName:         projectName,
+		BackendTechs:        backendTechs,
+		FrontendTechs:       frontendTechs,
+		DatabaseTechs:       databaseTechs,
+		InfrastructureTechs: infraTechs,
+		ArchitectureStyle:   archStyle,
+		PainPoints:          painPoints,
+		TeamSize:            teamSize,
+		TeamComposition:     teamComp,
+		IsExisting:          isExisting,
+		CreatedAt:           time.Now(),
+	}, nil
+}
+
+// parseCommaSeparated splits a comma-separated string into trimmed parts.
+func parseCommaSeparated(input string) []string {
+	if input == "" {
+		return []string{}
+	}
+	parts := strings.Split(input, ",")
+	var result []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
 
 // BootstrapProfile captures user answers from the bootstrap questionnaire.
 // It records the project's technology stack, architecture, team composition,
