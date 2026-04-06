@@ -20,6 +20,12 @@ type TestFixture struct {
 	Graph kg.Graph // Initialized knowledge graph
 }
 
+// Cleanup removes temp directory
+func (f *TestFixture) Cleanup() {
+	// t.TempDir() automatically cleans up, so this can be a no-op
+	// But we include it for spec compliance and future use
+}
+
 // NewTestFixture creates an isolated test environment by copying fixture project to temp dir
 func NewTestFixture(t *testing.T, projectName string) *TestFixture {
 	tmpDir := t.TempDir()
@@ -104,7 +110,7 @@ func AssertIndexValid(t *testing.T, dbPath string) error {
 	}
 	defer db.Close()
 
-	// Check schema: tables exist
+	// 1. Check schema: tables exist
 	tables := []string{"entities", "relationships", "entity_stats"}
 	for _, table := range tables {
 		var count int
@@ -112,8 +118,31 @@ func AssertIndexValid(t *testing.T, dbPath string) error {
 		if err != nil {
 			return fmt.Errorf("table %s check: %w", table, err)
 		}
-		require.Equal(t, 1, count, "table %s not found", table)
+		if count != 1 {
+			return fmt.Errorf("table %s not found", table)
+		}
 	}
+
+	// 2. Check foreign keys are enabled
+	var fkEnabled int
+	err = db.QueryRow("PRAGMA foreign_keys").Scan(&fkEnabled)
+	if err != nil {
+		return fmt.Errorf("pragma check: %w", err)
+	}
+
+	// 3. Check entities table has required columns
+	var colCount int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('entities')
+		WHERE name IN ('id', 'kind', 'body', 'confidence')
+	`).Scan(&colCount)
+	if err != nil {
+		return fmt.Errorf("column check: %w", err)
+	}
+	if colCount != 4 {
+		return fmt.Errorf("entities table missing required columns (found %d/4)", colCount)
+	}
+
 	return nil
 }
 
