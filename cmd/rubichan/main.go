@@ -28,6 +28,7 @@ import (
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/hooks"
+	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/parser"
@@ -949,6 +950,26 @@ func appendPersonaOptions(opts []agent.AgentOption, cwd string) []agent.AgentOpt
 	return opts
 }
 
+// appendKnowledgeGraphOption adds knowledge graph integration to the agent options.
+// It gracefully degrades if the knowledge graph cannot be opened (no warnings logged).
+func appendKnowledgeGraphOption(ctx context.Context, opts []agent.AgentOption, workDir string) []agent.AgentOption {
+	g, err := openGraph(ctx, workDir)
+	if err != nil {
+		// Graceful degradation: knowledge graph is optional
+		return opts
+	}
+
+	// Cast to internal KnowledgeGraph type to access NewContextSelector
+	kg, ok := g.(*knowledgegraph.KnowledgeGraph)
+	if !ok {
+		// Graceful degradation if cast fails
+		return opts
+	}
+
+	selector := knowledgegraph.NewContextSelector(kg)
+	return append(opts, agent.WithKnowledgeGraph(selector))
+}
+
 // convertHookRules converts config hook rules into UserHookConfig entries.
 func convertHookRules(rules []config.HookRuleConfig, source string) []hooks.UserHookConfig {
 	var out []hooks.UserHookConfig
@@ -1565,6 +1586,7 @@ func runInteractive() error {
 	}
 
 	opts = appendPersonaOptions(opts, cwd)
+	opts = appendKnowledgeGraphOption(runCtx, opts, cwd)
 	opts = append(opts, agent.WithMode("interactive"))
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.

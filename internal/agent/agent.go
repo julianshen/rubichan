@@ -1033,6 +1033,9 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 					Cacheable: false,
 				})
 			}
+			// Record that these entities were selected and injected into the prompt.
+			// Errors are silently discarded to ensure metrics recording never blocks prompt building.
+			_ = a.knowledgeSelector.RecordUsage(ctx, entities)
 		}
 	}
 

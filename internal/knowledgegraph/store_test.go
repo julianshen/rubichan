@@ -598,3 +598,294 @@ func TestRecordEntityMentionsViaGraphInterface(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, hitCount)
 }
+
+// TestPutPersistsConfidenceToSQLite verifies that Put() writes confidence to SQLite
+func TestPutPersistsConfidenceToSQLite(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	// Create entity with Confidence=0.85
+	entity := &kg.Entity{
+		ID:         "test-conf-001",
+		Kind:       kg.KindArchitecture,
+		Title:      "Test Confidence",
+		Body:       "Entity with confidence value",
+		Source:     kg.SourceManual,
+		Confidence: 0.85,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	// Put the entity
+	ctx := context.Background()
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Query SQLite directly to verify confidence was persisted
+	db := g.(*KnowledgeGraph).db
+	var confidence float64
+	err = db.QueryRowContext(ctx,
+		`SELECT confidence FROM entities WHERE id=?`, "test-conf-001").Scan(&confidence)
+	require.NoError(t, err)
+	require.Equal(t, 0.85, confidence, "confidence should be persisted to SQLite")
+}
+
+// TestRebuildIndexPersistsConfidenceToSQLite verifies that RebuildIndex restores confidence
+func TestRebuildIndexPersistsConfidenceToSQLite(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Create entity with Confidence=0.75
+	entity := &kg.Entity{
+		ID:         "test-rebuild-001",
+		Kind:       kg.KindDecision,
+		Title:      "Test Rebuild",
+		Body:       "Entity for rebuild test",
+		Source:     kg.SourceManual,
+		Confidence: 0.75,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	// Put the entity
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Zero out confidence in DB to simulate corruption
+	db := g.(*KnowledgeGraph).db
+	_, err = db.ExecContext(ctx,
+		`UPDATE entities SET confidence=0 WHERE id=?`, "test-rebuild-001")
+	require.NoError(t, err)
+
+	// Verify it's zeroed
+	var confidence float64
+	err = db.QueryRowContext(ctx,
+		`SELECT confidence FROM entities WHERE id=?`, "test-rebuild-001").Scan(&confidence)
+	require.NoError(t, err)
+	require.Equal(t, 0.0, confidence)
+
+	// Call RebuildIndex to restore from cache/index
+	err = g.(*KnowledgeGraph).RebuildIndex(ctx)
+	require.NoError(t, err)
+
+	// Verify confidence was restored
+	err = db.QueryRowContext(ctx,
+		`SELECT confidence FROM entities WHERE id=?`, "test-rebuild-001").Scan(&confidence)
+	require.NoError(t, err)
+	require.Equal(t, 0.75, confidence, "confidence should be restored by RebuildIndex")
+}
+
+// TestStatAvgScoreAfterPut verifies that Stats correctly computes average confidence
+func TestStatAvgScoreAfterPut(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Put two entities with different confidence values
+	entity1 := &kg.Entity{
+		ID:         "test-stats-001",
+		Kind:       kg.KindArchitecture,
+		Title:      "Entity 1",
+		Body:       "First entity",
+		Source:     kg.SourceManual,
+		Confidence: 0.9,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	entity2 := &kg.Entity{
+		ID:         "test-stats-002",
+		Kind:       kg.KindArchitecture,
+		Title:      "Entity 2",
+		Body:       "Second entity",
+		Source:     kg.SourceManual,
+		Confidence: 0.7,
+		Created:    time.Now(),
+		Updated:    time.Now(),
+	}
+
+	err = g.Put(ctx, entity1)
+	require.NoError(t, err)
+	err = g.Put(ctx, entity2)
+	require.NoError(t, err)
+
+	// Get stats
+	stats, err := g.Stats(ctx)
+	require.NoError(t, err)
+
+	// Verify AvgScore (average confidence) is 0.8 = (0.9 + 0.7) / 2
+	require.InDelta(t, 0.8, stats.AvgScore, 0.01, "average score should be (0.9 + 0.7) / 2 = 0.8")
+
+	// Verify HighConfidenceCount counts entities with confidence >= 0.8
+	// Only entity1 (0.9) meets this, so count should be 1
+	require.Equal(t, 1, stats.HighConfidenceCount, "should have 1 entity with confidence >= 0.8")
+}
+
+// TestLintGraphMissingKindDetectsBlankKind verifies that LintGraph detects blank kind values
+func TestLintGraphMissingKindDetectsBlankKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert entity with blank kind (simulating a data corruption)
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-blank-kind", "", "Test Entity", "Body")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect blank kind
+	require.Contains(t, report.MissingKinds, "test-blank-kind", "should detect entity with blank kind")
+}
+
+// TestLintGraphMissingKindDetectsInvalidKind verifies that LintGraph detects invalid kind values
+func TestLintGraphMissingKindDetectsInvalidKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert entity with invalid kind
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-invalid-kind", "invalid-kind-value", "Test Entity", "Body")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect invalid kind
+	require.Contains(t, report.MissingKinds, "test-invalid-kind", "should detect entity with invalid kind")
+}
+
+// TestLintGraphMissingKindIsEmptyForValidGraph verifies MissingKinds is empty for valid entities
+func TestLintGraphMissingKindIsEmptyForValidGraph(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Add valid entities with correct kinds
+	entity := &kg.Entity{
+		ID:      "test-valid-001",
+		Kind:    kg.KindArchitecture,
+		Title:   "Valid Entity",
+		Body:    "This has a valid kind",
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(ctx)
+	require.NoError(t, err)
+
+	// MissingKinds should be empty
+	require.Len(t, report.MissingKinds, 0, "should have no entities with missing or invalid kinds")
+}
+
+// TestLintGraphEmptyBodyDetectsBlankBody verifies that LintGraph detects blank body values
+func TestLintGraphEmptyBodyDetectsBlankBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert entity with blank body
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-blank-body", "architecture", "Test Entity", "")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect blank body
+	require.Contains(t, report.EmptyBodies, "test-blank-body", "should detect entity with blank body")
+}
+
+// TestLintGraphEmptyBodyMultipleDetections verifies EmptyBodies detects multiple empty entities
+func TestLintGraphEmptyBodyMultipleDetections(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert multiple entities with blank bodies
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-empty-body-1", "architecture", "Test Entity 1", "")
+	require.NoError(t, err)
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-empty-body-2", "architecture", "Test Entity 2", "")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect both empty bodies
+	require.Contains(t, report.EmptyBodies, "test-empty-body-1")
+	require.Contains(t, report.EmptyBodies, "test-empty-body-2")
+	require.Len(t, report.EmptyBodies, 2)
+}
+
+// TestLintGraphEmptyBodyIsEmptyForGoodEntities verifies EmptyBodies is empty for valid entities
+func TestLintGraphEmptyBodyIsEmptyForGoodEntities(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Add valid entity with non-empty body
+	entity := &kg.Entity{
+		ID:      "test-good-body-001",
+		Kind:    kg.KindArchitecture,
+		Title:   "Valid Entity",
+		Body:    "This entity has a proper body with content",
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(ctx)
+	require.NoError(t, err)
+
+	// EmptyBodies should be empty
+	require.Len(t, report.EmptyBodies, 0, "should have no entities with empty or NULL bodies")
+}

@@ -15,6 +15,12 @@ import (
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
+// kindDirs lists all entity kind subdirectories in .knowledge/
+var kindDirs = []string{"architecture", "decisions", "gotchas", "patterns", "modules", "integrations"}
+
+// kindValues maps kind directories to their SQL enum values (singular forms)
+var kindValues = []string{"architecture", "decision", "gotcha", "pattern", "module", "integration"}
+
 // KnowledgeGraph implements kg.Graph backed by SQLite + markdown files.
 // It is safe for concurrent use.
 type KnowledgeGraph struct {
@@ -51,7 +57,7 @@ func openGraph(ctx context.Context, projectRoot string, opts []kg.Option) (kg.Gr
 	}
 
 	// Create knowledge directory structure if needed
-	for _, subdir := range []string{"architecture", "decisions", "gotchas", "patterns", "modules", "integrations"} {
+	for _, subdir := range kindDirs {
 		fullDir := filepath.Join(knowledgeDir, subdir)
 		if err := os.MkdirAll(fullDir, 0o755); err != nil {
 			return nil, fmt.Errorf("Open: creating dir %s: %w", fullDir, err)
@@ -60,7 +66,7 @@ func openGraph(ctx context.Context, projectRoot string, opts []kg.Option) (kg.Gr
 
 	// Create layer subdirectories (team and session layers; base uses flat layout)
 	for _, layerDir := range []string{"team", "session"} {
-		for _, kind := range []string{"architecture", "decisions", "gotchas", "patterns", "modules", "integrations"} {
+		for _, kind := range kindDirs {
 			fullDir := filepath.Join(knowledgeDir, layerDir, kind)
 			if err := os.MkdirAll(fullDir, 0o755); err != nil {
 				return nil, fmt.Errorf("Open: creating layer dir %s: %w", fullDir, err)
@@ -181,12 +187,12 @@ func (g *KnowledgeGraph) Put(ctx context.Context, e *kg.Entity) error {
 	if err != nil {
 		return fmt.Errorf("Put: marshal tags: %w", err)
 	}
-	stmt := `INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	stmt := `INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = g.db.ExecContext(ctx, stmt,
 		e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
-		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339),
+		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339), e.Confidence,
 	)
 	if err != nil {
 		return fmt.Errorf("Put: insert entity: %w", err)
@@ -462,10 +468,10 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 			return fmt.Errorf("rebuildIndex: marshal tags for entity %s: %w", e.ID, err)
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
-			e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339),
+			e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339), e.Confidence,
 		)
 		if err != nil {
 			return fmt.Errorf("rebuildIndex: insert entity: %w", err)
@@ -587,6 +593,35 @@ func (g *KnowledgeGraph) LintGraph(ctx context.Context) (*kg.LintReport, error) 
 			Title: title,
 			IDs:   ids,
 		})
+	}
+
+	// Batch missing kinds and empty bodies checks into single query
+	// Use UNION to combine two separate checks into one result set with a discriminator
+	kindList := "'" + strings.Join(kindValues, "','") + "'"
+	batchQuery := fmt.Sprintf(`
+		SELECT id, 'missing_kind' as check_type FROM entities
+		WHERE kind = '' OR kind NOT IN (%s)
+		UNION ALL
+		SELECT id, 'empty_body' as check_type FROM entities
+		WHERE body = '' OR body IS NULL
+	`, kindList)
+
+	rows, err = g.db.QueryContext(ctx, batchQuery)
+	if err != nil {
+		return nil, fmt.Errorf("LintGraph: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, checkType string
+		if err := rows.Scan(&id, &checkType); err != nil {
+			return nil, err
+		}
+		if checkType == "missing_kind" {
+			report.MissingKinds = append(report.MissingKinds, id)
+		} else if checkType == "empty_body" {
+			report.EmptyBodies = append(report.EmptyBodies, id)
+		}
 	}
 
 	return report, nil
