@@ -130,3 +130,80 @@ func TestTurnRenderer_HidesThinkingWhenEmpty(t *testing.T) {
 		t.Errorf("Output should not contain thinking emoji when thinking is empty")
 	}
 }
+
+func TestTurnRenderer_RendersToolCallCollapsed(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "I read the file",
+		Status:        "done",
+		ToolCalls: []RenderedToolCall{
+			{
+				ID:        "tool-1",
+				Name:      "file",
+				Args:      `path="main.go"`,
+				Result:    "package main\n\nfunc main() {}",
+				IsError:   false,
+				Collapsed: true,
+				LineCount: 3,
+			},
+		},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// Collapsed should show summary line only
+	if !strings.Contains(output, "▶") {
+		t.Errorf("Collapsed tool should have ▶ indicator")
+	}
+	if !strings.Contains(output, "file") {
+		t.Errorf("Output should contain tool name")
+	}
+	if !strings.Contains(output, "3 lines") && !strings.Contains(output, "lines") {
+		t.Errorf("Output should contain line count")
+	}
+	// Should NOT expand the result
+	if strings.Count(output, "package main") > 1 {
+		t.Errorf("Collapsed tool should not show full result")
+	}
+}
+
+func TestTurnRenderer_RendersToolCallExpanded(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "I read the file",
+		Status:        "done",
+		ToolCalls: []RenderedToolCall{
+			{
+				ID:        "tool-1",
+				Name:      "file",
+				Args:      `path="main.go"`,
+				Result:    "package main\n\nfunc main() {}",
+				IsError:   false,
+				Collapsed: false, // Expanded
+				LineCount: 3,
+			},
+		},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// Expanded should show full result
+	if !strings.Contains(output, "▼") {
+		t.Errorf("Expanded tool should have ▼ indicator")
+	}
+	if !strings.Contains(output, "package main") {
+		t.Errorf("Expanded tool should show result content")
+	}
+}

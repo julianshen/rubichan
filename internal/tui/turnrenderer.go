@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -60,6 +61,21 @@ func (r *TurnRenderer) Render(ctx context.Context, turn *Turn, opts RenderOption
 	if turn.AssistantText != "" {
 		output.WriteString(turn.AssistantText)
 		output.WriteString("\n")
+	}
+
+	// Render tool calls
+	for _, call := range turn.ToolCalls {
+		if call.Collapsed {
+			// Collapsed summary line
+			output.WriteString(fmt.Sprintf("▶ %s(%s) — %d lines\n",
+				call.Name, call.Args, call.LineCount))
+		} else {
+			// Expanded with full result
+			output.WriteString(fmt.Sprintf("▼ %s(%s)\n", call.Name, call.Args))
+			output.WriteString("╭──────────────────────────╮\n")
+			output.WriteString(call.Result)
+			output.WriteString("\n╰──────────────────────────╯\n")
+		}
 	}
 
 	return output.String(), nil
