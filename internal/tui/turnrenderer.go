@@ -56,8 +56,11 @@ type RenderedToolCall struct {
 
 // Render produces the complete text representation of a turn.
 // This is the main entry point used by Model.View().
-// Callers must pass non-nil turn; nil input is a programmer error.
 func (r *TurnRenderer) Render(ctx context.Context, turn *Turn, opts RenderOptions) (string, error) {
+	if turn == nil {
+		return "", nil
+	}
+
 	var output strings.Builder
 
 	// Render thinking block if present

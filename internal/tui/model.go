@@ -174,11 +174,9 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
 	// Create archive directory and initialize TurnCache + TurnWindow
-	// Use default archive path (~/.rubichan/archive) unless overridden in config
+	// Use default archive path (~/.rubichan/archive)
+	// (Future: make configurable via cfg if needed)
 	archiveDir := filepath.Join(os.Getenv("HOME"), ".rubichan", "archive")
-	if cfg != nil && cfg.Archive != nil && cfg.Archive.Dir != "" {
-		archiveDir = cfg.Archive.Dir
-	}
 
 	sessionID := fmt.Sprintf("session-%d", time.Now().Unix()) // unique per session
 	cache := NewTurnCache(archiveDir, sessionID, minTurnsBeforeArchive)
