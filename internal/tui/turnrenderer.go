@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -46,6 +47,20 @@ type RenderedToolCall struct {
 // Render produces the complete text representation of a turn.
 // This is the main entry point used by Model.View().
 func (r *TurnRenderer) Render(ctx context.Context, turn *Turn, opts RenderOptions) (string, error) {
-	// Stub: return empty for now, will implement in later tasks
-	return "", nil
+	var output strings.Builder
+
+	// Render thinking block if present
+	if turn.ThinkingText != "" {
+		output.WriteString("🧠 Thinking...\n")
+		output.WriteString(turn.ThinkingText)
+		output.WriteString("\n\n")
+	}
+
+	// Render assistant message
+	if turn.AssistantText != "" {
+		output.WriteString(turn.AssistantText)
+		output.WriteString("\n")
+	}
+
+	return output.String(), nil
 }

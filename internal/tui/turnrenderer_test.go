@@ -2,6 +2,8 @@
 package tui
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,5 +60,73 @@ func TestRenderOptions_StructFields(t *testing.T) {
 
 	if opts.Width != 80 {
 		t.Errorf("Width not set correctly")
+	}
+}
+
+func TestTurnRenderer_RendersAssistantMessage(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Hello world",
+		Status:        "done",
+		ToolCalls:     []RenderedToolCall{},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if !strings.Contains(output, "Hello world") {
+		t.Errorf("Output should contain assistant text, got: %s", output)
+	}
+}
+
+func TestTurnRenderer_RendersThinkingBlock(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Response",
+		ThinkingText:  "Let me think...",
+		Status:        "done",
+		ToolCalls:     []RenderedToolCall{},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if !strings.Contains(output, "Let me think...") {
+		t.Errorf("Output should contain thinking text")
+	}
+	if !strings.Contains(output, "🧠") {
+		t.Errorf("Output should contain thinking emoji")
+	}
+}
+
+func TestTurnRenderer_HidesThinkingWhenEmpty(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Response",
+		ThinkingText:  "", // Empty
+		Status:        "done",
+		ToolCalls:     []RenderedToolCall{},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if strings.Contains(output, "🧠") {
+		t.Errorf("Output should not contain thinking emoji when thinking is empty")
 	}
 }
