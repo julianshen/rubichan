@@ -2,6 +2,10 @@ package knowledgegraph
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -240,4 +244,283 @@ type BootstrapMetadata struct {
 
 	// BootstrappedAt is the timestamp when the bootstrap process completed.
 	BootstrappedAt time.Time `json:"bootstrapped_at"`
+}
+
+// DiscoverModules walks the codebase and identifies top-level packages/directories.
+// It scans pkg/, internal/, cmd/, src/, app/, backend/, and frontend/ directories
+// and creates ProposedEntity nodes for each module found.
+//
+// Returns a slice of module entities with Kind="module" and Confidence=0.9.
+// If a directory cannot be read, it is skipped gracefully.
+func DiscoverModules(rootDir string) ([]*ProposedEntity, error) {
+	moduleDirs := []string{"pkg", "internal", "cmd", "src", "app", "backend", "frontend"}
+	var entities []*ProposedEntity
+
+	for _, baseDir := range moduleDirs {
+		basePath := filepath.Join(rootDir, baseDir)
+		entries, err := os.ReadDir(basePath)
+		if err != nil {
+			// Directory doesn't exist or unreadable, skip gracefully
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			moduleName := entry.Name()
+			moduleTitle := formatModuleTitle(moduleName)
+
+			entity := &ProposedEntity{
+				ID:         moduleName,
+				Kind:       "module",
+				Title:      moduleTitle,
+				Body:       fmt.Sprintf("Module discovered in %s/%s", baseDir, moduleName),
+				SourceType: "module",
+				Confidence: 0.9,
+				Tags:       []string{"module", baseDir},
+			}
+
+			entities = append(entities, entity)
+		}
+	}
+
+	return entities, nil
+}
+
+// formatModuleTitle converts snake_case module name to Title Case.
+// For example, "user_management" becomes "User Management".
+func formatModuleTitle(name string) string {
+	// Replace underscores with spaces
+	withSpaces := strings.ReplaceAll(name, "_", " ")
+
+	// Split by spaces and capitalize each word
+	words := strings.Fields(withSpaces)
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
+		}
+	}
+
+	return strings.Join(words, " ")
+}
+
+// DiscoverDecisionsFromGit analyzes recent git commits for architectural decisions.
+// It examines the last 30 commits and searches for keywords: "architecture",
+// "decision", "pattern", "refactor", and pain points from the profile.
+//
+// Returns a slice of decision entities with Kind="decision" and SourceType="git".
+// Confidence is set to 0.7. If git is not available or the repo is invalid,
+// an empty slice is returned with nil error.
+func DiscoverDecisionsFromGit(rootDir string, profile *BootstrapProfile) ([]*ProposedEntity, error) {
+	// Run git log command
+	cmd := exec.Command("git", "-C", rootDir, "log", "--oneline", "-30")
+	output, err := cmd.Output()
+	if err != nil {
+		// Git not available or not a git repo, return empty slice
+		return []*ProposedEntity{}, nil
+	}
+
+	// Keywords to search for in commit messages
+	keywords := []string{
+		"architecture",
+		"decision",
+		"pattern",
+		"refactor",
+	}
+
+	// Add pain points as keywords (lowercase)
+	if profile != nil {
+		for _, painPoint := range profile.PainPoints {
+			keywords = append(keywords, strings.ToLower(painPoint))
+		}
+	}
+
+	var entities []*ProposedEntity
+	lines := strings.Split(string(output), "\n")
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		// Check if line contains any keyword
+		lowerLine := strings.ToLower(line)
+		for _, keyword := range keywords {
+			if strings.Contains(lowerLine, keyword) {
+				// Extract commit message (everything after the hash)
+				parts := strings.SplitN(line, " ", 2)
+				if len(parts) < 2 {
+					continue
+				}
+
+				commitMsg := parts[1]
+				entity := &ProposedEntity{
+					ID:         strings.TrimSpace(parts[0]), // Use commit hash as ID
+					Kind:       "decision",
+					Title:      commitMsg,
+					Body:       fmt.Sprintf("Discovered from git commit: %s", line),
+					SourceType: "git",
+					Confidence: 0.7,
+					Tags:       []string{"git", "decision"},
+				}
+
+				entities = append(entities, entity)
+				break // Don't add duplicate entity for same commit
+			}
+		}
+	}
+
+	return entities, nil
+}
+
+// knownIntegrations maps import paths to human-readable integration names.
+var knownIntegrations = map[string]string{
+	"github.com/lib/pq":                   "PostgreSQL (pq driver)",
+	"github.com/redis/go-redis":           "Redis",
+	"go.mongodb.org/mongo-driver":         "MongoDB",
+	"github.com/go-sql-driver/mysql":      "MySQL",
+	"github.com/jackc/pgx/v5":             "PostgreSQL (pgx driver)",
+	"github.com/elastic/go-elasticsearch": "Elasticsearch",
+	"github.com/go-gorm/gorm":             "GORM (ORM)",
+	"github.com/goreleaser/goreleaser":    "GoReleaser",
+}
+
+// DiscoverIntegrations scans Go files for imported libraries and external dependencies.
+// It walks the codebase, finds import statements, and matches them against the
+// knownIntegrations map to identify external services and databases.
+//
+// Returns a slice of integration entities with Kind="integration" and Confidence=0.85.
+// Unknown imports are skipped.
+func DiscoverIntegrations(rootDir string) ([]*ProposedEntity, error) {
+	var entities []*ProposedEntity
+	seenIntegrations := make(map[string]bool) // Track already-found integrations
+
+	// Walk the directory tree looking for .go files
+	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip unreadable files
+		}
+
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+
+		// Read the file
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil // Skip unreadable files
+		}
+
+		// Find import statements
+		imports := extractImports(string(content))
+
+		for _, importPath := range imports {
+			// Check against known integrations (direct match first)
+			if title, ok := knownIntegrations[importPath]; ok {
+				// Skip if we've already added this integration
+				if seenIntegrations[importPath] {
+					continue
+				}
+				seenIntegrations[importPath] = true
+
+				entity := &ProposedEntity{
+					ID:         strings.ReplaceAll(importPath, "/", "-"),
+					Kind:       "integration",
+					Title:      title,
+					Body:       fmt.Sprintf("Imported from: %s", importPath),
+					SourceType: "integration",
+					Confidence: 0.85,
+					Tags:       []string{"integration", "dependency"},
+				}
+
+				entities = append(entities, entity)
+				continue
+			}
+
+			// Try matching without version suffix (e.g., "github.com/redis/go-redis/v8" -> "github.com/redis/go-redis")
+			basePath := importPath
+			if strings.Contains(basePath, "/v") {
+				// Remove version suffix like /v8, /v2, etc.
+				parts := strings.Split(basePath, "/")
+				for i := len(parts) - 1; i >= 0; i-- {
+					if strings.HasPrefix(parts[i], "v") && len(parts[i]) > 1 {
+						// This looks like a version, remove it
+						basePath = strings.Join(parts[:i], "/")
+						break
+					}
+				}
+
+				if title, ok := knownIntegrations[basePath]; ok {
+					// Skip if we've already added this integration
+					if seenIntegrations[basePath] {
+						continue
+					}
+					seenIntegrations[basePath] = true
+
+					entity := &ProposedEntity{
+						ID:         strings.ReplaceAll(basePath, "/", "-"),
+						Kind:       "integration",
+						Title:      title,
+						Body:       fmt.Sprintf("Imported from: %s", importPath),
+						SourceType: "integration",
+						Confidence: 0.85,
+						Tags:       []string{"integration", "dependency"},
+					}
+
+					entities = append(entities, entity)
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return []*ProposedEntity{}, fmt.Errorf("failed to walk directory: %w", err)
+	}
+
+	return entities, nil
+}
+
+// extractImports uses regex to find import statements in Go source code.
+// It handles both single-line and multi-line import blocks.
+func extractImports(content string) []string {
+	var imports []string
+
+	// Pattern for single import: import "path"
+	singleImportRe := regexp.MustCompile(`import\s+"([^"]+)"`)
+	matches := singleImportRe.FindAllStringSubmatch(content, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			imports = append(imports, match[1])
+		}
+	}
+
+	// Pattern for import block: import ( ... )
+	blockImportRe := regexp.MustCompile(`import\s*\(([\s\S]*?)\)`)
+	blockMatches := blockImportRe.FindAllStringSubmatch(content, -1)
+	for _, match := range blockMatches {
+		if len(match) > 1 {
+			block := match[1]
+			// Extract individual imports from the block
+			lines := strings.Split(block, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				// Skip empty lines and comments
+				if line == "" || strings.HasPrefix(line, "//") {
+					continue
+				}
+				// Extract path from quoted string
+				pathRe := regexp.MustCompile(`"([^"]+)"`)
+				pathMatches := pathRe.FindStringSubmatch(line)
+				if len(pathMatches) > 1 {
+					imports = append(imports, pathMatches[1])
+				}
+			}
+		}
+	}
+
+	return imports
 }

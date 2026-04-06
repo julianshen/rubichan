@@ -2,6 +2,8 @@ package knowledgegraph
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -333,5 +335,204 @@ func TestExistingProjectDetection(t *testing.T) {
 
 	if profile.IsExisting {
 		t.Error("IsExisting should be false when answer is 'no'")
+	}
+}
+
+func TestDiscoverModules(t *testing.T) {
+	// Create a temporary project structure with modules
+	tmpDir := t.TempDir()
+
+	// Create pkg/ directory with auth module
+	pkgAuthDir := tmpDir + "/pkg/auth"
+	if err := os.MkdirAll(pkgAuthDir, 0755); err != nil {
+		t.Fatalf("failed to create pkg/auth directory: %v", err)
+	}
+
+	// Create pkg/ directory with database module
+	pkgDatabaseDir := tmpDir + "/pkg/database"
+	if err := os.MkdirAll(pkgDatabaseDir, 0755); err != nil {
+		t.Fatalf("failed to create pkg/database directory: %v", err)
+	}
+
+	// Create internal/ directory with config module
+	internalConfigDir := tmpDir + "/internal/config"
+	if err := os.MkdirAll(internalConfigDir, 0755); err != nil {
+		t.Fatalf("failed to create internal/config directory: %v", err)
+	}
+
+	// Run DiscoverModules
+	entities, err := DiscoverModules(tmpDir)
+	if err != nil {
+		t.Fatalf("DiscoverModules failed: %v", err)
+	}
+
+	// Verify entities were found
+	if len(entities) < 3 {
+		t.Errorf("expected at least 3 modules, got %d", len(entities))
+	}
+
+	// Verify module names
+	moduleNames := make(map[string]bool)
+	for _, entity := range entities {
+		if entity.Kind != "module" {
+			t.Errorf("expected kind 'module', got %q", entity.Kind)
+		}
+		if entity.Confidence != 0.9 {
+			t.Errorf("expected confidence 0.9, got %f", entity.Confidence)
+		}
+		moduleNames[entity.ID] = true
+	}
+
+	if !moduleNames["auth"] {
+		t.Error("expected 'auth' module not found")
+	}
+	if !moduleNames["database"] {
+		t.Error("expected 'database' module not found")
+	}
+	if !moduleNames["config"] {
+		t.Error("expected 'config' module not found")
+	}
+}
+
+func TestFormatModuleTitle(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"auth", "Auth"},
+		{"user_management", "User Management"},
+		{"api_handler", "Api Handler"},
+		{"database", "Database"},
+		{"a", "A"},
+	}
+
+	for _, tt := range tests {
+		result := formatModuleTitle(tt.input)
+		if result != tt.expected {
+			t.Errorf("formatModuleTitle(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestDiscoverDecisionsFromGit(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init", tmpDir)
+	if err := cmd.Run(); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	// Configure git user for commits
+	configNameCmd := exec.Command("git", "-C", tmpDir, "config", "user.name", "Test User")
+	if err := configNameCmd.Run(); err != nil {
+		t.Fatalf("failed to configure git user name: %v", err)
+	}
+
+	configEmailCmd := exec.Command("git", "-C", tmpDir, "config", "user.email", "test@example.com")
+	if err := configEmailCmd.Run(); err != nil {
+		t.Fatalf("failed to configure git user email: %v", err)
+	}
+
+	// Create test file and commit with architecture keyword
+	testFile := tmpDir + "/test.txt"
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	addCmd := exec.Command("git", "-C", tmpDir, "add", "test.txt")
+	if err := addCmd.Run(); err != nil {
+		t.Fatalf("failed to git add: %v", err)
+	}
+
+	commitCmd := exec.Command("git", "-C", tmpDir, "commit", "-m", "[STRUCTURAL] architecture: refactor to microservices")
+	if err := commitCmd.Run(); err != nil {
+		t.Fatalf("failed to git commit: %v", err)
+	}
+
+	// Run DiscoverDecisionsFromGit
+	profile := &BootstrapProfile{}
+	entities, err := DiscoverDecisionsFromGit(tmpDir, profile)
+	if err != nil {
+		t.Fatalf("DiscoverDecisionsFromGit failed: %v", err)
+	}
+
+	// Verify decision entity was found
+	if len(entities) < 1 {
+		t.Error("expected at least 1 decision entity, got 0")
+	}
+
+	if len(entities) > 0 {
+		entity := entities[0]
+		if entity.Kind != "decision" {
+			t.Errorf("expected kind 'decision', got %q", entity.Kind)
+		}
+		if entity.SourceType != "git" {
+			t.Errorf("expected source_type 'git', got %q", entity.SourceType)
+		}
+		if entity.Confidence <= 0 || entity.Confidence > 1 {
+			t.Errorf("expected confidence between 0 and 1, got %f", entity.Confidence)
+		}
+	}
+}
+
+func TestDiscoverIntegrations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create cmd/ directory
+	cmdDir := tmpDir + "/cmd/myapp"
+	if err := os.MkdirAll(cmdDir, 0755); err != nil {
+		t.Fatalf("failed to create cmd directory: %v", err)
+	}
+
+	// Create a Go file with pq and redis imports
+	mainFile := cmdDir + "/main.go"
+	mainContent := `package main
+
+import (
+	"github.com/lib/pq"
+	"github.com/redis/go-redis/v8"
+	"fmt"
+)
+
+func main() {
+	fmt.Println("hello")
+}
+`
+	if err := os.WriteFile(mainFile, []byte(mainContent), 0644); err != nil {
+		t.Fatalf("failed to create main.go: %v", err)
+	}
+
+	// Run DiscoverIntegrations
+	entities, err := DiscoverIntegrations(tmpDir)
+	if err != nil {
+		t.Fatalf("DiscoverIntegrations failed: %v", err)
+	}
+
+	// Verify integration entities were found
+	if len(entities) < 2 {
+		t.Errorf("expected at least 2 integration entities, got %d", len(entities))
+	}
+
+	// Check for PostgreSQL and Redis integrations
+	integrationTitles := make(map[string]bool)
+	for _, entity := range entities {
+		if entity.Kind != "integration" {
+			t.Errorf("expected kind 'integration', got %q", entity.Kind)
+		}
+		if entity.SourceType != "integration" {
+			t.Errorf("expected source_type 'integration', got %q", entity.SourceType)
+		}
+		if entity.Confidence != 0.85 {
+			t.Errorf("expected confidence 0.85, got %f", entity.Confidence)
+		}
+		integrationTitles[entity.Title] = true
+	}
+
+	if !integrationTitles["PostgreSQL (pq driver)"] {
+		t.Error("expected PostgreSQL integration not found")
+	}
+	if !integrationTitles["Redis"] {
+		t.Error("expected Redis integration not found")
 	}
 }
