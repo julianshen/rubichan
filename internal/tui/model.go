@@ -252,6 +252,25 @@ func (m *Model) GetAgent() *agent.Agent {
 	return m.agent
 }
 
+// extractTurnForRendering creates an immutable Turn snapshot from the model's
+// current streaming state. This bridges Model's internal state to TurnRenderer
+// for rendering. The Turn is a snapshot of state at call time, not a live reference.
+func (m *Model) extractTurnForRendering() *Turn {
+	turn := &Turn{
+		ID:            fmt.Sprintf("turn-%d", m.turnCount),
+		AssistantText: m.rawAssistant.String(),
+		ThinkingText:  m.rawThinking.String(),
+		Status:        "done",
+		ErrorMsg:      "",
+		StartTime:     m.turnStartTime,
+		ToolCalls:     []RenderedToolCall{},
+	}
+
+	// TODO: Extract tool calls from model state (done in later task)
+
+	return turn
+}
+
 // ClearContent resets the content buffer and viewport. This is used by the
 // /clear command callback to wipe the display.
 func (m *Model) ClearContent() {
