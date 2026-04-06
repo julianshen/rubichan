@@ -194,13 +194,13 @@ func wireSandboxProxy(cfg *config.Config, shellTool *tools.ShellTool) (cleanup f
 
 	if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && shellTool.Sandbox() == nil {
 		if proxy != nil {
-			proxy.Stop()
+			_ = proxy.Stop()
 		}
 		return nil, fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
 	}
 
 	if proxy != nil {
-		return func() { proxy.Stop() }, nil
+		return func() { _ = proxy.Stop() }, nil
 	}
 	return nil, nil
 }

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -206,31 +204,6 @@ func runShell() error {
 	return err
 }
 
-// makeShellApprovalFunc creates an inline yes/no approval prompt for shell mode.
-// It writes prompts to the given writer (stderr) to avoid conflicting with
-// the shell host's stdin scanner.
-func makeShellApprovalFunc(promptWriter *os.File) agent.ApprovalFunc {
-	return func(_ context.Context, toolName string, _ json.RawMessage) (bool, error) {
-		fmt.Fprintf(promptWriter, "[Approve %s?] (y/n): ", toolName)
-		buf := make([]byte, 64)
-		n, err := promptWriter.Read(buf) // read from tty via stderr's fd
-		if err != nil {
-			// Fallback: read from /dev/tty directly
-			tty, ttyErr := os.Open("/dev/tty")
-			if ttyErr != nil {
-				return false, fmt.Errorf("no terminal available for approval prompt: %w", ttyErr)
-			}
-			defer tty.Close()
-			n, err = tty.Read(buf)
-			if err != nil {
-				return false, fmt.Errorf("reading approval response: %w", err)
-			}
-		}
-		response := strings.TrimSpace(strings.ToLower(string(buf[:n])))
-		return response == "y" || response == "yes", nil
-	}
-}
-
 // makeHuhApprovalFunc creates a huh-based approval form for shell mode tool calls.
 // Displays tool name and formatted arguments in an interactive form.
 func makeHuhApprovalFunc() agent.ApprovalFunc {
@@ -399,15 +372,3 @@ func makeSlashCommandFunc(registry *commands.Registry) shell.SlashCommandFunc {
 	}
 }
 
-// shellConfigDir returns the path for shell-mode-specific config like history.
-func shellConfigDir() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	shellDir := filepath.Join(dir, "shell")
-	if err := os.MkdirAll(shellDir, 0o755); err != nil {
-		return "", err
-	}
-	return shellDir, nil
-}

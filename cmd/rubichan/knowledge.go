@@ -300,11 +300,10 @@ func openGraph(ctx context.Context, workDir string) (kg.Graph, error) {
 
 	// Probe Ollama with a short timeout; use FTS5 fallback if unavailable (silent)
 	ollamaEmbedder := knowledgegraph.NewOllamaEmbedder(ollama.DefaultBaseURL)
-	if ollamaCtx, cancel := context.WithTimeout(ctx, 2*time.Second); true {
-		defer cancel()
-		if err := ollamaEmbedder.HealthCheck(ollamaCtx); err == nil {
-			embedder = ollamaEmbedder
-		}
+	ollamaCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := ollamaEmbedder.HealthCheck(ollamaCtx); err == nil {
+		embedder = ollamaEmbedder
 	}
 
 	g, err := kg.Open(ctx, workDir,

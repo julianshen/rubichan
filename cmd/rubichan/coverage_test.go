@@ -1197,7 +1197,7 @@ func TestSaveMemoriesBestEffort_NilContext(t *testing.T) {
 	t.Parallel()
 	// Should not panic even with nil context.
 	assert.NotPanics(t, func() {
-		saveMemoriesBestEffort(nil, nil, os.Stderr)
+		saveMemoriesBestEffort(context.TODO(), nil, os.Stderr)
 	})
 }
 
