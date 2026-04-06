@@ -729,3 +729,80 @@ func TestStatAvgScoreAfterPut(t *testing.T) {
 	// Only entity1 (0.9) meets this, so count should be 1
 	require.Equal(t, 1, stats.HighConfidenceCount, "should have 1 entity with confidence >= 0.8")
 }
+
+// TestLintGraphMissingKindDetectsBlankKind verifies that LintGraph detects blank kind values
+func TestLintGraphMissingKindDetectsBlankKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert entity with blank kind (simulating a data corruption)
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-blank-kind", "", "Test Entity", "Body")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect blank kind
+	require.Contains(t, report.MissingKinds, "test-blank-kind", "should detect entity with blank kind")
+}
+
+// TestLintGraphMissingKindDetectsInvalidKind verifies that LintGraph detects invalid kind values
+func TestLintGraphMissingKindDetectsInvalidKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert entity with invalid kind
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-invalid-kind", "invalid-kind-value", "Test Entity", "Body")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect invalid kind
+	require.Contains(t, report.MissingKinds, "test-invalid-kind", "should detect entity with invalid kind")
+}
+
+// TestLintGraphMissingKindIsEmptyForValidGraph verifies MissingKinds is empty for valid entities
+func TestLintGraphMissingKindIsEmptyForValidGraph(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Add valid entities with correct kinds
+	entity := &kg.Entity{
+		ID:      "test-valid-001",
+		Kind:    kg.KindArchitecture,
+		Title:   "Valid Entity",
+		Body:    "This has a valid kind",
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(ctx)
+	require.NoError(t, err)
+
+	// MissingKinds should be empty
+	require.Len(t, report.MissingKinds, 0, "should have no entities with missing or invalid kinds")
+}

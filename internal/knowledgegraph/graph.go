@@ -589,6 +589,24 @@ func (g *KnowledgeGraph) LintGraph(ctx context.Context) (*kg.LintReport, error) 
 		})
 	}
 
+	// Check for missing or invalid kinds
+	rows, err = g.db.QueryContext(ctx, `
+		SELECT id FROM entities WHERE kind = '' OR kind NOT IN
+		('architecture','decision','gotcha','pattern','module','integration')
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("LintGraph: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		report.MissingKinds = append(report.MissingKinds, id)
+	}
+
 	return report, nil
 }
 
