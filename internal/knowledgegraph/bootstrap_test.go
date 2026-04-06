@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBootstrapProfileMarshaling(t *testing.T) {
@@ -665,8 +669,8 @@ func TestWriteBootstrapEntities(t *testing.T) {
 
 	// Verify created entities
 	expectedIDs := map[string]bool{
-		"testapp-auth":       true,
-		"testapp-database":   true,
+		"testapp-auth":         true,
+		"testapp-database":     true,
 		"postgres-integration": true,
 	}
 
@@ -675,4 +679,168 @@ func TestWriteBootstrapEntities(t *testing.T) {
 			t.Errorf("unexpected entity ID in metadata: %q", id)
 		}
 	}
+}
+
+func TestBootstrapFullWorkflow(t *testing.T) {
+	// This test simulates the complete bootstrap workflow end-to-end
+
+	tmpDir := t.TempDir()
+
+	// 1. Create a realistic project structure with multiple directories
+	dirs := []string{"pkg/auth", "pkg/database", "internal/api", "cmd/server"}
+	for _, dir := range dirs {
+		fullPath := filepath.Join(tmpDir, dir)
+		err := os.MkdirAll(fullPath, 0o755)
+		require.NoError(t, err)
+
+		// Create a dummy Go file
+		err = os.WriteFile(filepath.Join(fullPath, "main.go"),
+			[]byte("package main"), 0o644)
+		require.NoError(t, err)
+	}
+
+	// 2. Create profile (simulating questionnaire answers)
+	profile := &BootstrapProfile{
+		ProjectName:         "testapp",
+		BackendTechs:        []string{"Go"},
+		FrontendTechs:       []string{"React"},
+		DatabaseTechs:       []string{"PostgreSQL"},
+		InfrastructureTechs: []string{"Docker"},
+		ArchitectureStyle:   "Microservices",
+		PainPoints:          []string{"scaling", "testing"},
+		TeamSize:            "medium",
+		TeamComposition:     "backend",
+		IsExisting:          true,
+		CreatedAt:           time.Now(),
+	}
+
+	// 3. Discover modules
+	modules, err := DiscoverModules(tmpDir)
+	require.NoError(t, err)
+	require.Greater(t, len(modules), 0)
+	assert.Equal(t, "module", modules[0].Kind)
+	assert.Equal(t, 0.9, modules[0].Confidence)
+
+	// 4. Combine all entities
+	var allEntities []*ProposedEntity
+	allEntities = append(allEntities, modules...)
+
+	// 5. Write entities to .knowledge/
+	knowledgeDir := filepath.Join(tmpDir, ".knowledge")
+	metadata, err := WriteBootstrapEntities(knowledgeDir, allEntities, profile)
+	require.NoError(t, err)
+	require.NotNil(t, metadata)
+
+	// 6. Verify entity files were created correctly
+	for _, entityID := range metadata.CreatedEntities {
+		entityPath := filepath.Join(knowledgeDir, "module", entityID+".md")
+		_, err := os.Stat(entityPath)
+		assert.NoError(t, err, "entity file should exist: %s", entityPath)
+
+		// Verify file content contains frontmatter
+		content, err := os.ReadFile(entityPath)
+		require.NoError(t, err)
+		assert.Contains(t, string(content), "---")
+		assert.Contains(t, string(content), "kind: module")
+		assert.Contains(t, string(content), "layer: base")
+	}
+
+	// 7. Verify bootstrap.json was created
+	bootstrapPath := filepath.Join(knowledgeDir, ".bootstrap.json")
+	_, err = os.Stat(bootstrapPath)
+	require.NoError(t, err)
+
+	// 8. Load and verify bootstrap metadata
+	bootstrapData, err := os.ReadFile(bootstrapPath)
+	require.NoError(t, err)
+
+	var readMetadata BootstrapMetadata
+	err = json.Unmarshal(bootstrapData, &readMetadata)
+	require.NoError(t, err)
+
+	// Verify metadata contents
+	assert.Equal(t, profile.ProjectName, readMetadata.Profile.ProjectName)
+	assert.Equal(t, profile.ArchitectureStyle, readMetadata.Profile.ArchitectureStyle)
+	assert.Equal(t, len(allEntities), len(readMetadata.CreatedEntities))
+	assert.NotZero(t, readMetadata.BootstrappedAt)
+
+	// 9. Verify entity count and types
+	assert.Greater(t, len(metadata.CreatedEntities), 0)
+	for _, id := range metadata.CreatedEntities {
+		assert.NotEmpty(t, id)
+	}
+}
+
+func TestBootstrapEmptyProject(t *testing.T) {
+	// Test bootstrap on a brand new project with no source files
+
+	tmpDir := t.TempDir()
+	profile := &BootstrapProfile{
+		ProjectName: "newapp",
+		CreatedAt:   time.Now(),
+	}
+
+	// No source files exist
+	modules, err := DiscoverModules(tmpDir)
+	assert.NoError(t, err)
+	assert.Empty(t, modules) // Should find nothing
+
+	// But bootstrap should still work with empty entity list
+	knowledgeDir := filepath.Join(tmpDir, ".knowledge")
+	metadata, err := WriteBootstrapEntities(knowledgeDir, nil, profile)
+	assert.NoError(t, err)
+	assert.NotNil(t, metadata)
+
+	// Verify .bootstrap.json was created even with no entities
+	bootstrapPath := filepath.Join(knowledgeDir, ".bootstrap.json")
+	_, err = os.Stat(bootstrapPath)
+	assert.NoError(t, err)
+}
+
+func TestBootstrapExistingGraph(t *testing.T) {
+	// Test bootstrap with existing .knowledge/ directory
+
+	tmpDir := t.TempDir()
+	knowledgeDir := filepath.Join(tmpDir, ".knowledge")
+
+	// Create existing graph structure
+	err := os.MkdirAll(filepath.Join(knowledgeDir, "module"), 0o755)
+	require.NoError(t, err)
+
+	// Create existing entity
+	err = os.WriteFile(filepath.Join(knowledgeDir, "module", "existing.md"),
+		[]byte("# Existing Entity"), 0o644)
+	require.NoError(t, err)
+
+	// Now bootstrap new entities
+	profile := &BootstrapProfile{
+		ProjectName: "myapp",
+		CreatedAt:   time.Now(),
+	}
+
+	newEntities := []*ProposedEntity{
+		{
+			ID:         "new-module",
+			Kind:       "module",
+			Title:      "New Module",
+			Body:       "A new module",
+			SourceType: "module",
+			Confidence: 0.9,
+			Tags:       []string{"new"},
+		},
+	}
+
+	// WriteBootstrapEntities should not delete existing entities
+	metadata, err := WriteBootstrapEntities(knowledgeDir, newEntities, profile)
+	assert.NoError(t, err)
+	require.NotNil(t, metadata)
+
+	// Both old and new files should exist
+	existingPath := filepath.Join(knowledgeDir, "module", "existing.md")
+	_, err = os.Stat(existingPath)
+	assert.NoError(t, err, "existing entity should not be deleted")
+
+	newPath := filepath.Join(knowledgeDir, "module", "new-module.md")
+	_, err = os.Stat(newPath)
+	assert.NoError(t, err, "new entity should be created")
 }
