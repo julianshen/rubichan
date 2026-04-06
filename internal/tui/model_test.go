@@ -2798,3 +2798,15 @@ func TestModelExtractTurnForRenderingWithMultipleTurns(t *testing.T) {
 	assert.Equal(t, "Thinking for turn 10", turn.ThinkingText)
 	assert.Equal(t, startTime, turn.StartTime)
 }
+
+func TestModel_UsesTurnWindow(t *testing.T) {
+	m := NewModel(nil, "TestApp", "test-model", 100, "", nil, nil)
+
+	if m.turnWindow == nil {
+		t.Errorf("Model should have turnWindow initialized")
+	}
+
+	if m.turnCache == nil {
+		t.Errorf("Model should have turnCache initialized")
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +73,8 @@ type Model struct {
 	mdRenderer        *MarkdownRenderer
 	toolBox           *ToolBoxRenderer
 	turnRenderer      *TurnRenderer
+	turnWindow        *TurnWindow // manages virtual scrolling
+	turnCache         *TurnCache  // manages archival
 	statusBar         *StatusBar
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
@@ -158,6 +162,12 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	// but handle it gracefully — Render falls back to raw text if renderer is nil.
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
+	// Create archive directory and initialize TurnCache + TurnWindow
+	archiveDir := filepath.Join(os.Getenv("HOME"), ".rubichan", "archive")
+	sessionID := fmt.Sprintf("session-%d", time.Now().Unix()) // unique per session
+	cache := NewTurnCache(archiveDir, sessionID, 50)          // keep 50 turns in memory
+	turnWindow := NewTurnWindow(cache)
+
 	m := &Model{
 		agent:             a,
 		cfg:               cfg,
@@ -168,6 +178,8 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		mdRenderer:        mdRenderer,
 		toolBox:           NewToolBoxRenderer(80),
 		turnRenderer:      &TurnRenderer{},
+		turnWindow:        turnWindow,
+		turnCache:         cache,
 		statusBar:         sb,
 		approvalCh:        make(chan approvalRequest),
 		state:             StateInput,
