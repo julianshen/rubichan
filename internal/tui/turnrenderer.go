@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// Rendering constants for tool display
+const (
+	toolCollapsedMarker  = "▶"
+	toolExpandedMarker   = "▼"
+	toolBoxTopBorder     = "╭──────────────────────────╮"
+	toolBoxBottomBorder  = "╰──────────────────────────╯"
+	thinkingBlockHeader  = "🧠 Thinking..."
+)
+
 // TurnRenderer encapsulates all turn rendering logic.
 // It is a pure function: takes immutable turn data, returns rendered string.
 // Zero state, zero side effects — easy to test and parallelize.
@@ -47,16 +56,14 @@ type RenderedToolCall struct {
 
 // Render produces the complete text representation of a turn.
 // This is the main entry point used by Model.View().
+// Callers must pass non-nil turn; nil input is a programmer error.
 func (r *TurnRenderer) Render(ctx context.Context, turn *Turn, opts RenderOptions) (string, error) {
-	if turn == nil {
-		return "", nil
-	}
-
 	var output strings.Builder
 
 	// Render thinking block if present
 	if turn.ThinkingText != "" {
-		output.WriteString("🧠 Thinking...\n")
+		output.WriteString(thinkingBlockHeader)
+		output.WriteString("\n")
 		output.WriteString(turn.ThinkingText)
 		output.WriteString("\n\n")
 	}
@@ -71,14 +78,17 @@ func (r *TurnRenderer) Render(ctx context.Context, turn *Turn, opts RenderOption
 	for _, call := range turn.ToolCalls {
 		if call.Collapsed {
 			// Collapsed summary line
-			output.WriteString(fmt.Sprintf("▶ %s(%s) — %d lines\n",
-				call.Name, call.Args, call.LineCount))
+			output.WriteString(fmt.Sprintf("%s %s(%s) — %d lines\n",
+				toolCollapsedMarker, call.Name, call.Args, call.LineCount))
 		} else {
 			// Expanded with full result
-			output.WriteString(fmt.Sprintf("▼ %s(%s)\n", call.Name, call.Args))
-			output.WriteString("╭──────────────────────────╮\n")
+			output.WriteString(fmt.Sprintf("%s %s(%s)\n", toolExpandedMarker, call.Name, call.Args))
+			output.WriteString(toolBoxTopBorder)
+			output.WriteString("\n")
 			output.WriteString(call.Result)
-			output.WriteString("\n╰──────────────────────────╯\n")
+			output.WriteString("\n")
+			output.WriteString(toolBoxBottomBorder)
+			output.WriteString("\n")
 		}
 	}
 

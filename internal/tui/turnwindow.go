@@ -12,6 +12,7 @@ type TurnWindow struct {
 	cache        *TurnCache
 	visibleStart int
 	visibleEnd   int
+	maxTurnIndex int // highest turn index seen
 	mu           sync.RWMutex
 }
 
@@ -22,9 +23,22 @@ func NewTurnWindow(cache *TurnCache) *TurnWindow {
 	}
 }
 
-// AddTurn adds a turn to the window.
+// AddTurn adds a turn to the window and updates max index tracking.
 func (w *TurnWindow) AddTurn(index int, turn *Turn) {
 	w.cache.AddTurn(index, turn)
+
+	w.mu.Lock()
+	if index > w.maxTurnIndex {
+		w.maxTurnIndex = index
+	}
+	w.mu.Unlock()
+}
+
+// GetVisibleRange returns the currently visible start and end indices (for testing).
+func (w *TurnWindow) GetVisibleRange() (int, int) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.visibleStart, w.visibleEnd
 }
 
 // UpdateVisibleRange updates which turns are visible.
@@ -51,11 +65,18 @@ func (w *TurnWindow) UpdateVisibleRange(scrollPos, viewportHeight int) {
 
 // RenderVisible renders only visible turns.
 // O(k) rendering where k = visible turn count (typically 5-10).
+// Bounds-checks against maxTurnIndex to avoid expensive failed disk lookups.
 func (w *TurnWindow) RenderVisible(renderer *TurnRenderer) (string, error) {
 	w.mu.RLock()
 	visibleStart := w.visibleStart
 	visibleEnd := w.visibleEnd
+	maxTurnIndex := w.maxTurnIndex
 	w.mu.RUnlock()
+
+	// Bounds-check visibleEnd against actual turns
+	if visibleEnd > maxTurnIndex {
+		visibleEnd = maxTurnIndex
+	}
 
 	var output strings.Builder
 
@@ -63,7 +84,7 @@ func (w *TurnWindow) RenderVisible(renderer *TurnRenderer) (string, error) {
 	for i := visibleStart; i <= visibleEnd; i++ {
 		turn, err := w.cache.GetTurn(i)
 		if err != nil {
-			// Turn not in range, stop
+			// Turn not in range, continue to next
 			continue
 		}
 

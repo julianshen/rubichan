@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTurnWindow_ComputesVisibleRange(t *testing.T) {
@@ -21,12 +24,10 @@ func TestTurnWindow_ComputesVisibleRange(t *testing.T) {
 	// Simulate viewport at height 10 (showing ~5-10 turns)
 	window.UpdateVisibleRange(0, 10)
 
-	if window.visibleStart < 0 {
-		t.Errorf("visibleStart should be >= 0, got %d", window.visibleStart)
-	}
-	if window.visibleEnd < window.visibleStart {
-		t.Errorf("visibleEnd should be >= visibleStart, got start=%d end=%d", window.visibleStart, window.visibleEnd)
-	}
+	// Use public API to check visible range
+	start, end := window.GetVisibleRange()
+	assert.GreaterOrEqual(t, start, 0, "visibleStart should be >= 0")
+	assert.GreaterOrEqual(t, end, start, "visibleEnd should be >= visibleStart")
 }
 
 func TestTurnWindow_RenderVisibleOnly(t *testing.T) {
@@ -41,23 +42,14 @@ func TestTurnWindow_RenderVisibleOnly(t *testing.T) {
 			ID:            fmt.Sprintf("turn-%d", i),
 			AssistantText: fmt.Sprintf("Turn %d", i),
 			StartTime:     time.Now(),
-			Status:        "done",
+			Status:        TurnStatusDone,
 		}
 		window.AddTurn(i, turn)
 	}
 
 	window.UpdateVisibleRange(0, 10)
 	output, err := window.RenderVisible(renderer)
-	if err != nil {
-		t.Fatalf("RenderVisible failed: %v", err)
-	}
-
-	if output == "" {
-		t.Errorf("Output should not be empty")
-	}
-
-	// Verify that output contains some of the turn content
-	if !strings.Contains(output, "Turn") {
-		t.Errorf("Output should contain turn content, got: %s", output)
-	}
+	require.NoError(t, err, "RenderVisible should not fail")
+	assert.NotEmpty(t, output, "Output should not be empty")
+	assert.Contains(t, output, "Turn", "Output should contain turn content")
 }

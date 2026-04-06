@@ -22,6 +22,33 @@ type ArchivedTurn struct {
 	ArchivedAt    time.Time          `json:"archived_at"`
 }
 
+// ToArchived converts a Turn to ArchivedTurn for serialization
+func (t *Turn) ToArchived() ArchivedTurn {
+	return ArchivedTurn{
+		ID:            t.ID,
+		AssistantText: t.AssistantText,
+		ThinkingText:  t.ThinkingText,
+		ToolCalls:     t.ToolCalls,
+		Status:        t.Status,
+		ErrorMsg:      t.ErrorMsg,
+		StartTime:     t.StartTime,
+		ArchivedAt:    time.Now(),
+	}
+}
+
+// ToTurn converts an ArchivedTurn back to Turn
+func (a *ArchivedTurn) ToTurn() *Turn {
+	return &Turn{
+		ID:            a.ID,
+		AssistantText: a.AssistantText,
+		ThinkingText:  a.ThinkingText,
+		ToolCalls:     a.ToolCalls,
+		Status:        a.Status,
+		ErrorMsg:      a.ErrorMsg,
+		StartTime:     a.StartTime,
+	}
+}
+
 // TurnCache manages turn storage with automatic archival.
 type TurnCache struct {
 	mu             sync.RWMutex
@@ -74,37 +101,36 @@ func (c *TurnCache) ArchiveOldTurns(beforeIndex int) error {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	// Archive turns before threshold
+	// Archive turns before threshold (skip already archived)
 	for i := 0; i < beforeIndex; i++ {
-		if turn, ok := c.turns[i]; ok {
-			// Convert to ArchivedTurn
-			archived := ArchivedTurn{
-				ID:            turn.ID,
-				AssistantText: turn.AssistantText,
-				ThinkingText:  turn.ThinkingText,
-				ToolCalls:     turn.ToolCalls,
-				Status:        turn.Status,
-				ErrorMsg:      turn.ErrorMsg,
-				StartTime:     turn.StartTime,
-				ArchivedAt:    time.Now(),
-			}
-
-			// Write to disk
-			data, err := json.MarshalIndent(archived, "", "  ")
-			if err != nil {
-				return fmt.Errorf("marshal archive: %w", err)
-			}
-			archivePath := filepath.Join(archiveSessionDir, fmt.Sprintf("turn-%d.json", i))
-			if err := os.WriteFile(archivePath, data, 0644); err != nil {
-				return fmt.Errorf("write archive: %w", err)
-			}
-
-			// Track archived path
-			c.archivedPaths[i] = archivePath
-
-			// Remove from memory
-			delete(c.turns, i)
+		// Skip if already archived
+		if _, alreadyArchived := c.archivedPaths[i]; alreadyArchived {
+			continue
 		}
+
+		turn, ok := c.turns[i]
+		if !ok {
+			continue // Turn not in memory, skip
+		}
+
+		// Convert to ArchivedTurn
+		archived := turn.ToArchived()
+
+		// Write to disk
+		data, err := json.MarshalIndent(archived, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal archive: %w", err)
+		}
+		archivePath := filepath.Join(archiveSessionDir, fmt.Sprintf("turn-%d.json", i))
+		if err := os.WriteFile(archivePath, data, 0644); err != nil {
+			return fmt.Errorf("write archive: %w", err)
+		}
+
+		// Track archived path
+		c.archivedPaths[i] = archivePath
+
+		// Remove from memory
+		delete(c.turns, i)
 	}
 
 	return nil
@@ -126,22 +152,11 @@ func (c *TurnCache) LoadFromArchive(index int) (*Turn, error) {
 		return nil, fmt.Errorf("read archive: %w", err)
 	}
 
-	// Unmarshal
+	// Unmarshal and convert back to Turn
 	var archived ArchivedTurn
 	if err := json.Unmarshal(data, &archived); err != nil {
 		return nil, fmt.Errorf("unmarshal archive: %w", err)
 	}
 
-	// Convert back to Turn
-	turn := &Turn{
-		ID:            archived.ID,
-		AssistantText: archived.AssistantText,
-		ThinkingText:  archived.ThinkingText,
-		ToolCalls:     archived.ToolCalls,
-		Status:        archived.Status,
-		ErrorMsg:      archived.ErrorMsg,
-		StartTime:     archived.StartTime,
-	}
-
-	return turn, nil
+	return archived.ToTurn(), nil
 }

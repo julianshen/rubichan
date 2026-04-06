@@ -26,6 +26,17 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
+// Turn status constants
+const (
+	TurnStatusDone      = "done"
+	TurnStatusStreaming = "streaming"
+	TurnStatusError     = "error"
+
+	// Archival configuration constants
+	archiveCheckInterval = 10  // archive every 10 turns
+	minTurnsBeforeArchive = 50 // don't archive until we have this many
+)
+
 // approvalRequest carries a tool approval request from the agent goroutine
 // to the TUI. The agent blocks on the response channel until the user decides.
 type approvalRequest struct {
@@ -163,9 +174,14 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
 	// Create archive directory and initialize TurnCache + TurnWindow
+	// Use default archive path (~/.rubichan/archive) unless overridden in config
 	archiveDir := filepath.Join(os.Getenv("HOME"), ".rubichan", "archive")
+	if cfg != nil && cfg.Archive != nil && cfg.Archive.Dir != "" {
+		archiveDir = cfg.Archive.Dir
+	}
+
 	sessionID := fmt.Sprintf("session-%d", time.Now().Unix()) // unique per session
-	cache := NewTurnCache(archiveDir, sessionID, 50)          // keep 50 turns in memory
+	cache := NewTurnCache(archiveDir, sessionID, minTurnsBeforeArchive)
 	turnWindow := NewTurnWindow(cache)
 
 	m := &Model{
@@ -266,6 +282,9 @@ func (m *Model) GetAgent() *agent.Agent {
 	return m.agent
 }
 
+// emptyToolCalls is a reusable empty slice to avoid allocations on every render
+var emptyToolCalls = []RenderedToolCall{}
+
 // extractTurnForRendering creates an immutable Turn snapshot from the model's
 // current streaming state. This bridges Model's internal state to TurnRenderer
 // for rendering. The Turn is a snapshot of state at call time, not a live reference.
@@ -274,10 +293,10 @@ func (m *Model) extractTurnForRendering() *Turn {
 		ID:            fmt.Sprintf("turn-%d", m.turnCount),
 		AssistantText: m.rawAssistant.String(),
 		ThinkingText:  m.rawThinking.String(),
-		Status:        "done",
+		Status:        TurnStatusDone,
 		ErrorMsg:      "",
 		StartTime:     m.turnStartTime,
-		ToolCalls:     []RenderedToolCall{},
+		ToolCalls:     emptyToolCalls, // reuse constant
 	}
 
 	// TODO: Extract tool calls from model state (done in later task)

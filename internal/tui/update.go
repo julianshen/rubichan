@@ -735,13 +735,16 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		turn := m.extractTurnForRendering()
 		m.turnWindow.AddTurn(m.turnCount-1, turn)
 
-		// Periodically archive old turns (every 10 new turns)
-		if m.turnCount%10 == 0 && m.turnCount > 50 {
-			err := m.turnCache.ArchiveOldTurns(m.turnCount - 50)
-			if err != nil {
-				// log error but don't break rendering
-				log.Printf("archive error: %v", err)
-			}
+		// Periodically archive old turns (every N turns, async to avoid UI blocking)
+		if m.turnCount%archiveCheckInterval == 0 && m.turnCount > minTurnsBeforeArchive {
+			archiveThreshold := m.turnCount - minTurnsBeforeArchive
+			// Run archival in background to avoid blocking the render loop
+			go func(threshold int) {
+				if err := m.turnCache.ArchiveOldTurns(threshold); err != nil {
+					// Log error but don't disrupt user experience
+					log.Printf("background archive error: %v", err)
+				}
+			}(archiveThreshold)
 		}
 
 		contextBudget := 100000
