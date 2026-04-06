@@ -607,6 +607,23 @@ func (g *KnowledgeGraph) LintGraph(ctx context.Context) (*kg.LintReport, error) 
 		report.MissingKinds = append(report.MissingKinds, id)
 	}
 
+	// Check for empty or NULL bodies
+	rows, err = g.db.QueryContext(ctx, `
+		SELECT id FROM entities WHERE body = '' OR body IS NULL
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("LintGraph: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		report.EmptyBodies = append(report.EmptyBodies, id)
+	}
+
 	return report, nil
 }
 

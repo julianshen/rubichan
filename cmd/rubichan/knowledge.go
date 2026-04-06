@@ -231,7 +231,8 @@ func knowledgeLintCmd() *cobra.Command {
 
 			if len(report.OrphanedRelationships) == 0 &&
 				len(report.DuplicateTitles) == 0 &&
-				len(report.MissingKinds) == 0 {
+				len(report.MissingKinds) == 0 &&
+				len(report.EmptyBodies) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "✓ Knowledge graph is clean")
 				return nil
 			}
@@ -253,6 +254,13 @@ func knowledgeLintCmd() *cobra.Command {
 			if len(report.MissingKinds) > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "\n⚠ Entities with missing or invalid kind (%d):\n", len(report.MissingKinds))
 				for _, id := range report.MissingKinds {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", id)
+				}
+			}
+
+			if len(report.EmptyBodies) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "\n⚠ Entities with empty or missing body (%d):\n", len(report.EmptyBodies))
+				for _, id := range report.EmptyBodies {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", id)
 				}
 			}

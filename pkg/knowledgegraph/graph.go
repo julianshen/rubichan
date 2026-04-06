@@ -66,6 +66,7 @@ type LintReport struct {
 	OrphanedRelationships []OrphanedRelationship
 	DuplicateTitles       []DuplicateTitle
 	MissingKinds          []string // entity IDs where Kind is empty/invalid
+	EmptyBodies           []string // entity IDs where Body is empty or NULL
 }
 
 // OrphanedRelationship points to a target that doesn't exist.

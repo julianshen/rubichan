@@ -806,3 +806,86 @@ func TestLintGraphMissingKindIsEmptyForValidGraph(t *testing.T) {
 	// MissingKinds should be empty
 	require.Len(t, report.MissingKinds, 0, "should have no entities with missing or invalid kinds")
 }
+
+// TestLintGraphEmptyBodyDetectsBlankBody verifies that LintGraph detects blank body values
+func TestLintGraphEmptyBodyDetectsBlankBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert entity with blank body
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-blank-body", "architecture", "Test Entity", "")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect blank body
+	require.Contains(t, report.EmptyBodies, "test-blank-body", "should detect entity with blank body")
+}
+
+// TestLintGraphEmptyBodyMultipleDetections verifies EmptyBodies detects multiple empty entities
+func TestLintGraphEmptyBodyMultipleDetections(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	db := g.(*KnowledgeGraph).db
+
+	// Manually insert multiple entities with blank bodies
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-empty-body-1", "architecture", "Test Entity 1", "")
+	require.NoError(t, err)
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entities(id, kind, title, body) VALUES(?, ?, ?, ?)`,
+		"test-empty-body-2", "architecture", "Test Entity 2", "")
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(context.Background())
+	require.NoError(t, err)
+
+	// Should detect both empty bodies
+	require.Contains(t, report.EmptyBodies, "test-empty-body-1")
+	require.Contains(t, report.EmptyBodies, "test-empty-body-2")
+	require.Len(t, report.EmptyBodies, 2)
+}
+
+// TestLintGraphEmptyBodyIsEmptyForGoodEntities verifies EmptyBodies is empty for valid entities
+func TestLintGraphEmptyBodyIsEmptyForGoodEntities(t *testing.T) {
+	tmpDir := t.TempDir()
+	g, err := openGraph(context.Background(), tmpDir, []kg.Option{})
+	require.NoError(t, err)
+	defer g.Close()
+
+	ctx := context.Background()
+
+	// Add valid entity with non-empty body
+	entity := &kg.Entity{
+		ID:      "test-good-body-001",
+		Kind:    kg.KindArchitecture,
+		Title:   "Valid Entity",
+		Body:    "This entity has a proper body with content",
+		Source:  kg.SourceManual,
+		Created: time.Now(),
+		Updated: time.Now(),
+	}
+
+	err = g.Put(ctx, entity)
+	require.NoError(t, err)
+
+	// Run lint
+	report, err := g.LintGraph(ctx)
+	require.NoError(t, err)
+
+	// EmptyBodies should be empty
+	require.Len(t, report.EmptyBodies, 0, "should have no entities with empty or NULL bodies")
+}
