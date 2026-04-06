@@ -21,6 +21,7 @@ import (
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/evaluator"
 	"github.com/julianshen/rubichan/internal/hooks"
+	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
@@ -79,6 +80,16 @@ func WithStore(st *store.Store) AgentOption {
 func WithResumeSession(sessionID string) AgentOption {
 	return func(a *Agent) {
 		a.resumeSessionID = sessionID
+	}
+}
+
+// WithBootstrapContext prepends bootstrap metadata to the agent's system prompt.
+func WithBootstrapContext(metadata *knowledgegraph.BootstrapMetadata) AgentOption {
+	return func(a *Agent) {
+		if metadata != nil {
+			prefix := BuildBootstrapSystemPromptPrefix(metadata)
+			a.basePrompt = prefix + a.basePrompt
+		}
 	}
 }
 
@@ -275,47 +286,47 @@ func WithRateLimiter(rl *SharedRateLimiter) AgentOption {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider         provider.LLMProvider
-	tools            *tools.Registry
-	conversation     *Conversation
-	context          *ContextManager
-	approve          ApprovalFunc
-	approvalChecker  ApprovalChecker
-	uiRequestHandler UIRequestHandler
-	model            string
-	maxTurns         int
-	basePrompt       string
-	staticPrompts    []PromptSection
-	skillRuntime     *skills.Runtime
-	store            *store.Store
-	sessionID        string
-	resumeSessionID  string
-	agentMD          string
-	identityMD       string
-	soulMD           string
-	extraPrompts     []namedPrompt
-	summarizer       Summarizer
-	scratchpad       *Scratchpad
+	provider          provider.LLMProvider
+	tools             *tools.Registry
+	conversation      *Conversation
+	context           *ContextManager
+	approve           ApprovalFunc
+	approvalChecker   ApprovalChecker
+	uiRequestHandler  UIRequestHandler
+	model             string
+	maxTurns          int
+	basePrompt        string
+	staticPrompts     []PromptSection
+	skillRuntime      *skills.Runtime
+	store             *store.Store
+	sessionID         string
+	resumeSessionID   string
+	agentMD           string
+	identityMD        string
+	soulMD            string
+	extraPrompts      []namedPrompt
+	summarizer        Summarizer
+	scratchpad        *Scratchpad
 	memoryStore       MemoryStore
 	knowledgeSelector kg.ContextSelector
 	customStrategies  bool
 	resultStore       *ResultStore
-	promptBuilder    *PromptBuilder
-	deferral         *tools.DeferralManager
-	diffTracker      *tools.DiffTracker
-	turnMu           sync.Mutex // serializes Turn() calls to prevent DiffTracker race
-	wakeManager      *WakeManager
-	pipeline         *toolexec.Pipeline
-	workingDir       string // override working directory (empty = os.Getwd)
-	parallelPolicy   ToolParallelPolicy
-	logger           Logger
-	mode             string
-	checkpointMgr    *checkpoint.Manager
-	userHookRunner   *hooks.UserHookRunner
-	turnNumber       atomic.Int32
-	rateLimiter      *SharedRateLimiter
-	capabilities     provider.ModelCapabilities
-	progress         *ProgressTracker
+	promptBuilder     *PromptBuilder
+	deferral          *tools.DeferralManager
+	diffTracker       *tools.DiffTracker
+	turnMu            sync.Mutex // serializes Turn() calls to prevent DiffTracker race
+	wakeManager       *WakeManager
+	pipeline          *toolexec.Pipeline
+	workingDir        string // override working directory (empty = os.Getwd)
+	parallelPolicy    ToolParallelPolicy
+	logger            Logger
+	mode              string
+	checkpointMgr     *checkpoint.Manager
+	userHookRunner    *hooks.UserHookRunner
+	turnNumber        atomic.Int32
+	rateLimiter       *SharedRateLimiter
+	capabilities      provider.ModelCapabilities
+	progress          *ProgressTracker
 }
 
 const maxUIRequestInputBytes = 2048
@@ -1815,4 +1826,58 @@ func makeToolResultEvent(id, name, content, displayContent string, isError bool)
 			IsError:        isError,
 		},
 	}
+}
+
+// LoadBootstrapContext reads and parses the bootstrap metadata file.
+func LoadBootstrapContext(bootstrapPath string) (*knowledgegraph.BootstrapMetadata, error) {
+	data, err := os.ReadFile(bootstrapPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var metadata knowledgegraph.BootstrapMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, err
+	}
+
+	return &metadata, nil
+}
+
+// BuildBootstrapSystemPromptPrefix creates a system prompt prefix based on bootstrap context.
+func BuildBootstrapSystemPromptPrefix(metadata *knowledgegraph.BootstrapMetadata) string {
+	if metadata == nil {
+		return ""
+	}
+
+	entitiesStr := strings.Join(metadata.CreatedEntities[:], ", ")
+	if len(metadata.CreatedEntities) > 5 {
+		entitiesStr = strings.Join(metadata.CreatedEntities[:5], ", ") + ", ..."
+	}
+
+	prefix := fmt.Sprintf(`You just helped bootstrap a knowledge graph for "%s".
+
+We discovered:
+- %d modules and packages
+- %d architectural decisions from git history
+- %d integrations and external services
+
+Here are the initial entities we created:
+%s
+
+Let's refine these together. You can:
+- Ask me to elaborate on any entity
+- Suggest changes or improvements
+- Add entities I might have missed
+- Adjust confidence scores
+
+Type /done when we're finished refining.
+
+`,
+		metadata.Profile.ProjectName,
+		metadata.AnalysisMetadata.ModulesFound,
+		metadata.AnalysisMetadata.GitCommitsAnalyzed,
+		metadata.AnalysisMetadata.IntegrationsDetected,
+		entitiesStr)
+
+	return prefix
 }
