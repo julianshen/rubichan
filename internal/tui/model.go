@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,17 @@ import (
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
+)
+
+// Turn status constants
+const (
+	TurnStatusDone      = "done"
+	TurnStatusStreaming = "streaming"
+	TurnStatusError     = "error"
+
+	// Archival configuration constants
+	archiveCheckInterval = 10  // archive every 10 turns
+	minTurnsBeforeArchive = 50 // don't archive until we have this many
 )
 
 // approvalRequest carries a tool approval request from the agent goroutine
@@ -70,6 +83,9 @@ type Model struct {
 	thinkingEndIdx    int
 	mdRenderer        *MarkdownRenderer
 	toolBox           *ToolBoxRenderer
+	turnRenderer      *TurnRenderer
+	turnWindow        *TurnWindow // manages virtual scrolling
+	turnCache         *TurnCache  // manages archival
 	statusBar         *StatusBar
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
@@ -157,6 +173,15 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	// but handle it gracefully — Render falls back to raw text if renderer is nil.
 	mdRenderer, _ := NewMarkdownRenderer(80)
 
+	// Create archive directory and initialize TurnCache + TurnWindow
+	// Use default archive path (~/.rubichan/archive)
+	// (Future: make configurable via cfg if needed)
+	archiveDir := filepath.Join(os.Getenv("HOME"), ".rubichan", "archive")
+
+	sessionID := fmt.Sprintf("session-%d", time.Now().Unix()) // unique per session
+	cache := NewTurnCache(archiveDir, sessionID, minTurnsBeforeArchive)
+	turnWindow := NewTurnWindow(cache)
+
 	m := &Model{
 		agent:             a,
 		cfg:               cfg,
@@ -166,6 +191,9 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		spinner:           sp,
 		mdRenderer:        mdRenderer,
 		toolBox:           NewToolBoxRenderer(80),
+		turnRenderer:      &TurnRenderer{},
+		turnWindow:        turnWindow,
+		turnCache:         cache,
 		statusBar:         sb,
 		approvalCh:        make(chan approvalRequest),
 		state:             StateInput,
@@ -250,6 +278,42 @@ func (m *Model) SetAgent(a *agent.Agent) {
 // need to interact with the agent (e.g., clear conversation, switch model).
 func (m *Model) GetAgent() *agent.Agent {
 	return m.agent
+}
+
+// emptyToolCalls is a reusable empty slice to avoid allocations on every render
+var emptyToolCalls = []RenderedToolCall{}
+
+// extractTurnForRendering creates an immutable Turn snapshot from the model's
+// current streaming state. This bridges Model's internal state to TurnRenderer
+// for rendering. The Turn is a snapshot of state at call time, not a live reference.
+func (m *Model) extractTurnForRendering() *Turn {
+	turn := &Turn{
+		ID:            fmt.Sprintf("turn-%d", m.turnCount),
+		AssistantText: m.rawAssistant.String(),
+		ThinkingText:  m.rawThinking.String(),
+		Status:        TurnStatusDone,
+		ErrorMsg:      "",
+		StartTime:     m.turnStartTime,
+		ToolCalls:     emptyToolCalls, // reuse constant
+	}
+
+	// TODO: Extract tool calls from model state (done in later task)
+
+	return turn
+}
+
+// renderCurrentTurn uses TurnRenderer to render the current streaming turn.
+// This method bridges Model's state management with TurnRenderer's rendering logic.
+func (m *Model) renderCurrentTurn(ctx context.Context) (string, error) {
+	turn := m.extractTurnForRendering()
+	opts := RenderOptions{
+		Width:          m.width,
+		IsStreaming:    m.state == StateStreaming,
+		CollapsedTools: m.diffExpanded,
+		HighlightError: m.state == StateStreaming || m.state == StateAwaitingApproval,
+		MaxToolLines:   500,
+	}
+	return m.turnRenderer.Render(ctx, turn, opts)
 }
 
 // ClearContent resets the content buffer and viewport. This is used by the

@@ -1,0 +1,282 @@
+// internal/tui/turnrenderer_test.go
+package tui
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestTurn_StructFields(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Hello",
+		ThinkingText:  "Thinking...",
+		ToolCalls:     []RenderedToolCall{},
+		Status:        "done",
+		ErrorMsg:      "",
+		StartTime:     time.Now(),
+	}
+
+	if turn.ID != "turn-1" {
+		t.Errorf("ID not set correctly")
+	}
+	if turn.AssistantText != "Hello" {
+		t.Errorf("AssistantText not set correctly")
+	}
+	if len(turn.ToolCalls) != 0 {
+		t.Errorf("ToolCalls should be empty slice")
+	}
+}
+
+func TestRenderedToolCall_StructFields(t *testing.T) {
+	call := RenderedToolCall{
+		ID:        "tool-1",
+		Name:      "file",
+		Args:      "path=main.go",
+		Result:    "package main",
+		IsError:   false,
+		Collapsed: true,
+		LineCount: 100,
+	}
+
+	if call.Name != "file" {
+		t.Errorf("Name not set correctly")
+	}
+	if call.Collapsed != true {
+		t.Errorf("Collapsed should be true")
+	}
+}
+
+func TestRenderOptions_StructFields(t *testing.T) {
+	opts := RenderOptions{
+		Width:          80,
+		IsStreaming:    true,
+		CollapsedTools: false,
+		HighlightError: false,
+		MaxToolLines:   500,
+	}
+
+	if opts.Width != 80 {
+		t.Errorf("Width not set correctly")
+	}
+}
+
+func TestTurnRenderer_RendersAssistantMessage(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Hello world",
+		Status:        "done",
+		ToolCalls:     []RenderedToolCall{},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if !strings.Contains(output, "Hello world") {
+		t.Errorf("Output should contain assistant text, got: %s", output)
+	}
+}
+
+func TestTurnRenderer_RendersThinkingBlock(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Response",
+		ThinkingText:  "Let me think...",
+		Status:        "done",
+		ToolCalls:     []RenderedToolCall{},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if !strings.Contains(output, "Let me think...") {
+		t.Errorf("Output should contain thinking text")
+	}
+	if !strings.Contains(output, "🧠") {
+		t.Errorf("Output should contain thinking emoji")
+	}
+}
+
+func TestTurnRenderer_HidesThinkingWhenEmpty(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Response",
+		ThinkingText:  "", // Empty
+		Status:        "done",
+		ToolCalls:     []RenderedToolCall{},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if strings.Contains(output, "🧠") {
+		t.Errorf("Output should not contain thinking emoji when thinking is empty")
+	}
+}
+
+func TestTurnRenderer_RendersToolCallCollapsed(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "I read the file",
+		Status:        "done",
+		ToolCalls: []RenderedToolCall{
+			{
+				ID:        "tool-1",
+				Name:      "file",
+				Args:      `path="main.go"`,
+				Result:    "package main\n\nfunc main() {}",
+				IsError:   false,
+				Collapsed: true,
+				LineCount: 3,
+			},
+		},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// Collapsed should show summary line only
+	if !strings.Contains(output, "▶") {
+		t.Errorf("Collapsed tool should have ▶ indicator")
+	}
+	if !strings.Contains(output, "file") {
+		t.Errorf("Output should contain tool name")
+	}
+	if !strings.Contains(output, "3 lines") && !strings.Contains(output, "lines") {
+		t.Errorf("Output should contain line count")
+	}
+	// Should NOT expand the result
+	if strings.Count(output, "package main") > 1 {
+		t.Errorf("Collapsed tool should not show full result")
+	}
+}
+
+func TestTurnRenderer_RendersToolCallExpanded(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "I read the file",
+		Status:        "done",
+		ToolCalls: []RenderedToolCall{
+			{
+				ID:        "tool-1",
+				Name:      "file",
+				Args:      `path="main.go"`,
+				Result:    "package main\n\nfunc main() {}",
+				IsError:   false,
+				Collapsed: false, // Expanded
+				LineCount: 3,
+			},
+		},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// Expanded should show full result
+	if !strings.Contains(output, "▼") {
+		t.Errorf("Expanded tool should have ▼ indicator")
+	}
+	if !strings.Contains(output, "package main") {
+		t.Errorf("Expanded tool should show result content")
+	}
+}
+
+func TestTurnRenderer_EmptyTurn(t *testing.T) {
+	turn := &Turn{}
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Errorf("Should not error on empty turn")
+	}
+	// Should return empty string for empty turn
+	if output != "" {
+		t.Errorf("Empty turn should produce empty output, got: %q", output)
+	}
+}
+
+func TestTurnRenderer_ContextCancellation(t *testing.T) {
+	turn := &Turn{AssistantText: "test"}
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Should handle cancelled context gracefully
+	output, err := renderer.Render(ctx, turn, opts)
+	if err != nil {
+		t.Errorf("Should not error on cancelled context: %v", err)
+	}
+	// Should still render (context is informational for now)
+	if !strings.Contains(output, "test") {
+		t.Errorf("Should render assistant text even with cancelled context")
+	}
+}
+
+func TestTurnRenderer_SpecialCharacters(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Test with emoji 🎉 and unicode ñ",
+		ToolCalls: []RenderedToolCall{
+			{
+				Name:      "shell",
+				Result:    "error: file not found\n✗ failed",
+				Collapsed: false,
+			},
+		},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Errorf("Should handle special characters: %v", err)
+	}
+	if !strings.Contains(output, "🎉") {
+		t.Errorf("Should preserve emoji in output")
+	}
+}
+
+func TestTurnRenderer_NilTurn(t *testing.T) {
+	var turn *Turn
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Errorf("Should not error on nil turn, got: %v", err)
+	}
+	if output != "" {
+		t.Errorf("Should return empty string for nil turn, got: %q", output)
+	}
+}

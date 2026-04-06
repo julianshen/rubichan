@@ -61,6 +61,14 @@ func TestNewModel(t *testing.T) {
 	assert.NotNil(t, m.spinner)
 }
 
+func TestModel_TurnRendererInitialized(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	if m.turnRenderer == nil {
+		t.Errorf("turnRenderer should be initialized")
+	}
+}
+
 func TestModelHandleSlashQuit(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	cmd := m.handleCommand("/quit")
@@ -2729,4 +2737,76 @@ func TestModelAgentPanelNotToggledDuringStreaming(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
 	um := updated.(*Model)
 	assert.False(t, um.agentPanelVisible, "Ctrl+A should not toggle panel during streaming")
+}
+
+func TestModelExtractTurnForRendering(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	// Set up turn state
+	m.turnCount = 5
+	m.turnStartTime = time.Now()
+
+	// Add some mock turn data
+	m.rawAssistant.WriteString("This is the assistant response.")
+	m.rawThinking.WriteString("Let me think about this problem...")
+
+	turn := m.extractTurnForRendering()
+
+	require.NotNil(t, turn, "extractTurnForRendering returned nil")
+	assert.Equal(t, "turn-5", turn.ID)
+	assert.Equal(t, "This is the assistant response.", turn.AssistantText)
+	assert.Equal(t, "Let me think about this problem...", turn.ThinkingText)
+	assert.Equal(t, "done", turn.Status)
+	assert.Equal(t, "", turn.ErrorMsg)
+	assert.Equal(t, m.turnStartTime, turn.StartTime)
+	assert.Len(t, turn.ToolCalls, 0, "ToolCalls should be empty for now")
+}
+
+func TestModelExtractTurnForRenderingEmptyText(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	m.turnCount = 3
+	m.turnStartTime = time.Now()
+	// Don't write anything to rawAssistant or rawThinking
+
+	turn := m.extractTurnForRendering()
+
+	require.NotNil(t, turn, "extractTurnForRendering returned nil")
+	assert.Equal(t, "turn-3", turn.ID)
+	assert.Equal(t, "", turn.AssistantText)
+	assert.Equal(t, "", turn.ThinkingText)
+	assert.Equal(t, "done", turn.Status)
+	assert.Len(t, turn.ToolCalls, 0)
+}
+
+func TestModelExtractTurnForRenderingWithMultipleTurns(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	// Simulate multiple turns
+	m.turnCount = 10
+	startTime := time.Now()
+	m.turnStartTime = startTime
+
+	m.rawAssistant.WriteString("Response for turn 10")
+	m.rawThinking.WriteString("Thinking for turn 10")
+
+	turn := m.extractTurnForRendering()
+
+	require.NotNil(t, turn)
+	assert.Equal(t, "turn-10", turn.ID)
+	assert.Equal(t, "Response for turn 10", turn.AssistantText)
+	assert.Equal(t, "Thinking for turn 10", turn.ThinkingText)
+	assert.Equal(t, startTime, turn.StartTime)
+}
+
+func TestModel_UsesTurnWindow(t *testing.T) {
+	m := NewModel(nil, "TestApp", "test-model", 100, "", nil, nil)
+
+	if m.turnWindow == nil {
+		t.Errorf("Model should have turnWindow initialized")
+	}
+
+	if m.turnCache == nil {
+		t.Errorf("Model should have turnCache initialized")
+	}
 }

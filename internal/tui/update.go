@@ -730,6 +730,23 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 
 		// Update status bar with token usage and turn count.
 		m.turnCount++
+
+		// Add completed turn to TurnWindow
+		turn := m.extractTurnForRendering()
+		m.turnWindow.AddTurn(m.turnCount-1, turn)
+
+		// Periodically archive old turns (every N turns, async to avoid UI blocking)
+		if m.turnCount%archiveCheckInterval == 0 && m.turnCount > minTurnsBeforeArchive {
+			archiveThreshold := m.turnCount - minTurnsBeforeArchive
+			// Run archival in background to avoid blocking the render loop
+			go func(threshold int) {
+				if err := m.turnCache.ArchiveOldTurns(threshold); err != nil {
+					// Log error but don't disrupt user experience
+					log.Printf("background archive error: %v", err)
+				}
+			}(archiveThreshold)
+		}
+
 		contextBudget := 100000
 		if m.cfg != nil && m.cfg.Agent.ContextBudget > 0 {
 			contextBudget = m.cfg.Agent.ContextBudget
