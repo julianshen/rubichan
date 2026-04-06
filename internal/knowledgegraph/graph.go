@@ -224,6 +224,29 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 	g.mu.RLock()
 	if e, ok := g.cache[id]; ok {
 		g.mu.RUnlock()
+		// Even for cached entities, we must read injection metrics from entity_stats
+		// to ensure UsageCount and LastUsed are up-to-date for sorting/filtering
+		var injectionCount int
+		var lastAccessedStr string
+		err := g.db.QueryRowContext(ctx,
+			`SELECT COALESCE(injection_count, 0), COALESCE(last_accessed_at, '')
+			 FROM entity_stats WHERE entity_id = ?`,
+			id,
+		).Scan(&injectionCount, &lastAccessedStr)
+
+		// Only an error if something other than "no row found"
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("Get: query entity_stats: %w", err)
+		}
+
+		// Update runtime metrics on the cached entity
+		e.UsageCount = injectionCount
+		if lastAccessedStr != "" {
+			if parsed, err := time.Parse(time.RFC3339, lastAccessedStr); err == nil {
+				e.LastUsed = parsed
+			}
+		}
+
 		return e, nil
 	}
 	g.mu.RUnlock()
