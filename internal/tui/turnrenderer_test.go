@@ -207,3 +207,76 @@ func TestTurnRenderer_RendersToolCallExpanded(t *testing.T) {
 		t.Errorf("Expanded tool should show result content")
 	}
 }
+
+func TestTurnRenderer_EmptyTurn(t *testing.T) {
+	turn := &Turn{}
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Errorf("Should not error on empty turn")
+	}
+	// Should return empty string for empty turn
+	if output != "" {
+		t.Errorf("Empty turn should produce empty output, got: %q", output)
+	}
+}
+
+func TestTurnRenderer_ContextCancellation(t *testing.T) {
+	turn := &Turn{AssistantText: "test"}
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Should handle cancelled context gracefully
+	output, err := renderer.Render(ctx, turn, opts)
+	if err != nil {
+		t.Errorf("Should not error on cancelled context: %v", err)
+	}
+	// Should still render (context is informational for now)
+	if !strings.Contains(output, "test") {
+		t.Errorf("Should render assistant text even with cancelled context")
+	}
+}
+
+func TestTurnRenderer_SpecialCharacters(t *testing.T) {
+	turn := &Turn{
+		ID:            "turn-1",
+		AssistantText: "Test with emoji 🎉 and unicode ñ",
+		ToolCalls: []RenderedToolCall{
+			{
+				Name:      "shell",
+				Result:    "error: file not found\n✗ failed",
+				Collapsed: false,
+			},
+		},
+	}
+
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Errorf("Should handle special characters: %v", err)
+	}
+	if !strings.Contains(output, "🎉") {
+		t.Errorf("Should preserve emoji in output")
+	}
+}
+
+func TestTurnRenderer_NilTurn(t *testing.T) {
+	var turn *Turn
+	renderer := &TurnRenderer{}
+	opts := RenderOptions{Width: 80}
+
+	output, err := renderer.Render(context.Background(), turn, opts)
+	if err != nil {
+		t.Errorf("Should not error on nil turn, got: %v", err)
+	}
+	if output != "" {
+		t.Errorf("Should return empty string for nil turn, got: %q", output)
+	}
+}
