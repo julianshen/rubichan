@@ -362,7 +362,7 @@ func (g *KnowledgeGraph) Delete(ctx context.Context, id string) error {
 		}
 		path := entityToPath(g.knowledgeDir, e)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			// Log but don't fail if file doesn't exist
+			return fmt.Errorf("deleteEntity: remove file: %w", err)
 		}
 	}
 
@@ -452,7 +452,7 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("rebuildIndex: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Clear all tables
 	for _, table := range []string{"embeddings", "relationships", "entities_fts", "entities"} {

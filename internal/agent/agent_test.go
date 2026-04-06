@@ -14,6 +14,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -3297,4 +3298,50 @@ func TestAgentContextBudget(t *testing.T) {
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, result.BeforeTokens, 0)
 	})
+}
+
+func TestLoadBootstrapContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	bootstrapPath := filepath.Join(tmpDir, ".bootstrap.json")
+
+	// Create bootstrap.json
+	bootstrapData := `{
+		"profile": {"project_name": "testapp"},
+		"created_entities": ["entity1", "entity2"],
+		"analysis_metadata": {"modules_found": 3}
+	}`
+	err := os.WriteFile(bootstrapPath, []byte(bootstrapData), 0o644)
+	require.NoError(t, err)
+
+	ctx, err := LoadBootstrapContext(bootstrapPath)
+	assert.NoError(t, err)
+	assert.NotNil(t, ctx)
+	assert.Equal(t, "testapp", ctx.Profile.ProjectName)
+	assert.Equal(t, 2, len(ctx.CreatedEntities))
+}
+
+func TestBuildBootstrapSystemPromptPrefix(t *testing.T) {
+	metadata := &knowledgegraph.BootstrapMetadata{
+		Profile: knowledgegraph.BootstrapProfile{
+			ProjectName: "myapp",
+		},
+		CreatedEntities: []string{"entity1", "entity2", "entity3"},
+		AnalysisMetadata: knowledgegraph.AnalysisMetadata{
+			ModulesFound:       5,
+			GitCommitsAnalyzed: 30,
+			IntegrationsDetected: 12,
+		},
+	}
+
+	prefix := BuildBootstrapSystemPromptPrefix(metadata)
+	assert.NotEmpty(t, prefix)
+	assert.Contains(t, prefix, "myapp")
+	assert.Contains(t, prefix, "5 modules")
+	assert.Contains(t, prefix, "30")
+	assert.Contains(t, prefix, "12 integrations")
+}
+
+func TestBuildBootstrapSystemPromptPrefixNil(t *testing.T) {
+	prefix := BuildBootstrapSystemPromptPrefix(nil)
+	assert.Empty(t, prefix)
 }

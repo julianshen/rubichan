@@ -54,7 +54,7 @@ func TestSkillManagerAdapterSearch(t *testing.T) {
 		assert.Equal(t, "/api/v1/search", r.URL.Path)
 		assert.Equal(t, "kubernetes", r.URL.Query().Get("q"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]skills.RegistrySearchResult{
+		_ = json.NewEncoder(w).Encode([]skills.RegistrySearchResult{
 			{Name: "kubernetes", Version: "1.2.0", Description: "kubectl wrapper"},
 		})
 	})

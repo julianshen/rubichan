@@ -28,8 +28,8 @@ import (
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/hooks"
-	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/integrations"
+	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/permissions"
@@ -194,13 +194,13 @@ func wireSandboxProxy(cfg *config.Config, shellTool *tools.ShellTool) (cleanup f
 
 	if cfg.Sandbox.IsEnabled() && !cfg.Sandbox.IsAllowUnsandboxedCommands() && shellTool.Sandbox() == nil {
 		if proxy != nil {
-			proxy.Stop()
+			_ = proxy.Stop()
 		}
 		return nil, fmt.Errorf("sandbox enabled with allow_unsandboxed_commands=false but no sandbox backend available")
 	}
 
 	if proxy != nil {
-		return func() { proxy.Stop() }, nil
+		return func() { _ = proxy.Stop() }, nil
 	}
 	return nil, nil
 }
@@ -563,6 +563,7 @@ func main() {
 	// wiki is now a built-in skill (generate_wiki tool), not a CLI subcommand.
 	rootCmd.AddCommand(ollamaCmd())
 	rootCmd.AddCommand(knowledgeCmd())
+	rootCmd.AddCommand(initKnowledgeGraphCmd())
 	rootCmd.AddCommand(worktreeCmd())
 	rootCmd.AddCommand(sessionCmd())
 	rootCmd.AddCommand(initCmd())
@@ -1444,6 +1445,19 @@ func runInteractive() error {
 		return err
 	}
 
+	// Detect and load bootstrap context if available
+	bootstrapPath := filepath.Join(cwd, ".knowledge", ".bootstrap.json")
+	var bootstrapContext *knowledgegraph.BootstrapMetadata
+	if _, err := os.Stat(bootstrapPath); err == nil {
+		ctx, err := agent.LoadBootstrapContext(bootstrapPath)
+		if err == nil {
+			bootstrapContext = ctx
+			// Remove marker so we don't re-inject on next run
+			markerPath := filepath.Join(cwd, ".knowledge", ".bootstrap-agent-start")
+			os.Remove(markerPath)
+		}
+	}
+
 	// Create tool registry
 	registry := tools.NewRegistry()
 	diffTracker := tools.NewDiffTracker()
@@ -1471,6 +1485,11 @@ func runInteractive() error {
 	opts = append(opts, agent.WithDiffTracker(diffTracker))
 	opts = appendWorkingDirOption(opts, cwd)
 	opts = append(opts, agent.WithCapabilities(modelCaps))
+
+	// Inject bootstrap context into system prompt if available
+	if bootstrapContext != nil {
+		opts = append(opts, agent.WithBootstrapContext(bootstrapContext))
+	}
 	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
 		return err
 	}

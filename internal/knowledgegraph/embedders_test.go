@@ -25,7 +25,7 @@ func TestOllamaEmbedder(t *testing.T) {
 				"embedding": []float64{0.1, 0.2, 0.3, 0.4},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		}
 	}))
 	defer server.Close()
@@ -51,14 +51,14 @@ func TestOllamaEmbedderWithModel(t *testing.T) {
 			var req struct {
 				Model string `json:"model"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 			require.Equal(t, "custom-model", req.Model)
 
 			resp := map[string]interface{}{
 				"embedding": []float64{1.0, 2.0},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		}
 	}))
 	defer server.Close()
@@ -72,7 +72,7 @@ func TestOllamaEmbedderWithModel(t *testing.T) {
 func TestOllamaEmbedderError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("server error"))
+		_, _ = w.Write([]byte("server error"))
 	}))
 	defer server.Close()
 
@@ -101,7 +101,7 @@ func TestOllamaHealthCheck(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"models":[]}`))
+			_, _ = w.Write([]byte(`{"models":[]}`))
 		}
 	}))
 	defer server.Close()
@@ -130,7 +130,7 @@ func TestOpenAIEmbedder(t *testing.T) {
 				Model string `json:"model"`
 				Input string `json:"input"`
 			}
-			json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewDecoder(r.Body).Decode(&req)
 
 			resp := map[string]interface{}{
 				"data": []map[string]interface{}{
@@ -140,7 +140,7 @@ func TestOpenAIEmbedder(t *testing.T) {
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		}
 	}))
 	defer server.Close()
