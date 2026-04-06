@@ -15,6 +15,12 @@ import (
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
+// kindDirs lists all entity kind subdirectories in .knowledge/
+var kindDirs = []string{"architecture", "decisions", "gotchas", "patterns", "modules", "integrations"}
+
+// kindValues maps kind directories to their SQL enum values (singular forms)
+var kindValues = []string{"architecture", "decision", "gotcha", "pattern", "module", "integration"}
+
 // KnowledgeGraph implements kg.Graph backed by SQLite + markdown files.
 // It is safe for concurrent use.
 type KnowledgeGraph struct {
@@ -51,7 +57,7 @@ func openGraph(ctx context.Context, projectRoot string, opts []kg.Option) (kg.Gr
 	}
 
 	// Create knowledge directory structure if needed
-	for _, subdir := range []string{"architecture", "decisions", "gotchas", "patterns", "modules", "integrations"} {
+	for _, subdir := range kindDirs {
 		fullDir := filepath.Join(knowledgeDir, subdir)
 		if err := os.MkdirAll(fullDir, 0o755); err != nil {
 			return nil, fmt.Errorf("Open: creating dir %s: %w", fullDir, err)
@@ -60,7 +66,7 @@ func openGraph(ctx context.Context, projectRoot string, opts []kg.Option) (kg.Gr
 
 	// Create layer subdirectories (team and session layers; base uses flat layout)
 	for _, layerDir := range []string{"team", "session"} {
-		for _, kind := range []string{"architecture", "decisions", "gotchas", "patterns", "modules", "integrations"} {
+		for _, kind := range kindDirs {
 			fullDir := filepath.Join(knowledgeDir, layerDir, kind)
 			if err := os.MkdirAll(fullDir, 0o755); err != nil {
 				return nil, fmt.Errorf("Open: creating layer dir %s: %w", fullDir, err)
@@ -589,39 +595,33 @@ func (g *KnowledgeGraph) LintGraph(ctx context.Context) (*kg.LintReport, error) 
 		})
 	}
 
-	// Check for missing or invalid kinds
-	rows, err = g.db.QueryContext(ctx, `
-		SELECT id FROM entities WHERE kind = '' OR kind NOT IN
-		('architecture','decision','gotcha','pattern','module','integration')
-	`)
+	// Batch missing kinds and empty bodies checks into single query
+	// Use UNION to combine two separate checks into one result set with a discriminator
+	kindList := "'" + strings.Join(kindValues, "','") + "'"
+	batchQuery := fmt.Sprintf(`
+		SELECT id, 'missing_kind' as check_type FROM entities
+		WHERE kind = '' OR kind NOT IN (%s)
+		UNION ALL
+		SELECT id, 'empty_body' as check_type FROM entities
+		WHERE body = '' OR body IS NULL
+	`, kindList)
+
+	rows, err = g.db.QueryContext(ctx, batchQuery)
 	if err != nil {
 		return nil, fmt.Errorf("LintGraph: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, checkType string
+		if err := rows.Scan(&id, &checkType); err != nil {
 			return nil, err
 		}
-		report.MissingKinds = append(report.MissingKinds, id)
-	}
-
-	// Check for empty or NULL bodies
-	rows, err = g.db.QueryContext(ctx, `
-		SELECT id FROM entities WHERE body = '' OR body IS NULL
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("LintGraph: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		if checkType == "missing_kind" {
+			report.MissingKinds = append(report.MissingKinds, id)
+		} else if checkType == "empty_body" {
+			report.EmptyBodies = append(report.EmptyBodies, id)
 		}
-		report.EmptyBodies = append(report.EmptyBodies, id)
 	}
 
 	return report, nil
