@@ -228,3 +228,91 @@ func TestBuildSystemPromptBudgetPassedToSelector(t *testing.T) {
 	// Budget might be 0 or positive depending on config; just verify it was passed
 	assert.GreaterOrEqual(t, selector.capturedBudget, 0)
 }
+
+// recordingSelector tracks RecordUsage calls for testing
+type recordingSelector struct {
+	selectCalled    bool
+	recordedOnce    bool
+	lastRecorded    []kg.ScoredEntity
+	results         []kg.ScoredEntity
+	selectErr       error
+	recordUsageErr  error
+}
+
+func (r *recordingSelector) Select(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
+	r.selectCalled = true
+	return r.results, r.selectErr
+}
+
+func (r *recordingSelector) RecordUsage(ctx context.Context, entities []kg.ScoredEntity) error {
+	r.recordedOnce = true
+	r.lastRecorded = append([]kg.ScoredEntity{}, entities...)
+	return r.recordUsageErr
+}
+
+func TestBuildSystemPromptCallsRecordUsageAfterSelect(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	entity := kg.ScoredEntity{
+		Entity: &kg.Entity{
+			ID:    "arch-001",
+			Kind:  kg.KindArchitecture,
+			Title: "Test Architecture",
+			Body:  "Test body",
+		},
+		Score:           0.95,
+		EstimatedTokens: 50,
+	}
+
+	selector := &recordingSelector{
+		results: []kg.ScoredEntity{entity},
+	}
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	// Call buildSystemPromptWithFragments with a non-empty message
+	a.buildSystemPromptWithFragments(context.Background(), "tell me about architecture")
+
+	// Verify RecordUsage was called with the selected entities
+	require.True(t, selector.recordedOnce, "RecordUsage should have been called")
+	require.Len(t, selector.lastRecorded, 1, "RecordUsage should be called with 1 entity")
+	require.Equal(t, "arch-001", selector.lastRecorded[0].Entity.ID)
+}
+
+func TestBuildSystemPromptDoesNotCallRecordUsageOnEmptyResults(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	selector := &recordingSelector{
+		results: []kg.ScoredEntity{}, // Empty results
+	}
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	// Empty results means knowledge section is not rendered
+	a.buildSystemPromptWithFragments(context.Background(), "query")
+
+	// RecordUsage should NOT be called on empty results
+	require.False(t, selector.recordedOnce, "RecordUsage should not be called on empty results")
+}
+
+func TestBuildSystemPromptDoesNotCallRecordUsageOnSelectError(t *testing.T) {
+	mp := &mockProvider{}
+	reg := tools.NewRegistry()
+	cfg := testConfig()
+
+	selector := &recordingSelector{
+		selectErr: errors.New("selector unavailable"),
+	}
+
+	a := New(mp, reg, autoApprove, cfg, WithKnowledgeGraph(selector))
+
+	// Select error means knowledge section is not rendered
+	a.buildSystemPromptWithFragments(context.Background(), "query")
+
+	// RecordUsage should NOT be called if Select fails
+	require.False(t, selector.recordedOnce, "RecordUsage should not be called on Select error")
+}
