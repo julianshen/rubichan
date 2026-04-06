@@ -2,6 +2,8 @@
 package tui
 
 import (
+	"context"
+	"strings"
 	"sync"
 )
 
@@ -26,12 +28,53 @@ func (w *TurnWindow) AddTurn(index int, turn *Turn) {
 }
 
 // UpdateVisibleRange updates which turns are visible.
+// Estimate lines-per-turn to calculate visible range with lookahead for smooth scrolling.
 func (w *TurnWindow) UpdateVisibleRange(scrollPos, viewportHeight int) {
-	// TODO: compute visible range based on scroll position
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Estimate turns per viewport (roughly 30 chars per line, accounting for wrapping)
+	linesPerTurn := 5 // rough estimate
+	turnsPerViewport := viewportHeight / linesPerTurn
+	if turnsPerViewport < 1 {
+		turnsPerViewport = 1
+	}
+
+	// Compute visible range based on scroll position
+	// (This is simplified; real implementation would track pixel offsets)
+	w.visibleStart = (scrollPos / linesPerTurn) - turnsPerViewport
+	if w.visibleStart < 0 {
+		w.visibleStart = 0
+	}
+	w.visibleEnd = w.visibleStart + (turnsPerViewport * 2) // slightly ahead for smoothness
 }
 
 // RenderVisible renders only visible turns.
+// O(k) rendering where k = visible turn count (typically 5-10).
 func (w *TurnWindow) RenderVisible(renderer *TurnRenderer) (string, error) {
-	// TODO: render visible turns
-	return "", nil
+	w.mu.RLock()
+	visibleStart := w.visibleStart
+	visibleEnd := w.visibleEnd
+	w.mu.RUnlock()
+
+	var output strings.Builder
+
+	// Render visible turns only
+	for i := visibleStart; i <= visibleEnd; i++ {
+		turn, err := w.cache.GetTurn(i)
+		if err != nil {
+			// Turn not in range, stop
+			continue
+		}
+
+		rendered, err := renderer.Render(context.Background(), turn, RenderOptions{Width: 80})
+		if err != nil {
+			continue
+		}
+
+		output.WriteString(rendered)
+		output.WriteString("\n")
+	}
+
+	return output.String(), nil
 }
