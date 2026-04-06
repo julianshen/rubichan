@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -534,5 +535,144 @@ func main() {
 	}
 	if !integrationTitles["Redis"] {
 		t.Error("expected Redis integration not found")
+	}
+}
+
+func TestWriteBootstrapEntities(t *testing.T) {
+	tmpDir := t.TempDir()
+	knowledgeDir := tmpDir + "/.knowledge"
+
+	// Create sample profile
+	profile := &BootstrapProfile{
+		ProjectName:         "testapp",
+		BackendTechs:        []string{"Go"},
+		FrontendTechs:       []string{"React"},
+		DatabaseTechs:       []string{"PostgreSQL"},
+		InfrastructureTechs: []string{"Docker"},
+		ArchitectureStyle:   "Microservices",
+		PainPoints:          []string{"scaling"},
+		TeamSize:            "medium",
+		TeamComposition:     "fullstack",
+		IsExisting:          true,
+		CreatedAt:           time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC),
+	}
+
+	// Create sample entities
+	entities := []*ProposedEntity{
+		{
+			ID:         "testapp-auth",
+			Kind:       "module",
+			Title:      "Auth Module",
+			Body:       "Handles authentication logic",
+			SourceType: "module",
+			Confidence: 0.9,
+			Tags:       []string{"security", "auth"},
+		},
+		{
+			ID:         "testapp-database",
+			Kind:       "module",
+			Title:      "Database Module",
+			Body:       "Database access layer",
+			SourceType: "module",
+			Confidence: 0.85,
+			Tags:       []string{"database", "persistence"},
+		},
+		{
+			ID:         "postgres-integration",
+			Kind:       "integration",
+			Title:      "PostgreSQL",
+			Body:       "PostgreSQL database integration",
+			SourceType: "integration",
+			Confidence: 0.85,
+			Tags:       []string{"database", "integration"},
+		},
+	}
+
+	// Call WriteBootstrapEntities
+	metadata, err := WriteBootstrapEntities(knowledgeDir, entities, profile)
+	if err != nil {
+		t.Fatalf("WriteBootstrapEntities failed: %v", err)
+	}
+
+	// Verify metadata is returned
+	if metadata == nil {
+		t.Fatal("expected metadata to be returned")
+	}
+
+	// Verify created entities list
+	if len(metadata.CreatedEntities) != len(entities) {
+		t.Errorf("expected %d created entities, got %d", len(entities), len(metadata.CreatedEntities))
+	}
+
+	// Verify module entity file exists
+	moduleFile := knowledgeDir + "/module/testapp-auth.md"
+	if _, err := os.Stat(moduleFile); os.IsNotExist(err) {
+		t.Errorf("expected module file to exist at %s", moduleFile)
+	}
+
+	// Verify integration entity file exists
+	integrationFile := knowledgeDir + "/integration/postgres-integration.md"
+	if _, err := os.Stat(integrationFile); os.IsNotExist(err) {
+		t.Errorf("expected integration file to exist at %s", integrationFile)
+	}
+
+	// Verify bootstrap metadata file exists
+	bootstrapFile := knowledgeDir + "/.bootstrap.json"
+	if _, err := os.Stat(bootstrapFile); os.IsNotExist(err) {
+		t.Errorf("expected bootstrap file to exist at %s", bootstrapFile)
+	}
+
+	// Verify content of module file
+	content, err := os.ReadFile(moduleFile)
+	if err != nil {
+		t.Fatalf("failed to read module file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "id: testapp-auth") {
+		t.Error("expected 'id: testapp-auth' in module file")
+	}
+	if !strings.Contains(contentStr, "kind: module") {
+		t.Error("expected 'kind: module' in module file")
+	}
+	if !strings.Contains(contentStr, "layer: base") {
+		t.Error("expected 'layer: base' in module file")
+	}
+	if !strings.Contains(contentStr, "title: Auth Module") {
+		t.Error("expected 'title: Auth Module' in module file")
+	}
+	if !strings.Contains(contentStr, "source: bootstrap") {
+		t.Error("expected 'source: bootstrap' in module file")
+	}
+	if !strings.Contains(contentStr, "Handles authentication logic") {
+		t.Error("expected body content in module file")
+	}
+
+	// Verify metadata content
+	metadataContent, err := os.ReadFile(bootstrapFile)
+	if err != nil {
+		t.Fatalf("failed to read bootstrap metadata: %v", err)
+	}
+
+	var readMetadata BootstrapMetadata
+	if err := json.Unmarshal(metadataContent, &readMetadata); err != nil {
+		t.Fatalf("failed to unmarshal bootstrap metadata: %v", err)
+	}
+
+	if readMetadata.Profile.ProjectName != "testapp" {
+		t.Errorf("expected project name 'testapp', got %q", readMetadata.Profile.ProjectName)
+	}
+
+	// Verify created entities
+	expectedIDs := map[string]bool{
+		"testapp-auth":       true,
+		"testapp-database":   true,
+		"postgres-integration": true,
+	}
+
+	for _, id := range readMetadata.CreatedEntities {
+		if !expectedIDs[id] {
+			t.Errorf("unexpected entity ID in metadata: %q", id)
+		}
 	}
 }

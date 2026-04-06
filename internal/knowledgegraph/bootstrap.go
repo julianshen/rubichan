@@ -1,6 +1,7 @@
 package knowledgegraph
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -523,4 +524,95 @@ func extractImports(content string) []string {
 	}
 
 	return imports
+}
+
+// WriteBootstrapEntities writes proposed entities to .knowledge/ and returns bootstrap metadata.
+// It creates a directory structure with entity files organized by kind, then writes a .bootstrap.json
+// metadata file recording what was created and when.
+func WriteBootstrapEntities(knowledgeDir string, entities []*ProposedEntity, profile *BootstrapProfile) (*BootstrapMetadata, error) {
+	// Create the .knowledge/ directory structure if it doesn't exist
+	if err := os.MkdirAll(knowledgeDir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create knowledge directory: %w", err)
+	}
+
+	// Track created entity IDs
+	createdEntities := []string{}
+
+	// Write each entity to its corresponding kind subdirectory
+	for _, entity := range entities {
+		// Create kind-specific subdirectory (e.g., .knowledge/module/)
+		kindDir := filepath.Join(knowledgeDir, entity.Kind)
+		if err := os.MkdirAll(kindDir, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to create kind directory %q: %w", kindDir, err)
+		}
+
+		// Build the markdown file with YAML frontmatter
+		markdown := buildEntityMarkdown(entity)
+
+		// Write entity file
+		entityPath := filepath.Join(kindDir, entity.ID+".md")
+		if err := os.WriteFile(entityPath, []byte(markdown), 0o644); err != nil {
+			return nil, fmt.Errorf("failed to write entity file %q: %w", entityPath, err)
+		}
+
+		// Append to created entities list
+		createdEntities = append(createdEntities, entity.ID)
+	}
+
+	// Create bootstrap metadata
+	metadata := &BootstrapMetadata{
+		Profile:         *profile,
+		CreatedEntities: createdEntities,
+		BootstrappedAt:  time.Now(),
+	}
+
+	// Marshal metadata to JSON
+	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal bootstrap metadata: %w", err)
+	}
+
+	// Write .bootstrap.json file
+	bootstrapPath := filepath.Join(knowledgeDir, ".bootstrap.json")
+	if err := os.WriteFile(bootstrapPath, metadataJSON, 0o644); err != nil {
+		return nil, fmt.Errorf("failed to write bootstrap metadata file: %w", err)
+	}
+
+	return metadata, nil
+}
+
+// buildEntityMarkdown constructs a markdown file with YAML frontmatter for an entity.
+// Frontmatter includes: id, kind, layer (always "base"), title, tags, source (always "bootstrap"), confidence
+func buildEntityMarkdown(entity *ProposedEntity) string {
+	// Build YAML frontmatter
+	frontmatter := fmt.Sprintf(`---
+id: %s
+kind: %s
+layer: base
+title: %s
+tags: %s
+source: bootstrap
+confidence: %g
+---
+
+%s`, entity.ID, entity.Kind, entity.Title, formatTagsYAML(entity.Tags), entity.Confidence, entity.Body)
+
+	return frontmatter
+}
+
+// formatTagsYAML formats tags as a YAML array in the frontmatter.
+// For example: ["security", "auth"]
+func formatTagsYAML(tags []string) string {
+	if len(tags) == 0 {
+		return "[]"
+	}
+	result := "["
+	for i, tag := range tags {
+		if i > 0 {
+			result += ", "
+		}
+		result += fmt.Sprintf("\"%s\"", tag)
+	}
+	result += "]"
+	return result
 }
