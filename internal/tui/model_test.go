@@ -61,6 +61,14 @@ func TestNewModel(t *testing.T) {
 	assert.NotNil(t, m.spinner)
 }
 
+func TestModel_TurnRendererInitialized(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	if m.turnRenderer == nil {
+		t.Errorf("turnRenderer should be initialized")
+	}
+}
+
 func TestModelHandleSlashQuit(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	cmd := m.handleCommand("/quit")

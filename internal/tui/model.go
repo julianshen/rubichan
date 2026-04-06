@@ -70,6 +70,7 @@ type Model struct {
 	thinkingEndIdx    int
 	mdRenderer        *MarkdownRenderer
 	toolBox           *ToolBoxRenderer
+	turnRenderer      *TurnRenderer
 	statusBar         *StatusBar
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
@@ -166,6 +167,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		spinner:           sp,
 		mdRenderer:        mdRenderer,
 		toolBox:           NewToolBoxRenderer(80),
+		turnRenderer:      &TurnRenderer{},
 		statusBar:         sb,
 		approvalCh:        make(chan approvalRequest),
 		state:             StateInput,
@@ -269,6 +271,20 @@ func (m *Model) extractTurnForRendering() *Turn {
 	// TODO: Extract tool calls from model state (done in later task)
 
 	return turn
+}
+
+// renderCurrentTurn uses TurnRenderer to render the current streaming turn.
+// This method bridges Model's state management with TurnRenderer's rendering logic.
+func (m *Model) renderCurrentTurn(ctx context.Context) (string, error) {
+	turn := m.extractTurnForRendering()
+	opts := RenderOptions{
+		Width:          m.width,
+		IsStreaming:    m.state == StateStreaming,
+		CollapsedTools: m.diffExpanded,
+		HighlightError: m.state == StateStreaming || m.state == StateAwaitingApproval,
+		MaxToolLines:   500,
+	}
+	return m.turnRenderer.Render(ctx, turn, opts)
 }
 
 // ClearContent resets the content buffer and viewport. This is used by the
