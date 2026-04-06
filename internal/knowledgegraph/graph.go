@@ -228,14 +228,19 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 	}
 	g.mu.RUnlock()
 
-	// Query from database
-	var kind, layer, title, body, source, tagsJSON, createdStr, updatedStr string
+	// Query from database with LEFT JOIN to entity_stats for injection metrics
+	var kind, layer, title, body, source, tagsJSON, createdStr, updatedStr, lastAccessedStr string
 	var confidence float64
-	var usageCount int
+	var injectionCount int
 	err := g.db.QueryRowContext(ctx,
-		`SELECT kind, layer, title, body, source, tags_json, created_at, updated_at, confidence, usage_count FROM entities WHERE id = ?`,
+		`SELECT e.kind, e.layer, e.title, e.body, e.source, e.tags_json, e.created_at, e.updated_at, e.confidence,
+		        COALESCE(es.injection_count, 0) as injection_count,
+		        COALESCE(es.last_accessed_at, '') as last_accessed_at
+		 FROM entities e
+		 LEFT JOIN entity_stats es ON es.entity_id = e.id
+		 WHERE e.id = ?`,
 		id,
-	).Scan(&kind, &layer, &title, &body, &source, &tagsJSON, &createdStr, &updatedStr, &confidence, &usageCount)
+	).Scan(&kind, &layer, &title, &body, &source, &tagsJSON, &createdStr, &updatedStr, &confidence, &injectionCount, &lastAccessedStr)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -278,6 +283,14 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 		rels = append(rels, kg.Relationship{Kind: kg.RelationshipKind(relKind), Target: targetID})
 	}
 
+	// Parse last_accessed_at into LastUsed, handling NULL/empty case from LEFT JOIN miss
+	var lastUsed time.Time
+	if lastAccessedStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, lastAccessedStr); err == nil {
+			lastUsed = parsed
+		}
+	}
+
 	e := &kg.Entity{
 		ID:            id,
 		Kind:          kg.EntityKind(kind),
@@ -290,7 +303,8 @@ func (g *KnowledgeGraph) Get(ctx context.Context, id string) (*kg.Entity, error)
 		Created:       created,
 		Updated:       updated,
 		Confidence:    confidence,
-		UsageCount:    usageCount,
+		UsageCount:    injectionCount,
+		LastUsed:      lastUsed,
 	}
 
 	// Update cache
@@ -640,9 +654,17 @@ func (g *KnowledgeGraph) Stats(ctx context.Context) (*kg.KnowledgeStats, error) 
 				AND datetime(last_accessed_at) < datetime('now', '-30 days')
 				THEN 1 END)
 		FROM entity_stats
-	`).Scan(&stats.TotalInjections, &stats.NeverUsedCount, &stats.StaleSinceDays)
+	`).Scan(&stats.TotalInjections, &stats.NeverUsedCount, &stats.StaleEntityCount)
 	if err != nil {
 		return nil, fmt.Errorf("Stats: counting usage metrics: %w", err)
+	}
+
+	// Total query hits from entity_stats
+	err = g.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(query_hit_count), 0) FROM entity_stats
+	`).Scan(&stats.TotalQueryHits)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("Stats: counting query hits: %w", err)
 	}
 
 	return stats, nil

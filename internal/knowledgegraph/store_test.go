@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 	"github.com/stretchr/testify/require"
@@ -255,14 +256,22 @@ func TestGetReadsUsageCount(t *testing.T) {
 		embedder: kg.NullEmbedder{},
 	}
 
-	// Insert entity with usage_count value directly into DB
+	// Insert entity into entities table
 	_, err := db.Exec(`
-		INSERT INTO entities(id, kind, layer, title, body, usage_count)
-		VALUES(?, ?, ?, ?, ?, ?)
-	`, "test-usage-001", "decision", "base", "Test Usage", "Body", 42)
+		INSERT INTO entities(id, kind, layer, title, body)
+		VALUES(?, ?, ?, ?, ?)
+	`, "test-usage-001", "decision", "base", "Test Usage", "Body")
 	require.NoError(t, err)
 
-	// Get should read back usage_count value
+	// Insert usage count into entity_stats (via injection_count)
+	// Note: UsageCount is now read from entity_stats.injection_count, not entities.usage_count
+	_, err = db.Exec(`
+		INSERT INTO entity_stats(entity_id, injection_count)
+		VALUES(?, ?)
+	`, "test-usage-001", 42)
+	require.NoError(t, err)
+
+	// Get should read back usage_count value from entity_stats
 	ctx := context.Background()
 	e, err := g.Get(ctx, "test-usage-001")
 	require.NoError(t, err)
@@ -451,6 +460,141 @@ func TestRecordEntityMentionsCaseSensitive(t *testing.T) {
 	var hitCount int
 	err = db.QueryRowContext(context.Background(),
 		`SELECT COALESCE(query_hit_count, 0) FROM entity_stats WHERE entity_id='pattern-mix'`).Scan(&hitCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, hitCount)
+}
+
+func TestGetReadsUsageFromInjectionCount(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	g := &KnowledgeGraph{
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
+	}
+
+	// Insert entity into entities table
+	_, err := db.Exec(`
+		INSERT INTO entities(id, kind, layer, title, body)
+		VALUES(?, ?, ?, ?, ?)
+	`, "test-inject-001", "architecture", "base", "Test Injection", "Body")
+	require.NoError(t, err)
+
+	// Manually increment injection_count in entity_stats to simulate RecordUsage
+	_, err = db.Exec(`
+		INSERT INTO entity_stats(entity_id, injection_count, last_accessed_at)
+		VALUES(?, ?, datetime('now'))
+	`, "test-inject-001", 1)
+	require.NoError(t, err)
+
+	// Get should read back injection_count as UsageCount
+	ctx := context.Background()
+	e, err := g.Get(ctx, "test-inject-001")
+	require.NoError(t, err)
+	require.NotNil(t, e)
+	require.Equal(t, 1, e.UsageCount, "UsageCount should be read from injection_count")
+}
+
+func TestGetReadsLastUsed(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	g := &KnowledgeGraph{
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
+	}
+
+	// Insert entity into entities table
+	_, err := db.Exec(`
+		INSERT INTO entities(id, kind, layer, title, body)
+		VALUES(?, ?, ?, ?, ?)
+	`, "test-lastused-001", "architecture", "base", "Test LastUsed", "Body")
+	require.NoError(t, err)
+
+	// Manually set last_accessed_at in entity_stats to simulate RecordUsage
+	now := time.Now()
+	_, err = db.Exec(`
+		INSERT INTO entity_stats(entity_id, injection_count, last_accessed_at)
+		VALUES(?, ?, ?)
+	`, "test-lastused-001", 1, now.Format(time.RFC3339))
+	require.NoError(t, err)
+
+	// Get should read back last_accessed_at as LastUsed
+	ctx := context.Background()
+	e, err := g.Get(ctx, "test-lastused-001")
+	require.NoError(t, err)
+	require.NotNil(t, e)
+	// Allow for small time parsing differences
+	require.False(t, e.LastUsed.IsZero(), "LastUsed should not be zero")
+	require.True(t, e.LastUsed.After(now.Add(-1*time.Second)), "LastUsed should be close to inserted time")
+}
+
+func TestStatsShowsQueryHits(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	g := &KnowledgeGraph{
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
+	}
+
+	// Insert test entity
+	_, err := db.Exec(`
+		INSERT INTO entities(id, kind, title, body)
+		VALUES(?, ?, ?, ?)
+	`, "test-hits-001", "architecture", "Test Query Hits", "Body with searchable content")
+	require.NoError(t, err)
+
+	// Manually increment query_hit_count in entity_stats
+	_, err = db.Exec(`
+		INSERT INTO entity_stats(entity_id, query_hit_count)
+		VALUES(?, ?)
+	`, "test-hits-001", 5)
+	require.NoError(t, err)
+
+	// Stats should include TotalQueryHits
+	stats, err := g.Stats(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, stats)
+	// We have at least 5 query hits from this entity
+	require.GreaterOrEqual(t, stats.TotalQueryHits, 5)
+}
+
+func TestRecordEntityMentionsViaGraphInterface(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	g := &KnowledgeGraph{
+		db:       db,
+		cache:    make(map[string]*kg.Entity),
+		fts:      &ftsSearcher{db: db},
+		embedder: kg.NullEmbedder{},
+	}
+
+	// Insert entity
+	_, err := db.Exec(`
+		INSERT INTO entities(id, kind, title, body)
+		VALUES(?, ?, ?, ?)
+	`, "test-interface-001", "architecture", "Interface Test", "This is an interface test entity")
+	require.NoError(t, err)
+
+	// Cast to Graph interface and call RecordEntityMentions
+	var graphInterface kg.Graph = g
+	ctx := context.Background()
+	responseText := "The Interface Test entity was very useful."
+	err = graphInterface.RecordEntityMentions(ctx, responseText)
+	require.NoError(t, err)
+
+	// Verify query_hit_count was incremented via the interface
+	var hitCount int
+	err = db.QueryRowContext(ctx,
+		`SELECT COALESCE(query_hit_count, 0) FROM entity_stats WHERE entity_id='test-interface-001'`).Scan(&hitCount)
 	require.NoError(t, err)
 	require.Equal(t, 1, hitCount)
 }

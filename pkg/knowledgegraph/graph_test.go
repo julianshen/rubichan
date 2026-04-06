@@ -50,6 +50,10 @@ func (m *mockGraph) Stats(ctx context.Context) (*KnowledgeStats, error) {
 	return nil, nil
 }
 
+func (m *mockGraph) RecordEntityMentions(ctx context.Context, responseText string) error {
+	return nil
+}
+
 func (m *mockGraph) Close() error {
 	return nil
 }
