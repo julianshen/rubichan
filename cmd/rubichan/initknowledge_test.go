@@ -34,82 +34,59 @@ func TestRunInitKnowledgeGraphWithMockQuestioner(t *testing.T) {
 
 	// Create a mock questioner that returns predetermined answers
 	mockQ := &MockQuestioner{
-		projectName: "TestProject",
-		backends:    []string{"Go"},
-		frontends:   []string{"React"},
-		databases:   []string{"PostgreSQL"},
-		infras:      []string{"Docker"},
-		archStyle:   "Microservices",
-		painPoints:  []string{"scaling", "testing"},
-		teamSize:    "small",
-		teamComp:    "fullstack",
-		isExisting:  true,
+		responses: map[string]interface{}{
+			"What is your project name?":                   "TestProject",
+			"Select backend technologies:":                 []string{"Go"},
+			"Select frontend technologies:":                []string{"React"},
+			"Select database technologies:":                []string{"PostgreSQL"},
+			"Select infrastructure technologies:":          []string{"Docker"},
+			"What is your architecture style?":             "Microservices",
+			"Describe your pain points (comma-separated):": "scaling, testing",
+			"What is your team size?":                      "small",
+			"What is your team composition?":               "fullstack",
+			"Is this an existing project?":                 "yes",
+		},
 	}
 
 	// Verify mock questioner implements interface
 	require.NoError(t, runInitKnowledgeGraphWithQuestioner(context.Background(), tmpDir, mockQ))
 }
 
-// MockQuestioner is a test double for the bootstrap questioner.
+// MockQuestioner implements Questioner interface for testing.
+// Uses a flexible map-based approach that works with any prompt.
 type MockQuestioner struct {
-	projectName string
-	backends    []string
-	frontends   []string
-	databases   []string
-	infras      []string
-	archStyle   string
-	painPoints  []string
-	teamSize    string
-	teamComp    string
-	isExisting  bool
+	responses map[string]interface{}
 }
 
 // AskString implements the Questioner interface.
 func (m *MockQuestioner) AskString(prompt string) (string, error) {
-	switch prompt {
-	case "What is your project name?":
-		return m.projectName, nil
-	case "Describe your pain points (comma-separated):":
-		return "scaling, testing", nil
-	case "Is this an existing project?":
-		if m.isExisting {
-			return "yes", nil
+	if val, ok := m.responses[prompt]; ok {
+		if s, ok := val.(string); ok {
+			return s, nil
 		}
-		return "no", nil
-	default:
-		return "", nil
 	}
+	return "", nil
 }
 
 // AskChoice implements the Questioner interface.
 func (m *MockQuestioner) AskChoice(prompt string, options []string) (string, error) {
-	switch prompt {
-	case "What is your architecture style?":
-		return m.archStyle, nil
-	case "What is your team size?":
-		return m.teamSize, nil
-	case "What is your team composition?":
-		return m.teamComp, nil
-	default:
-		if len(options) > 0 {
-			return options[0], nil
+	if val, ok := m.responses[prompt]; ok {
+		if s, ok := val.(string); ok {
+			return s, nil
 		}
-		return "", nil
 	}
+	if len(options) > 0 {
+		return options[0], nil
+	}
+	return "", nil
 }
 
 // AskMultiSelect implements the Questioner interface.
 func (m *MockQuestioner) AskMultiSelect(prompt string, options []string) ([]string, error) {
-	switch prompt {
-	case "Select backend technologies:":
-		return m.backends, nil
-	case "Select frontend technologies:":
-		return m.frontends, nil
-	case "Select database technologies:":
-		return m.databases, nil
-	case "Select infrastructure technologies:":
-		return m.infras, nil
-	default:
-		return []string{}, nil
+	if val, ok := m.responses[prompt]; ok {
+		if ss, ok := val.([]string); ok {
+			return ss, nil
+		}
 	}
+	return []string{}, nil
 }

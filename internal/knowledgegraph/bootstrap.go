@@ -11,6 +11,66 @@ import (
 	"time"
 )
 
+// Confidence score constants for different entity discovery methods.
+// These represent the system's confidence that discovered entities should be created.
+const (
+	// ConfidenceModule represents confidence in entities discovered from directory structure.
+	// Modules are reliably discovered through filesystem scanning.
+	ConfidenceModule = 0.9
+
+	// ConfidenceDecision represents confidence in architectural decisions extracted from git commits.
+	// Keyword matching in commit messages is moderately reliable.
+	ConfidenceDecision = 0.7
+
+	// ConfidenceIntegration represents confidence in dependencies discovered from import statements.
+	// Import scanning is highly reliable when matched against known integrations.
+	ConfidenceIntegration = 0.85
+)
+
+// Entity kind constants define the valid kinds for discovered entities.
+const (
+	KindModule       = "module"
+	KindDecision     = "decision"
+	KindIntegration  = "integration"
+	KindArchitecture = "architecture"
+	KindGotcha       = "gotcha"
+	KindPattern      = "pattern"
+)
+
+// Entity source type constants indicate how an entity was discovered.
+const (
+	SourceTypeModule      = "module"
+	SourceTypeGit         = "git"
+	SourceTypeIntegration = "integration"
+	SourceTypeAST         = "ast"
+)
+
+// DefaultGitCommitLimit limits commit history analysis to avoid excessive processing.
+// This can be tuned based on performance requirements for large repositories.
+const DefaultGitCommitLimit = 30
+
+// Package-level regex variables compiled once at init, avoiding recompilation per use.
+var (
+	singleImportRegex = regexp.MustCompile(`import\s+"([^"]+)"`)
+	blockImportRegex  = regexp.MustCompile(`import\s*\(([\s\S]*?)\)`)
+	pathRegex         = regexp.MustCompile(`"([^"]+)"`)
+)
+
+// Directories to skip during filesystem walks to improve performance.
+var skipDirs = map[string]bool{
+	".git":          true,
+	".knowledge":    true,
+	"node_modules":  true,
+	"vendor":        true,
+	".terraform":    true,
+	"__pycache__":   true,
+	".pytest_cache": true,
+	"dist":          true,
+	"build":         true,
+	".venv":         true,
+	"venv":          true,
+}
+
 // Questioner is an interface for prompting the user during the bootstrap process.
 // It allows mocking for tests and decoupling from specific UI implementations.
 type Questioner interface {
@@ -280,12 +340,12 @@ func DiscoverModules(rootDir string) ([]*ProposedEntity, error) {
 
 			entity := &ProposedEntity{
 				ID:         moduleName,
-				Kind:       "module",
+				Kind:       KindModule,
 				Title:      moduleTitle,
 				Body:       fmt.Sprintf("Module discovered in %s/%s", baseDir, moduleName),
-				SourceType: "module",
-				Confidence: 0.9,
-				Tags:       []string{"module", baseDir},
+				SourceType: SourceTypeModule,
+				Confidence: ConfidenceModule,
+				Tags:       []string{KindModule},
 			}
 
 			entities = append(entities, entity)
@@ -313,18 +373,20 @@ func formatModuleTitle(name string) string {
 }
 
 // DiscoverDecisionsFromGit analyzes recent git commits for architectural decisions.
-// It examines the last 30 commits and searches for keywords: "architecture",
-// "decision", "pattern", "refactor", and pain points from the profile.
+// It examines the last DefaultGitCommitLimit commits and searches for keywords:
+// "architecture", "decision", "pattern", "refactor", and pain points from the profile.
 //
 // Returns a slice of decision entities with Kind="decision" and SourceType="git".
-// Confidence is set to 0.7. If git is not available or the repo is invalid,
-// an empty slice is returned with nil error.
+// Confidence is set to ConfidenceDecision. If git is not available or the repo is invalid,
+// an empty slice is returned with nil error (graceful degradation).
 func DiscoverDecisionsFromGit(rootDir string, profile *BootstrapProfile) ([]*ProposedEntity, error) {
-	// Run git log command
-	cmd := exec.Command("git", "-C", rootDir, "log", "--oneline", "-30")
+	// Run git log command. Limit to DefaultGitCommitLimit commits to avoid excessive
+	// processing on large repositories. If git is unavailable or not a git repo, we
+	// gracefully return an empty slice rather than erroring.
+	cmd := exec.Command("git", "-C", rootDir, "log", "--oneline", fmt.Sprintf("-%d", DefaultGitCommitLimit))
 	output, err := cmd.Output()
 	if err != nil {
-		// Git not available or not a git repo, return empty slice
+		// Git not available or not a git repo, return empty slice (graceful degradation)
 		return []*ProposedEntity{}, nil
 	}
 
@@ -364,12 +426,12 @@ func DiscoverDecisionsFromGit(rootDir string, profile *BootstrapProfile) ([]*Pro
 				commitMsg := parts[1]
 				entity := &ProposedEntity{
 					ID:         strings.TrimSpace(parts[0]), // Use commit hash as ID
-					Kind:       "decision",
+					Kind:       KindDecision,
 					Title:      commitMsg,
 					Body:       fmt.Sprintf("Discovered from git commit: %s", line),
-					SourceType: "git",
-					Confidence: 0.7,
-					Tags:       []string{"git", "decision"},
+					SourceType: SourceTypeGit,
+					Confidence: ConfidenceDecision,
+					Tags:       []string{SourceTypeGit, KindDecision},
 				}
 
 				entities = append(entities, entity)
@@ -396,17 +458,27 @@ var knownIntegrations = map[string]string{
 // DiscoverIntegrations scans Go files for imported libraries and external dependencies.
 // It walks the codebase, finds import statements, and matches them against the
 // knownIntegrations map to identify external services and databases.
+// Skips performance-critical directories like vendor/, node_modules/, and .git/.
 //
-// Returns a slice of integration entities with Kind="integration" and Confidence=0.85.
+// Returns a slice of integration entities with Kind="integration" and Confidence=ConfidenceIntegration.
 // Unknown imports are skipped.
 func DiscoverIntegrations(rootDir string) ([]*ProposedEntity, error) {
 	var entities []*ProposedEntity
 	seenIntegrations := make(map[string]bool) // Track already-found integrations
 
-	// Walk the directory tree looking for .go files
+	// Walk the directory tree looking for .go files, skipping irrelevant directories
+	// for performance (vendor/, node_modules/, .git/, etc.)
 	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip unreadable files
+		}
+
+		// Skip directories listed in skipDirs map (vendor/, node_modules/, .git/, etc.)
+		if info.IsDir() {
+			if skipDirs[filepath.Base(path)] {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
 		if !strings.HasSuffix(path, ".go") {
@@ -433,12 +505,12 @@ func DiscoverIntegrations(rootDir string) ([]*ProposedEntity, error) {
 
 				entity := &ProposedEntity{
 					ID:         strings.ReplaceAll(importPath, "/", "-"),
-					Kind:       "integration",
+					Kind:       KindIntegration,
 					Title:      title,
 					Body:       fmt.Sprintf("Imported from: %s", importPath),
-					SourceType: "integration",
-					Confidence: 0.85,
-					Tags:       []string{"integration", "dependency"},
+					SourceType: SourceTypeIntegration,
+					Confidence: ConfidenceIntegration,
+					Tags:       []string{KindIntegration, "dependency"},
 				}
 
 				entities = append(entities, entity)
@@ -467,12 +539,12 @@ func DiscoverIntegrations(rootDir string) ([]*ProposedEntity, error) {
 
 					entity := &ProposedEntity{
 						ID:         strings.ReplaceAll(basePath, "/", "-"),
-						Kind:       "integration",
+						Kind:       KindIntegration,
 						Title:      title,
 						Body:       fmt.Sprintf("Imported from: %s", importPath),
-						SourceType: "integration",
-						Confidence: 0.85,
-						Tags:       []string{"integration", "dependency"},
+						SourceType: SourceTypeIntegration,
+						Confidence: ConfidenceIntegration,
+						Tags:       []string{KindIntegration, "dependency"},
 					}
 
 					entities = append(entities, entity)
@@ -490,23 +562,22 @@ func DiscoverIntegrations(rootDir string) ([]*ProposedEntity, error) {
 	return entities, nil
 }
 
-// extractImports uses regex to find import statements in Go source code.
-// It handles both single-line and multi-line import blocks.
+// extractImports uses pre-compiled regex patterns to find import statements in Go source code.
+// It handles both single-line (import "path") and multi-line (import ( ... )) import blocks.
+// Uses package-level regex variables to avoid recompilation on each call.
 func extractImports(content string) []string {
 	var imports []string
 
-	// Pattern for single import: import "path"
-	singleImportRe := regexp.MustCompile(`import\s+"([^"]+)"`)
-	matches := singleImportRe.FindAllStringSubmatch(content, -1)
+	// Find single imports: import "path"
+	matches := singleImportRegex.FindAllStringSubmatch(content, -1)
 	for _, match := range matches {
 		if len(match) > 1 {
 			imports = append(imports, match[1])
 		}
 	}
 
-	// Pattern for import block: import ( ... )
-	blockImportRe := regexp.MustCompile(`import\s*\(([\s\S]*?)\)`)
-	blockMatches := blockImportRe.FindAllStringSubmatch(content, -1)
+	// Find import blocks: import ( ... )
+	blockMatches := blockImportRegex.FindAllStringSubmatch(content, -1)
 	for _, match := range blockMatches {
 		if len(match) > 1 {
 			block := match[1]
@@ -518,9 +589,8 @@ func extractImports(content string) []string {
 				if line == "" || strings.HasPrefix(line, "//") {
 					continue
 				}
-				// Extract path from quoted string
-				pathRe := regexp.MustCompile(`"([^"]+)"`)
-				pathMatches := pathRe.FindStringSubmatch(line)
+				// Extract path from quoted string using pre-compiled regex
+				pathMatches := pathRegex.FindStringSubmatch(line)
 				if len(pathMatches) > 1 {
 					imports = append(imports, pathMatches[1])
 				}
