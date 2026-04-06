@@ -20,8 +20,8 @@ func TestTurnWindow_ComputesVisibleRange(t *testing.T) {
 		window.AddTurn(i, turn)
 	}
 
-	// Simulate viewport at height 10 (showing ~5-10 turns)
-	window.UpdateVisibleRange(0, 10)
+	// Simulate viewport at height 10, width 80 (showing ~5-10 turns)
+	window.UpdateVisibleRange(0, 10, 80)
 
 	// Use public API to check visible range
 	start, end := window.GetVisibleRange()
@@ -46,7 +46,7 @@ func TestTurnWindow_RenderVisibleOnly(t *testing.T) {
 		window.AddTurn(i, turn)
 	}
 
-	window.UpdateVisibleRange(0, 10)
+	window.UpdateVisibleRange(0, 10, 80)
 	output, err := window.RenderVisible(renderer)
 	require.NoError(t, err, "RenderVisible should not fail")
 	assert.NotEmpty(t, output, "Output should not be empty")

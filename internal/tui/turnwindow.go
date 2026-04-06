@@ -13,6 +13,7 @@ type TurnWindow struct {
 	visibleStart int
 	visibleEnd   int
 	maxTurnIndex int // highest turn index seen
+	width        int // viewport width in characters
 	mu           sync.RWMutex
 }
 
@@ -43,9 +44,11 @@ func (w *TurnWindow) GetVisibleRange() (int, int) {
 
 // UpdateVisibleRange updates which turns are visible.
 // Estimate lines-per-turn to calculate visible range with lookahead for smooth scrolling.
-func (w *TurnWindow) UpdateVisibleRange(scrollPos, viewportHeight int) {
+func (w *TurnWindow) UpdateVisibleRange(scrollPos, viewportHeight, viewportWidth int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	w.width = viewportWidth
 
 	// Estimate turns per viewport (roughly 30 chars per line, accounting for wrapping)
 	linesPerTurn := 5 // rough estimate
@@ -71,6 +74,10 @@ func (w *TurnWindow) RenderVisible(renderer *TurnRenderer) (string, error) {
 	visibleStart := w.visibleStart
 	visibleEnd := w.visibleEnd
 	maxTurnIndex := w.maxTurnIndex
+	width := w.width
+	if width == 0 {
+		width = 80 // default if not set
+	}
 	w.mu.RUnlock()
 
 	// Bounds-check visibleEnd against actual turns
@@ -88,7 +95,7 @@ func (w *TurnWindow) RenderVisible(renderer *TurnRenderer) (string, error) {
 			continue
 		}
 
-		rendered, err := renderer.Render(context.Background(), turn, RenderOptions{Width: 80})
+		rendered, err := renderer.Render(context.Background(), turn, RenderOptions{Width: width})
 		if err != nil {
 			continue
 		}

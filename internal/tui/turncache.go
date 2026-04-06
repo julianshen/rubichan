@@ -90,18 +90,20 @@ func (c *TurnCache) GetTurn(index int) (*Turn, error) {
 	return c.LoadFromArchive(index)
 }
 
-// ArchiveOldTurns moves turns before index to disk
+// ArchiveOldTurns moves turns before index to disk.
+// Splits into two phases to avoid lock contention:
+// - Fast phase (locked): copy Turn objects to buffer
+// - Slow phase (unlocked): marshal and write to disk
+// This prevents rendering threads from blocking during I/O.
 func (c *TurnCache) ArchiveOldTurns(beforeIndex int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Create archive directory
-	archiveSessionDir := filepath.Join(c.archiveDir, c.sessionID)
-	if err := os.MkdirAll(archiveSessionDir, 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
+	// Fast phase: copy turns to buffer while locked
+	type archiveJob struct {
+		index   int
+		archive ArchivedTurn
 	}
+	var jobs []archiveJob
 
-	// Archive turns before threshold (skip already archived)
+	c.mu.Lock()
 	for i := 0; i < beforeIndex; i++ {
 		// Skip if already archived
 		if _, alreadyArchived := c.archivedPaths[i]; alreadyArchived {
@@ -113,24 +115,32 @@ func (c *TurnCache) ArchiveOldTurns(beforeIndex int) error {
 			continue // Turn not in memory, skip
 		}
 
-		// Convert to ArchivedTurn
-		archived := turn.ToArchived()
+		// Convert to ArchivedTurn (still locked, minimal work)
+		jobs = append(jobs, archiveJob{index: i, archive: turn.ToArchived()})
+	}
+	c.mu.Unlock()
 
-		// Write to disk
-		data, err := json.MarshalIndent(archived, "", "  ")
+	// Slow phase: marshal and write to disk (unlocked)
+	archiveSessionDir := filepath.Join(c.archiveDir, c.sessionID)
+	if err := os.MkdirAll(archiveSessionDir, 0755); err != nil {
+		return fmt.Errorf("create archive dir: %w", err)
+	}
+
+	for _, job := range jobs {
+		data, err := json.MarshalIndent(job.archive, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshal archive: %w", err)
 		}
-		archivePath := filepath.Join(archiveSessionDir, fmt.Sprintf("turn-%d.json", i))
+		archivePath := filepath.Join(archiveSessionDir, fmt.Sprintf("turn-%d.json", job.index))
 		if err := os.WriteFile(archivePath, data, 0644); err != nil {
 			return fmt.Errorf("write archive: %w", err)
 		}
 
-		// Track archived path
-		c.archivedPaths[i] = archivePath
-
-		// Remove from memory
-		delete(c.turns, i)
+		// Track archived path and remove from memory (locked)
+		c.mu.Lock()
+		c.archivedPaths[job.index] = archivePath
+		delete(c.turns, job.index)
+		c.mu.Unlock()
 	}
 
 	return nil

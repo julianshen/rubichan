@@ -56,6 +56,7 @@ type RenderedToolCall struct {
 
 // Render produces the complete text representation of a turn.
 // This is the main entry point used by Model.View().
+// The ctx parameter is reserved for future use (e.g., cancellation on user abort).
 func (r *TurnRenderer) Render(ctx context.Context, turn *Turn, opts RenderOptions) (string, error) {
 	if turn == nil {
 		return "", nil
