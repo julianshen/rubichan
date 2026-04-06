@@ -115,6 +115,7 @@ func runShell() error {
 
 	// Create skill runtime.
 	ctx := context.Background()
+	opts = appendKnowledgeGraphOption(ctx, opts, cwd)
 	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg, "shell", cwd)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
