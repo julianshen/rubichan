@@ -4,44 +4,149 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
-// FormatAPIError produces a human-readable error message from an HTTP
-// status code and raw response body. It extracts the message field from
-// known API error formats (Anthropic, OpenAI, Ollama) and provides
-// friendly descriptions for common status codes.
+// FormatAPIError produces a human-readable error from an HTTP status code
+// and raw response body. It now returns a *ProviderError (which implements
+// the error interface), so callers can use errors.As to extract typed info.
 //
-// For model-not-found errors (HTTP 404), the full HTTP request and
-// response details are included to aid debugging.
+// The providerName is set to "" for backward compatibility; callers that
+// know the provider should use ClassifyAPIError instead.
 func FormatAPIError(statusCode int, body []byte, httpReq *http.Request) error {
-	friendly := friendlyStatus(statusCode)
-	message := extractErrorMessage(body)
+	return ClassifyAPIError(statusCode, body, httpReq, "")
+}
 
-	var base string
+// ClassifyAPIError creates a typed *ProviderError from an HTTP error response.
+// It classifies the error by HTTP status code and error message patterns,
+// extracts the human-readable message from known API formats (Anthropic,
+// OpenAI, Ollama), and builds a user-friendly error string.
+func ClassifyAPIError(statusCode int, body []byte, httpReq *http.Request, providerName string) *ProviderError {
+	return ClassifyAPIErrorWithResponse(statusCode, body, httpReq, providerName, nil)
+}
+
+// ClassifyAPIErrorWithResponse is like ClassifyAPIError but also accepts
+// response headers, allowing extraction of Retry-After for rate-limited errors.
+func ClassifyAPIErrorWithResponse(statusCode int, body []byte, httpReq *http.Request, providerName string, headers http.Header) *ProviderError {
+	message := extractErrorMessage(body)
+	kind := classifyByStatus(statusCode)
+
+	// Refine classification using error message patterns for ambiguous statuses.
+	if kind == ErrInvalidRequest && message != "" {
+		if refined := classifyByMessage(message); refined != ErrOther {
+			kind = refined
+		}
+	}
+
+	// Build human-readable error string (preserving legacy FormatAPIError output).
+	friendly := friendlyStatus(statusCode)
+	var displayMsg string
 	if message != "" {
-		base = fmt.Sprintf("%s: %s", friendly, message)
+		displayMsg = fmt.Sprintf("%s: %s", friendly, message)
 	} else {
-		// Fallback: include truncated raw body for debugging.
 		raw := strings.TrimSpace(string(body))
 		if len(raw) > 200 {
 			raw = raw[:200] + "..."
 		}
 		if raw != "" {
-			base = fmt.Sprintf("%s (%s)", friendly, raw)
+			displayMsg = fmt.Sprintf("%s (%s)", friendly, raw)
 		} else {
-			base = friendly
+			displayMsg = friendly
 		}
 	}
 
 	// For 404 errors, append HTTP details to help debug model issues.
 	if statusCode == http.StatusNotFound && httpReq != nil {
-		return fmt.Errorf("%s\n\nHTTP Request: %s %s\nHTTP Response: %d\nResponse Body:\n%s",
-			base, httpReq.Method, httpReq.URL.String(), statusCode,
+		displayMsg = fmt.Sprintf("%s\n\nHTTP Request: %s %s\nHTTP Response: %d\nResponse Body:\n%s",
+			displayMsg, httpReq.Method, httpReq.URL.String(), statusCode,
 			strings.TrimSpace(string(body)))
 	}
 
-	return fmt.Errorf("%s", base)
+	pe := &ProviderError{
+		Kind:       kind,
+		Provider:   providerName,
+		Message:    displayMsg,
+		StatusCode: statusCode,
+	}
+
+	// Extract Retry-After header for rate-limited errors.
+	if kind == ErrRateLimited && headers != nil {
+		if ra := headers.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(strings.TrimSpace(ra)); err == nil && secs > 0 {
+				pe.RetryAfter = time.Duration(secs) * time.Second
+			}
+		}
+	}
+
+	return pe
+}
+
+// classifyByStatus maps an HTTP status code to an ErrorKind.
+func classifyByStatus(code int) ErrorKind {
+	switch code {
+	case http.StatusTooManyRequests: // 429
+		return ErrRateLimited
+	case http.StatusUnauthorized, http.StatusForbidden: // 401, 403
+		return ErrAuthFailed
+	case http.StatusNotFound: // 404
+		return ErrModelNotFound
+	case http.StatusPaymentRequired: // 402
+		return ErrQuotaExceeded
+	case http.StatusRequestEntityTooLarge: // 413
+		return ErrContextOverflow
+	case http.StatusBadRequest: // 400
+		return ErrInvalidRequest // may be refined by classifyByMessage
+	case http.StatusInternalServerError, // 500
+		http.StatusBadGateway,         // 502
+		http.StatusServiceUnavailable, // 503
+		http.StatusGatewayTimeout:     // 504
+		return ErrServerError
+	default:
+		return ErrOther
+	}
+}
+
+// contextOverflowPatterns are substrings that indicate a context window overflow
+// in error messages from various providers.
+var contextOverflowPatterns = []string{
+	"maximum context length",
+	"context_length_exceeded",
+	"prompt is too long",
+	"exceed the model's maximum context",
+	"token limit",
+	"exceeds the maximum number of tokens",
+	"input too long",
+}
+
+// contentFilterPatterns are substrings that indicate content filtering.
+var contentFilterPatterns = []string{
+	"content was blocked",
+	"content filtering",
+	"safety system",
+	"content_policy_violation",
+	"flagged by our",
+}
+
+// classifyByMessage inspects the error message text to refine classification
+// for ambiguous HTTP statuses (mainly 400 Bad Request).
+func classifyByMessage(message string) ErrorKind {
+	lower := strings.ToLower(message)
+
+	for _, pattern := range contextOverflowPatterns {
+		if strings.Contains(lower, pattern) {
+			return ErrContextOverflow
+		}
+	}
+
+	for _, pattern := range contentFilterPatterns {
+		if strings.Contains(lower, pattern) {
+			return ErrContentFiltered
+		}
+	}
+
+	return ErrOther
 }
 
 func friendlyStatus(code int) string {
