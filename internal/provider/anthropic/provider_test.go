@@ -701,24 +701,36 @@ func TestConvertContentBlocksHandlesThinkingType(t *testing.T) {
 	assert.Equal(t, "visible answer", out[1].Text)
 }
 
-func TestConvertContentBlocksStripsEmptyText(t *testing.T) {
-	blocks := []provider.ContentBlock{
-		{Type: "text", Text: "hello"},
-		{Type: "text", Text: ""},
-		{Type: "text", Text: "world"},
-		{Type: "tool_use", ID: "tu_1", Name: "shell", Input: json.RawMessage(`{}`)},
+func TestTransformerStripsEmptyTextViaNormalization(t *testing.T) {
+	// Empty text blocks are stripped by normalization in ToProviderJSON.
+	tr := &Transformer{}
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 1024,
+		Messages: []provider.Message{{
+			Role: "user",
+			Content: []provider.ContentBlock{
+				{Type: "text", Text: "hello"},
+				{Type: "text", Text: ""},
+				{Type: "text", Text: "world"},
+			},
+		}},
 	}
 
-	out := convertContentBlocks(blocks)
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
 
-	// The empty text block should be stripped.
-	require.Len(t, out, 3)
-	assert.Equal(t, "text", out[0].Type)
-	assert.Equal(t, "hello", out[0].Text)
-	assert.Equal(t, "text", out[1].Type)
-	assert.Equal(t, "world", out[1].Text)
-	assert.Equal(t, "tool_use", out[2].Type)
-	assert.Equal(t, "tu_1", out[2].ID)
+	var parsed struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(body, &parsed))
+	require.Len(t, parsed.Messages, 1)
+
+	var blocks []map[string]any
+	require.NoError(t, json.Unmarshal(parsed.Messages[0].Content, &blocks))
+	assert.Len(t, blocks, 2, "empty text block should be removed by normalization")
 }
 
 func floatPtr(f float64) *float64 { return &f }

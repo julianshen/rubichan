@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/provider/normalize"
 )
 
 // API wire-format types for Anthropic v1 messages endpoint.
@@ -77,8 +78,14 @@ func (t *Transformer) ToProviderJSON(req provider.CompletionRequest) ([]byte, er
 		apiReq.Temperature = &temp
 	}
 
+	// Normalize messages: remove empty blocks and scrub tool IDs.
+	messages := normalize.ScrubToolIDs(
+		normalize.RemoveEmptyMessages(req.Messages),
+		normalize.ScrubAnthropicToolID,
+	)
+
 	// Convert messages, remapping fields for the Anthropic API.
-	for _, msg := range req.Messages {
+	for _, msg := range messages {
 		apiReq.Messages = append(apiReq.Messages, apiMessage{
 			Role:    msg.Role,
 			Content: convertContentBlocks(msg.Content),
@@ -136,10 +143,6 @@ func buildCachedSystemBlocks(system string, breakpoints []int) []apiSystemBlock 
 func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
 	var out []apiContentBlock
 	for _, b := range blocks {
-		// Skip empty text blocks — Anthropic rejects them.
-		if b.Type == "text" && b.Text == "" {
-			continue
-		}
 		cb := apiContentBlock{
 			Type:      b.Type,
 			ID:        b.ID,
