@@ -54,7 +54,8 @@ func TestQuery_FilterByKind(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, 2, len(results), "should return 2 architecture entities")
+	// Expect 3 architecture entities: 1 from fixture + 2 created in test
+	require.Equal(t, 3, len(results), "should return 3 architecture entities (1 from fixture + 2 created)")
 
 	// Verify all results are architecture kind
 	for _, r := range results {
