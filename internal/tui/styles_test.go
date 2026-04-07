@@ -37,3 +37,15 @@ func TestAdaptiveColors(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectionStyleDefined(t *testing.T) {
+	t.Parallel()
+
+	// Verify that selectionStyle is defined and can render text
+	plainText := "selected text"
+	styledText := selectionStyle.Render(plainText)
+
+	// Verify output is produced (may be plain or styled depending on terminal capabilities)
+	assert.NotEmpty(t, styledText, "selectionStyle should produce output")
+	assert.True(t, len(styledText) > 0, "selectionStyle render should not be empty")
+}

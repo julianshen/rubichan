@@ -192,4 +192,9 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorInfo).
 			Padding(0, 1)
+
+	// Text selection highlight — inverted colors with blue-tinted background.
+	selectionStyle = lipgloss.NewStyle().
+			Reverse(true).
+			Background(lipgloss.AdaptiveColor{Light: "#4A90E2", Dark: "#1D5FAD"})
 )
