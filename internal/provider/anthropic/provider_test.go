@@ -154,22 +154,33 @@ data: {"type":"message_stop"}
 
 	// Collect events by type
 	var textParts []string
+	var jsonDeltaParts []string
 	var toolUseEvents []provider.StreamEvent
-	var hasStop bool
+	var hasStop, hasMessageStart bool
 
 	for _, evt := range events {
 		switch evt.Type {
 		case "text_delta":
 			textParts = append(textParts, evt.Text)
+		case "input_json_delta":
+			jsonDeltaParts = append(jsonDeltaParts, evt.Text)
 		case "tool_use":
 			toolUseEvents = append(toolUseEvents, evt)
+		case "message_start":
+			hasMessageStart = true
 		case "stop":
 			hasStop = true
 		}
 	}
 
-	// Should have the text part
-	assert.Equal(t, []string{"Let me read that file.", `{"path":`, `"/tmp/test.txt"}`}, textParts)
+	// Text part should only contain visible text, not tool JSON.
+	assert.Equal(t, []string{"Let me read that file."}, textParts)
+
+	// Tool JSON fragments arrive as input_json_delta events.
+	assert.Equal(t, []string{`{"path":`, `"/tmp/test.txt"}`}, jsonDeltaParts)
+
+	// message_start should have been emitted.
+	assert.True(t, hasMessageStart, "should have received message_start event")
 
 	// Should have tool_use event with correct ID and name
 	require.Len(t, toolUseEvents, 1)

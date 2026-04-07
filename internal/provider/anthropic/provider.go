@@ -131,6 +131,8 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 // convertSSEEvent converts a raw SSE event into a StreamEvent.
 func (p *Provider) convertSSEEvent(evt sseEvent) *provider.StreamEvent {
 	switch evt.Event {
+	case "message_start":
+		return p.handleMessageStart(evt.Data)
 	case "content_block_start":
 		return p.handleContentBlockStart(evt.Data)
 	case "content_block_delta":
@@ -139,6 +141,31 @@ func (p *Provider) convertSSEEvent(evt sseEvent) *provider.StreamEvent {
 		return &provider.StreamEvent{Type: "stop"}
 	default:
 		return nil
+	}
+}
+
+func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
+	var parsed struct {
+		Message struct {
+			ID    string `json:"id"`
+			Model string `json:"model"`
+			Usage struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		} `json:"message"`
+	}
+
+	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
+		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing message_start: %w", err)}
+	}
+
+	return &provider.StreamEvent{
+		Type:         "message_start",
+		Model:        parsed.Message.Model,
+		MessageID:    parsed.Message.ID,
+		InputTokens:  parsed.Message.Usage.InputTokens,
+		OutputTokens: parsed.Message.Usage.OutputTokens,
 	}
 }
 
@@ -198,9 +225,8 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 			Text: parsed.Delta.Thinking,
 		}
 	case "input_json_delta":
-		// Emit JSON input deltas as text_delta - the agent layer accumulates the JSON
 		return &provider.StreamEvent{
-			Type: "text_delta",
+			Type: "input_json_delta",
 			Text: parsed.Delta.PartialJSON,
 		}
 	default:
