@@ -95,8 +95,9 @@ func (a *ToolCallAccumulator) Flush(ctx context.Context, ch chan<- provider.Stre
 		case <-ctx.Done():
 			return
 		}
-		// Emit a text_delta with the full arguments for the agent loop's
-		// toolInputBuf accumulation.
+		// Emit text_delta with the full arguments so the agent loop's
+		// toolInputBuf captures them (needed for OpenAI-compat providers
+		// that don't emit input_json_delta incrementally).
 		select {
 		case ch <- provider.StreamEvent{Type: "text_delta", Text: args}:
 		case <-ctx.Done():

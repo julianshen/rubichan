@@ -244,24 +244,23 @@ func (a *Agent) consumeStream(
 		*totalOutput += event.OutputTokens
 
 		switch event.Type {
-		case "message_start":
-			ch <- TurnEvent{Type: "message_start", Model: event.Model, MessageID: event.MessageID}
-		case "text_delta":
+		case EventMessageStart:
+			ch <- TurnEvent{Type: EventMessageStart, Model: event.Model, MessageID: event.MessageID}
+		case EventTextDelta:
 			// During tool accumulation, text deltas carry JSON input
 			// for the tool call, not user-visible text.
 			if currentTool != nil {
 				toolInputBuf += event.Text
 			} else {
 				currentTextBuf += event.Text
-				ch <- TurnEvent{Type: "text_delta", Text: event.Text}
+				ch <- TurnEvent{Type: EventTextDelta, Text: event.Text}
 			}
-		case "input_json_delta":
-			// Accumulate JSON fragments for the current tool call.
+		case EventInputJsonDelta:
 			if currentTool != nil {
 				toolInputBuf += event.Text
+				ch <- TurnEvent{Type: EventInputJsonDelta, Text: event.Text}
 			}
-			ch <- TurnEvent{Type: "input_json_delta", Text: event.Text}
-		case "tool_use":
+		case EventToolUse:
 			if event.ToolUse == nil {
 				finalizeText()
 				finalizeTool()
@@ -276,7 +275,7 @@ func (a *Agent) consumeStream(
 				Name:  event.ToolUse.Name,
 				Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 			}
-		case "error":
+		case EventError:
 			a.logger.Error("stream error: %v", event.Error)
 			ch <- TurnEvent{Type: "error", Error: event.Error}
 			// Discard all accumulated state to avoid processing
@@ -287,7 +286,7 @@ func (a *Agent) consumeStream(
 			blocks = nil
 			pendingTools = nil
 			hadError = true
-		case "stop":
+		case EventStop:
 			// handled after loop
 		}
 	}
