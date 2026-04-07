@@ -43,6 +43,19 @@ func DefaultCapabilities() ModelCapabilities {
 	}
 }
 
+// ProviderErrorClassifier is an optional interface that provider errors can
+// implement to expose their classification to the agent loop. The agent uses
+// this to emit specific TurnEvent types (e.g. "context_overflow") without
+// importing internal provider packages.
+type ProviderErrorClassifier interface {
+	error
+	// ProviderErrorKind returns the error classification string.
+	// Known values: "context_overflow", "rate_limited", "auth_failed",
+	// "model_not_found", "server_error", "stream_error",
+	// "content_filtered", "invalid_request", "quota_exceeded".
+	ProviderErrorKind() string
+}
+
 // Content block type constants.
 const (
 	BlockTypeText       = "text"

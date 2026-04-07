@@ -83,6 +83,13 @@ func (e *ProviderError) Error() string {
 	return fmt.Sprintf("%s (%s): %s", e.Kind.String(), e.Provider, e.Message)
 }
 
+// ProviderErrorKind returns the error kind string, satisfying
+// agentsdk.ProviderErrorClassifier so the agent loop can detect
+// specific error categories without importing this package.
+func (e *ProviderError) ProviderErrorKind() string {
+	return e.Kind.String()
+}
+
 // IsRetryable reports whether the error is transient and the request
 // should be retried. RateLimited, ServerError, and StreamError are
 // retryable by default. The Retryable field can override this.

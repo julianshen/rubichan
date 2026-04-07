@@ -998,3 +998,63 @@ func (m *agentMockChecker) CheckApproval(toolName string, _ json.RawMessage) App
 	}
 	return AutoApproved
 }
+
+// errorProvider returns a fixed error from Stream for testing.
+type errorProvider struct {
+	err error
+}
+
+func (p *errorProvider) Stream(_ context.Context, _ CompletionRequest) (<-chan StreamEvent, error) {
+	return nil, p.err
+}
+
+// testProviderError is a mock ProviderError-like type implementing
+// ContextOverflowError for testing the agent loop's error detection.
+type testProviderError struct {
+	kind    string
+	message string
+}
+
+func (e *testProviderError) Error() string             { return e.message }
+func (e *testProviderError) ProviderErrorKind() string { return e.kind }
+func (e *testProviderError) IsRetryable() bool         { return false }
+
+func TestAgent_Turn_ContextOverflowEvent(t *testing.T) {
+	pe := &testProviderError{kind: "context overflow", message: "prompt exceeds context window"}
+	p := &errorProvider{err: pe}
+	a := NewAgent(p)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have a context_overflow event followed by done.
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, "context_overflow", events[0].Type)
+	assert.Contains(t, events[0].Error.Error(), "context window")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestAgent_Turn_ProviderErrorPreservesKind(t *testing.T) {
+	pe := &testProviderError{kind: "auth_failed", message: "invalid api key"}
+	p := &errorProvider{err: pe}
+	a := NewAgent(p)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Auth errors should still come through as "error" type events.
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, "error", events[0].Type)
+	assert.Contains(t, events[0].Error.Error(), "invalid api key")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}

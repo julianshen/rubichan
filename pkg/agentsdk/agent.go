@@ -153,7 +153,12 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
-			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
+			eventType := "error"
+			var classifier ProviderErrorClassifier
+			if errors.As(err, &classifier) && classifier.ProviderErrorKind() == "context overflow" {
+				eventType = "context_overflow"
+			}
+			ch <- TurnEvent{Type: eventType, Error: fmt.Errorf("provider stream: %w", err)}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
