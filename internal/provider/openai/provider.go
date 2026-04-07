@@ -3,7 +3,6 @@ package openai
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,45 +49,6 @@ func New(baseURL, apiKey string, extraHeaders map[string]string) *Provider {
 // testing with custom transports (e.g. in-memory mem:// servers).
 func (p *Provider) SetHTTPClient(c *http.Client) {
 	p.client = c
-}
-
-// apiRequest is the request body sent to the OpenAI API.
-type apiRequest struct {
-	Model       string       `json:"model"`
-	Messages    []apiMessage `json:"messages"`
-	Tools       []apiTool    `json:"tools,omitempty"`
-	MaxTokens   int          `json:"max_tokens"`
-	Temperature *float64     `json:"temperature,omitempty"`
-	Stream      bool         `json:"stream"`
-}
-
-type apiMessage struct {
-	Role       string        `json:"role"`
-	Content    any           `json:"content,omitempty"`
-	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string        `json:"tool_call_id,omitempty"`
-}
-
-type apiTool struct {
-	Type     string      `json:"type"`
-	Function apiFunction `json:"function"`
-}
-
-type apiFunction struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-}
-
-type apiToolCall struct {
-	ID       string      `json:"id"`
-	Type     string      `json:"type"`
-	Function apiCallFunc `json:"function"`
-}
-
-type apiCallFunc struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
 }
 
 // Stream sends a completion request to the OpenAI-compatible API and returns a

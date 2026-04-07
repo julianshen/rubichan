@@ -13,33 +13,29 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
-// ChatChunk represents a single SSE chunk from an OpenAI-compatible API.
-type ChatChunk struct {
-	Choices []ChunkChoice `json:"choices"`
+// chatChunk represents a single SSE chunk from an OpenAI-compatible API.
+type chatChunk struct {
+	Choices []chunkChoice `json:"choices"`
 }
 
-// ChunkChoice is a single choice within a chat chunk.
-type ChunkChoice struct {
-	Delta        ChunkDelta `json:"delta"`
+type chunkChoice struct {
+	Delta        chunkDelta `json:"delta"`
 	FinishReason *string    `json:"finish_reason"`
 }
 
-// ChunkDelta is the incremental content within a choice.
-type ChunkDelta struct {
+type chunkDelta struct {
 	Content   *string         `json:"content"`
-	ToolCalls []ChunkToolCall `json:"tool_calls"`
+	ToolCalls []chunkToolCall `json:"tool_calls"`
 }
 
-// ChunkToolCall is an incremental tool call fragment.
-type ChunkToolCall struct {
+type chunkToolCall struct {
 	Index    int           `json:"index"`
 	ID       string        `json:"id,omitempty"`
 	Type     string        `json:"type,omitempty"`
-	Function ChunkToolFunc `json:"function,omitempty"`
+	Function chunkToolFunc `json:"function,omitempty"`
 }
 
-// ChunkToolFunc is the function portion of a tool call fragment.
-type ChunkToolFunc struct {
+type chunkToolFunc struct {
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 }
@@ -56,7 +52,7 @@ type ToolCallAccumulator struct {
 }
 
 // Update processes a streamed tool call chunk.
-func (a *ToolCallAccumulator) Update(tc ChunkToolCall) {
+func (a *ToolCallAccumulator) Update(tc chunkToolCall) {
 	for len(a.calls) <= tc.Index {
 		a.calls = append(a.calls, struct {
 			id   string
@@ -143,7 +139,7 @@ func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.Stre
 			return
 		}
 
-		var chunk ChatChunk
+		var chunk chatChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			select {
 			case ch <- provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing chunk: %w", err)}:

@@ -8,6 +8,46 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
+// API wire-format types for OpenAI Chat Completions endpoint.
+
+type apiRequest struct {
+	Model       string       `json:"model"`
+	Messages    []apiMessage `json:"messages"`
+	Tools       []apiTool    `json:"tools,omitempty"`
+	MaxTokens   int          `json:"max_tokens"`
+	Temperature *float64     `json:"temperature,omitempty"`
+	Stream      bool         `json:"stream"`
+}
+
+type apiMessage struct {
+	Role       string        `json:"role"`
+	Content    any           `json:"content,omitempty"`
+	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+}
+
+type apiTool struct {
+	Type     string      `json:"type"`
+	Function apiFunction `json:"function"`
+}
+
+type apiFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+type apiToolCall struct {
+	ID       string      `json:"id"`
+	Type     string      `json:"type"`
+	Function apiCallFunc `json:"function"`
+}
+
+type apiCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 // Transformer implements provider.MessageTransformer for OpenAI-compatible APIs.
 type Transformer struct{}
 

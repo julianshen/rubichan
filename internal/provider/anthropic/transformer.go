@@ -6,6 +6,53 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
+// API wire-format types for Anthropic v1 messages endpoint.
+
+type apiRequest struct {
+	Model       string       `json:"model"`
+	MaxTokens   int          `json:"max_tokens"`
+	Stream      bool         `json:"stream"`
+	System      any          `json:"system,omitempty"` // string or []apiSystemBlock
+	Messages    []apiMessage `json:"messages"`
+	Tools       []apiTool    `json:"tools,omitempty"`
+	Temperature *float64     `json:"temperature,omitempty"`
+}
+
+type apiSystemBlock struct {
+	Type         string           `json:"type"`
+	Text         string           `json:"text"`
+	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+}
+
+type apiCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
+type apiMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+type apiTool struct {
+	Name         string           `json:"name"`
+	Description  string           `json:"description"`
+	InputSchema  json.RawMessage  `json:"input_schema"`
+	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+}
+
+// apiContentBlock is the Anthropic-specific content block for serialization.
+// The Anthropic API uses "content" (not "text") for tool_result blocks.
+type apiContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+}
+
 // Transformer implements provider.MessageTransformer for the Anthropic API.
 type Transformer struct{}
 
