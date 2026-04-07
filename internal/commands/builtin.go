@@ -205,6 +205,29 @@ func (c *undoOverlayCommand) Execute(_ context.Context, _ []string) (Result, err
 	return Result{Action: ActionOpenUndo}, nil
 }
 
+// --- about ---
+
+type aboutCommand struct{}
+
+// NewAboutCommand creates a command that opens the about screen.
+func NewAboutCommand() SlashCommand {
+	return &aboutCommand{}
+}
+
+func (c *aboutCommand) Name() string        { return "about" }
+func (c *aboutCommand) Description() string { return "Show information about Rubichan" }
+func (c *aboutCommand) Arguments() []ArgumentDef {
+	return nil
+}
+
+func (c *aboutCommand) Complete(_ context.Context, _ []string) []Candidate {
+	return nil
+}
+
+func (c *aboutCommand) Execute(_ context.Context, _ []string) (Result, error) {
+	return Result{Action: ActionOpenAbout}, nil
+}
+
 // --- debug-verification-snapshot ---
 
 type debugVerificationSnapshotCommand struct {

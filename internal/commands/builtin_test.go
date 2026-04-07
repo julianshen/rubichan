@@ -331,3 +331,33 @@ func TestCancelRalphCommandExecuteWithoutActiveLoop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "No active Ralph loop")
 }
+
+func TestAboutCommandName(t *testing.T) {
+	cmd := NewAboutCommand()
+	assert.Equal(t, "about", cmd.Name())
+}
+
+func TestAboutCommandDescription(t *testing.T) {
+	cmd := NewAboutCommand()
+	assert.NotEmpty(t, cmd.Description())
+	assert.Contains(t, cmd.Description(), "Rubichan")
+}
+
+func TestAboutCommandArguments(t *testing.T) {
+	cmd := NewAboutCommand()
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestAboutCommandComplete(t *testing.T) {
+	cmd := NewAboutCommand()
+	candidates := cmd.Complete(context.Background(), []string{})
+	assert.Nil(t, candidates)
+}
+
+func TestAboutCommandExecute(t *testing.T) {
+	cmd := NewAboutCommand()
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, ActionOpenAbout, result.Action)
+	assert.Empty(t, result.Output)
+}
