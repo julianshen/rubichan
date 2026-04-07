@@ -754,3 +754,76 @@ func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
 }
 
 func floatPtr(f float64) *float64 { return &f }
+
+// --- Quirks tests ---
+
+func TestTransformer_Quirks_MaxToolIDLength(t *testing.T) {
+	tr := &Transformer{Quirks: Quirks{MaxToolIDLength: 5}}
+	req := provider.CompletionRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 1024,
+		Messages: []provider.Message{{
+			Role: "assistant",
+			Content: []provider.ContentBlock{
+				{Type: "tool_use", ID: "abcdefghij", Name: "search", Input: json.RawMessage(`{}`)},
+			},
+		}},
+	}
+
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"abcde"`)
+	assert.NotContains(t, string(body), `"abcdefghij"`)
+}
+
+func TestTransformer_Quirks_AlphanumericToolIDs(t *testing.T) {
+	tr := &Transformer{Quirks: Quirks{AlphanumericToolIDs: true}}
+	req := provider.CompletionRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 1024,
+		Messages: []provider.Message{{
+			Role: "assistant",
+			Content: []provider.ContentBlock{
+				{Type: "tool_use", ID: "call:1/abc", Name: "search", Input: json.RawMessage(`{}`)},
+			},
+		}},
+	}
+
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"call_1_abc"`)
+	assert.NotContains(t, string(body), `"call:1/abc"`)
+}
+
+func TestTransformer_Quirks_InsertAssistant(t *testing.T) {
+	tr := &Transformer{Quirks: Quirks{InsertAssistantAfterTool: true}}
+	req := provider.CompletionRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 1024,
+		Messages: []provider.Message{
+			{Role: "user", Content: []provider.ContentBlock{
+				{Type: "tool_result", ToolUseID: "id1", Text: "result"},
+			}},
+			{Role: "user", Content: []provider.ContentBlock{
+				{Type: "text", Text: "next question"},
+			}},
+		},
+	}
+
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+
+	var parsed struct {
+		Messages []struct {
+			Role string `json:"role"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(body, &parsed))
+
+	// Should have: tool result, filler assistant, user.
+	roles := make([]string, len(parsed.Messages))
+	for i, m := range parsed.Messages {
+		roles[i] = m.Role
+	}
+	assert.Contains(t, roles, "assistant", "should insert filler assistant message")
+}

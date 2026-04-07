@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/provider/normalize"
 )
 
 // API wire-format types for OpenAI Chat Completions endpoint.
@@ -48,8 +49,22 @@ type apiCallFunc struct {
 	Arguments string `json:"arguments"`
 }
 
+// Quirks configures provider-specific behavioral adjustments for
+// OpenAI-compatible APIs that deviate from the standard format.
+type Quirks struct {
+	// MaxToolIDLength truncates tool IDs to this length (0 = no limit).
+	MaxToolIDLength int
+	// AlphanumericToolIDs restricts tool IDs to [a-zA-Z0-9_-].
+	AlphanumericToolIDs bool
+	// InsertAssistantAfterTool inserts a filler assistant message between
+	// tool results and user messages for providers that require it.
+	InsertAssistantAfterTool bool
+}
+
 // Transformer implements provider.MessageTransformer for OpenAI-compatible APIs.
-type Transformer struct{}
+type Transformer struct {
+	Quirks Quirks
+}
 
 // ToProviderJSON converts a CompletionRequest into the OpenAI Chat Completions
 // JSON request body.
@@ -73,8 +88,23 @@ func (t *Transformer) ToProviderJSON(req provider.CompletionRequest) ([]byte, er
 		})
 	}
 
+	// Normalize messages.
+	messages := normalize.RemoveEmptyMessages(req.Messages)
+	if t.Quirks.AlphanumericToolIDs || t.Quirks.MaxToolIDLength > 0 {
+		scrub := func(id string) string {
+			if t.Quirks.AlphanumericToolIDs {
+				id = normalize.ScrubAnthropicToolID(id)
+			}
+			return normalize.TruncateToolID(id, t.Quirks.MaxToolIDLength)
+		}
+		messages = normalize.ScrubToolIDs(messages, scrub)
+	}
+	if t.Quirks.InsertAssistantAfterTool {
+		messages = normalize.InsertAssistantBetweenToolAndUser(messages)
+	}
+
 	// Convert messages.
-	for _, msg := range req.Messages {
+	for _, msg := range messages {
 		apiReq.Messages = append(apiReq.Messages, convertMessages(msg)...)
 	}
 
