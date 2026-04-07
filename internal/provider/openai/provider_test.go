@@ -753,6 +753,23 @@ func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
 	assert.Equal(t, "helloworld", msgs[0].Content)
 }
 
+func TestConvertUserMessagesPreservesTextWithToolResults(t *testing.T) {
+	msg := provider.Message{
+		Role: "user",
+		Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "t1", Text: "result data"},
+			{Type: "text", Text: "follow-up question"},
+		},
+	}
+
+	msgs := convertUserMessages(msg)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "tool", msgs[0].Role)
+	assert.Equal(t, "result data", msgs[0].Content)
+	assert.Equal(t, "user", msgs[1].Role)
+	assert.Equal(t, "follow-up question", msgs[1].Content)
+}
+
 func floatPtr(f float64) *float64 { return &f }
 
 // --- Quirks tests ---

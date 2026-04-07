@@ -26,6 +26,12 @@ type Provider struct {
 	extraHeaders map[string]string
 	client       *http.Client
 	transformer  openai.Transformer
+	debugLogger  provider.DebugLogger
+}
+
+// SetDebugLogger enables debug logging for API requests and responses.
+func (p *Provider) SetDebugLogger(logger provider.DebugLogger) {
+	p.debugLogger = logger
 }
 
 // New creates a new Z.ai provider.
@@ -75,7 +81,9 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := p.client.Do(httpReq)
+	provider.LogRequest(p.debugLogger, httpReq, body)
+
+	resp, err := provider.DoWithRetry(ctx, p.client, httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
@@ -83,7 +91,12 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
+		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
 		return nil, provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "zai", resp.Header)
+	}
+
+	if p.debugLogger != nil {
+		p.debugLogger("[DEBUG] <<< HTTP Response: %d %s (streaming)", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
 	ch := make(chan provider.StreamEvent)

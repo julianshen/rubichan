@@ -87,8 +87,8 @@ func isToolIDChar(ch byte) bool {
 		(ch >= '0' && ch <= '9') || ch == '_' || ch == '-'
 }
 
-// ScrubAnthropicToolID is an alias for ScrubToolIDChars for backward compatibility.
-var ScrubAnthropicToolID = ScrubToolIDChars
+// ScrubAnthropicToolID is a backward-compatible alias for ScrubToolIDChars.
+func ScrubAnthropicToolID(id string) string { return ScrubToolIDChars(id) }
 
 // TruncateToolID truncates a tool ID to maxLen characters.
 // A maxLen of 0 means no limit.

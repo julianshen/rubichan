@@ -9,8 +9,10 @@ import (
 type ErrorKind int
 
 const (
+	// ErrUnknown is the zero value; guards against uninitialized ErrorKind.
+	ErrUnknown ErrorKind = iota
 	// ErrRateLimited indicates HTTP 429 or equivalent throttling.
-	ErrRateLimited ErrorKind = iota
+	ErrRateLimited
 	// ErrAuthFailed indicates invalid or missing credentials.
 	ErrAuthFailed
 	// ErrContextOverflow indicates the request exceeded the model's context window.

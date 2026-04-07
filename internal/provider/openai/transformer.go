@@ -207,6 +207,13 @@ func convertUserMessages(msg provider.Message) []apiMessage {
 	}
 
 	if len(toolResults) > 0 {
+		// Preserve any text blocks alongside tool results.
+		if len(texts) > 0 {
+			toolResults = append(toolResults, apiMessage{
+				Role:    "user",
+				Content: strings.Join(texts, ""),
+			})
+		}
 		return toolResults
 	}
 

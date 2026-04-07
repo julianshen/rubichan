@@ -132,6 +132,7 @@ func TestErrorKind_String(t *testing.T) {
 		kind ErrorKind
 		want string
 	}{
+		{ErrUnknown, "provider error"},
 		{ErrRateLimited, "rate limited"},
 		{ErrAuthFailed, "auth failed"},
 		{ErrContextOverflow, "context overflow"},
