@@ -2288,6 +2288,26 @@ func TestModelRegistersDebugVerificationSnapshotCommand(t *testing.T) {
 	assert.Contains(t, result.Output, "unavailable")
 }
 
+func TestModelRegistersAboutCommand(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	cmd, ok := m.cmdRegistry.Get("about")
+	require.True(t, ok)
+	assert.NotNil(t, cmd)
+
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, commands.ActionOpenAbout, result.Action)
+}
+
+func TestModelAboutOverlayView(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.activeOverlay = NewAboutOverlay(80, 24)
+
+	view := m.View()
+	assert.Contains(t, view, "Rubichan")
+	assert.Contains(t, view, "何が好き")
+}
+
 func TestModelHandleCommandEmitsSessionEvent(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	var events []session.Event

@@ -217,6 +217,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		_ = cmdRegistry.Register(commands.NewQuitCommand())
 		_ = cmdRegistry.Register(commands.NewExitCommand())
 		_ = cmdRegistry.Register(commands.NewConfigCommand())
+		_ = cmdRegistry.Register(commands.NewAboutCommand())
 		_ = cmdRegistry.Register(commands.NewRalphLoopCommand(m.StartRalphLoop))
 		_ = cmdRegistry.Register(commands.NewCancelRalphCommand(m.CancelRalphLoop))
 		_ = cmdRegistry.Register(commands.NewClearCommand(func() {
@@ -792,6 +793,9 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 			cps = m.checkpointMgr.List()
 		}
 		m.activeOverlay = NewUndoOverlay(cps, m.width)
+		return nil
+	case commands.ActionOpenAbout:
+		m.activeOverlay = NewAboutOverlay(m.width, m.height)
 		return nil
 	}
 

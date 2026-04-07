@@ -22,6 +22,8 @@ const (
 	ActionOpenWiki
 	// ActionOpenUndo requests the host to open the undo checkpoint selector.
 	ActionOpenUndo
+	// ActionOpenAbout requests the host to open the about screen.
+	ActionOpenAbout
 )
 
 // Candidate represents a completion suggestion.
