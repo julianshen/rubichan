@@ -3221,3 +3221,27 @@ func TestRenderWithSelection_EmptySelection(t *testing.T) {
 	// Empty selection should not highlight anything
 	assert.Equal(t, viewStr, result, "empty selection should not change output")
 }
+
+func TestRenderWithSelection_PreservesANSICodesInUnselectedText(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.YOffset = 0
+
+	// Create a string with ANSI color codes (e.g., red text "world")
+	// ANSI format: \x1b[31m = red, \x1b[0m = reset
+	viewStr := "hello \x1b[31mworld\x1b[0m!"
+
+	// Select "world" (columns 6-11 in plain text, skipping "hello ")
+	m.selection = MouseSelection{
+		Start:  Position{Line: 0, Col: 6},
+		End:    Position{Line: 0, Col: 11},
+		Active: true,
+	}
+
+	result := m.renderWithSelection(viewStr)
+
+	// The unselected portion should preserve ANSI codes
+	assert.Contains(t, result, "hello", "unselected prefix should be present")
+	assert.Contains(t, result, "!", "unselected suffix should be present")
+	// The result should contain ANSI codes (either original or from selection style)
+	assert.Greater(t, len(result), len("hello world!"), "result should contain ANSI codes")
+}

@@ -159,7 +159,9 @@ func (m *Model) activeSkillsLine() string {
 }
 
 // renderWithSelection applies selection highlighting to the viewport view.
-// It overlays selectionStyle (reversed colors with blue background) on selected text ranges.
+// It overlays selectionStyle (reversed colors with blue background) on selected text ranges,
+// while preserving the original ANSI styling of the content by reconstructing the line
+// character-by-character and applying selection style only to selected portions.
 func (m *Model) renderWithSelection(viewStr string) string {
 	start, end := m.selection.Normalized()
 	sel := MouseSelection{Start: start, End: end}
@@ -171,7 +173,7 @@ func (m *Model) renderWithSelection(viewStr string) string {
 			continue
 		}
 
-		// Strip ANSI codes to work with plain text positions
+		// Strip ANSI codes to calculate selection positions in plain text
 		stripped := stripANSI(line)
 		runes := []rune(stripped)
 		lineLen := len(runes)
@@ -186,12 +188,40 @@ func (m *Model) renderWithSelection(viewStr string) string {
 			endCol = lineLen
 		}
 
-		// Reconstruct: unselected prefix + selected range (highlighted) + unselected suffix
-		before := string(runes[:startCol])
-		selected := string(runes[startCol:endCol])
-		after := string(runes[endCol:])
+		// Reconstruct the line while preserving ANSI codes.
+		// We iterate through the original line, tracking plain-text position,
+		// and wrap selected runes in selection style while preserving ANSI escape codes.
+		var output strings.Builder
+		plainPos := 0 // position in plain text (stripped version)
+		inEscape := false
 
-		lines[i] = before + selectionStyle.Render(selected) + after
+		for _, r := range line {
+			// Handle ANSI escape sequences — copy them as-is to output
+			if r == '\x1b' {
+				inEscape = true
+				output.WriteRune(r)
+				continue
+			}
+			if inEscape {
+				output.WriteRune(r)
+				if r == 'm' {
+					inEscape = false
+				}
+				continue
+			}
+
+			// Regular character (not part of escape sequence)
+			if plainPos >= startCol && plainPos < endCol {
+				// This rune is selected — wrap in selection style
+				output.WriteString(selectionStyle.Render(string(r)))
+			} else {
+				// Unselected rune — copy as-is
+				output.WriteRune(r)
+			}
+			plainPos++
+		}
+
+		lines[i] = output.String()
 	}
 
 	return strings.Join(lines, "\n")
