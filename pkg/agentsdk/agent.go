@@ -153,7 +153,12 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
-			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
+			eventType := "error"
+			var classifier ProviderErrorClassifier
+			if errors.As(err, &classifier) && classifier.ProviderErrorKind() == ProviderErrContextOverflow {
+				eventType = "context_overflow"
+			}
+			ch <- TurnEvent{Type: eventType, Error: fmt.Errorf("provider stream: %w", err)}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
 		}
@@ -239,16 +244,23 @@ func (a *Agent) consumeStream(
 		*totalOutput += event.OutputTokens
 
 		switch event.Type {
-		case "text_delta":
+		case EventMessageStart:
+			ch <- TurnEvent{Type: EventMessageStart, Model: event.Model, MessageID: event.MessageID}
+		case EventTextDelta:
 			// During tool accumulation, text deltas carry JSON input
 			// for the tool call, not user-visible text.
 			if currentTool != nil {
 				toolInputBuf += event.Text
 			} else {
 				currentTextBuf += event.Text
-				ch <- TurnEvent{Type: "text_delta", Text: event.Text}
+				ch <- TurnEvent{Type: EventTextDelta, Text: event.Text}
 			}
-		case "tool_use":
+		case EventInputJsonDelta:
+			if currentTool != nil {
+				toolInputBuf += event.Text
+				ch <- TurnEvent{Type: EventInputJsonDelta, Text: event.Text}
+			}
+		case EventToolUse:
 			if event.ToolUse == nil {
 				finalizeText()
 				finalizeTool()
@@ -263,7 +275,7 @@ func (a *Agent) consumeStream(
 				Name:  event.ToolUse.Name,
 				Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 			}
-		case "error":
+		case EventError:
 			a.logger.Error("stream error: %v", event.Error)
 			ch <- TurnEvent{Type: "error", Error: event.Error}
 			// Discard all accumulated state to avoid processing
@@ -274,7 +286,7 @@ func (a *Agent) consumeStream(
 			blocks = nil
 			pendingTools = nil
 			hadError = true
-		case "stop":
+		case EventStop:
 			// handled after loop
 		}
 	}

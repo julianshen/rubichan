@@ -998,3 +998,119 @@ func (m *agentMockChecker) CheckApproval(toolName string, _ json.RawMessage) App
 	}
 	return AutoApproved
 }
+
+// errorProvider returns a fixed error from Stream for testing.
+type errorProvider struct {
+	err error
+}
+
+func (p *errorProvider) Stream(_ context.Context, _ CompletionRequest) (<-chan StreamEvent, error) {
+	return nil, p.err
+}
+
+// testProviderError is a mock ProviderError-like type implementing
+// ContextOverflowError for testing the agent loop's error detection.
+type testProviderError struct {
+	kind    string
+	message string
+}
+
+func (e *testProviderError) Error() string             { return e.message }
+func (e *testProviderError) ProviderErrorKind() string { return e.kind }
+func (e *testProviderError) IsRetryable() bool         { return false }
+
+func TestAgent_Turn_ContextOverflowEvent(t *testing.T) {
+	pe := &testProviderError{kind: ProviderErrContextOverflow, message: "prompt exceeds context window"}
+	p := &errorProvider{err: pe}
+	a := NewAgent(p)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Should have a context_overflow event followed by done.
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, "context_overflow", events[0].Type)
+	assert.Contains(t, events[0].Error.Error(), "context window")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestAgent_Turn_ProviderErrorPreservesKind(t *testing.T) {
+	pe := &testProviderError{kind: "auth_failed", message: "invalid api key"}
+	p := &errorProvider{err: pe}
+	a := NewAgent(p)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var events []TurnEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+
+	// Auth errors should still come through as "error" type events.
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, "error", events[0].Type)
+	assert.Contains(t, events[0].Error.Error(), "invalid api key")
+	assert.Equal(t, "done", events[len(events)-1].Type)
+}
+
+func TestAgent_ConsumeStream_InputJsonDelta(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "t1", Name: "read"}},
+		{Type: "input_json_delta", Text: `{"path":`},
+		{Type: "input_json_delta", Text: `"/tmp"}`},
+		{Type: "stop", InputTokens: 10, OutputTokens: 5},
+	}}}
+
+	reg := NewRegistry()
+	reg.Register(&dummyTool{name: "read"})
+	a := NewAgent(p, WithTools(reg))
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var jsonDeltas []string
+	var toolCalls []string
+	for ev := range ch {
+		switch ev.Type {
+		case "input_json_delta":
+			jsonDeltas = append(jsonDeltas, ev.Text)
+		case "tool_call":
+			toolCalls = append(toolCalls, ev.ToolCall.Name)
+		}
+	}
+
+	// input_json_delta should be forwarded to TUI.
+	assert.Equal(t, []string{`{"path":`, `"/tmp"}`}, jsonDeltas)
+	// Tool call should have accumulated the JSON.
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "read", toolCalls[0])
+}
+
+func TestAgent_ConsumeStream_MessageStart(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{{
+		{Type: "message_start", Model: "gpt-4o", MessageID: "msg_123"},
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop", InputTokens: 10, OutputTokens: 5},
+	}}}
+	a := NewAgent(p)
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+
+	var messageStarts []TurnEvent
+	for ev := range ch {
+		if ev.Type == "message_start" {
+			messageStarts = append(messageStarts, ev)
+		}
+	}
+
+	require.Len(t, messageStarts, 1)
+	assert.Equal(t, "gpt-4o", messageStarts[0].Model)
+	assert.Equal(t, "msg_123", messageStarts[0].MessageID)
+}

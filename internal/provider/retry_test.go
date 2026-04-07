@@ -123,6 +123,82 @@ func TestParseRetryAfter(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestDoWithRetry_UsesRetryAfterHeader(t *testing.T) {
+	oldBase, oldMax := retryBaseDelay, retryMaxDelay
+	retryBaseDelay, retryMaxDelay = time.Millisecond, 2*time.Millisecond
+	t.Cleanup(func() {
+		retryBaseDelay, retryMaxDelay = oldBase, oldMax
+	})
+
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < 3 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, bytes.NewReader([]byte("{}")))
+	require.NoError(t, err)
+
+	start := time.Now()
+	resp, err := DoWithRetry(context.Background(), &http.Client{}, req)
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.EqualValues(t, 3, calls.Load())
+	// Should have waited at least ~1s for the Retry-After header (2 retries * 1s).
+	// Use a lower bound to account for timing variance.
+	assert.Greater(t, elapsed, 500*time.Millisecond)
+}
+
+func TestDoWithRetry_SkipsRetryOnAuthFailed(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := DoWithRetry(context.Background(), &http.Client{}, req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.EqualValues(t, 1, calls.Load(), "should not retry auth failures")
+}
+
+func TestDoWithRetry_SkipsRetryOnContextOverflow(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = w.Write([]byte(`{"error":{"message":"request too large"}}`))
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := DoWithRetry(context.Background(), &http.Client{}, req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	assert.EqualValues(t, 1, calls.Load(), "should not retry context overflow")
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

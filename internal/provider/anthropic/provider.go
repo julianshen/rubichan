@@ -23,6 +23,7 @@ type Provider struct {
 	baseURL     string
 	apiKey      string
 	client      *http.Client
+	transformer Transformer
 	debugLogger provider.DebugLogger
 }
 
@@ -46,58 +47,10 @@ func (p *Provider) SetHTTPClient(c *http.Client) {
 	p.client = c
 }
 
-// apiRequest is the request body sent to the Anthropic API.
-type apiRequest struct {
-	Model       string       `json:"model"`
-	MaxTokens   int          `json:"max_tokens"`
-	Stream      bool         `json:"stream"`
-	System      any          `json:"system,omitempty"` // string or []apiSystemBlock
-	Messages    []apiMessage `json:"messages"`
-	Tools       []apiTool    `json:"tools,omitempty"`
-	Temperature *float64     `json:"temperature,omitempty"`
-}
-
-// apiSystemBlock represents a structured system prompt block with optional cache control.
-type apiSystemBlock struct {
-	Type         string           `json:"type"`
-	Text         string           `json:"text"`
-	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
-}
-
-// apiCacheControl marks a block for prompt caching.
-type apiCacheControl struct {
-	Type string `json:"type"` // "ephemeral"
-}
-
-type apiMessage struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"`
-}
-
-type apiTool struct {
-	Name         string           `json:"name"`
-	Description  string           `json:"description"`
-	InputSchema  json.RawMessage  `json:"input_schema"`
-	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
-}
-
-// apiContentBlock is an Anthropic-specific content block for serialization.
-// The Anthropic API uses "content" (not "text") for tool_result blocks.
-type apiContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
-}
-
 // Stream sends a completion request to the Anthropic API and returns a channel
 // of StreamEvents parsed from the SSE response.
 func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	if err != nil {
 		return nil, fmt.Errorf("building request body: %w", err)
 	}
@@ -122,7 +75,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
 		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
-		return nil, provider.FormatAPIError(resp.StatusCode, respBody, httpReq)
+		return nil, provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "anthropic", resp.Header)
 	}
 
 	if p.debugLogger != nil {
@@ -133,108 +86,6 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	go p.processStream(ctx, resp.Body, ch)
 
 	return ch, nil
-}
-
-func (p *Provider) buildRequestBody(req provider.CompletionRequest) ([]byte, error) {
-	apiReq := apiRequest{
-		Model:     req.Model,
-		MaxTokens: req.MaxTokens,
-		Stream:    true,
-	}
-
-	// Build system prompt with optional cache breakpoints.
-	if len(req.CacheBreakpoints) > 0 && req.System != "" {
-		apiReq.System = buildCachedSystemBlocks(req.System, req.CacheBreakpoints)
-	} else {
-		apiReq.System = req.System
-	}
-
-	if req.Temperature != nil {
-		temp := *req.Temperature
-		apiReq.Temperature = &temp
-	}
-
-	// Convert messages, remapping fields for the Anthropic API
-	for _, msg := range req.Messages {
-		apiReq.Messages = append(apiReq.Messages, apiMessage{
-			Role:    msg.Role,
-			Content: convertContentBlocks(msg.Content),
-		})
-	}
-
-	// Convert tools
-	for _, tool := range req.Tools {
-		apiReq.Tools = append(apiReq.Tools, apiTool{
-			Name:        tool.Name,
-			Description: tool.Description,
-			InputSchema: tool.InputSchema,
-		})
-	}
-
-	// Mark last tool with cache_control for Anthropic prompt caching.
-	if len(apiReq.Tools) > 0 {
-		apiReq.Tools[len(apiReq.Tools)-1].CacheControl = &apiCacheControl{Type: "ephemeral"}
-	}
-
-	return json.Marshal(apiReq)
-}
-
-// buildCachedSystemBlocks splits the system prompt at breakpoint byte offsets
-// and marks pre-breakpoint blocks with cache_control.
-func buildCachedSystemBlocks(system string, breakpoints []int) []apiSystemBlock {
-	var blocks []apiSystemBlock
-	prev := 0
-	for _, bp := range breakpoints {
-		if bp > len(system) {
-			bp = len(system)
-		}
-		if bp <= prev {
-			continue
-		}
-		blocks = append(blocks, apiSystemBlock{
-			Type:         "text",
-			Text:         system[prev:bp],
-			CacheControl: &apiCacheControl{Type: "ephemeral"},
-		})
-		prev = bp
-	}
-	if prev < len(system) {
-		blocks = append(blocks, apiSystemBlock{
-			Type: "text",
-			Text: system[prev:],
-		})
-	}
-	return blocks
-}
-
-// convertContentBlocks maps provider.ContentBlock to Anthropic-specific
-// apiContentBlock. For tool_result blocks, the text is placed in the "content"
-// field (which is what the Anthropic API expects) instead of "text".
-func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
-	var out []apiContentBlock
-	for _, b := range blocks {
-		// Skip empty text blocks — Anthropic rejects them.
-		if b.Type == "text" && b.Text == "" {
-			continue
-		}
-		cb := apiContentBlock{
-			Type:      b.Type,
-			ID:        b.ID,
-			Name:      b.Name,
-			Input:     b.Input,
-			ToolUseID: b.ToolUseID,
-			IsError:   b.IsError,
-		}
-		switch b.Type {
-		case "tool_result":
-			cb.Content = b.Text
-		default:
-			// text, thinking, and tool_use blocks all use the "text" field.
-			cb.Text = b.Text
-		}
-		out = append(out, cb)
-	}
-	return out
 }
 
 // processStream reads SSE events from the response body and sends StreamEvents
@@ -280,6 +131,8 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 // convertSSEEvent converts a raw SSE event into a StreamEvent.
 func (p *Provider) convertSSEEvent(evt sseEvent) *provider.StreamEvent {
 	switch evt.Event {
+	case "message_start":
+		return p.handleMessageStart(evt.Data)
 	case "content_block_start":
 		return p.handleContentBlockStart(evt.Data)
 	case "content_block_delta":
@@ -288,6 +141,31 @@ func (p *Provider) convertSSEEvent(evt sseEvent) *provider.StreamEvent {
 		return &provider.StreamEvent{Type: "stop"}
 	default:
 		return nil
+	}
+}
+
+func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
+	var parsed struct {
+		Message struct {
+			ID    string `json:"id"`
+			Model string `json:"model"`
+			Usage struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		} `json:"message"`
+	}
+
+	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
+		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing message_start: %w", err)}
+	}
+
+	return &provider.StreamEvent{
+		Type:         "message_start",
+		Model:        parsed.Message.Model,
+		MessageID:    parsed.Message.ID,
+		InputTokens:  parsed.Message.Usage.InputTokens,
+		OutputTokens: parsed.Message.Usage.OutputTokens,
 	}
 }
 
@@ -347,9 +225,8 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 			Text: parsed.Delta.Thinking,
 		}
 	case "input_json_delta":
-		// Emit JSON input deltas as text_delta - the agent layer accumulates the JSON
 		return &provider.StreamEvent{
-			Type: "text_delta",
+			Type: "input_json_delta",
 			Text: parsed.Delta.PartialJSON,
 		}
 	default:

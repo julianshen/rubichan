@@ -43,6 +43,23 @@ func DefaultCapabilities() ModelCapabilities {
 	}
 }
 
+// Provider error kind constants for use with ProviderErrorClassifier.
+const (
+	ProviderErrContextOverflow = "context overflow"
+	ProviderErrRateLimited     = "rate limited"
+)
+
+// ProviderErrorClassifier is an optional interface that provider errors can
+// implement to expose their classification to the agent loop. The agent uses
+// this to emit specific TurnEvent types (e.g. "context_overflow") without
+// importing internal provider packages.
+type ProviderErrorClassifier interface {
+	error
+	// ProviderErrorKind returns the error classification string.
+	// Known values match the ProviderErr* constants above.
+	ProviderErrorKind() string
+}
+
 // Content block type constants.
 const (
 	BlockTypeText       = "text"
@@ -53,11 +70,13 @@ const (
 
 // Stream event type constants.
 const (
-	EventTextDelta     = "text_delta"
-	EventThinkingDelta = "thinking_delta"
-	EventToolUse       = "tool_use"
-	EventStop          = "stop"
-	EventError         = "error"
+	EventTextDelta      = "text_delta"
+	EventThinkingDelta  = "thinking_delta"
+	EventInputJsonDelta = "input_json_delta"
+	EventToolUse        = "tool_use"
+	EventMessageStart   = "message_start"
+	EventStop           = "stop"
+	EventError          = "error"
 )
 
 // CompletionRequest represents a request to an LLM for completion.
@@ -148,6 +167,8 @@ type StreamEvent struct {
 	Error        error
 	InputTokens  int
 	OutputTokens int
+	Model        string // populated on message_start
+	MessageID    string // populated on message_start
 }
 
 func marshalSafeRawJSON(raw json.RawMessage) json.RawMessage {

@@ -19,7 +19,7 @@ func TestBuildRequestBodyWithCacheBreakpoints(t *testing.T) {
 		CacheBreakpoints: []int{15}, // breakpoint after "You are helpful"
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	assert.NoError(t, err)
 	assert.Contains(t, string(body), "cache_control")
 }
@@ -104,7 +104,7 @@ func TestBuildRequestBodyBackwardCompatibleWithoutBreakpoints(t *testing.T) {
 		// CacheBreakpoints is nil — backward compatible
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	require.NoError(t, err)
 
 	// Parse the JSON and verify system is a plain string, not an array
@@ -129,7 +129,7 @@ func TestBuildRequestBodyEmptyBreakpointsBackwardCompatible(t *testing.T) {
 		CacheBreakpoints: []int{}, // empty slice, should still serialize as string
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	require.NoError(t, err)
 
 	var parsed map[string]any
@@ -153,7 +153,7 @@ func TestToolDefinitionCaching(t *testing.T) {
 		},
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	require.NoError(t, err)
 
 	var parsed map[string]json.RawMessage
@@ -179,7 +179,7 @@ func TestToolDefinitionCachingNoTools(t *testing.T) {
 		System: "You are helpful.",
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	require.NoError(t, err)
 
 	var parsed map[string]json.RawMessage
@@ -200,7 +200,7 @@ func TestToolDefinitionCachingSingleTool(t *testing.T) {
 		},
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	require.NoError(t, err)
 
 	var parsed map[string]json.RawMessage

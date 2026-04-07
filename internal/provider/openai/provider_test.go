@@ -717,7 +717,7 @@ func TestToolDefinitionsSortedAlphabetically(t *testing.T) {
 		},
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	require.NoError(t, err)
 
 	var parsed struct {
@@ -737,8 +737,6 @@ func TestToolDefinitionsSortedAlphabetically(t *testing.T) {
 }
 
 func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
-	p := &Provider{}
-
 	msg := provider.Message{
 		Role: "user",
 		Content: []provider.ContentBlock{
@@ -748,11 +746,101 @@ func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
 		},
 	}
 
-	msgs := p.convertUserMessages(msg)
+	msgs := convertUserMessages(msg)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "user", msgs[0].Role)
 	// Empty text block should be filtered; result is "helloworld" not "helloworld".
 	assert.Equal(t, "helloworld", msgs[0].Content)
 }
 
+func TestConvertUserMessagesPreservesTextWithToolResults(t *testing.T) {
+	msg := provider.Message{
+		Role: "user",
+		Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "t1", Text: "result data"},
+			{Type: "text", Text: "follow-up question"},
+		},
+	}
+
+	msgs := convertUserMessages(msg)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "tool", msgs[0].Role)
+	assert.Equal(t, "result data", msgs[0].Content)
+	assert.Equal(t, "user", msgs[1].Role)
+	assert.Equal(t, "follow-up question", msgs[1].Content)
+}
+
 func floatPtr(f float64) *float64 { return &f }
+
+// --- Quirks tests ---
+
+func TestTransformer_Quirks_MaxToolIDLength(t *testing.T) {
+	tr := &Transformer{Quirks: Quirks{MaxToolIDLength: 5}}
+	req := provider.CompletionRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 1024,
+		Messages: []provider.Message{{
+			Role: "assistant",
+			Content: []provider.ContentBlock{
+				{Type: "tool_use", ID: "abcdefghij", Name: "search", Input: json.RawMessage(`{}`)},
+			},
+		}},
+	}
+
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"abcde"`)
+	assert.NotContains(t, string(body), `"abcdefghij"`)
+}
+
+func TestTransformer_Quirks_AlphanumericToolIDs(t *testing.T) {
+	tr := &Transformer{Quirks: Quirks{AlphanumericToolIDs: true}}
+	req := provider.CompletionRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 1024,
+		Messages: []provider.Message{{
+			Role: "assistant",
+			Content: []provider.ContentBlock{
+				{Type: "tool_use", ID: "call:1/abc", Name: "search", Input: json.RawMessage(`{}`)},
+			},
+		}},
+	}
+
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"call_1_abc"`)
+	assert.NotContains(t, string(body), `"call:1/abc"`)
+}
+
+func TestTransformer_Quirks_InsertAssistant(t *testing.T) {
+	tr := &Transformer{Quirks: Quirks{InsertAssistantAfterTool: true}}
+	req := provider.CompletionRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 1024,
+		Messages: []provider.Message{
+			{Role: "user", Content: []provider.ContentBlock{
+				{Type: "tool_result", ToolUseID: "id1", Text: "result"},
+			}},
+			{Role: "user", Content: []provider.ContentBlock{
+				{Type: "text", Text: "next question"},
+			}},
+		},
+	}
+
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+
+	var parsed struct {
+		Messages []struct {
+			Role string `json:"role"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(body, &parsed))
+
+	// Should have: tool result, filler assistant, user.
+	roles := make([]string, len(parsed.Messages))
+	for i, m := range parsed.Messages {
+		roles[i] = m.Role
+	}
+	assert.Contains(t, roles, "assistant", "should insert filler assistant message")
+}

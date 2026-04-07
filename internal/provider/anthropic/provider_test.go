@@ -154,22 +154,37 @@ data: {"type":"message_stop"}
 
 	// Collect events by type
 	var textParts []string
+	var jsonDeltaParts []string
 	var toolUseEvents []provider.StreamEvent
 	var hasStop bool
+	var messageStartEvt *provider.StreamEvent
 
 	for _, evt := range events {
 		switch evt.Type {
 		case "text_delta":
 			textParts = append(textParts, evt.Text)
+		case "input_json_delta":
+			jsonDeltaParts = append(jsonDeltaParts, evt.Text)
 		case "tool_use":
 			toolUseEvents = append(toolUseEvents, evt)
+		case "message_start":
+			e := evt
+			messageStartEvt = &e
 		case "stop":
 			hasStop = true
 		}
 	}
 
-	// Should have the text part
-	assert.Equal(t, []string{"Let me read that file.", `{"path":`, `"/tmp/test.txt"}`}, textParts)
+	// Text part should only contain visible text, not tool JSON.
+	assert.Equal(t, []string{"Let me read that file."}, textParts)
+
+	// Tool JSON fragments arrive as input_json_delta events.
+	assert.Equal(t, []string{`{"path":`, `"/tmp/test.txt"}`}, jsonDeltaParts)
+
+	// message_start should have been emitted with model and ID.
+	require.NotNil(t, messageStartEvt, "should have received message_start event")
+	assert.Equal(t, "claude-sonnet-4-5", messageStartEvt.Model)
+	assert.Equal(t, "msg_2", messageStartEvt.MessageID)
 
 	// Should have tool_use event with correct ID and name
 	require.Len(t, toolUseEvents, 1)
@@ -701,24 +716,36 @@ func TestConvertContentBlocksHandlesThinkingType(t *testing.T) {
 	assert.Equal(t, "visible answer", out[1].Text)
 }
 
-func TestConvertContentBlocksStripsEmptyText(t *testing.T) {
-	blocks := []provider.ContentBlock{
-		{Type: "text", Text: "hello"},
-		{Type: "text", Text: ""},
-		{Type: "text", Text: "world"},
-		{Type: "tool_use", ID: "tu_1", Name: "shell", Input: json.RawMessage(`{}`)},
+func TestTransformerStripsEmptyTextViaNormalization(t *testing.T) {
+	// Empty text blocks are stripped by normalization in ToProviderJSON.
+	tr := &Transformer{}
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 1024,
+		Messages: []provider.Message{{
+			Role: "user",
+			Content: []provider.ContentBlock{
+				{Type: "text", Text: "hello"},
+				{Type: "text", Text: ""},
+				{Type: "text", Text: "world"},
+			},
+		}},
 	}
 
-	out := convertContentBlocks(blocks)
+	body, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
 
-	// The empty text block should be stripped.
-	require.Len(t, out, 3)
-	assert.Equal(t, "text", out[0].Type)
-	assert.Equal(t, "hello", out[0].Text)
-	assert.Equal(t, "text", out[1].Type)
-	assert.Equal(t, "world", out[1].Text)
-	assert.Equal(t, "tool_use", out[2].Type)
-	assert.Equal(t, "tu_1", out[2].ID)
+	var parsed struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(body, &parsed))
+	require.Len(t, parsed.Messages, 1)
+
+	var blocks []map[string]any
+	require.NoError(t, json.Unmarshal(parsed.Messages[0].Content, &blocks))
+	assert.Len(t, blocks, 2, "empty text block should be removed by normalization")
 }
 
 func floatPtr(f float64) *float64 { return &f }

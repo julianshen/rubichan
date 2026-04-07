@@ -149,7 +149,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
-		return nil, provider.FormatAPIError(resp.StatusCode, respBody, httpReq)
+		return nil, provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "ollama", resp.Header)
 	}
 
 	if p.debugLogger != nil {
