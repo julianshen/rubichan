@@ -325,7 +325,10 @@ func TestStreamUnauthorizedError(t *testing.T) {
 
 	_, err := p.Stream(context.Background(), req)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "401")
+	var pe *provider.ProviderError
+	require.ErrorAs(t, err, &pe)
+	assert.Equal(t, provider.ErrAuthFailed, pe.Kind)
+	assert.Contains(t, err.Error(), "Authentication failed")
 }
 
 func TestStreamServerError(t *testing.T) {
@@ -347,7 +350,10 @@ func TestStreamServerError(t *testing.T) {
 
 	_, err := p.Stream(context.Background(), req)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "500")
+	var pe *provider.ProviderError
+	require.ErrorAs(t, err, &pe)
+	assert.Equal(t, provider.ErrServerError, pe.Kind)
+	assert.Contains(t, err.Error(), "Server error")
 }
 
 // Task 13 - Context Cancellation

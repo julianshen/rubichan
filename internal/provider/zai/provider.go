@@ -277,7 +277,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Z.ai API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "zai", resp.Header)
 	}
 
 	ch := make(chan provider.StreamEvent)
