@@ -119,3 +119,46 @@ func (ct *clickTracker) Register(x, y int, now time.Time) int {
 	ct.lastTime = now
 	return ct.count
 }
+
+// Selection constructors for different click modes
+
+// newDragSelection creates an initial click-drag selection at (line, col).
+func newDragSelection(line, col int) MouseSelection {
+	pos := Position{Line: line, Col: col}
+	return MouseSelection{
+		Start:    pos,
+		End:      pos,
+		Active:   true,
+		Dragging: true,
+	}
+}
+
+// newWordSelection selects the word at (line, col) using word boundary detection.
+// Requires wordBoundaries to be available (defined in textextract.go).
+func newWordSelection(line, col int, lines []string) MouseSelection {
+	if line < 0 || line >= len(lines) {
+		return MouseSelection{}
+	}
+
+	startCol, endCol := wordBoundaries(lines[line], col)
+
+	return MouseSelection{
+		Start:  Position{Line: line, Col: startCol},
+		End:    Position{Line: line, Col: endCol},
+		Active: true,
+	}
+}
+
+// newLineSelection selects the entire line at the given index.
+func newLineSelection(line int, lines []string) MouseSelection {
+	if line < 0 || line >= len(lines) {
+		return MouseSelection{}
+	}
+
+	lineLen := len([]rune(lines[line]))
+	return MouseSelection{
+		Start:  Position{Line: line, Col: 0},
+		End:    Position{Line: line, Col: lineLen},
+		Active: true,
+	}
+}

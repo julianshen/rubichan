@@ -86,8 +86,12 @@ func (m *Model) View() string {
 		}
 	}
 
-	// Viewport
-	b.WriteString(m.viewport.View())
+	// Viewport with selection highlighting if active
+	viewContent := m.viewport.View()
+	if m.selection.Active && !m.selection.IsEmpty() {
+		viewContent = m.renderWithSelection(viewContent)
+	}
+	b.WriteString(viewContent)
 	b.WriteString("\n")
 
 	// Status line / approval prompt
@@ -152,4 +156,43 @@ func (m *Model) activeSkillsLine() string {
 		}
 	}
 	return styleTextDim.Render(line)
+}
+
+// renderWithSelection applies selection highlighting to the viewport view.
+// It overlays selectionStyle (reversed colors with blue background) on selected text ranges.
+func (m *Model) renderWithSelection(viewStr string) string {
+	start, end := m.selection.Normalized()
+	sel := MouseSelection{Start: start, End: end}
+	lines := strings.Split(viewStr, "\n")
+
+	for i, line := range lines {
+		contentLine := m.viewport.YOffset + i
+		if !sel.ContainsLine(contentLine) {
+			continue
+		}
+
+		// Strip ANSI codes to work with plain text positions
+		stripped := stripANSI(line)
+		runes := []rune(stripped)
+		lineLen := len(runes)
+
+		startCol, endCol := sel.ColRangeForLine(contentLine, lineLen)
+		if startCol >= endCol || startCol >= lineLen {
+			continue
+		}
+
+		// Clamp endCol to line length
+		if endCol > lineLen {
+			endCol = lineLen
+		}
+
+		// Reconstruct: unselected prefix + selected range (highlighted) + unselected suffix
+		before := string(runes[:startCol])
+		selected := string(runes[startCol:endCol])
+		after := string(runes[endCol:])
+
+		lines[i] = before + selectionStyle.Render(selected) + after
+	}
+
+	return strings.Join(lines, "\n")
 }
