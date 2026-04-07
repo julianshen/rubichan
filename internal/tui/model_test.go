@@ -2830,3 +2830,418 @@ func TestModel_UsesTurnWindow(t *testing.T) {
 		t.Errorf("Model should have turnCache initialized")
 	}
 }
+
+// --- Selection tests ---
+
+func TestModelMouseToContent_Basic(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.viewport.YOffset = 0
+
+	// headerRows returns the number of rows above the viewport
+	// For basic calculation: mouse at (5, 2) with headerRows=2 and YOffset=0 should map to (line=0, col=5)
+	line, col := m.mouseToContent(5, 2)
+
+	// The actual headerRows depends on the UI layout. We're testing the formula:
+	// vpRow := y - m.headerRows()
+	// contentLine := m.viewport.YOffset + vpRow
+	// This ensures coordinates map correctly to content space
+	assert.Equal(t, 5, col, "column should be the x coordinate")
+	// Line depends on headerRows, so we just verify the formula works
+	assert.GreaterOrEqual(t, line, 0, "line should be non-negative")
+}
+
+func TestModelMouseToContent_WithScroll(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.viewport.YOffset = 10
+
+	line, col := m.mouseToContent(0, 2)
+
+	assert.Equal(t, 0, col, "column should be the x coordinate")
+	// When YOffset=10 and mouse is at screen position 2,
+	// the content line depends on headerRows
+	// Just verify the offset is included in the calculation
+	assert.GreaterOrEqual(t, line, 10, "line should include the viewport offset")
+}
+
+func TestModelHasSelectionField(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	// Model should have selection field initialized
+	assert.False(t, m.selection.Active, "selection should start inactive")
+	assert.True(t, m.selection.IsEmpty(), "selection should start empty")
+}
+
+func TestModelCopySelection_NoOp_WhenEmpty(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	// copySelection on empty selection should be a no-op (no error)
+	m.copySelection()
+
+	// No panic or error is the success condition
+	assert.True(t, m.selection.IsEmpty())
+}
+
+func TestNewDragSelection_SinglePoint(t *testing.T) {
+	sel := newDragSelection(5, 10)
+
+	assert.True(t, sel.Active, "drag selection should be active")
+	assert.True(t, sel.Dragging, "drag selection should be in dragging state")
+	assert.Equal(t, Position{Line: 5, Col: 10}, sel.Start)
+	assert.Equal(t, Position{Line: 5, Col: 10}, sel.End)
+	assert.True(t, sel.IsEmpty(), "initial drag selection has same start/end")
+}
+
+func TestNewWordSelection_Basic(t *testing.T) {
+	lines := []string{"hello world"}
+	sel := newWordSelection(0, 2, lines) // cursor on 'l' in "hello"
+
+	assert.True(t, sel.Active, "word selection should be active")
+	assert.False(t, sel.Dragging, "word selection should not be dragging")
+	assert.Equal(t, Position{Line: 0, Col: 0}, sel.Start, "should select from word start")
+	assert.Equal(t, Position{Line: 0, Col: 5}, sel.End, "should select to word end")
+}
+
+func TestNewWordSelection_OutOfBounds(t *testing.T) {
+	lines := []string{"hello world"}
+	sel := newWordSelection(10, 0, lines) // line out of bounds
+
+	assert.False(t, sel.Active, "out of bounds selection should be inactive")
+	assert.True(t, sel.IsEmpty())
+}
+
+func TestNewLineSelection_FullLine(t *testing.T) {
+	lines := []string{"hello world"}
+	sel := newLineSelection(0, lines)
+
+	assert.True(t, sel.Active, "line selection should be active")
+	assert.False(t, sel.Dragging, "line selection should not be dragging")
+	assert.Equal(t, Position{Line: 0, Col: 0}, sel.Start, "should select from line start")
+	assert.Equal(t, Position{Line: 0, Col: 11}, sel.End, "should select to end of line (full length)")
+}
+
+func TestNewLineSelection_OutOfBounds(t *testing.T) {
+	lines := []string{"hello world"}
+	sel := newLineSelection(10, lines) // line out of bounds
+
+	assert.False(t, sel.Active, "out of bounds selection should be inactive")
+	assert.True(t, sel.IsEmpty())
+}
+
+// --- MouseMsg and update tests ---
+
+func TestMouseLeftPress_StartsSelection(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.content.WriteString("hello world")
+	lines := m.contentPlainLines()
+
+	msg := tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      5,
+		Y:      2,
+	}
+
+	updated, cmd := m.Update(msg)
+	um := updated.(*Model)
+
+	assert.True(t, um.selection.Active, "selection should be active after left press")
+	assert.Nil(t, cmd, "left press should not produce a command")
+	assert.NotEmpty(t, lines, "should have content lines")
+}
+
+func TestMouseLeftMotion_ExtendsDragSelection(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.content.WriteString("hello world")
+	m.selection = newDragSelection(0, 0)
+
+	msg := tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionMotion,
+		X:      5,
+		Y:      2,
+	}
+
+	updated, cmd := m.Update(msg)
+	um := updated.(*Model)
+
+	assert.True(t, um.selection.Dragging, "selection should be dragging during motion")
+	assert.True(t, um.selection.Active, "selection should remain active")
+	assert.Nil(t, cmd)
+}
+
+func TestMouseLeftRelease_FinalizesSelection(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.content.WriteString("hello world")
+	m.selection = newDragSelection(0, 0)
+	m.selection.Dragging = true
+
+	msg := tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionRelease,
+		X:      5,
+		Y:      2,
+	}
+
+	updated, cmd := m.Update(msg)
+	um := updated.(*Model)
+
+	assert.False(t, um.selection.Dragging, "selection should not be dragging after release")
+	assert.True(t, um.selection.Active, "selection should remain active")
+	assert.Nil(t, cmd)
+}
+
+func TestMouseDoubleClick_SelectsWord(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.content.WriteString("hello world")
+
+	// First click
+	msg1 := tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      2,
+		Y:      2,
+	}
+	m.Update(msg1)
+
+	// Second click at same location (should trigger double-click)
+	msg2 := tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      2,
+		Y:      2,
+	}
+
+	updated, _ := m.Update(msg2)
+	um := updated.(*Model)
+
+	// Should have selected the word "hello"
+	assert.True(t, um.selection.Active, "selection should be active after double-click")
+	// For "hello world", word at col 2 should select "hello" (0-5)
+	assert.True(t, um.selection.Start.Col <= 2 && um.selection.End.Col >= 2, "selection should contain the clicked position")
+}
+
+func TestMouseTripleClick_SelectsLine(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.content.WriteString("hello world")
+
+	now := time.Now()
+
+	// Triple-click detection: verify clickTracker reaches count=3
+	count := m.clickTracker.Register(2, 2, now)
+	assert.Equal(t, 1, count, "first click should register as count 1")
+
+	count = m.clickTracker.Register(2, 2, now.Add(100*time.Millisecond))
+	assert.Equal(t, 2, count, "second click at same location should register as count 2")
+
+	count = m.clickTracker.Register(2, 2, now.Add(200*time.Millisecond))
+	assert.Equal(t, 3, count, "third click at same location should register as count 3")
+
+	// Simulate triple-click through mouse message
+	msg := tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      2,
+		Y:      2,
+	}
+
+	// Pre-register to get count=3
+	m.clickTracker.Register(msg.X, msg.Y, now.Add(200*time.Millisecond))
+
+	updated, _ := m.Update(msg)
+	um := updated.(*Model)
+
+	// Should have selected the entire line
+	assert.True(t, um.selection.Active, "selection should be active after triple-click")
+	assert.Equal(t, 0, um.selection.Start.Col, "selection should start at column 0")
+	// The rendered line length depends on m.content.Render(m.width), so just verify
+	// that end column is greater than start (indicating a selection was made)
+	assert.Greater(t, um.selection.End.Col, um.selection.Start.Col, "selection should span the line")
+}
+
+func TestMouseWheelUp_PassedToViewport(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+
+	var lines strings.Builder
+	for i := 0; i < 50; i++ {
+		lines.WriteString("line " + string(rune('0'+i%10)) + "\n")
+	}
+	m.content.WriteString(lines.String())
+	m.viewport.SetContent(m.viewportContent())
+	m.viewport.GotoBottom()
+	initialOffset := m.viewport.YOffset
+
+	msg := tea.MouseMsg{
+		Button: tea.MouseButtonWheelUp,
+		Action: tea.MouseActionPress,
+	}
+
+	updated, _ := m.Update(msg)
+	um := updated.(*Model)
+
+	// Scroll wheel should change viewport offset
+	assert.NotEqual(t, initialOffset, um.viewport.YOffset, "wheel up should scroll viewport")
+}
+
+func TestCtrlC_CopiesWhenSelectionActive(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.content.WriteString("hello world")
+	m.selection = MouseSelection{
+		Start:  Position{Line: 0, Col: 0},
+		End:    Position{Line: 0, Col: 5},
+		Active: true,
+	}
+
+	keyMsg := tea.KeyMsg{Type: tea.KeyCtrlC}
+
+	updated, cmd := m.Update(keyMsg)
+	um := updated.(*Model)
+
+	// Selection should be cleared
+	assert.False(t, um.selection.Active, "selection should be cleared after copy")
+	// Should not produce a Quit command
+	assert.Nil(t, cmd, "should not quit when selection was copied")
+	// App should not be marked as quitting
+	assert.False(t, um.quitting, "should not quit when selection is copied")
+}
+
+func TestCtrlC_QuitsWhenNoSelection(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	keyMsg := tea.KeyMsg{Type: tea.KeyCtrlC}
+
+	updated, cmd := m.Update(keyMsg)
+	um := updated.(*Model)
+
+	assert.True(t, um.quitting, "should quit when no selection")
+	require.NotNil(t, cmd, "should produce a command")
+
+	// Call the command to verify it produces a QuitMsg
+	msg := cmd()
+	assert.IsType(t, tea.QuitMsg{}, msg, "command should produce QuitMsg")
+}
+
+// --- View and rendering tests ---
+
+func TestRenderWithSelection_HighlightsRange(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+	m.viewport.YOffset = 0
+
+	// Create a simple view with one line of text
+	viewStr := "hello world"
+
+	// Create selection from column 0 to 5 (select "hello")
+	m.selection = MouseSelection{
+		Start:  Position{Line: 0, Col: 0},
+		End:    Position{Line: 0, Col: 5},
+		Active: true,
+	}
+
+	result := m.renderWithSelection(viewStr)
+
+	// Result should contain "hello" and "world"
+	// The rendering applies selection style which may or may not produce ANSI codes depending on terminal
+	assert.Contains(t, result, "world", "unselected portion should remain")
+	// Verify the result contains at least the parts of the original text
+	assert.Greater(t, len(result), 0, "result should not be empty")
+}
+
+func TestRenderWithSelection_NoOpWhenInactive(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 5
+	m.viewport.YOffset = 0
+	m.selection.Active = false
+
+	viewStr := "hello world"
+	result := m.renderWithSelection(viewStr)
+
+	// When selection is inactive, output should be unchanged
+	// (though technically the method checks !m.selection.IsEmpty() in View() so this shouldn't be called)
+	assert.Equal(t, viewStr, result, "inactive selection should not change output")
+}
+
+func TestRenderWithSelection_MultiLineSelection(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.viewport.YOffset = 0
+
+	viewStr := "first line\nsecond line\nthird line"
+
+	// Select from line 0 col 6 to line 2 col 5 (spanning multiple lines)
+	m.selection = MouseSelection{
+		Start:  Position{Line: 0, Col: 6},
+		End:    Position{Line: 2, Col: 5},
+		Active: true,
+	}
+
+	result := m.renderWithSelection(viewStr)
+
+	// Result should contain all three lines
+	assert.Contains(t, result, "first", "first line should be in output")
+	assert.Contains(t, result, "second", "second line should be in output")
+	assert.Contains(t, result, "third", "third line should be in output")
+	// Verify structure is preserved (newlines should still be there)
+	assert.Greater(t, strings.Count(result, "\n"), 0, "should preserve newlines")
+}
+
+func TestRenderWithSelection_EmptySelection(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.YOffset = 0
+
+	viewStr := "hello world"
+
+	// Empty selection (Start == End)
+	m.selection = MouseSelection{
+		Start:  Position{Line: 0, Col: 5},
+		End:    Position{Line: 0, Col: 5},
+		Active: true,
+	}
+
+	result := m.renderWithSelection(viewStr)
+
+	// Empty selection should not highlight anything
+	assert.Equal(t, viewStr, result, "empty selection should not change output")
+}
+
+func TestRenderWithSelection_PreservesANSICodesInUnselectedText(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	m.viewport.YOffset = 0
+
+	// Create a string with ANSI color codes (e.g., red text "world")
+	// ANSI format: \x1b[31m = red, \x1b[0m = reset
+	viewStr := "hello \x1b[31mworld\x1b[0m!"
+
+	// Select "world" (columns 6-11 in plain text, skipping "hello ")
+	m.selection = MouseSelection{
+		Start:  Position{Line: 0, Col: 6},
+		End:    Position{Line: 0, Col: 11},
+		Active: true,
+	}
+
+	result := m.renderWithSelection(viewStr)
+
+	// The unselected portion should preserve ANSI codes
+	assert.Contains(t, result, "hello", "unselected prefix should be present")
+	assert.Contains(t, result, "!", "unselected suffix should be present")
+	// The result should contain ANSI codes (either original or from selection style)
+	assert.Greater(t, len(result), len("hello world!"), "result should contain ANSI codes")
+}

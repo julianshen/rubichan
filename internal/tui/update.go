@@ -44,17 +44,16 @@ func (m *Model) Init() tea.Cmd {
 // Update implements tea.Model. It processes incoming messages and returns the
 // updated model and any commands to execute.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Ctrl+C pre-overlay intercept: must always quit and unblock agent if needed.
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC && m.activeOverlay != nil {
-		m.quitting = true
-		if m.pendingApproval != nil {
-			m.pendingApproval.responseValue <- ApprovalNo
-			m.pendingApproval = nil
+	// Ctrl+C intercept: copy selection if active, otherwise quit.
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC {
+		// If selection is active and not empty, copy it instead of quitting.
+		if m.selection.Active && !m.selection.IsEmpty() {
+			m.copySelection()
+			m.selection = MouseSelection{}
+			return m, nil
 		}
-		if m.wikiCancel != nil {
-			m.wikiCancel()
-		}
-		m.activeOverlay = nil
+		// Not a selection copy — proceed with quit logic.
+		m.doQuit()
 		return m, tea.Quit
 	}
 
@@ -98,6 +97,60 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyMsg(msg)
 
 	case tea.MouseMsg:
+		// Scroll wheel always forwards to viewport.
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+
+		// Left press — start selection.
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+			count := m.clickTracker.Register(msg.X, msg.Y, time.Now())
+			line, col := m.mouseToContent(msg.X, msg.Y)
+			// Only fetch plain lines for multi-click selections to avoid expensive Render() on single clicks
+			switch count {
+			case 2:
+				lines := m.contentPlainLines()
+				m.selection = newWordSelection(line, col, lines)
+			case 3:
+				lines := m.contentPlainLines()
+				m.selection = newLineSelection(line, lines)
+			default:
+				m.selection = newDragSelection(line, col)
+			}
+			return m, nil
+		}
+
+		// Left motion — extend drag.
+		if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft {
+			if m.selection.Active {
+				line, col := m.mouseToContent(msg.X, msg.Y)
+				m.selection.End = Position{Line: line, Col: col}
+				m.selection.Dragging = true
+			}
+			return m, nil
+		}
+
+		// Left release — finalize.
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionRelease {
+			if m.selection.Active {
+				line, col := m.mouseToContent(msg.X, msg.Y)
+				m.selection.End = Position{Line: line, Col: col}
+				m.selection.Dragging = false
+			}
+			return m, nil
+		}
+
+		// Right press — copy if selection exists.
+		if msg.Button == tea.MouseButtonRight && msg.Action == tea.MouseActionPress {
+			if m.selection.Active && !m.selection.IsEmpty() {
+				m.copySelection()
+			}
+			return m, nil
+		}
+
+		// Other mouse events → viewport.
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
@@ -162,18 +215,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyMsg processes keyboard input.
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Ctrl+C always quits, regardless of state.
+	// Ctrl+C: copy selection if active, otherwise quit (via doQuit).
 	if msg.Type == tea.KeyCtrlC {
-		m.quitting = true
-		// Unblock the agent goroutine if it's waiting for approval.
-		if m.pendingApproval != nil {
-			m.pendingApproval.responseValue <- ApprovalNo
-			m.pendingApproval = nil
+		// If selection is active and not empty, copy it instead of quitting.
+		if m.selection.Active && !m.selection.IsEmpty() {
+			m.copySelection()
+			m.selection = MouseSelection{}
+			return m, nil
 		}
-		// Cancel any running wiki generation goroutine.
-		if m.wikiCancel != nil {
-			m.wikiCancel()
-		}
+		// Not a selection copy — proceed with quit logic.
+		m.doQuit()
 		return m, tea.Quit
 	}
 

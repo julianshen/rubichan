@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -90,6 +91,8 @@ type Model struct {
 	approvalPrompt    *ApprovalPrompt
 	pendingApproval   *approvalRequest
 	activeOverlay     Overlay
+	selection         MouseSelection // current text selection state
+	clickTracker      clickTracker   // click counting for double/triple-click detection
 	checkpointMgr     *checkpoint.Manager
 	alwaysApproved    sync.Map
 	alwaysDenied      sync.Map
@@ -511,6 +514,42 @@ func (m *Model) reflowViewport() {
 	}
 	m.viewport.Width = m.width
 	m.viewport.Height = viewportHeight
+}
+
+// mouseToContent converts terminal coordinates (x, y) to content-space coordinates (line, col).
+// Takes into account the header height and viewport scroll offset.
+func (m *Model) mouseToContent(x, y int) (line, col int) {
+	vpRow := y - m.headerRows()
+	return m.viewport.YOffset + vpRow, x
+}
+
+// copySelection copies the currently selected text to the system clipboard.
+// Does nothing if there is no active selection or selection is empty.
+func (m *Model) copySelection() {
+	if !m.selection.Active || m.selection.IsEmpty() {
+		return
+	}
+	text := extractSelectedText(m.contentPlainLines(), m.selection)
+	_ = clipboard.WriteAll(text) // ignore errors (clipboard may not be available)
+}
+
+// contentPlainLines returns the rendered content with all ANSI escape sequences stripped,
+// split into individual lines. Used for text selection and extraction.
+func (m *Model) contentPlainLines() []string {
+	return plainLines(m.content.Render(m.width))
+}
+
+// doQuit performs all quit-side-effects: unblocking approval, canceling wiki, clearing overlay.
+func (m *Model) doQuit() {
+	m.quitting = true
+	if m.pendingApproval != nil {
+		m.pendingApproval.responseValue <- ApprovalNo
+		m.pendingApproval = nil
+	}
+	if m.wikiCancel != nil {
+		m.wikiCancel()
+	}
+	m.activeOverlay = nil
 }
 
 // scrollToLastError positions the viewport at the last error message.
