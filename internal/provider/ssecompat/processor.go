@@ -15,6 +15,8 @@ import (
 
 // chatChunk represents a single SSE chunk from an OpenAI-compatible API.
 type chatChunk struct {
+	ID      string        `json:"id"`
+	Model   string        `json:"model"`
 	Choices []chunkChoice `json:"choices"`
 }
 
@@ -111,6 +113,7 @@ func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.Stre
 	defer body.Close()
 
 	var toolAcc ToolCallAccumulator
+	sentMessageStart := false
 
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
@@ -146,6 +149,20 @@ func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.Stre
 			case <-ctx.Done():
 			}
 			continue
+		}
+
+		// Emit synthetic message_start from the first chunk with model info.
+		if !sentMessageStart && chunk.Model != "" {
+			sentMessageStart = true
+			select {
+			case ch <- provider.StreamEvent{
+				Type:      "message_start",
+				Model:     chunk.Model,
+				MessageID: chunk.ID,
+			}:
+			case <-ctx.Done():
+				return
+			}
 		}
 
 		if len(chunk.Choices) == 0 {
