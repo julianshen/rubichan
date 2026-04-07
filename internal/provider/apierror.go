@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // FormatAPIError produces a human-readable error from an HTTP status code
@@ -74,8 +72,8 @@ func ClassifyAPIErrorWithResponse(statusCode int, body []byte, httpReq *http.Req
 	// Extract Retry-After header for rate-limited errors.
 	if kind == ErrRateLimited && headers != nil {
 		if ra := headers.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(strings.TrimSpace(ra)); err == nil && secs > 0 {
-				pe.RetryAfter = time.Duration(secs) * time.Second
+			if d, ok := parseRetryAfter(ra); ok {
+				pe.RetryAfter = d
 			}
 		}
 	}

@@ -155,7 +155,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 		if err != nil {
 			eventType := "error"
 			var classifier ProviderErrorClassifier
-			if errors.As(err, &classifier) && classifier.ProviderErrorKind() == "context overflow" {
+			if errors.As(err, &classifier) && classifier.ProviderErrorKind() == ProviderErrContextOverflow {
 				eventType = "context_overflow"
 			}
 			ch <- TurnEvent{Type: eventType, Error: fmt.Errorf("provider stream: %w", err)}

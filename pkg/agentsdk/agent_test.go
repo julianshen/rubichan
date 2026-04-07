@@ -1020,7 +1020,7 @@ func (e *testProviderError) ProviderErrorKind() string { return e.kind }
 func (e *testProviderError) IsRetryable() bool         { return false }
 
 func TestAgent_Turn_ContextOverflowEvent(t *testing.T) {
-	pe := &testProviderError{kind: "context overflow", message: "prompt exceeds context window"}
+	pe := &testProviderError{kind: ProviderErrContextOverflow, message: "prompt exceeds context window"}
 	p := &errorProvider{err: pe}
 	a := NewAgent(p)
 
