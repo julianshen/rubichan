@@ -131,8 +131,11 @@ fields:
 		return nil, fmt.Errorf("Open: sql.Open: %w", err)
 	}
 
-	// Configure SQLite for serialized writes (mirrors internal/store)
-	db.SetMaxOpenConns(1)
+	// Configure SQLite connection pool
+	// SQLite's default journal mode (DELETE) provides sufficient serialization for writes
+	// Allow multiple concurrent connections for reads; SQLite handles transaction isolation
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
 
 	// Create tables
 	if err := createTables(db); err != nil {
@@ -512,25 +515,45 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 
 // Query performs semantic or keyword search.
 func (g *KnowledgeGraph) Query(ctx context.Context, req kg.QueryRequest) ([]kg.ScoredEntity, error) {
-	// Try vector embedding first
-	queryVec, err := g.embedder.Embed(ctx, req.Text)
-
 	var results []kg.ScoredEntity
 
-	if err == nil && len(queryVec) > 0 {
-		// Vector search
-		results, err = g.vectorSearch(ctx, queryVec, req)
-		if err != nil {
-			// Fall through to FTS
-			results = nil
-		}
-	}
-
-	if len(results) == 0 {
-		// FTS5 fallback or primary search
-		results, err = g.ftsSearch(ctx, req.Text, req)
+	// If query text is empty, return all entities matching filters (no full-text search)
+	if req.Text == "" {
+		// Use List to get all entities with filters applied
+		entities, err := g.List(ctx, kg.ListFilter{
+			Kinds:  req.KindFilter,
+			Layers: req.LayerFilter,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("Query: %w", err)
+		}
+		// Convert to ScoredEntity with neutral score
+		for _, e := range entities {
+			results = append(results, kg.ScoredEntity{
+				Entity:          e,
+				Score:           0.5,
+				EstimatedTokens: estimateTokens(e),
+			})
+		}
+	} else {
+		// Try vector embedding first
+		queryVec, err := g.embedder.Embed(ctx, req.Text)
+
+		if err == nil && len(queryVec) > 0 {
+			// Vector search
+			results, err = g.vectorSearch(ctx, queryVec, req)
+			if err != nil {
+				// Fall through to FTS
+				results = nil
+			}
+		}
+
+		if len(results) == 0 {
+			// FTS5 fallback or primary search
+			results, err = g.ftsSearch(ctx, req.Text, req)
+			if err != nil {
+				return nil, fmt.Errorf("Query: %w", err)
+			}
 		}
 	}
 

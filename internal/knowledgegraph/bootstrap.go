@@ -1,6 +1,7 @@
 package knowledgegraph
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,6 +70,68 @@ var skipDirs = map[string]bool{
 	"build":         true,
 	".venv":         true,
 	"venv":          true,
+}
+
+// LanguageProfile contains detected project language information.
+type LanguageProfile struct {
+	Language   string   // go, python, javascript, rust, etc.
+	Frameworks []string // Detected frameworks/tools
+	Root       string   // Project root path
+}
+
+// BootstrapLanguageDetector identifies project type and language.
+type BootstrapLanguageDetector struct{}
+
+// NewBootstrapLanguageDetector creates a new language detector.
+func NewBootstrapLanguageDetector() *BootstrapLanguageDetector {
+	return &BootstrapLanguageDetector{}
+}
+
+// Detect analyzes project directory and returns language profile.
+// It inspects for key indicator files like go.mod, setup.py, or package.json
+// to identify the primary language and frameworks in use.
+func (d *BootstrapLanguageDetector) Detect(ctx context.Context, dir string) (*LanguageProfile, error) {
+	profile := &LanguageProfile{
+		Root:       dir,
+		Frameworks: []string{},
+	}
+
+	// Detect language by looking for key files
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+		profile.Language = "go"
+		profile.Frameworks = append(profile.Frameworks, "go")
+	} else if _, err := os.Stat(filepath.Join(dir, "setup.py")); err == nil {
+		profile.Language = "python"
+		profile.Frameworks = append(profile.Frameworks, "setuptools")
+	} else if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
+		profile.Language = "javascript"
+		profile.Frameworks = append(profile.Frameworks, "npm")
+	}
+
+	// If multiple languages detected, mark as mixed
+	if len(profile.Frameworks) > 1 {
+		profile.Language = "mixed"
+	}
+
+	if profile.Language == "" {
+		return nil, fmt.Errorf("could not detect project language in %s", dir)
+	}
+
+	return profile, nil
+}
+
+// IsInitialized checks if .knowledge/ already has entities.
+// Returns true if the .knowledge directory exists and contains files.
+func (d *BootstrapLanguageDetector) IsInitialized(ctx context.Context, dir string) (bool, error) {
+	knowledgeDir := filepath.Join(dir, ".knowledge")
+	entries, err := os.ReadDir(knowledgeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return len(entries) > 0, nil
 }
 
 // Questioner is an interface for prompting the user during the bootstrap process.
