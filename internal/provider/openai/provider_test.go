@@ -717,7 +717,7 @@ func TestToolDefinitionsSortedAlphabetically(t *testing.T) {
 		},
 	}
 
-	body, err := p.buildRequestBody(req)
+	body, err := p.transformer.ToProviderJSON(req)
 	require.NoError(t, err)
 
 	var parsed struct {
@@ -737,8 +737,6 @@ func TestToolDefinitionsSortedAlphabetically(t *testing.T) {
 }
 
 func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
-	p := &Provider{}
-
 	msg := provider.Message{
 		Role: "user",
 		Content: []provider.ContentBlock{
@@ -748,7 +746,7 @@ func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
 		},
 	}
 
-	msgs := p.convertUserMessages(msg)
+	msgs := convertUserMessages(msg)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "user", msgs[0].Role)
 	// Empty text block should be filtered; result is "helloworld" not "helloworld".
