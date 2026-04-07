@@ -1,17 +1,15 @@
 package zai
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/provider/openai"
+	"github.com/julianshen/rubichan/internal/provider/ssecompat"
 )
 
 func init() {
@@ -53,33 +51,6 @@ func (p *Provider) SetHTTPClient(c *http.Client) {
 	p.client = c
 }
 
-// SSE chunk types for parsing streaming responses.
-type chatChunk struct {
-	Choices []chunkChoice `json:"choices"`
-}
-
-type chunkChoice struct {
-	Delta        chunkDelta `json:"delta"`
-	FinishReason *string    `json:"finish_reason"`
-}
-
-type chunkDelta struct {
-	Content   *string         `json:"content"`
-	ToolCalls []chunkToolCall `json:"tool_calls"`
-}
-
-type chunkToolCall struct {
-	Index    int           `json:"index"`
-	ID       string        `json:"id,omitempty"`
-	Type     string        `json:"type,omitempty"`
-	Function chunkToolFunc `json:"function,omitempty"`
-}
-
-type chunkToolFunc struct {
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
-}
-
 // Stream sends a completion request to the Z.ai API and returns a channel of StreamEvents.
 func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
 	// Resolve default model if not specified in the request.
@@ -116,136 +87,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	}
 
 	ch := make(chan provider.StreamEvent)
-	go p.processStream(ctx, resp.Body, ch)
+	go ssecompat.ProcessSSE(ctx, resp.Body, ch)
 
 	return ch, nil
-}
-
-// toolCallAccumulator tracks in-flight tool calls by their streamed index.
-type toolCallAccumulator struct {
-	calls []struct {
-		id   string
-		name string
-		args strings.Builder
-	}
-}
-
-// update processes a streamed tool call chunk.
-func (a *toolCallAccumulator) update(tc chunkToolCall) {
-	for len(a.calls) <= tc.Index {
-		a.calls = append(a.calls, struct {
-			id   string
-			name string
-			args strings.Builder
-		}{})
-	}
-	if tc.ID != "" {
-		a.calls[tc.Index].id = tc.ID
-	}
-	if tc.Function.Name != "" {
-		a.calls[tc.Index].name = tc.Function.Name
-	}
-	if tc.Function.Arguments != "" {
-		a.calls[tc.Index].args.WriteString(tc.Function.Arguments)
-	}
-}
-
-// flush emits all accumulated tool calls as complete StreamEvents.
-func (a *toolCallAccumulator) flush(ctx context.Context, ch chan<- provider.StreamEvent) {
-	for _, call := range a.calls {
-		if call.id == "" {
-			continue
-		}
-		args := call.args.String()
-		if args == "" {
-			args = "{}"
-		}
-		select {
-		case ch <- provider.StreamEvent{
-			Type: "tool_use",
-			ToolUse: &provider.ToolUseBlock{
-				ID:    call.id,
-				Name:  call.name,
-				Input: json.RawMessage(args),
-			},
-		}:
-		case <-ctx.Done():
-			return
-		}
-		select {
-		case ch <- provider.StreamEvent{Type: "text_delta", Text: args}:
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// processStream reads SSE lines from the response body and sends StreamEvents.
-func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
-	defer close(ch)
-	defer body.Close()
-
-	var toolAcc toolCallAccumulator
-
-	scanner := bufio.NewScanner(body)
-	for scanner.Scan() {
-		if ctx.Err() != nil {
-			select {
-			case ch <- provider.StreamEvent{Type: "error", Error: ctx.Err()}:
-			default:
-			}
-			return
-		}
-
-		line := scanner.Text()
-
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		data := strings.TrimPrefix(line, "data: ")
-
-		if data == "[DONE]" {
-			toolAcc.flush(ctx, ch)
-			select {
-			case ch <- provider.StreamEvent{Type: "stop"}:
-			case <-ctx.Done():
-			}
-			return
-		}
-
-		var chunk chatChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			select {
-			case ch <- provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing chunk: %w", err)}:
-			case <-ctx.Done():
-			}
-			continue
-		}
-
-		if len(chunk.Choices) == 0 {
-			continue
-		}
-
-		delta := chunk.Choices[0].Delta
-
-		if delta.Content != nil && *delta.Content != "" {
-			select {
-			case ch <- provider.StreamEvent{Type: "text_delta", Text: *delta.Content}:
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		for _, tc := range delta.ToolCalls {
-			toolAcc.update(tc)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		select {
-		case ch <- provider.StreamEvent{Type: "error", Error: err}:
-		case <-ctx.Done():
-		}
-	}
 }
