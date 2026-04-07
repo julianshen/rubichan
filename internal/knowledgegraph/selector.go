@@ -3,6 +3,7 @@ package knowledgegraph
 import (
 	"context"
 	"sort"
+	"time"
 
 	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
@@ -130,19 +131,41 @@ func (s *contextSelector) RecordUsage(ctx context.Context, entities []kg.ScoredE
 		return nil
 	}
 
+	now := time.Now().Format(time.RFC3339)
 	for _, se := range entities {
 		// Ensure entity_stats row exists, then update metrics
+		// Using RFC3339 format for consistency with entity timestamps
 		_, err := s.g.db.ExecContext(ctx, `
 			INSERT INTO entity_stats(entity_id, injection_count, last_accessed_at)
-			VALUES(?, 1, datetime('now'))
+			VALUES(?, 1, ?)
 			ON CONFLICT(entity_id) DO UPDATE SET
 				injection_count = injection_count + 1,
-				last_accessed_at = datetime('now')
-		`, se.Entity.ID)
+				last_accessed_at = ?
+		`, se.Entity.ID, now, now)
 		if err != nil {
 			return err
 		}
 	}
 
+	return nil
+}
+
+// nullSelector implements kg.ContextSelector with graceful degradation when
+// no knowledge graph is available. All methods are no-ops that return empty results.
+type nullSelector struct{}
+
+// NewNullSelector creates a selector that always returns empty results.
+// Used for graceful degradation when no knowledge graph is available.
+func NewNullSelector() kg.ContextSelector {
+	return &nullSelector{}
+}
+
+// Select returns an empty result set (graceful degradation).
+func (n *nullSelector) Select(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {
+	return []kg.ScoredEntity{}, nil
+}
+
+// RecordUsage is a no-op for the null selector.
+func (n *nullSelector) RecordUsage(ctx context.Context, entities []kg.ScoredEntity) error {
 	return nil
 }
