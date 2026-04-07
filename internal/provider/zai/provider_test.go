@@ -13,6 +13,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test-only types for unmarshaling request bodies (mirror openai wire format).
+type apiRequest struct {
+	Model       string       `json:"model"`
+	Messages    []apiMessage `json:"messages"`
+	Tools       []apiTool    `json:"tools,omitempty"`
+	MaxTokens   int          `json:"max_tokens"`
+	Temperature *float64     `json:"temperature,omitempty"`
+	Stream      bool         `json:"stream"`
+}
+
+type apiMessage struct {
+	Role       string        `json:"role"`
+	Content    any           `json:"content,omitempty"`
+	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+}
+
+type apiTool struct {
+	Type     string      `json:"type"`
+	Function apiFunction `json:"function"`
+}
+
+type apiFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+type apiToolCall struct {
+	ID       string      `json:"id"`
+	Type     string      `json:"type"`
+	Function apiCallFunc `json:"function"`
+}
+
+type apiCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 // Task 7 - Construction Tests
 
 func TestNew(t *testing.T) {
