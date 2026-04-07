@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,7 +122,7 @@ func TestClassifyAPIError_RateLimited_RetryAfter(t *testing.T) {
 	pe := ClassifyAPIErrorWithResponse(http.StatusTooManyRequests, body, nil, "openai", resp.Header)
 	require.NotNil(t, pe)
 	assert.Equal(t, ErrRateLimited, pe.Kind)
-	assert.Equal(t, 30*1_000_000_000, int(pe.RetryAfter)) // 30 seconds in nanoseconds
+	assert.Equal(t, 30*time.Second, pe.RetryAfter)
 }
 
 func TestClassifyAPIError_AuthFailed(t *testing.T) {
@@ -197,6 +198,14 @@ func TestClassifyAPIError_QuotaExceeded(t *testing.T) {
 	pe := ClassifyAPIError(http.StatusPaymentRequired, []byte(`{"error":{"message":"Insufficient credits"}}`), nil, "openai")
 	require.NotNil(t, pe)
 	assert.Equal(t, ErrQuotaExceeded, pe.Kind)
+}
+
+func TestClassifyAPIError_QuotaExceeded_As429(t *testing.T) {
+	// Providers like OpenAI surface quota exhaustion as 429 with specific message.
+	pe := ClassifyAPIError(http.StatusTooManyRequests, []byte(`{"error":{"message":"You exceeded your current quota, please check your plan and billing details"}}`), nil, "openai")
+	require.NotNil(t, pe)
+	assert.Equal(t, ErrQuotaExceeded, pe.Kind)
+	assert.False(t, pe.IsRetryable(), "quota exhaustion should not be retryable")
 }
 
 func TestClassifyAPIError_InvalidRequest(t *testing.T) {

@@ -61,8 +61,8 @@ func ScrubToolIDs(msgs []agentsdk.Message, scrub func(string) string) []agentsdk
 func ScrubToolIDChars(id string) string {
 	// Short-circuit: scan first to avoid allocation when ID is already clean.
 	clean := true
-	for i := range id {
-		if !isToolIDChar(id[i]) {
+	for _, r := range id {
+		if !isToolIDRune(r) {
 			clean = false
 			break
 		}
@@ -71,30 +71,34 @@ func ScrubToolIDChars(id string) string {
 		return id
 	}
 
-	b := make([]byte, len(id))
-	for i := range id {
-		if isToolIDChar(id[i]) {
-			b[i] = id[i]
+	runes := make([]rune, 0, len(id))
+	for _, r := range id {
+		if isToolIDRune(r) {
+			runes = append(runes, r)
 		} else {
-			b[i] = '_'
+			runes = append(runes, '_')
 		}
 	}
-	return string(b)
+	return string(runes)
 }
 
-func isToolIDChar(ch byte) bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-		(ch >= '0' && ch <= '9') || ch == '_' || ch == '-'
+func isToolIDRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') || r == '_' || r == '-'
 }
 
 // ScrubAnthropicToolID is a backward-compatible alias for ScrubToolIDChars.
 func ScrubAnthropicToolID(id string) string { return ScrubToolIDChars(id) }
 
-// TruncateToolID truncates a tool ID to maxLen characters.
+// TruncateToolID truncates a tool ID to maxLen runes.
 // A maxLen of 0 means no limit.
 func TruncateToolID(id string, maxLen int) string {
-	if maxLen > 0 && len(id) > maxLen {
-		return id[:maxLen]
+	if maxLen <= 0 {
+		return id
+	}
+	runes := []rune(id)
+	if len(runes) > maxLen {
+		return string(runes[:maxLen])
 	}
 	return id
 }

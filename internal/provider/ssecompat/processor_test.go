@@ -99,8 +99,8 @@ func TestProcessSSE_Done(t *testing.T) {
 	ProcessSSE(context.Background(), body, ch)
 	events := collect(ch)
 
-	last := events[len(events)-1]
-	assert.Equal(t, "stop", last.Type)
+	require.NotEmpty(t, events, "expected at least one event")
+	assert.Equal(t, "stop", events[len(events)-1].Type)
 }
 
 func TestProcessSSE_ParseError(t *testing.T) {

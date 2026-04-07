@@ -111,8 +111,20 @@ func TestInsertAssistantBetweenToolAndUser_NoInsertWhenNotNeeded(t *testing.T) {
 	require.Len(t, result, 3)
 }
 
+func TestScrubToolIDChars_Unicode(t *testing.T) {
+	// Multi-byte UTF-8 characters should be replaced with a single underscore each.
+	assert.Equal(t, "caf_", ScrubToolIDChars("café"))
+	assert.Equal(t, "tool_id", ScrubToolIDChars("tool🔧id"))
+}
+
 func TestTruncateToolID(t *testing.T) {
 	assert.Equal(t, "abcde", TruncateToolID("abcdefghij", 5))
 	assert.Equal(t, "abc", TruncateToolID("abc", 5))
 	assert.Equal(t, "abc", TruncateToolID("abc", 0)) // 0 = no limit
+}
+
+func TestTruncateToolID_Unicode(t *testing.T) {
+	// Truncation should count runes, not bytes, to avoid splitting characters.
+	assert.Equal(t, "ca", TruncateToolID("café", 2))
+	assert.Equal(t, "café", TruncateToolID("café", 10))
 }

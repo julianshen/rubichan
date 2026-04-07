@@ -82,6 +82,9 @@ type ProviderError struct {
 
 // Error implements the error interface.
 func (e *ProviderError) Error() string {
+	if e.Provider == "" {
+		return e.Message
+	}
 	return fmt.Sprintf("%s (%s): %s", e.Kind.String(), e.Provider, e.Message)
 }
 

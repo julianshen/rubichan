@@ -32,7 +32,7 @@ func ClassifyAPIErrorWithResponse(statusCode int, body []byte, httpReq *http.Req
 	kind := classifyByStatus(statusCode)
 
 	// Refine classification using error message patterns for ambiguous statuses.
-	if kind == ErrInvalidRequest && message != "" {
+	if message != "" && (kind == ErrInvalidRequest || kind == ErrRateLimited) {
 		if refined := classifyByMessage(message); refined != ErrOther {
 			kind = refined
 		}
@@ -127,14 +127,28 @@ var contentFilterPatterns = []string{
 	"flagged by our",
 }
 
+// quotaExceededPatterns detect quota exhaustion that some providers surface as 429.
+var quotaExceededPatterns = []string{
+	"insufficient_quota",
+	"quota exceeded",
+	"billing hard limit",
+	"check your plan and billing details",
+}
+
 // classifyByMessage inspects the error message text to refine classification
-// for ambiguous HTTP statuses (mainly 400 Bad Request).
+// for ambiguous HTTP statuses (400 Bad Request, 429 with quota messages).
 func classifyByMessage(message string) ErrorKind {
 	lower := strings.ToLower(message)
 
 	for _, pattern := range contextOverflowPatterns {
 		if strings.Contains(lower, pattern) {
 			return ErrContextOverflow
+		}
+	}
+
+	for _, pattern := range quotaExceededPatterns {
+		if strings.Contains(lower, pattern) {
+			return ErrQuotaExceeded
 		}
 	}
 

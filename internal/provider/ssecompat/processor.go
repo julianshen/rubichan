@@ -54,7 +54,13 @@ type ToolCallAccumulator struct {
 }
 
 // Update processes a streamed tool call chunk.
+// maxToolCallIndex guards against unbounded slice growth from malformed chunks.
+const maxToolCallIndex = 128
+
 func (a *ToolCallAccumulator) Update(tc chunkToolCall) {
+	if tc.Index < 0 || tc.Index > maxToolCallIndex {
+		return
+	}
 	for len(a.calls) <= tc.Index {
 		a.calls = append(a.calls, struct {
 			id   string
@@ -117,6 +123,9 @@ func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.Stre
 	sentMessageStart := false
 
 	scanner := bufio.NewScanner(body)
+	// Increase buffer to 1MB to handle large JSON chunks (reasoning, tool args).
+	const maxScanCapacity = 1024 * 1024
+	scanner.Buffer(make([]byte, 0, maxScanCapacity), maxScanCapacity)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			select {
