@@ -81,7 +81,7 @@ func (t *Transformer) ToProviderJSON(req provider.CompletionRequest) ([]byte, er
 	// Normalize messages: remove empty blocks and scrub tool IDs.
 	messages := normalize.ScrubToolIDs(
 		normalize.RemoveEmptyMessages(req.Messages),
-		normalize.ScrubAnthropicToolID,
+		normalize.ScrubToolIDChars,
 	)
 
 	// Convert messages, remapping fields for the Anthropic API.

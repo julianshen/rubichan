@@ -25,11 +25,7 @@ func filterBlocks(blocks []agentsdk.ContentBlock) []agentsdk.ContentBlock {
 	var out []agentsdk.ContentBlock
 	for _, b := range blocks {
 		switch b.Type {
-		case "text":
-			if b.Text == "" {
-				continue
-			}
-		case "thinking":
+		case "text", "thinking":
 			if b.Text == "" {
 				continue
 			}
@@ -59,21 +55,40 @@ func ScrubToolIDs(msgs []agentsdk.Message, scrub func(string) string) []agentsdk
 	return out
 }
 
-// ScrubAnthropicToolID replaces non-alphanumeric characters (except _ and -)
-// with underscores to satisfy Anthropic's tool ID constraints.
-func ScrubAnthropicToolID(id string) string {
+// ScrubToolIDChars replaces non-alphanumeric characters (except _ and -)
+// with underscores. This satisfies tool ID constraints for providers like
+// Anthropic that restrict IDs to [a-zA-Z0-9_-].
+func ScrubToolIDChars(id string) string {
+	// Short-circuit: scan first to avoid allocation when ID is already clean.
+	clean := true
+	for i := range id {
+		if !isToolIDChar(id[i]) {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return id
+	}
+
 	b := make([]byte, len(id))
 	for i := range id {
-		ch := id[i]
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-			(ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
-			b[i] = ch
+		if isToolIDChar(id[i]) {
+			b[i] = id[i]
 		} else {
 			b[i] = '_'
 		}
 	}
 	return string(b)
 }
+
+func isToolIDChar(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+		(ch >= '0' && ch <= '9') || ch == '_' || ch == '-'
+}
+
+// ScrubAnthropicToolID is an alias for ScrubToolIDChars for backward compatibility.
+var ScrubAnthropicToolID = ScrubToolIDChars
 
 // TruncateToolID truncates a tool ID to maxLen characters.
 // A maxLen of 0 means no limit.

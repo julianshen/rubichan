@@ -93,7 +93,7 @@ func (t *Transformer) ToProviderJSON(req provider.CompletionRequest) ([]byte, er
 	if t.Quirks.AlphanumericToolIDs || t.Quirks.MaxToolIDLength > 0 {
 		scrub := func(id string) string {
 			if t.Quirks.AlphanumericToolIDs {
-				id = normalize.ScrubAnthropicToolID(id)
+				id = normalize.ScrubToolIDChars(id)
 			}
 			return normalize.TruncateToolID(id, t.Quirks.MaxToolIDLength)
 		}
