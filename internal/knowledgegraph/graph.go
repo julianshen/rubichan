@@ -131,8 +131,11 @@ fields:
 		return nil, fmt.Errorf("Open: sql.Open: %w", err)
 	}
 
-	// Configure SQLite for serialized writes (mirrors internal/store)
-	db.SetMaxOpenConns(1)
+	// Configure SQLite connection pool
+	// SQLite's default journal mode (DELETE) provides sufficient serialization for writes
+	// Allow multiple concurrent connections for reads; SQLite handles transaction isolation
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
 
 	// Create tables
 	if err := createTables(db); err != nil {
