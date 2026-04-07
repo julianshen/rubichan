@@ -536,7 +536,20 @@ func (m *Model) copySelection() {
 // contentPlainLines returns the rendered content with all ANSI escape sequences stripped,
 // split into individual lines. Used for text selection and extraction.
 func (m *Model) contentPlainLines() []string {
-	return strings.Split(stripANSI(m.content.Render(m.width)), "\n")
+	return plainLines(m.content.Render(m.width))
+}
+
+// doQuit performs all quit-side-effects: unblocking approval, canceling wiki, clearing overlay.
+func (m *Model) doQuit() {
+	m.quitting = true
+	if m.pendingApproval != nil {
+		m.pendingApproval.responseValue <- ApprovalNo
+		m.pendingApproval = nil
+	}
+	if m.wikiCancel != nil {
+		m.wikiCancel()
+	}
+	m.activeOverlay = nil
 }
 
 // scrollToLastError positions the viewport at the last error message.

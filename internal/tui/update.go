@@ -44,24 +44,16 @@ func (m *Model) Init() tea.Cmd {
 // Update implements tea.Model. It processes incoming messages and returns the
 // updated model and any commands to execute.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Ctrl+C pre-overlay intercept: copy selection if active, otherwise quit.
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC && m.activeOverlay != nil {
+	// Ctrl+C intercept: copy selection if active, otherwise quit.
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC {
 		// If selection is active and not empty, copy it instead of quitting.
 		if m.selection.Active && !m.selection.IsEmpty() {
 			m.copySelection()
 			m.selection = MouseSelection{}
 			return m, nil
 		}
-
-		m.quitting = true
-		if m.pendingApproval != nil {
-			m.pendingApproval.responseValue <- ApprovalNo
-			m.pendingApproval = nil
-		}
-		if m.wikiCancel != nil {
-			m.wikiCancel()
-		}
-		m.activeOverlay = nil
+		// Not a selection copy — proceed with quit logic.
+		m.doQuit()
 		return m, tea.Quit
 	}
 
@@ -116,11 +108,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 			count := m.clickTracker.Register(msg.X, msg.Y, time.Now())
 			line, col := m.mouseToContent(msg.X, msg.Y)
-			lines := m.contentPlainLines()
+			// Only fetch plain lines for multi-click selections to avoid expensive Render() on single clicks
 			switch count {
 			case 2:
+				lines := m.contentPlainLines()
 				m.selection = newWordSelection(line, col, lines)
 			case 3:
+				lines := m.contentPlainLines()
 				m.selection = newLineSelection(line, lines)
 			default:
 				m.selection = newDragSelection(line, col)
@@ -221,7 +215,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyMsg processes keyboard input.
 func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Ctrl+C: copy selection if active, otherwise quit.
+	// Ctrl+C: copy selection if active, otherwise quit (via doQuit).
 	if msg.Type == tea.KeyCtrlC {
 		// If selection is active and not empty, copy it instead of quitting.
 		if m.selection.Active && !m.selection.IsEmpty() {
@@ -229,17 +223,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selection = MouseSelection{}
 			return m, nil
 		}
-
-		m.quitting = true
-		// Unblock the agent goroutine if it's waiting for approval.
-		if m.pendingApproval != nil {
-			m.pendingApproval.responseValue <- ApprovalNo
-			m.pendingApproval = nil
-		}
-		// Cancel any running wiki generation goroutine.
-		if m.wikiCancel != nil {
-			m.wikiCancel()
-		}
+		// Not a selection copy — proceed with quit logic.
+		m.doQuit()
 		return m, tea.Quit
 	}
 

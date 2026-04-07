@@ -1,9 +1,18 @@
 package tui
 
-import "unicode"
+import (
+	"strings"
+	"unicode"
+)
 
 // stripANSI is defined in approval.go and removes ANSI escape sequences.
 // It's reused here for text extraction.
+
+// plainLines strips ANSI escape sequences from a string and splits it into lines.
+// Consolidates the common pattern of stripANSI + strings.Split.
+func plainLines(s string) []string {
+	return strings.Split(stripANSI(s), "\n")
+}
 
 // extractSelectedText extracts the text within the selection from the given lines.
 // Handles multi-line selections, clamps to line lengths, and normalizes reversed selections.
