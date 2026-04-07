@@ -70,11 +70,13 @@ const (
 
 // Stream event type constants.
 const (
-	EventTextDelta     = "text_delta"
-	EventThinkingDelta = "thinking_delta"
-	EventToolUse       = "tool_use"
-	EventStop          = "stop"
-	EventError         = "error"
+	EventTextDelta      = "text_delta"
+	EventThinkingDelta  = "thinking_delta"
+	EventInputJsonDelta = "input_json_delta"
+	EventToolUse        = "tool_use"
+	EventMessageStart   = "message_start"
+	EventStop           = "stop"
+	EventError          = "error"
 )
 
 // CompletionRequest represents a request to an LLM for completion.
@@ -165,6 +167,8 @@ type StreamEvent struct {
 	Error        error
 	InputTokens  int
 	OutputTokens int
+	Model        string // populated on message_start
+	MessageID    string // populated on message_start
 }
 
 func marshalSafeRawJSON(raw json.RawMessage) json.RawMessage {
