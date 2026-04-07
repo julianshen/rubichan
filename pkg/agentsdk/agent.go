@@ -244,6 +244,8 @@ func (a *Agent) consumeStream(
 		*totalOutput += event.OutputTokens
 
 		switch event.Type {
+		case "message_start":
+			ch <- TurnEvent{Type: "message_start", Model: event.Model, MessageID: event.MessageID}
 		case "text_delta":
 			// During tool accumulation, text deltas carry JSON input
 			// for the tool call, not user-visible text.
@@ -253,6 +255,12 @@ func (a *Agent) consumeStream(
 				currentTextBuf += event.Text
 				ch <- TurnEvent{Type: "text_delta", Text: event.Text}
 			}
+		case "input_json_delta":
+			// Accumulate JSON fragments for the current tool call.
+			if currentTool != nil {
+				toolInputBuf += event.Text
+			}
+			ch <- TurnEvent{Type: "input_json_delta", Text: event.Text}
 		case "tool_use":
 			if event.ToolUse == nil {
 				finalizeText()

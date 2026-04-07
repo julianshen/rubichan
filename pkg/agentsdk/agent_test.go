@@ -1058,3 +1058,59 @@ func TestAgent_Turn_ProviderErrorPreservesKind(t *testing.T) {
 	assert.Contains(t, events[0].Error.Error(), "invalid api key")
 	assert.Equal(t, "done", events[len(events)-1].Type)
 }
+
+func TestAgent_ConsumeStream_InputJsonDelta(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "t1", Name: "read"}},
+		{Type: "input_json_delta", Text: `{"path":`},
+		{Type: "input_json_delta", Text: `"/tmp"}`},
+		{Type: "stop", InputTokens: 10, OutputTokens: 5},
+	}}}
+
+	reg := NewRegistry()
+	reg.Register(&dummyTool{name: "read"})
+	a := NewAgent(p, WithTools(reg))
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var jsonDeltas []string
+	var toolCalls []string
+	for ev := range ch {
+		switch ev.Type {
+		case "input_json_delta":
+			jsonDeltas = append(jsonDeltas, ev.Text)
+		case "tool_call":
+			toolCalls = append(toolCalls, ev.ToolCall.Name)
+		}
+	}
+
+	// input_json_delta should be forwarded to TUI.
+	assert.Equal(t, []string{`{"path":`, `"/tmp"}`}, jsonDeltas)
+	// Tool call should have accumulated the JSON.
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "read", toolCalls[0])
+}
+
+func TestAgent_ConsumeStream_MessageStart(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{{
+		{Type: "message_start", Model: "gpt-4o", MessageID: "msg_123"},
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop", InputTokens: 10, OutputTokens: 5},
+	}}}
+	a := NewAgent(p)
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+
+	var messageStarts []TurnEvent
+	for ev := range ch {
+		if ev.Type == "message_start" {
+			messageStarts = append(messageStarts, ev)
+		}
+	}
+
+	require.Len(t, messageStarts, 1)
+	assert.Equal(t, "gpt-4o", messageStarts[0].Model)
+	assert.Equal(t, "msg_123", messageStarts[0].MessageID)
+}
