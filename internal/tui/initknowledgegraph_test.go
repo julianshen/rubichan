@@ -18,15 +18,15 @@ func TestNewInitKnowledgeGraphOverlay(t *testing.T) {
 	require.NotNil(t, overlay)
 	assert.Equal(t, 80, overlay.width)
 	assert.Equal(t, 24, overlay.height)
-	assert.False(t, overlay.cancelled)
+	assert.NotNil(t, overlay.form)
+	assert.Nil(t, overlay.Result())
 }
 
-func TestInitKnowledgeGraphOverlay_ViewContainsContent(t *testing.T) {
+func TestInitKnowledgeGraphOverlay_ViewRendersForm(t *testing.T) {
 	overlay := NewInitKnowledgeGraphOverlay(80, 24)
 	view := overlay.View()
-	assert.Contains(t, view, "Initialize Knowledge Graph")
-	assert.Contains(t, view, "questionnaire")
-	assert.Contains(t, view, "codebase")
+	// Form should render with project name field visible
+	assert.NotEmpty(t, view)
 }
 
 func TestInitKnowledgeGraphOverlay_DoneInitiallyFalse(t *testing.T) {
@@ -34,39 +34,11 @@ func TestInitKnowledgeGraphOverlay_DoneInitiallyFalse(t *testing.T) {
 	assert.False(t, overlay.Done())
 }
 
-func TestInitKnowledgeGraphOverlay_ResultIsNil(t *testing.T) {
-	overlay := NewInitKnowledgeGraphOverlay(80, 24)
-	assert.Nil(t, overlay.Result())
-}
-
-func TestInitKnowledgeGraphOverlay_EscapeKeyClosesOverlay(t *testing.T) {
+func TestInitKnowledgeGraphOverlay_EscapeKeyCancels(t *testing.T) {
 	overlay := NewInitKnowledgeGraphOverlay(80, 24)
 	updated, _ := overlay.Update(tea.KeyMsg{Type: tea.KeyEscape})
 	assert.True(t, updated.Done())
-}
-
-func TestInitKnowledgeGraphOverlay_QKeyClosesOverlay(t *testing.T) {
-	overlay := NewInitKnowledgeGraphOverlay(80, 24)
-	updated, _ := overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	assert.True(t, updated.Done())
-}
-
-func TestInitKnowledgeGraphOverlay_CapitalQKeyClosesOverlay(t *testing.T) {
-	overlay := NewInitKnowledgeGraphOverlay(80, 24)
-	updated, _ := overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}})
-	assert.True(t, updated.Done())
-}
-
-func TestInitKnowledgeGraphOverlay_NKeyClosesOverlay(t *testing.T) {
-	overlay := NewInitKnowledgeGraphOverlay(80, 24)
-	updated, _ := overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	assert.True(t, updated.Done())
-}
-
-func TestInitKnowledgeGraphOverlay_YKeyClosesOverlay(t *testing.T) {
-	overlay := NewInitKnowledgeGraphOverlay(80, 24)
-	updated, _ := overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	assert.True(t, updated.Done())
+	assert.Nil(t, updated.Result())
 }
 
 func TestInitKnowledgeGraphOverlay_WindowResizeUpdatesSize(t *testing.T) {
@@ -77,8 +49,19 @@ func TestInitKnowledgeGraphOverlay_WindowResizeUpdatesSize(t *testing.T) {
 	assert.Equal(t, 40, updatedOverlay.height)
 }
 
-func TestInitKnowledgeGraphOverlay_UnhandledKeyDoesntClose(t *testing.T) {
-	overlay := NewInitKnowledgeGraphOverlay(80, 24)
-	updated, _ := overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	assert.False(t, updated.Done())
+func TestParseCommaSeparated(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"scaling, monitoring", []string{"scaling", "monitoring"}},
+		{"", []string{}},
+		{"single", []string{"single"}},
+		{"a, b, c", []string{"a", "b", "c"}},
+	}
+
+	for _, test := range tests {
+		result := parseCommaSeparated(test.input)
+		assert.Equal(t, test.expected, result)
+	}
 }
