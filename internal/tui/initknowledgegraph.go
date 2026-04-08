@@ -170,7 +170,7 @@ func (i *InitKnowledgeGraphOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 	i.form = form.(*huh.Form)
 
 	if i.form.State == huh.StateCompleted {
-		// Build profile from form responses
+		// Build profile from form responses - this marks the form as done
 		i.profile = &knowledgegraph.BootstrapProfile{
 			ProjectName:         i.projectName,
 			BackendTechs:        i.backendTechs,
@@ -184,6 +184,10 @@ func (i *InitKnowledgeGraphOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			IsExisting:          i.isExisting,
 		}
 		i.cancelled = true
+	} else if i.form.State == huh.StateAborted {
+		// User cancelled the form
+		i.cancelled = true
+		i.profile = nil
 	}
 
 	return i, cmd
@@ -199,9 +203,12 @@ func (i *InitKnowledgeGraphOverlay) Done() bool {
 	return i.cancelled
 }
 
-// Result returns the collected bootstrap profile (or nil if cancelled).
+// Result returns the InitKnowledgeGraphResult with the bootstrap profile.
 func (i *InitKnowledgeGraphOverlay) Result() any {
-	return i.profile
+	if i.profile == nil {
+		return nil
+	}
+	return InitKnowledgeGraphResult{Profile: i.profile}
 }
 
 // parseCommaSeparated splits a comma-separated string into trimmed parts.

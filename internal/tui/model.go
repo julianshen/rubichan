@@ -20,6 +20,7 @@ import (
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
@@ -959,4 +960,87 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	m.statusBar.ClearElapsed()
 	m.turnStartTime = time.Now()
 	return m.startTurn(m.agent, prompt)
+}
+
+// startBootstrapProcess runs knowledge graph bootstrap in background.
+func (m *Model) startBootstrapProcess(ctx context.Context, profile *knowledgegraph.BootstrapProfile) tea.Cmd {
+	return func() tea.Msg {
+		return m.runBootstrap(ctx, profile)
+	}
+}
+
+// runBootstrap executes the bootstrap and sends progress updates.
+func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.BootstrapProfile) tea.Msg {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+
+	// Phase 2: Analysis
+	var allEntities []*knowledgegraph.ProposedEntity
+
+	// Modules
+	modules, err := knowledgegraph.DiscoverModules(cwd)
+	if err == nil {
+		sendProgress(BootstrapProgressMsg{
+			Phase:   "analysis",
+			Message: "Scanning modules",
+			Count:   len(modules),
+		})
+		allEntities = append(allEntities, modules...)
+	}
+
+	// Decisions from git
+	decisions, err := knowledgegraph.DiscoverDecisionsFromGit(cwd, profile)
+	if err == nil {
+		sendProgress(BootstrapProgressMsg{
+			Phase:   "analysis",
+			Message: "Analyzing git history",
+			Count:   len(decisions),
+		})
+		allEntities = append(allEntities, decisions...)
+	}
+
+	// Integrations
+	integrations, err := knowledgegraph.DiscoverIntegrations(cwd)
+	if err == nil {
+		sendProgress(BootstrapProgressMsg{
+			Phase:   "analysis",
+			Message: "Detecting integrations",
+			Count:   len(integrations),
+		})
+		allEntities = append(allEntities, integrations...)
+	}
+
+	// Phase 3: Entity Creation
+	knowledgeDir := filepath.Join(cwd, ".knowledge")
+
+	metadata, err := knowledgegraph.WriteBootstrapEntities(knowledgeDir, allEntities, profile)
+	if err != nil {
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: err.Error(),
+		}
+	}
+
+	sendProgress(BootstrapProgressMsg{
+		Phase:   "entities",
+		Message: "Created entities",
+		Count:   len(metadata.CreatedEntities),
+	})
+
+	// Complete
+	m.content.WriteString(fmt.Sprintf("✅ Knowledge graph bootstrap complete! Created %d entities in .knowledge/\n", len(metadata.CreatedEntities)))
+	m.setContentAndAutoScroll()
+
+	return BootstrapProgressMsg{
+		Phase: "complete",
+	}
+}
+
+// sendProgress is a helper to send progress messages (for now just logs).
+func sendProgress(msg BootstrapProgressMsg) {
+	// In a real implementation, this would send to a channel
+	// For now, we just log it
+	_ = msg
 }

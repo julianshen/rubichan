@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/julianshen/rubichan/internal/knowledgegraph"
 )
 
 // Overlay represents a modal UI surface that temporarily takes over
@@ -29,6 +31,11 @@ type WikiResult struct {
 type UndoResult struct {
 	Turn int  // turn number of selected checkpoint
 	All  bool // true = rewind all changes from that turn
+}
+
+// InitKnowledgeGraphResult carries the bootstrap profile to start the process.
+type InitKnowledgeGraphResult struct {
+	Profile *knowledgegraph.BootstrapProfile
 }
 
 // processOverlayResult handles the typed result from a completed overlay.
@@ -65,6 +72,15 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 		m.state = StateInput
 		m.executeUndo(r)
 		return nil
+	case InitKnowledgeGraphResult:
+		if r.Profile == nil {
+			m.state = StateInput
+			return nil
+		}
+		// Start bootstrap in background with progress overlay
+		m.activeOverlay = NewBootstrapProgressOverlay(m.width, m.height)
+		m.state = StateInitKnowledgeGraphOverlay
+		return m.startBootstrapProcess(context.Background(), r.Profile)
 	case nil:
 		// Overlay was cancelled (e.g., Escape pressed).
 		// Defensive: unblock agent if approval was somehow cancelled.
