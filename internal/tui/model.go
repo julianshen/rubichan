@@ -66,6 +66,10 @@ const (
 	StateBootstrap
 	// StateWikiOverlay indicates the TUI is showing the wiki form overlay.
 	StateWikiOverlay
+	// StateAboutOverlay indicates the TUI is showing the about overlay.
+	StateAboutOverlay
+	// StateUndoOverlay indicates the TUI is showing the undo overlay.
+	StateUndoOverlay
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -832,9 +836,11 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 			cps = m.checkpointMgr.List()
 		}
 		m.activeOverlay = NewUndoOverlay(cps, m.width)
+		m.state = StateUndoOverlay
 		return nil
 	case commands.ActionOpenAbout:
 		m.activeOverlay = NewAboutOverlay(m.width, m.height)
+		m.state = StateAboutOverlay
 		return nil
 	}
 
