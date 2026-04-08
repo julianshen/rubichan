@@ -550,7 +550,7 @@ func (m *Model) contentPlainLines() []string {
 	return plainLines(m.content.Render(m.width))
 }
 
-// doQuit performs all quit-side-effects: unblocking approval, canceling wiki, clearing overlay.
+// doQuit performs all quit-side-effects: unblocking approval, canceling wiki and bootstrap, clearing overlay.
 func (m *Model) doQuit() {
 	m.quitting = true
 	if m.pendingApproval != nil {
@@ -559,6 +559,10 @@ func (m *Model) doQuit() {
 	}
 	if m.wikiCancel != nil {
 		m.wikiCancel()
+	}
+	if m.bootstrapCancel != nil {
+		m.bootstrapCancel()
+		m.bootstrapCancel = nil
 	}
 	m.activeOverlay = nil
 }
@@ -966,6 +970,7 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 }
 
 // runBootstrap executes the bootstrap and sends progress updates.
+// The context can be cancelled via the bootstrapCancel field to interrupt the process.
 func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.BootstrapProfile) tea.Msg {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -976,24 +981,56 @@ func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.Bootst
 	var allEntities []*knowledgegraph.ProposedEntity
 
 	// Modules
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
 	modules, err := knowledgegraph.DiscoverModules(cwd)
 	if err == nil {
 		allEntities = append(allEntities, modules...)
 	}
 
 	// Decisions from git
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
 	decisions, err := knowledgegraph.DiscoverDecisionsFromGit(cwd, profile)
 	if err == nil {
 		allEntities = append(allEntities, decisions...)
 	}
 
 	// Integrations
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
 	integrations, err := knowledgegraph.DiscoverIntegrations(cwd)
 	if err == nil {
 		allEntities = append(allEntities, integrations...)
 	}
 
 	// Phase 3: Entity Creation
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
 	knowledgeDir := filepath.Join(cwd, ".knowledge")
 
 	metadata, err := knowledgegraph.WriteBootstrapEntities(knowledgeDir, allEntities, profile)

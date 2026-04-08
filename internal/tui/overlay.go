@@ -77,10 +77,12 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 			m.state = StateInput
 			return nil
 		}
-		// Start bootstrap in background with progress overlay
+		// Start bootstrap in background with progress overlay.
+		// Unlike other overlays, bootstrap runs as an async operation because discovery
+		// can take seconds. The progress overlay provides feedback via BootstrapProgressMsg.
+		// The context can be cancelled via m.bootstrapCancel (e.g., user presses Ctrl+C).
 		m.activeOverlay = NewBootstrapProgressOverlay(m.width, m.height)
 		m.state = StateBootstrapProgressOverlay
-		// Pass context for cancellation capability
 		ctx, cancel := context.WithCancel(context.Background())
 		m.bootstrapCancel = cancel
 		return func() tea.Msg {

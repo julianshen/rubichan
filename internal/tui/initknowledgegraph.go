@@ -14,7 +14,8 @@ import (
 // It collects project information through a multi-step form and then runs the bootstrap.
 type InitKnowledgeGraphOverlay struct {
 	form      *huh.Form
-	cancelled bool
+	completed bool // true = user submitted form, false = form still active
+	cancelled bool // true = user pressed Escape to dismiss
 	profile   *knowledgegraph.BootstrapProfile
 	width     int
 	height    int
@@ -183,7 +184,7 @@ func (i *InitKnowledgeGraphOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			TeamComposition:     i.teamComp,
 			IsExisting:          i.isExisting,
 		}
-		i.cancelled = true
+		i.completed = true
 	} else if i.form.State == huh.StateAborted {
 		// User cancelled the form
 		i.cancelled = true
@@ -198,9 +199,9 @@ func (i *InitKnowledgeGraphOverlay) View() string {
 	return i.form.View()
 }
 
-// Done returns true when the form is complete.
+// Done returns true when the form is complete (submitted or escaped).
 func (i *InitKnowledgeGraphOverlay) Done() bool {
-	return i.cancelled
+	return i.completed || i.cancelled
 }
 
 // Result returns the InitKnowledgeGraphResult with the bootstrap profile.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // BootstrapProgressMsg carries progress updates during knowledge graph bootstrap.
@@ -67,9 +68,12 @@ func (b *BootstrapProgressOverlay) View() string {
 	title := styleApprovalBorder.Width(b.width - 4).Render("Knowledge Graph Bootstrap")
 	output += title + "\n\n"
 
-	// Progress messages
+	// Progress messages (constrain to terminal width)
+	contentStyle := lipgloss.NewStyle().Width(b.width - 4)
 	for _, msg := range b.messages {
-		output += msg + "\n"
+		// Wrap long messages to avoid exceeding terminal width
+		wrapped := contentStyle.Render(msg)
+		output += wrapped + "\n"
 	}
 
 	// Spinner or completion indicator
