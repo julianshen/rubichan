@@ -2308,6 +2308,42 @@ func TestModelAboutOverlayView(t *testing.T) {
 	assert.Contains(t, view, "何が好き")
 }
 
+func TestModelHandleSlashAbout(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	cmd := m.handleCommand("/about")
+
+	assert.Equal(t, StateAboutOverlay, m.state)
+	assert.NotNil(t, m.activeOverlay)
+	_, isAboutOverlay := m.activeOverlay.(*AboutOverlay)
+	assert.True(t, isAboutOverlay)
+	assert.Nil(t, cmd, "/about should not return an init cmd")
+}
+
+func TestModelHandleSlashUndo(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	cmd := m.handleCommand("/undo")
+
+	assert.Equal(t, StateUndoOverlay, m.state)
+	assert.NotNil(t, m.activeOverlay)
+	_, isUndoOverlay := m.activeOverlay.(*UndoOverlay)
+	assert.True(t, isUndoOverlay)
+	assert.Nil(t, cmd, "/undo should not return an init cmd")
+}
+
+func TestModelHandleSlashInitKnowledgeGraph(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	cmd := m.handleCommand("/initknowledgegraph")
+
+	assert.Equal(t, StateInitKnowledgeGraphOverlay, m.state)
+	assert.NotNil(t, m.activeOverlay)
+	_, isInitKnowledgeGraphOverlay := m.activeOverlay.(*InitKnowledgeGraphOverlay)
+	assert.True(t, isInitKnowledgeGraphOverlay)
+	assert.Nil(t, cmd, "/initknowledgegraph should not return an init cmd")
+}
+
 func TestModelHandleCommandEmitsSessionEvent(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	var events []session.Event

@@ -24,6 +24,8 @@ const (
 	ActionOpenUndo
 	// ActionOpenAbout requests the host to open the about screen.
 	ActionOpenAbout
+	// ActionInitKnowledgeGraph requests the host to start knowledge graph bootstrap.
+	ActionInitKnowledgeGraph
 )
 
 // Candidate represents a completion suggestion.

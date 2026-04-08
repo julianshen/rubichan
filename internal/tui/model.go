@@ -20,6 +20,7 @@ import (
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
@@ -66,6 +67,14 @@ const (
 	StateBootstrap
 	// StateWikiOverlay indicates the TUI is showing the wiki form overlay.
 	StateWikiOverlay
+	// StateAboutOverlay indicates the TUI is showing the about overlay.
+	StateAboutOverlay
+	// StateUndoOverlay indicates the TUI is showing the undo overlay.
+	StateUndoOverlay
+	// StateInitKnowledgeGraphOverlay indicates the TUI is showing the knowledge graph bootstrap questionnaire.
+	StateInitKnowledgeGraphOverlay
+	// StateBootstrapProgressOverlay indicates the TUI is showing the bootstrap progress overlay.
+	StateBootstrapProgressOverlay
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -135,6 +144,7 @@ type Model struct {
 	sessionState      *session.State
 	eventSink         session.EventSink
 	toolApprovalCount map[string]int // per-turn count of times each tool was approved
+	bootstrapCancel   context.CancelFunc // cancels bootstrap process if set
 }
 
 type skillSummaryProvider interface {
@@ -221,6 +231,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		_ = cmdRegistry.Register(commands.NewExitCommand())
 		_ = cmdRegistry.Register(commands.NewConfigCommand())
 		_ = cmdRegistry.Register(commands.NewAboutCommand())
+		_ = cmdRegistry.Register(commands.NewInitKnowledgeGraphCommand())
 		_ = cmdRegistry.Register(commands.NewRalphLoopCommand(m.StartRalphLoop))
 		_ = cmdRegistry.Register(commands.NewCancelRalphCommand(m.CancelRalphLoop))
 		_ = cmdRegistry.Register(commands.NewClearCommand(func() {
@@ -539,7 +550,7 @@ func (m *Model) contentPlainLines() []string {
 	return plainLines(m.content.Render(m.width))
 }
 
-// doQuit performs all quit-side-effects: unblocking approval, canceling wiki, clearing overlay.
+// doQuit performs all quit-side-effects: unblocking approval, canceling wiki and bootstrap, clearing overlay.
 func (m *Model) doQuit() {
 	m.quitting = true
 	if m.pendingApproval != nil {
@@ -548,6 +559,10 @@ func (m *Model) doQuit() {
 	}
 	if m.wikiCancel != nil {
 		m.wikiCancel()
+	}
+	if m.bootstrapCancel != nil {
+		m.bootstrapCancel()
+		m.bootstrapCancel = nil
 	}
 	m.activeOverlay = nil
 }
@@ -832,9 +847,15 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 			cps = m.checkpointMgr.List()
 		}
 		m.activeOverlay = NewUndoOverlay(cps, m.width)
+		m.state = StateUndoOverlay
 		return nil
 	case commands.ActionOpenAbout:
 		m.activeOverlay = NewAboutOverlay(m.width, m.height)
+		m.state = StateAboutOverlay
+		return nil
+	case commands.ActionInitKnowledgeGraph:
+		m.activeOverlay = NewInitKnowledgeGraphOverlay(m.width, m.height)
+		m.state = StateInitKnowledgeGraphOverlay
 		return nil
 	}
 
@@ -946,4 +967,85 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	m.statusBar.ClearElapsed()
 	m.turnStartTime = time.Now()
 	return m.startTurn(m.agent, prompt)
+}
+
+// runBootstrap executes the bootstrap and sends progress updates.
+// The context can be cancelled via the bootstrapCancel field to interrupt the process.
+func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.BootstrapProfile) tea.Msg {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+
+	// Phase 2: Analysis
+	var allEntities []*knowledgegraph.ProposedEntity
+
+	// Modules
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
+	modules, err := knowledgegraph.DiscoverModules(cwd)
+	if err == nil {
+		allEntities = append(allEntities, modules...)
+	}
+
+	// Decisions from git
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
+	decisions, err := knowledgegraph.DiscoverDecisionsFromGit(cwd, profile)
+	if err == nil {
+		allEntities = append(allEntities, decisions...)
+	}
+
+	// Integrations
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
+	integrations, err := knowledgegraph.DiscoverIntegrations(cwd)
+	if err == nil {
+		allEntities = append(allEntities, integrations...)
+	}
+
+	// Phase 3: Entity Creation
+	select {
+	case <-ctx.Done():
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: "bootstrap cancelled",
+		}
+	default:
+	}
+	knowledgeDir := filepath.Join(cwd, ".knowledge")
+
+	metadata, err := knowledgegraph.WriteBootstrapEntities(knowledgeDir, allEntities, profile)
+	if err != nil {
+		return BootstrapProgressMsg{
+			Phase: "error",
+			Error: err.Error(),
+		}
+	}
+
+	// Complete
+	m.content.WriteString(fmt.Sprintf("✅ Knowledge graph bootstrap complete! Created %d entities in .knowledge/\n", len(metadata.CreatedEntities)))
+	m.setContentAndAutoScroll()
+
+	return BootstrapProgressMsg{
+		Phase: "complete",
+	}
 }
