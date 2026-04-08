@@ -117,3 +117,43 @@ type CapabilityDefinition struct {
 	Type       string          `json:"type"`                 // Type (e.g., "tool", "skill", "security")
 	Definition json.RawMessage `json:"definition,omitempty"` // Capability-specific definition
 }
+
+// RPC Methods
+const (
+	// Tool methods
+	MethodListTools = "tools/list"
+	MethodCallTool  = "tools/call"
+
+	// Resource methods
+	MethodListResources = "resources/list"
+	MethodReadResource  = "resources/read"
+
+	// Sampling (LLM) methods
+	MethodSampling = "sampling/createMessage"
+
+	// Prompt methods
+	MethodListPrompts = "prompts/list"
+	MethodCallPrompt  = "prompts/call"
+
+	// Notification methods (server → client, no response expected)
+	MethodNotificationProgress = "notifications/progress"
+	MethodNotificationLog      = "notifications/log"
+
+	// Rubichan-specific extensions
+	MethodListSkills         = "skills/list"
+	MethodCallSkill          = "skills/call"
+	MethodGetSecurityVerdict = "security/getVerdict"
+)
+
+// Error Codes (JSON-RPC standard + custom)
+const (
+	ErrorCodeParseError       = -32700
+	ErrorCodeInvalidRequest   = -32600
+	ErrorCodeMethodNotFound   = -32601
+	ErrorCodeInvalidParams    = -32602
+	ErrorCodeInternalError    = -32603
+	ErrorCodeServerError      = -32000
+	ErrorCodeToolNotFound     = -32100
+	ErrorCodeSkillNotFound    = -32101
+	ErrorCodePermissionDenied = -32102
+)
