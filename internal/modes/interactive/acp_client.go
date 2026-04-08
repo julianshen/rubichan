@@ -41,7 +41,10 @@ func (c *ACPClient) Initialize(clientName string) (*acp.InitializeResponse, erro
 		},
 	}
 
-	paramsData, _ := json.Marshal(params)
+	paramsData, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("marshal initialize params: %w", err)
+	}
 	req := acp.Request{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -70,7 +73,16 @@ func (c *ACPClient) Initialize(clientName string) (*acp.InitializeResponse, erro
 func (c *ACPClient) Prompt(prompt string, maxTurns int) (*acp.Response, error) {
 	id := c.getNextID()
 
-	params := json.RawMessage(fmt.Sprintf(`{"prompt":%q,"maxTurns":%d}`, prompt, maxTurns))
+	paramsStruct := map[string]interface{}{
+		"prompt":   prompt,
+		"maxTurns": maxTurns,
+	}
+	paramsData, err := json.Marshal(paramsStruct)
+	if err != nil {
+		return nil, fmt.Errorf("marshal prompt params: %w", err)
+	}
+	params := json.RawMessage(paramsData)
+
 	req := acp.Request{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -87,7 +99,16 @@ func (c *ACPClient) Prompt(prompt string, maxTurns int) (*acp.Response, error) {
 func (c *ACPClient) ExecuteTool(name string, input json.RawMessage) (*acp.Response, error) {
 	id := c.getNextID()
 
-	params := json.RawMessage(fmt.Sprintf(`{"tool":%q,"input":%s}`, name, string(input)))
+	paramsStruct := map[string]interface{}{
+		"tool":  name,
+		"input": json.RawMessage(input),
+	}
+	paramsData, err := json.Marshal(paramsStruct)
+	if err != nil {
+		return nil, fmt.Errorf("marshal execute tool params: %w", err)
+	}
+	params := json.RawMessage(paramsData)
+
 	req := acp.Request{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -104,19 +125,21 @@ func (c *ACPClient) ExecuteTool(name string, input json.RawMessage) (*acp.Respon
 func (c *ACPClient) InvokeSkill(skillName, action string, input json.RawMessage) (*acp.SkillInvokeResponse, error) {
 	id := c.getNextID()
 
+	params := acp.SkillInvokeRequest{
+		SkillName: skillName,
+		Action:    action,
+		Input:     input,
+	}
+	paramsData, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("marshal skill invoke params: %w", err)
+	}
+
 	req := acp.Request{
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  "skill/invoke",
-		Params: func() json.RawMessage {
-			params := acp.SkillInvokeRequest{
-				SkillName: skillName,
-				Action:    action,
-				Input:     input,
-			}
-			data, _ := json.Marshal(params)
-			return data
-		}(),
+		Params:  paramsData,
 	}
 
 	// TODO: Send request over transport and wait for response
@@ -128,7 +151,10 @@ func (c *ACPClient) InvokeSkill(skillName, action string, input json.RawMessage)
 func (c *ACPClient) ApprovalRequest(verdict acp.SecurityApprovalRequest) (*acp.SecurityApprovalResponse, error) {
 	id := c.getNextID()
 
-	paramsData, _ := json.Marshal(verdict)
+	paramsData, err := json.Marshal(verdict)
+	if err != nil {
+		return nil, fmt.Errorf("marshal approval request params: %w", err)
+	}
 	req := acp.Request{
 		JSONRPC: "2.0",
 		ID:      id,
