@@ -3,7 +3,7 @@
 <html>
 	<head>
 		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-		<title>evaluator: Go Coverage Report</title>
+		<title>acp: Go Coverage Report</title>
 		<style>
 			body {
 				background: black;
@@ -55,11 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/julianshen/rubichan/internal/evaluator/confidence.go (94.1%)</option>
-				
-				<option value="file1">github.com/julianshen/rubichan/internal/evaluator/evaluator.go (74.2%)</option>
-				
-				<option value="file2">github.com/julianshen/rubichan/internal/evaluator/speculative.go (55.8%)</option>
+				<option value="file0">github.com/julianshen/rubichan/internal/acp/capabilities.go (57.7%)</option>
 				
 				</select>
 			</div>
@@ -73,340 +69,98 @@
 		</div>
 		<div id="content">
 		
-		<pre class="file" id="file0" style="display: none">package evaluator
+		<pre class="file" id="file0" style="display: none">package acp
 
 import (
-        "context"
-        "strings"
-)
-
-// ConfidenceConfig configures confidence thresholds.
-type ConfidenceConfig struct {
-        HighRiskTools []string
-        Threshold     float64 // 0.0-1.0; if score &lt; threshold, approval required
-}
-
-// ConfidenceEvaluator assigns confidence scores based on tool riskiness
-// and contextual clues. High-risk tools (shell, write) require explicit approval.
-type ConfidenceEvaluator struct {
-        config ConfidenceConfig
-}
-
-// NewConfidenceEvaluator creates a confidence evaluator.
-func NewConfidenceEvaluator(config ConfidenceConfig) *ConfidenceEvaluator <span class="cov8" title="1">{
-        return &amp;ConfidenceEvaluator{config: config}
-}</span>
-
-// Evaluate scores the tool call based on tool risk and context alignment.
-func (c *ConfidenceEvaluator) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error) <span class="cov8" title="1">{
-        isHighRisk := false
-        for _, risky := range c.config.HighRiskTools </span><span class="cov8" title="1">{
-                if req.ToolName == risky </span><span class="cov8" title="1">{
-                        isHighRisk = true
-                        break</span>
-                }
-        }
-
-        <span class="cov8" title="1">if !isHighRisk </span><span class="cov8" title="1">{
-                // Safe tools get high confidence by default
-                return EvaluationResult{
-                        ConfidentEnough: true,
-                        ConfidenceScore: 0.95,
-                }, nil
-        }</span>
-
-        // High-risk tools score based on context alignment.
-        // Destructive terms in context reduce confidence.
-        <span class="cov8" title="1">score := 0.6 // Base score for high-risk tools
-        riskTerms := []string{"delete", "remove", "destroy", "erase", "truncate", "rm -rf"}
-        lowerContext := strings.ToLower(req.Context)
-        for _, term := range riskTerms </span><span class="cov8" title="1">{
-                if strings.Contains(lowerContext, term) </span><span class="cov8" title="1">{
-                        score -= 0.2
-                }</span>
-        }
-        <span class="cov8" title="1">if score &lt; 0 </span><span class="cov0" title="0">{
-                score = 0
-        }</span>
-
-        <span class="cov8" title="1">return EvaluationResult{
-                ConfidentEnough: score &gt;= c.config.Threshold,
-                ConfidenceScore: score,
-        }, nil</span>
-}
-</pre>
-		
-		<pre class="file" id="file1" style="display: none">package evaluator
-
-import (
-        "context"
         "encoding/json"
         "fmt"
 )
 
-// Evaluator checks whether a tool call is valid and safe before execution.
-// It implements three checks: schema validation, confidence scoring, and
-// speculative checks to prevent obviously-bad tool invocations.
-type Evaluator interface {
-        Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error)
+// CapabilityRegistry holds all registered capabilities (tools, skills, verdicts).
+type CapabilityRegistry struct {
+        tools   map[string]Tool
+        skills  map[string]Skill
+        methods map[string]Handler
 }
 
-// EvaluationRequest describes a tool call to evaluate.
-type EvaluationRequest struct {
-        ToolName string          // Name of the tool (e.g., "shell", "read_file")
-        Input    json.RawMessage // Tool input as JSON
-        Context  string          // Optional context (e.g., the user's request)
-}
+// Handler is a function that processes an ACP method call.
+type Handler func(params json.RawMessage) (json.RawMessage, error)
 
-// EvaluationResult reports the outcome of all three checks.
-type EvaluationResult struct {
-        // SchemaValid reports whether input matches tool's JSON schema.
-        SchemaValid bool
-        SchemaError string
-
-        // ConfidentEnough reports whether model confidence is high enough to execute.
-        // Low confidence on risky tools (shell, write) requires human approval.
-        ConfidentEnough bool
-        ConfidenceScore float64
-
-        // SpeculativeOK reports whether a speculative check suggests success.
-        // Example: checking if a file exists before attempting to read it.
-        SpeculativeOK     bool
-        SpeculativeReason string
-
-        // Reason is a human-readable explanation if Approved() is false.
-        Reason string
-}
-
-// Approved returns true if all checks passed and execution is safe.
-func (r *EvaluationResult) Approved() bool <span class="cov8" title="1">{
-        approved := r.SchemaValid &amp;&amp; r.ConfidentEnough &amp;&amp; r.SpeculativeOK
-        if !approved &amp;&amp; r.Reason == "" </span><span class="cov8" title="1">{
-                // Build reason from failed checks
-                var reasons []string
-                if !r.SchemaValid </span><span class="cov8" title="1">{
-                        reasons = append(reasons, "schema validation failed: "+r.SchemaError)
-                }</span>
-                <span class="cov8" title="1">if !r.ConfidentEnough </span><span class="cov8" title="1">{
-                        reasons = append(reasons, fmt.Sprintf("confidence too low: %.2f", r.ConfidenceScore))
-                }</span>
-                <span class="cov8" title="1">if !r.SpeculativeOK </span><span class="cov8" title="1">{
-                        reasons = append(reasons, "speculative check failed: "+r.SpeculativeReason)
-                }</span>
-                <span class="cov8" title="1">if len(reasons) &gt; 0 </span><span class="cov8" title="1">{
-                        r.Reason = reasons[0]
-                }</span>
+// NewCapabilityRegistry creates a new registry.
+func NewCapabilityRegistry() *CapabilityRegistry <span class="cov8" title="1">{
+        return &amp;CapabilityRegistry{
+                tools:   make(map[string]Tool),
+                skills:  make(map[string]Skill),
+                methods: make(map[string]Handler),
         }
-        <span class="cov8" title="1">return approved</span>
-}
-
-// ToolSchema describes the structure of a tool's input.
-type ToolSchema struct {
-        RequiredFields []string
-}
-
-// SchemaValidator checks whether JSON input matches a tool's schema.
-type SchemaValidator struct {
-        schemas map[string]ToolSchema
-}
-
-// NewSchemaValidator creates a schema validator with the given tool schemas.
-func NewSchemaValidator(schemas map[string]ToolSchema) *SchemaValidator <span class="cov8" title="1">{
-        return &amp;SchemaValidator{schemas: schemas}
 }</span>
 
-// Evaluate checks if the input is valid JSON and contains all required fields.
-func (v *SchemaValidator) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error) <span class="cov8" title="1">{
-        schema, found := v.schemas[req.ToolName]
-        if !found </span><span class="cov8" title="1">{
-                // Unknown tools pass validation (assume they handle their own schema)
-                return EvaluationResult{
-                        SchemaValid: true,
-                }, nil
-        }</span>
-
-        // Parse JSON
-        <span class="cov8" title="1">var input map[string]interface{}
-        if err := json.Unmarshal(req.Input, &amp;input); err != nil </span><span class="cov8" title="1">{
-                return EvaluationResult{
-                        SchemaValid: false,
-                        SchemaError: fmt.Sprintf("invalid JSON: %v", err),
-                }, nil
-        }</span>
-
-        // Check required fields
-        <span class="cov8" title="1">for _, field := range schema.RequiredFields </span><span class="cov8" title="1">{
-                if _, ok := input[field]; !ok </span><span class="cov8" title="1">{
-                        return EvaluationResult{
-                                SchemaValid: false,
-                                SchemaError: fmt.Sprintf("missing required field: %s", field),
-                        }, nil
-                }</span>
-        }
-
-        <span class="cov8" title="1">return EvaluationResult{
-                SchemaValid: true,
-        }, nil</span>
-}
-
-// CompositeEvaluator runs multiple evaluators and combines their results.
-// It fails fast: if any evaluator rejects the call, it returns that rejection.
-type CompositeEvaluator struct {
-        evaluators []Evaluator
-}
-
-// NewCompositeEvaluator creates an evaluator that runs multiple checks in sequence.
-func NewCompositeEvaluator(evals ...Evaluator) *CompositeEvaluator <span class="cov0" title="0">{
-        return &amp;CompositeEvaluator{evaluators: evals}
+// RegisterTool registers a tool capability.
+func (cr *CapabilityRegistry) RegisterTool(t Tool) <span class="cov8" title="1">{
+        cr.tools[t.Name] = t
 }</span>
 
-// Evaluate runs each evaluator in sequence, failing fast on first rejection.
-func (c *CompositeEvaluator) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error) <span class="cov0" title="0">{
-        for _, e := range c.evaluators </span><span class="cov0" title="0">{
-                result, err := e.Evaluate(ctx, req)
+// RegisterSkill registers a skill capability.
+func (cr *CapabilityRegistry) RegisterSkill(s Skill) <span class="cov0" title="0">{
+        cr.skills[s.Name] = s
+}</span>
+
+// RegisterMethod registers a handler for an ACP method.
+func (cr *CapabilityRegistry) RegisterMethod(method string, handler Handler) <span class="cov8" title="1">{
+        cr.methods[method] = handler
+}</span>
+
+// GetCapabilities returns all capabilities as CapabilityDefinition slice.
+func (cr *CapabilityRegistry) GetCapabilities() ([]CapabilityDefinition, error) <span class="cov8" title="1">{
+        var caps []CapabilityDefinition
+
+        // Add tool capabilities
+        for _, tool := range cr.tools </span><span class="cov8" title="1">{
+                toolCap := ToolCapability{Tool: tool}
+                data, err := json.Marshal(toolCap)
                 if err != nil </span><span class="cov0" title="0">{
-                        return EvaluationResult{}, fmt.Errorf("evaluator failed: %w", err)
+                        return nil, fmt.Errorf("marshal tool capability: %w", err)
                 }</span>
-                <span class="cov0" title="0">if !result.Approved() </span><span class="cov0" title="0">{
-                        return result, nil
-                }</span>
-        }
-        <span class="cov0" title="0">return EvaluationResult{
-                SchemaValid:     true,
-                ConfidentEnough: true,
-                SpeculativeOK:   true,
-        }, nil</span>
-}
-</pre>
-		
-		<pre class="file" id="file2" style="display: none">package evaluator
-
-import (
-        "context"
-        "encoding/json"
-        "fmt"
-        "os"
-        "strings"
-)
-
-// SpeculativeCheck defines a pre-execution check (e.g., file exists before read).
-type SpeculativeCheck struct {
-        PreconditionType string // "file_exists", "directory_exists", "command_recognized", etc.
-}
-
-// SpeculativeConfig configures precondition checks per tool.
-type SpeculativeConfig struct {
-        Checks map[string]SpeculativeCheck
-}
-
-// SpeculativeChecker runs precondition checks to predict whether a tool call
-// is likely to succeed. Checks are advisory; failures don't block execution.
-type SpeculativeChecker struct {
-        config SpeculativeConfig
-}
-
-// NewSpeculativeChecker creates a speculative checker.
-func NewSpeculativeChecker(config SpeculativeConfig) *SpeculativeChecker <span class="cov8" title="1">{
-        return &amp;SpeculativeChecker{config: config}
-}</span>
-
-// Evaluate runs precondition checks and returns whether they're likely to succeed.
-func (s *SpeculativeChecker) Evaluate(ctx context.Context, req EvaluationRequest) (EvaluationResult, error) <span class="cov8" title="1">{
-        check, found := s.config.Checks[req.ToolName]
-        if !found </span><span class="cov8" title="1">{
-                // No check defined for this tool
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        <span class="cov8" title="1">switch check.PreconditionType </span>{
-        case "file_exists":<span class="cov8" title="1">
-                return s.checkFileExists(req.Input)</span>
-        case "directory_exists":<span class="cov0" title="0">
-                return s.checkDirectoryExists(req.Input)</span>
-        case "command_recognized":<span class="cov8" title="1">
-                return s.checkCommandRecognized(req.Input)</span>
-        default:<span class="cov0" title="0">
-                // Unknown check type; don't block
-                return EvaluationResult{SpeculativeOK: true}, nil</span>
-        }
-}
-
-func (s *SpeculativeChecker) checkFileExists(input json.RawMessage) (EvaluationResult, error) <span class="cov8" title="1">{
-        var inp map[string]interface{}
-        if err := json.Unmarshal(input, &amp;inp); err != nil </span><span class="cov0" title="0">{
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        <span class="cov8" title="1">path, ok := inp["path"].(string)
-        if !ok </span><span class="cov0" title="0">{
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        <span class="cov8" title="1">if _, err := os.Stat(path); err == nil </span><span class="cov8" title="1">{
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        <span class="cov0" title="0">return EvaluationResult{
-                SpeculativeOK:     false,
-                SpeculativeReason: fmt.Sprintf("file does not exist: %s", path),
-        }, nil</span>
-}
-
-func (s *SpeculativeChecker) checkDirectoryExists(input json.RawMessage) (EvaluationResult, error) <span class="cov0" title="0">{
-        var inp map[string]interface{}
-        if err := json.Unmarshal(input, &amp;inp); err != nil </span><span class="cov0" title="0">{
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        <span class="cov0" title="0">path, ok := inp["path"].(string)
-        if !ok </span><span class="cov0" title="0">{
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        <span class="cov0" title="0">stat, err := os.Stat(path)
-        if err != nil || !stat.IsDir() </span><span class="cov0" title="0">{
-                return EvaluationResult{
-                        SpeculativeOK:     false,
-                        SpeculativeReason: fmt.Sprintf("directory does not exist: %s", path),
-                }, nil
-        }</span>
-
-        <span class="cov0" title="0">return EvaluationResult{SpeculativeOK: true}, nil</span>
-}
-
-func (s *SpeculativeChecker) checkCommandRecognized(input json.RawMessage) (EvaluationResult, error) <span class="cov8" title="1">{
-        var inp map[string]interface{}
-        if err := json.Unmarshal(input, &amp;inp); err != nil </span><span class="cov0" title="0">{
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        <span class="cov8" title="1">cmd, ok := inp["command"].(string)
-        if !ok </span><span class="cov0" title="0">{
-                return EvaluationResult{SpeculativeOK: true}, nil
-        }</span>
-
-        // Simple heuristic: check if command looks like gibberish
-        <span class="cov8" title="1">parts := strings.Fields(cmd)
-        if len(parts) == 0 </span><span class="cov0" title="0">{
-                return EvaluationResult{
-                        SpeculativeOK:     false,
-                        SpeculativeReason: "empty command",
-                }, nil
-        }</span>
-
-        // If the first word contains non-alphanumeric characters (except common ones), flag it
-        <span class="cov8" title="1">firstWord := parts[0]
-        validChars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./:"
-        for _, ch := range firstWord </span><span class="cov8" title="1">{
-                if !strings.ContainsRune(validChars, ch) </span><span class="cov0" title="0">{
-                        return EvaluationResult{
-                                SpeculativeOK:     false,
-                                SpeculativeReason: fmt.Sprintf("command looks malformed: %s", firstWord),
-                        }, nil
-                }</span>
+                <span class="cov8" title="1">caps = append(caps, CapabilityDefinition{
+                        Type:       "tool",
+                        Name:       tool.Name,
+                        Definition: json.RawMessage(data),
+                })</span>
         }
 
-        <span class="cov8" title="1">return EvaluationResult{SpeculativeOK: true}, nil</span>
+        // Add skill capabilities
+        <span class="cov8" title="1">for _, skill := range cr.skills </span><span class="cov0" title="0">{
+                skillCap := SkillCapability{Skill: skill}
+                data, err := json.Marshal(skillCap)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("marshal skill capability: %w", err)
+                }</span>
+                <span class="cov0" title="0">caps = append(caps, CapabilityDefinition{
+                        Type:       "skill",
+                        Name:       skill.Name,
+                        Definition: json.RawMessage(data),
+                })</span>
+        }
+
+        <span class="cov8" title="1">return caps, nil</span>
+}
+
+// GetMethods returns all registered method names.
+func (cr *CapabilityRegistry) GetMethods() []string <span class="cov8" title="1">{
+        methods := make([]string, 0, len(cr.methods))
+        for m := range cr.methods </span><span class="cov8" title="1">{
+                methods = append(methods, m)
+        }</span>
+        <span class="cov8" title="1">return methods</span>
+}
+
+// Call invokes a registered method handler.
+func (cr *CapabilityRegistry) Call(method string, params json.RawMessage) (json.RawMessage, error) <span class="cov0" title="0">{
+        handler, ok := cr.methods[method]
+        if !ok </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("method not found: %s", method)
+        }</span>
+        <span class="cov0" title="0">return handler(params)</span>
 }
 </pre>
 		

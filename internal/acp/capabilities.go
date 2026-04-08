@@ -48,7 +48,7 @@ func (cr *CapabilityRegistry) GetCapabilities() ([]CapabilityDefinition, error) 
 		toolCap := ToolCapability{Tool: tool}
 		data, err := json.Marshal(toolCap)
 		if err != nil {
-			return nil, fmt.Errorf("marshal tool capability: %w", err)
+			return nil, fmt.Errorf("marshal tool '%s': %w", tool.Name, err)
 		}
 		caps = append(caps, CapabilityDefinition{
 			Type:       "tool",
@@ -62,7 +62,7 @@ func (cr *CapabilityRegistry) GetCapabilities() ([]CapabilityDefinition, error) 
 		skillCap := SkillCapability{Skill: skill}
 		data, err := json.Marshal(skillCap)
 		if err != nil {
-			return nil, fmt.Errorf("marshal skill capability: %w", err)
+			return nil, fmt.Errorf("marshal skill '%s': %w", skill.Name, err)
 		}
 		caps = append(caps, CapabilityDefinition{
 			Type:       "skill",

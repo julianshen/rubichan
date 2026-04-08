@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -184,5 +185,87 @@ func TestCapabilityRegistryMethods(t *testing.T) {
 	methods := registry.GetMethods()
 	if len(methods) == 0 {
 		t.Error("expected methods list")
+	}
+}
+
+func TestCapabilityRegistrySkills(t *testing.T) {
+	registry := NewCapabilityRegistry()
+	skill := Skill{
+		Name:        "my_skill",
+		Manifest:    json.RawMessage(`{"version":"1.0"}`),
+		Permissions: []string{"file:read"},
+	}
+	registry.RegisterSkill(skill)
+
+	caps, err := registry.GetCapabilities()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(caps) != 1 {
+		t.Errorf("expected 1 capability, got %d", len(caps))
+	}
+	if caps[0].Type != "skill" {
+		t.Errorf("expected type 'skill', got %q", caps[0].Type)
+	}
+}
+
+func TestCapabilityRegistryCallSuccess(t *testing.T) {
+	registry := NewCapabilityRegistry()
+	registry.RegisterMethod("test/ping", func(params json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(`{"result":"pong"}`), nil
+	})
+
+	result, err := registry.Call("test/ping", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result) != `{"result":"pong"}` {
+		t.Errorf("got %s, want pong response", string(result))
+	}
+}
+
+func TestCapabilityRegistryCallNotFound(t *testing.T) {
+	registry := NewCapabilityRegistry()
+	_, err := registry.Call("nonexistent/method", json.RawMessage(`{}`))
+	if err == nil {
+		t.Error("expected error for nonexistent method")
+	}
+}
+
+func TestCapabilityRegistryCallErrorPropagation(t *testing.T) {
+	registry := NewCapabilityRegistry()
+	registry.RegisterMethod("test/error", func(params json.RawMessage) (json.RawMessage, error) {
+		return nil, fmt.Errorf("handler error")
+	})
+
+	_, err := registry.Call("test/error", json.RawMessage(`{}`))
+	if err == nil {
+		t.Error("expected handler error to propagate")
+	}
+}
+
+func TestCapabilityRegistryBothToolsAndSkills(t *testing.T) {
+	registry := NewCapabilityRegistry()
+
+	registry.RegisterTool(Tool{
+		Name:        "file.read",
+		Description: "Read file",
+		InputSchema: json.RawMessage(`{}`),
+	})
+
+	registry.RegisterSkill(Skill{
+		Name:        "my_skill",
+		Manifest:    json.RawMessage(`{}`),
+		Permissions: []string{"file:read"},
+	})
+
+	caps, err := registry.GetCapabilities()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(caps) != 2 {
+		t.Errorf("expected 2 capabilities, got %d", len(caps))
 	}
 }
