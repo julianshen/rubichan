@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/agent"
@@ -12,6 +13,12 @@ import (
 	"github.com/julianshen/rubichan/internal/modes/wiki"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/tools"
+
+	// Register provider implementations
+	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
+	_ "github.com/julianshen/rubichan/internal/provider/ollama"
+	_ "github.com/julianshen/rubichan/internal/provider/openai"
+	_ "github.com/julianshen/rubichan/internal/provider/zai"
 )
 
 // TestInteractiveModeWithACP verifies that the interactive mode can create
@@ -21,11 +28,19 @@ func TestInteractiveModeWithACP(t *testing.T) {
 		t.Skip("skipping e2e test in short mode")
 	}
 
+	// Skip if ANTHROPIC_API_KEY is not set (requires real API)
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("skipping test - ANTHROPIC_API_KEY not set")
+	}
+
 	// Create minimal config
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{
 			Default: "anthropic",
 			Model:   "claude-3-5-sonnet-20241022",
+			Anthropic: config.AnthropicProviderConfig{
+				APIKeySource: "env",
+			},
 		},
 		Agent: config.AgentConfig{
 			MaxTurns: 5,
@@ -82,11 +97,19 @@ func TestHeadlessModeWithACP(t *testing.T) {
 		t.Skip("skipping e2e test in short mode")
 	}
 
+	// Skip if ANTHROPIC_API_KEY is not set (requires real API)
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("skipping test - ANTHROPIC_API_KEY not set")
+	}
+
 	// Create minimal config
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{
 			Default: "anthropic",
 			Model:   "claude-3-5-sonnet-20241022",
+			Anthropic: config.AnthropicProviderConfig{
+				APIKeySource: "env",
+			},
 		},
 		Agent: config.AgentConfig{
 			MaxTurns: 3,
@@ -139,11 +162,19 @@ func TestWikiModeWithACP(t *testing.T) {
 		t.Skip("skipping e2e test in short mode")
 	}
 
+	// Skip if ANTHROPIC_API_KEY is not set (requires real API)
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("skipping test - ANTHROPIC_API_KEY not set")
+	}
+
 	// Create minimal config
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{
 			Default: "anthropic",
 			Model:   "claude-3-5-sonnet-20241022",
+			Anthropic: config.AnthropicProviderConfig{
+				APIKeySource: "env",
+			},
 		},
 		Agent: config.AgentConfig{
 			MaxTurns: 5,
@@ -200,11 +231,19 @@ func TestACPServerCapabilities(t *testing.T) {
 		t.Skip("skipping e2e test in short mode")
 	}
 
+	// Skip if ANTHROPIC_API_KEY is not set (requires real API)
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("skipping test - ANTHROPIC_API_KEY not set")
+	}
+
 	// Create minimal config
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{
 			Default: "anthropic",
 			Model:   "claude-3-5-sonnet-20241022",
+			Anthropic: config.AnthropicProviderConfig{
+				APIKeySource: "env",
+			},
 		},
 		Agent: config.AgentConfig{
 			MaxTurns: 3,
@@ -249,11 +288,19 @@ func TestMultipleModeClientsWithSingleAgent(t *testing.T) {
 		t.Skip("skipping e2e test in short mode")
 	}
 
+	// Skip if ANTHROPIC_API_KEY is not set (requires real API)
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("skipping test - ANTHROPIC_API_KEY not set")
+	}
+
 	// Create minimal config
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{
 			Default: "anthropic",
 			Model:   "claude-3-5-sonnet-20241022",
+			Anthropic: config.AnthropicProviderConfig{
+				APIKeySource: "env",
+			},
 		},
 		Agent: config.AgentConfig{
 			MaxTurns: 3,

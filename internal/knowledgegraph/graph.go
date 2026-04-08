@@ -190,12 +190,12 @@ func (g *KnowledgeGraph) Put(ctx context.Context, e *kg.Entity) error {
 	if err != nil {
 		return fmt.Errorf("Put: marshal tags: %w", err)
 	}
-	stmt := `INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	stmt := `INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence, usage_count)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = g.db.ExecContext(ctx, stmt,
 		e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
-		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339), e.Confidence,
+		e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339), e.Confidence, e.UsageCount,
 	)
 	if err != nil {
 		return fmt.Errorf("Put: insert entity: %w", err)
@@ -213,6 +213,20 @@ func (g *KnowledgeGraph) Put(ctx context.Context, e *kg.Entity) error {
 			e.ID, string(rel.Kind), rel.Target,
 		); err != nil {
 			return fmt.Errorf("Put: insert relationship: %w", err)
+		}
+	}
+
+	// Update entity_stats if UsageCount is set
+	if e.UsageCount > 0 {
+		lastUsedStr := ""
+		if !e.LastUsed.IsZero() {
+			lastUsedStr = e.LastUsed.Format(time.RFC3339)
+		}
+		if _, err := g.db.ExecContext(ctx,
+			`INSERT OR REPLACE INTO entity_stats(entity_id, injection_count, last_accessed_at) VALUES(?, ?, ?)`,
+			e.ID, e.UsageCount, lastUsedStr,
+		); err != nil {
+			return fmt.Errorf("Put: insert entity_stats: %w", err)
 		}
 	}
 
