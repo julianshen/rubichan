@@ -17,6 +17,7 @@ import (
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
+	"github.com/julianshen/rubichan/internal/acp"
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/evaluator"
@@ -216,6 +217,11 @@ func (a *Agent) Checkpoints() []checkpoint.Checkpoint {
 	return a.checkpointMgr.List()
 }
 
+// ACPServer returns the ACP server instance if enabled, or nil otherwise.
+func (a *Agent) ACPServer() *acp.Server {
+	return a.acpServer
+}
+
 // WithPipeline attaches a tool execution pipeline to the agent.
 func WithPipeline(p *toolexec.Pipeline) AgentOption {
 	return func(a *Agent) {
@@ -284,6 +290,15 @@ func WithRateLimiter(rl *SharedRateLimiter) AgentOption {
 	}
 }
 
+// WithACP enables the ACP (Agent Client Protocol) server for this agent.
+// When enabled, the agent can receive JSON-RPC 2.0 requests from clients
+// and process them through the ACP interface.
+func WithACP() AgentOption {
+	return func(a *Agent) {
+		a.useACP = true
+	}
+}
+
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
 	provider          provider.LLMProvider
@@ -327,6 +342,9 @@ type Agent struct {
 	rateLimiter       *SharedRateLimiter
 	capabilities      provider.ModelCapabilities
 	progress          *ProgressTracker
+	acpServer         *acp.Server        // ACP server instance (if enabled)
+	acpRegistry       *acp.CapabilityRegistry // Capability registry for ACP
+	useACP            bool                // Enable ACP server
 }
 
 const maxUIRequestInputBytes = 2048
@@ -543,6 +561,18 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 					a.logger.Warn("failed to register skill_manager tool: %v", err)
 				}
 			}
+		}
+	}
+
+	// Initialize ACP server if enabled (default: false).
+	// ACP allows clients to interact with the agent via JSON-RPC 2.0 protocol.
+	if a.useACP {
+		a.acpRegistry = acp.NewCapabilityRegistry()
+		a.acpServer = acp.NewServer(a.acpRegistry)
+
+		// Register all capabilities and methods.
+		if err := a.registerACPCapabilities(); err != nil {
+			a.logger.Warn("failed to register ACP capabilities: %v", err)
 		}
 	}
 
