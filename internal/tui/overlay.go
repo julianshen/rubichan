@@ -79,8 +79,13 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 		}
 		// Start bootstrap in background with progress overlay
 		m.activeOverlay = NewBootstrapProgressOverlay(m.width, m.height)
-		m.state = StateInitKnowledgeGraphOverlay
-		return m.startBootstrapProcess(context.Background(), r.Profile)
+		m.state = StateBootstrapProgressOverlay
+		// Pass context for cancellation capability
+		ctx, cancel := context.WithCancel(context.Background())
+		m.bootstrapCancel = cancel
+		return func() tea.Msg {
+			return m.runBootstrap(ctx, r.Profile)
+		}
 	case nil:
 		// Overlay was cancelled (e.g., Escape pressed).
 		// Defensive: unblock agent if approval was somehow cancelled.

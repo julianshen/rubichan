@@ -71,8 +71,10 @@ const (
 	StateAboutOverlay
 	// StateUndoOverlay indicates the TUI is showing the undo overlay.
 	StateUndoOverlay
-	// StateInitKnowledgeGraphOverlay indicates the TUI is showing the knowledge graph bootstrap overlay.
+	// StateInitKnowledgeGraphOverlay indicates the TUI is showing the knowledge graph bootstrap questionnaire.
 	StateInitKnowledgeGraphOverlay
+	// StateBootstrapProgressOverlay indicates the TUI is showing the bootstrap progress overlay.
+	StateBootstrapProgressOverlay
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -142,6 +144,7 @@ type Model struct {
 	sessionState      *session.State
 	eventSink         session.EventSink
 	toolApprovalCount map[string]int // per-turn count of times each tool was approved
+	bootstrapCancel   context.CancelFunc // cancels bootstrap process if set
 }
 
 type skillSummaryProvider interface {
@@ -962,13 +965,6 @@ func (m *Model) maybeStartRalphLoop() tea.Cmd {
 	return m.startTurn(m.agent, prompt)
 }
 
-// startBootstrapProcess runs knowledge graph bootstrap in background.
-func (m *Model) startBootstrapProcess(ctx context.Context, profile *knowledgegraph.BootstrapProfile) tea.Cmd {
-	return func() tea.Msg {
-		return m.runBootstrap(ctx, profile)
-	}
-}
-
 // runBootstrap executes the bootstrap and sends progress updates.
 func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.BootstrapProfile) tea.Msg {
 	cwd, err := os.Getwd()
@@ -982,33 +978,18 @@ func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.Bootst
 	// Modules
 	modules, err := knowledgegraph.DiscoverModules(cwd)
 	if err == nil {
-		sendProgress(BootstrapProgressMsg{
-			Phase:   "analysis",
-			Message: "Scanning modules",
-			Count:   len(modules),
-		})
 		allEntities = append(allEntities, modules...)
 	}
 
 	// Decisions from git
 	decisions, err := knowledgegraph.DiscoverDecisionsFromGit(cwd, profile)
 	if err == nil {
-		sendProgress(BootstrapProgressMsg{
-			Phase:   "analysis",
-			Message: "Analyzing git history",
-			Count:   len(decisions),
-		})
 		allEntities = append(allEntities, decisions...)
 	}
 
 	// Integrations
 	integrations, err := knowledgegraph.DiscoverIntegrations(cwd)
 	if err == nil {
-		sendProgress(BootstrapProgressMsg{
-			Phase:   "analysis",
-			Message: "Detecting integrations",
-			Count:   len(integrations),
-		})
 		allEntities = append(allEntities, integrations...)
 	}
 
@@ -1023,12 +1004,6 @@ func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.Bootst
 		}
 	}
 
-	sendProgress(BootstrapProgressMsg{
-		Phase:   "entities",
-		Message: "Created entities",
-		Count:   len(metadata.CreatedEntities),
-	})
-
 	// Complete
 	m.content.WriteString(fmt.Sprintf("✅ Knowledge graph bootstrap complete! Created %d entities in .knowledge/\n", len(metadata.CreatedEntities)))
 	m.setContentAndAutoScroll()
@@ -1036,11 +1011,4 @@ func (m *Model) runBootstrap(ctx context.Context, profile *knowledgegraph.Bootst
 	return BootstrapProgressMsg{
 		Phase: "complete",
 	}
-}
-
-// sendProgress is a helper to send progress messages (for now just logs).
-func sendProgress(msg BootstrapProgressMsg) {
-	// In a real implementation, this would send to a channel
-	// For now, we just log it
-	_ = msg
 }
