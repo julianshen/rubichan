@@ -150,3 +150,39 @@ func TestSecurityVerdict(t *testing.T) {
 		t.Errorf("got %q, want %q", decoded.Severity, "high")
 	}
 }
+
+func TestCapabilityRegistry(t *testing.T) {
+	registry := NewCapabilityRegistry()
+
+	tool := Tool{
+		Name:        "file.read",
+		Description: "Read a file",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}
+
+	registry.RegisterTool(tool)
+
+	caps, err := registry.GetCapabilities()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(caps) == 0 {
+		t.Error("expected at least 1 capability")
+	}
+}
+
+func TestCapabilityRegistryMethods(t *testing.T) {
+	registry := NewCapabilityRegistry()
+
+	callCount := 0
+	registry.RegisterMethod("test/ping", func(params json.RawMessage) (json.RawMessage, error) {
+		callCount++
+		return json.RawMessage(`{"pong":true}`), nil
+	})
+
+	methods := registry.GetMethods()
+	if len(methods) == 0 {
+		t.Error("expected methods list")
+	}
+}
