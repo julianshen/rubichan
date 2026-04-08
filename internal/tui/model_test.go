@@ -2332,6 +2332,18 @@ func TestModelHandleSlashUndo(t *testing.T) {
 	assert.Nil(t, cmd, "/undo should not return an init cmd")
 }
 
+func TestModelHandleSlashInitKnowledgeGraph(t *testing.T) {
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+
+	cmd := m.handleCommand("/initknowledgegraph")
+
+	assert.Equal(t, StateInitKnowledgeGraphOverlay, m.state)
+	assert.NotNil(t, m.activeOverlay)
+	_, isInitKnowledgeGraphOverlay := m.activeOverlay.(*InitKnowledgeGraphOverlay)
+	assert.True(t, isInitKnowledgeGraphOverlay)
+	assert.Nil(t, cmd, "/initknowledgegraph should not return an init cmd")
+}
+
 func TestModelHandleCommandEmitsSessionEvent(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	var events []session.Event

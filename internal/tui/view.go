@@ -23,7 +23,7 @@ func (m *Model) View() string {
 	// Full-screen overlays take over the entire view.
 	if m.activeOverlay != nil {
 		switch m.activeOverlay.(type) {
-		case *ConfigOverlay, *WikiOverlay, *UndoOverlay, *HelpOverlay, *AboutOverlay:
+		case *ConfigOverlay, *WikiOverlay, *UndoOverlay, *HelpOverlay, *AboutOverlay, *InitKnowledgeGraphOverlay:
 			return m.activeOverlay.View()
 		}
 	}

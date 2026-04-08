@@ -24,7 +24,7 @@ func (s *stubCommand) Execute(_ context.Context, _ []string) (Result, error) { r
 // --- Task 1: Type Tests ---
 
 func TestActionConstantsAreDistinct(t *testing.T) {
-	actions := []Action{ActionNone, ActionQuit, ActionOpenConfig, ActionOpenWiki, ActionOpenUndo, ActionOpenAbout}
+	actions := []Action{ActionNone, ActionQuit, ActionOpenConfig, ActionOpenWiki, ActionOpenUndo, ActionOpenAbout, ActionInitKnowledgeGraph}
 	seen := make(map[Action]bool)
 	for _, a := range actions {
 		assert.False(t, seen[a], "duplicate Action constant: %d", a)

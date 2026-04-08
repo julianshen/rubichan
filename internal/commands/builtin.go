@@ -264,3 +264,26 @@ func (c *debugVerificationSnapshotCommand) Execute(_ context.Context, _ []string
 	}
 	return Result{Output: snapshot}, nil
 }
+
+// --- initknowledgegraph ---
+
+type initKnowledgeGraphCommand struct{}
+
+// NewInitKnowledgeGraphCommand creates a command that starts knowledge graph bootstrap.
+func NewInitKnowledgeGraphCommand() SlashCommand {
+	return &initKnowledgeGraphCommand{}
+}
+
+func (c *initKnowledgeGraphCommand) Name() string        { return "initknowledgegraph" }
+func (c *initKnowledgeGraphCommand) Description() string { return "Bootstrap knowledge graph for project" }
+func (c *initKnowledgeGraphCommand) Arguments() []ArgumentDef {
+	return nil
+}
+
+func (c *initKnowledgeGraphCommand) Complete(_ context.Context, _ []string) []Candidate {
+	return nil
+}
+
+func (c *initKnowledgeGraphCommand) Execute(_ context.Context, _ []string) (Result, error) {
+	return Result{Action: ActionInitKnowledgeGraph}, nil
+}

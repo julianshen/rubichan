@@ -70,6 +70,8 @@ const (
 	StateAboutOverlay
 	// StateUndoOverlay indicates the TUI is showing the undo overlay.
 	StateUndoOverlay
+	// StateInitKnowledgeGraphOverlay indicates the TUI is showing the knowledge graph bootstrap overlay.
+	StateInitKnowledgeGraphOverlay
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -225,6 +227,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 		_ = cmdRegistry.Register(commands.NewExitCommand())
 		_ = cmdRegistry.Register(commands.NewConfigCommand())
 		_ = cmdRegistry.Register(commands.NewAboutCommand())
+		_ = cmdRegistry.Register(commands.NewInitKnowledgeGraphCommand())
 		_ = cmdRegistry.Register(commands.NewRalphLoopCommand(m.StartRalphLoop))
 		_ = cmdRegistry.Register(commands.NewCancelRalphCommand(m.CancelRalphLoop))
 		_ = cmdRegistry.Register(commands.NewClearCommand(func() {
@@ -841,6 +844,10 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 	case commands.ActionOpenAbout:
 		m.activeOverlay = NewAboutOverlay(m.width, m.height)
 		m.state = StateAboutOverlay
+		return nil
+	case commands.ActionInitKnowledgeGraph:
+		m.activeOverlay = NewInitKnowledgeGraphOverlay(m.width, m.height)
+		m.state = StateInitKnowledgeGraphOverlay
 		return nil
 	}
 

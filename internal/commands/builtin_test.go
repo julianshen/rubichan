@@ -361,3 +361,35 @@ func TestAboutCommandExecute(t *testing.T) {
 	assert.Equal(t, ActionOpenAbout, result.Action)
 	assert.Empty(t, result.Output)
 }
+
+// --- InitKnowledgeGraph Command ---
+
+func TestInitKnowledgeGraphCommandName(t *testing.T) {
+	cmd := NewInitKnowledgeGraphCommand()
+	assert.Equal(t, "initknowledgegraph", cmd.Name())
+}
+
+func TestInitKnowledgeGraphCommandDescription(t *testing.T) {
+	cmd := NewInitKnowledgeGraphCommand()
+	assert.NotEmpty(t, cmd.Description())
+	assert.Contains(t, cmd.Description(), "knowledge graph")
+}
+
+func TestInitKnowledgeGraphCommandArguments(t *testing.T) {
+	cmd := NewInitKnowledgeGraphCommand()
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestInitKnowledgeGraphCommandComplete(t *testing.T) {
+	cmd := NewInitKnowledgeGraphCommand()
+	candidates := cmd.Complete(context.Background(), []string{})
+	assert.Nil(t, candidates)
+}
+
+func TestInitKnowledgeGraphCommandExecute(t *testing.T) {
+	cmd := NewInitKnowledgeGraphCommand()
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, ActionInitKnowledgeGraph, result.Action)
+	assert.Empty(t, result.Output)
+}
