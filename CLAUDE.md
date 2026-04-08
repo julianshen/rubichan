@@ -26,6 +26,39 @@ All three modes share a common **Agent Core** (`internal/agent/`) with mode-spec
 
 Public SDK lives in `pkg/skillsdk/` — stable interface for skill authors. Everything in `internal/` is private.
 
+## ACP Protocol Integration
+
+Rubichan uses the Agent Client Protocol (ACP) as its standardized backbone for agent-mode communication. See `docs/ACP_ARCHITECTURE.md` for technical details and `docs/ACP_MIGRATION.md` for migration guide.
+
+### Three Execution Modes (All via ACP)
+- **Interactive**: Terminal UI with continuous conversation via `internal/modes/interactive/acp_client.go`
+- **Headless**: CI/CD pipeline integration via `internal/modes/headless/acp_client.go`
+- **Wiki**: Batch documentation generation via `internal/modes/wiki/acp_client.go`
+
+### ACP Implementation
+- **Server**: `internal/acp/server.go` with stdio transport
+- **Types**: `internal/acp/types.go` with JSON-RPC 2.0 structures
+- **Protocol extensions**: `internal/acp/*_protocol.go` for skills, security, tools
+- **Mode-specific clients**: `internal/modes/{mode}/acp_client.go` translate UI operations to ACP requests
+
+### For Developers
+When adding new capabilities:
+1. Define types in `internal/acp/*_protocol.go`
+2. Create a `Register*()` function to wire into registry
+3. Implement handlers in `internal/agent/acp_handlers.go`
+4. Add tests in `internal/acp/test/` and `test/e2e/`
+5. Enable ACP in agent creation with `agent.WithACP()` option
+
+Example: Using ACP in a mode entrypoint:
+```go
+agentCore := agent.New(provider, registry, approvalFunc, cfg,
+    agent.WithACP(),
+    agent.WithMode("interactive"),
+)
+client := interactive.NewACPClient()
+resp, err := client.Initialize("my-client")
+```
+
 ## Build Commands (planned)
 
 ```bash
