@@ -59,7 +59,6 @@ func (d *ResponseDispatcher) SendRequest(ctx context.Context, req Request, timeo
 		d.mu.Lock()
 		delete(d.pending, req.ID)
 		d.mu.Unlock()
-		close(respCh)
 	}()
 
 	// Send the request
@@ -72,7 +71,7 @@ func (d *ResponseDispatcher) SendRequest(ctx context.Context, req Request, timeo
 	}
 
 	// Wait for response with timeout
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	select {
@@ -94,6 +93,10 @@ func (d *ResponseDispatcher) Stop() {
 
 // routeResponse routes an incoming response to the waiting caller.
 func (d *ResponseDispatcher) routeResponse(resp *Response) {
+	if resp == nil {
+		return
+	}
+
 	d.mu.Lock()
 	respCh, ok := d.pending[resp.ID]
 	d.mu.Unlock()
