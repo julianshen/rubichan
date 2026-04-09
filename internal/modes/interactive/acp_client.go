@@ -113,98 +113,130 @@ func (c *ACPClient) Initialize(clientName string) (*acp.InitializeResponse, erro
 
 // Prompt sends a prompt request to the agent.
 func (c *ACPClient) Prompt(prompt string, maxTurns int) (*acp.Response, error) {
-	id := c.getNextID()
-
-	paramsStruct := map[string]interface{}{
+	promptReq := map[string]interface{}{
 		"prompt":   prompt,
 		"maxTurns": maxTurns,
 	}
-	paramsData, err := json.Marshal(paramsStruct)
+
+	paramsData, err := json.Marshal(promptReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal prompt params: %w", err)
 	}
-	params := json.RawMessage(paramsData)
 
 	req := acp.Request{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      c.getNextID(),
 		Method:  "agent/prompt",
-		Params:  params,
+		Params:  paramsData,
 	}
 
-	// TODO: Send request over transport and wait for response
-	_ = req
-	return nil, nil
+	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("prompt request failed: %w", err)
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("prompt error: %s", resp.Error.Message)
+	}
+
+	return resp, nil
 }
 
 // ExecuteTool executes a tool via ACP.
 func (c *ACPClient) ExecuteTool(name string, input json.RawMessage) (*acp.Response, error) {
-	id := c.getNextID()
-
-	paramsStruct := map[string]interface{}{
+	toolReq := map[string]interface{}{
 		"tool":  name,
-		"input": json.RawMessage(input),
+		"input": input,
 	}
-	paramsData, err := json.Marshal(paramsStruct)
+
+	paramsData, err := json.Marshal(toolReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal execute tool params: %w", err)
 	}
-	params := json.RawMessage(paramsData)
 
 	req := acp.Request{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      c.getNextID(),
 		Method:  "tool/execute",
-		Params:  params,
+		Params:  paramsData,
 	}
 
-	// TODO: Send request over transport and wait for response
-	_ = req
-	return nil, nil
+	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("execute tool request failed: %w", err)
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("execute tool error: %s", resp.Error.Message)
+	}
+
+	return resp, nil
 }
 
 // InvokeSkill invokes a skill via ACP.
 func (c *ACPClient) InvokeSkill(skillName, action string, input json.RawMessage) (*acp.SkillInvokeResponse, error) {
-	id := c.getNextID()
-
-	params := acp.SkillInvokeRequest{
+	skillReq := acp.SkillInvokeRequest{
 		SkillName: skillName,
 		Action:    action,
 		Input:     input,
 	}
-	paramsData, err := json.Marshal(params)
+
+	paramsData, err := json.Marshal(skillReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal skill invoke params: %w", err)
 	}
 
 	req := acp.Request{
 		JSONRPC: "2.0",
-		ID:      id,
-		Method:  "skill/invoke",
+		ID:      c.getNextID(),
+		Method:  acp.MethodSkillInvoke,
 		Params:  paramsData,
 	}
 
-	// TODO: Send request over transport and wait for response
-	_ = req
-	return nil, nil
+	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("invoke skill request failed: %w", err)
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("invoke skill error: %s", resp.Error.Message)
+	}
+
+	var skillResp acp.SkillInvokeResponse
+	if err := json.Unmarshal(*resp.Result, &skillResp); err != nil {
+		return nil, fmt.Errorf("unmarshal skill response: %w", err)
+	}
+
+	return &skillResp, nil
 }
 
 // ApprovalRequest asks the user to approve a security verdict.
 func (c *ACPClient) ApprovalRequest(verdict acp.SecurityApprovalRequest) (*acp.SecurityApprovalResponse, error) {
-	id := c.getNextID()
-
 	paramsData, err := json.Marshal(verdict)
 	if err != nil {
 		return nil, fmt.Errorf("marshal approval request params: %w", err)
 	}
+
 	req := acp.Request{
 		JSONRPC: "2.0",
-		ID:      id,
-		Method:  "security/requestApproval",
+		ID:      c.getNextID(),
+		Method:  acp.MethodSecurityApprove,
 		Params:  paramsData,
 	}
 
-	// TODO: Send request over transport and wait for response
-	_ = req
-	return nil, nil
+	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("approval request failed: %w", err)
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("approval error: %s", resp.Error.Message)
+	}
+
+	var approvalResp acp.SecurityApprovalResponse
+	if err := json.Unmarshal(*resp.Result, &approvalResp); err != nil {
+		return nil, fmt.Errorf("unmarshal approval response: %w", err)
+	}
+
+	return &approvalResp, nil
 }
