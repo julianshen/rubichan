@@ -72,10 +72,11 @@ func TestInteractiveModeWithACP(t *testing.T) {
 	acpServer := agentCore.ACPServer()
 	if acpServer == nil {
 		t.Error("ACP server not initialized")
+		return
 	}
 
 	// Create ACP client for interactive mode
-	client := interactive.NewACPClient()
+	client := interactive.NewACPClient(acpServer)
 	if client == nil {
 		t.Error("failed to create interactive ACP client")
 	}
@@ -327,8 +328,15 @@ func TestMultipleModeClientsWithSingleAgent(t *testing.T) {
 
 	agentCore := agent.New(p, registry, approvalFunc, cfg, opts...)
 
+	// All clients should be able to interface with the same agent's ACP server
+	acpServer := agentCore.ACPServer()
+	if acpServer == nil {
+		t.Error("ACP server not initialized")
+		return
+	}
+
 	// Create all three mode clients
-	interactiveClient := interactive.NewACPClient()
+	interactiveClient := interactive.NewACPClient(acpServer)
 	headlessClient := headless.NewACPClient()
 	wikiClient := wiki.NewACPClient()
 
@@ -343,8 +351,6 @@ func TestMultipleModeClientsWithSingleAgent(t *testing.T) {
 		t.Error("wiki client creation failed")
 	}
 
-	// All clients should be able to interface with the same agent's ACP server
-	acpServer := agentCore.ACPServer()
 	if acpServer == nil {
 		t.Error("ACP server not initialized")
 	}
