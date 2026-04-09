@@ -7,7 +7,7 @@ import "encoding/json"
 // Request represents a JSON-RPC 2.0 request message.
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`          // Always "2.0"
-	ID      interface{}     `json:"id,omitempty"`     // Request ID (number or string), omitted for notifications
+	ID      interface{}     `json:"id,omitempty"`     // Request ID - must be int64 for correlation. Omitted for notifications.
 	Method  string          `json:"method"`           // Method name
 	Params  json.RawMessage `json:"params,omitempty"` // Method parameters
 }
@@ -15,7 +15,7 @@ type Request struct {
 // Response represents a JSON-RPC 2.0 response message.
 type Response struct {
 	JSONRPC string           `json:"jsonrpc"`          // Always "2.0"
-	ID      interface{}      `json:"id,omitempty"`     // Request ID (matches request)
+	ID      interface{}      `json:"id,omitempty"`     // Request ID (must match request ID as int64 for correlation)
 	Result  *json.RawMessage `json:"result,omitempty"` // Result of successful call
 	Error   *RPCError        `json:"error,omitempty"`  // Error object (present if error occurred)
 }
