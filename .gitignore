@@ -4,3 +4,5 @@
 .claude/
 coverage.out
 coverage_xcode.out
+*.test
+coverage.html

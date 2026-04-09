@@ -1801,6 +1801,9 @@ func runInteractive() error {
 		opts = append(opts, agent.WithRateLimiter(rateLimiter))
 	}
 
+	// Enable ACP server for interactive mode
+	opts = append(opts, agent.WithACP())
+
 	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
@@ -2125,6 +2128,9 @@ func runHeadless() error {
 		headlessRateLimiter = agent.NewSharedRateLimiter(cfg.Agent.MaxRequestsPerMinute)
 		opts = append(opts, agent.WithRateLimiter(headlessRateLimiter))
 	}
+
+	// Enable ACP server for headless mode
+	opts = append(opts, agent.WithACP())
 
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
