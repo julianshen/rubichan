@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 // SkillInvokeRequest is a request to invoke a skill action.
@@ -82,13 +83,17 @@ func RegisterSkillMethods(registry *CapabilityRegistry, skillInvoker SkillInvoke
 	registry.RegisterMethod("skill/invoke", func(params json.RawMessage) (json.RawMessage, error) {
 		var req SkillInvokeRequest
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("unmarshal skill invoke request: %w", err)
 		}
 		resp, err := skillInvoker.Invoke(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("invoke skill: %w", err)
 		}
-		return json.Marshal(resp)
+		respData, err := json.Marshal(resp)
+		if err != nil {
+			return nil, fmt.Errorf("marshal skill response: %w", err)
+		}
+		return respData, nil
 	})
 
 	registry.RegisterMethod("skill/list", func(params json.RawMessage) (json.RawMessage, error) {
@@ -96,7 +101,7 @@ func RegisterSkillMethods(registry *CapabilityRegistry, skillInvoker SkillInvoke
 		// Empty params are valid for list (returns all skills)
 		if len(params) > 0 {
 			if err := json.Unmarshal(params, &req); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("unmarshal skill list request: %w", err)
 			}
 		}
 		resp := skillInvoker.List(req)

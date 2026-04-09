@@ -10,6 +10,10 @@ import (
 const (
 	// maxMessageSize is the maximum size of a single JSON-RPC message (10 MB).
 	// This accommodates large file reads and LLM completion outputs.
+	// Note: bufio.Scanner has a hard internal limit on token size. While this
+	// buffer setting helps, extremely large messages may still fail. For
+	// production systems handling very large payloads, consider using
+	// json.Decoder directly or implementing a chunking mechanism.
 	maxMessageSize = 10 * 1024 * 1024
 )
 

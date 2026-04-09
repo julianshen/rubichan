@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -51,13 +52,41 @@ func (a *Agent) handlePrompt(params json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("prompt cannot be empty")
 	}
 
-	// Return a stub response indicating the request was received.
-	// In a full implementation, this would process the prompt through
-	// the agent's Turn() loop and return the result.
+	// Execute the agent's Turn() loop with the prompt
+	maxTurns := promptReq.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = a.maxTurns
+	}
+
+	ctx := context.Background()
+	var turnEvents []interface{}
+	var turnErr error
+
+	for i := 0; i < maxTurns; i++ {
+		events, err := a.Turn(ctx, promptReq.Prompt)
+		if err != nil {
+			turnErr = err
+			break
+		}
+		turnEvents = append(turnEvents, events)
+
+		// If this is the first turn, use response from that turn
+		if i == 0 && len(events) > 0 {
+			break
+		}
+	}
+
+	// Build response with turn results
 	result := map[string]interface{}{
-		"status":   "processing",
 		"prompt":   promptReq.Prompt,
-		"maxTurns": promptReq.MaxTurns,
+		"maxTurns": maxTurns,
+		"events":   turnEvents,
+	}
+
+	if turnErr != nil {
+		result["error"] = turnErr.Error()
+	} else {
+		result["status"] = "complete"
 	}
 
 	return json.Marshal(result)
