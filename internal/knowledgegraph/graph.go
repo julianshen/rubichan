@@ -222,8 +222,13 @@ func (g *KnowledgeGraph) Put(ctx context.Context, e *kg.Entity) error {
 		if !e.LastUsed.IsZero() {
 			lastUsedStr = e.LastUsed.Format(time.RFC3339)
 		}
+		// Use INSERT ... ON CONFLICT to preserve query_hit_count
 		if _, err := g.db.ExecContext(ctx,
-			`INSERT OR REPLACE INTO entity_stats(entity_id, injection_count, last_accessed_at) VALUES(?, ?, ?)`,
+			`INSERT INTO entity_stats(entity_id, injection_count, last_accessed_at)
+			 VALUES(?, ?, ?)
+			 ON CONFLICT(entity_id) DO UPDATE SET
+			   injection_count=excluded.injection_count,
+			   last_accessed_at=excluded.last_accessed_at`,
 			e.ID, e.UsageCount, lastUsedStr,
 		); err != nil {
 			return fmt.Errorf("Put: insert entity_stats: %w", err)
