@@ -137,12 +137,18 @@ const (
 
 	// Notification methods (server → client, no response expected)
 	MethodNotificationProgress = "notifications/progress"
-	MethodNotificationLog      = "notifications/log"
+	MethodNotificationLog = "notifications/log"
+
+	// Built-in server methods
+	MethodInitialize = "initialize"
+	MethodShutdown   = "shutdown"
 
 	// Rubichan-specific extensions
-	MethodListSkills         = "skills/list"
-	MethodCallSkill          = "skills/call"
-	MethodGetSecurityVerdict = "security/getVerdict"
+	MethodSkillInvoke      = "skill/invoke"
+	MethodSkillList        = "skill/list"
+	MethodSkillManifest    = "skill/manifest"
+	MethodSecurityScan     = "security/scan"
+	MethodSecurityApprove  = "security/approve"
 )
 
 // Error Codes (JSON-RPC standard + custom)

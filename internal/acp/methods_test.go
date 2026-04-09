@@ -100,7 +100,7 @@ func TestCallSkillRequest(t *testing.T) {
 	msg := Request{
 		JSONRPC: "2.0",
 		ID:      4,
-		Method:  MethodCallSkill,
+		Method:  MethodSkillInvoke,
 		Params:  params,
 	}
 
@@ -115,8 +115,8 @@ func TestCallSkillRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if unmarshaled.Method != MethodCallSkill {
-		t.Errorf("got %q, want %q", unmarshaled.Method, MethodCallSkill)
+	if unmarshaled.Method != MethodSkillInvoke {
+		t.Errorf("got %q, want %q", unmarshaled.Method, MethodSkillInvoke)
 	}
 }
 

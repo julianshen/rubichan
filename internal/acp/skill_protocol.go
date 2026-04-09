@@ -93,7 +93,12 @@ func RegisterSkillMethods(registry *CapabilityRegistry, skillInvoker SkillInvoke
 
 	registry.RegisterMethod("skill/list", func(params json.RawMessage) (json.RawMessage, error) {
 		var req SkillListRequest
-		_ = json.Unmarshal(params, &req)
+		// Empty params are valid for list (returns all skills)
+		if len(params) > 0 {
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, err
+			}
+		}
 		resp := skillInvoker.List(req)
 		return json.Marshal(resp)
 	})

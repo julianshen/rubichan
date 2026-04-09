@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // Server is the ACP JSON-RPC 2.0 server.
@@ -26,9 +27,9 @@ func (s *Server) HandleMessage(data []byte) ([]byte, error) {
 
 	// Handle built-in methods
 	switch req.Method {
-	case "initialize":
+	case MethodInitialize:
 		return s.handleInitialize(req)
-	case "shutdown":
+	case MethodShutdown:
 		return s.handleShutdown(req)
 	default:
 		// Delegate to registry
@@ -65,7 +66,10 @@ func (s *Server) handleInitialize(req Request) ([]byte, error) {
 		initResult.Capabilities[cap.Type] = capList
 	}
 
-	result, _ := json.Marshal(initResult)
+	result, err := json.Marshal(initResult)
+	if err != nil {
+		return s.errorResponse(req.ID, ErrorCodeInternalError, "Failed to marshal initialization result", nil), nil
+	}
 	return s.successResponse(req.ID, json.RawMessage(result)), nil
 }
 
@@ -76,7 +80,12 @@ func (s *Server) handleShutdown(req Request) ([]byte, error) {
 func (s *Server) handleCustomMethod(req Request) ([]byte, error) {
 	result, err := s.registry.Call(req.Method, req.Params)
 	if err != nil {
-		return s.errorResponse(req.ID, ErrorCodeMethodNotFound, "Method not found", nil), nil
+		// Distinguish "method not found" from "handler error"
+		if strings.Contains(err.Error(), "method not found") {
+			return s.errorResponse(req.ID, ErrorCodeMethodNotFound, "Method not found", nil), nil
+		}
+		// Handler returned an error — use internal error code
+		return s.errorResponse(req.ID, ErrorCodeInternalError, err.Error(), nil), nil
 	}
 	return s.successResponse(req.ID, result), nil
 }

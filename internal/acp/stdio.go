@@ -7,6 +7,12 @@ import (
 	"log"
 )
 
+const (
+	// maxMessageSize is the maximum size of a single JSON-RPC message (10 MB).
+	// This accommodates large file reads and LLM completion outputs.
+	maxMessageSize = 10 * 1024 * 1024
+)
+
 // StdioTransport handles JSON-RPC communication over stdin/stdout.
 type StdioTransport struct {
 	stdin  io.Reader
@@ -17,11 +23,14 @@ type StdioTransport struct {
 
 // NewStdioTransport creates a new stdio-based ACP transport.
 func NewStdioTransport(stdin io.Reader, stdout io.Writer, server *Server) *StdioTransport {
+	scanner := bufio.NewScanner(stdin)
+	// Set maximum message size to accommodate large payloads (file reads, LLM outputs)
+	scanner.Buffer(make([]byte, 0, maxMessageSize), maxMessageSize)
 	return &StdioTransport{
 		stdin:  stdin,
 		stdout: stdout,
 		server: server,
-		reader: bufio.NewScanner(stdin),
+		reader: scanner,
 	}
 }
 
