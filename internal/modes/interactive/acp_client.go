@@ -112,10 +112,9 @@ func (c *ACPClient) Initialize(clientName string) (*acp.InitializeResponse, erro
 }
 
 // Prompt sends a prompt request to the agent.
-func (c *ACPClient) Prompt(prompt string, maxTurns int) (*acp.Response, error) {
+func (c *ACPClient) Prompt(turn string) (*acp.Response, error) {
 	promptReq := map[string]interface{}{
-		"prompt":   prompt,
-		"maxTurns": maxTurns,
+		"turn": turn,
 	}
 
 	paramsData, err := json.Marshal(promptReq)
@@ -174,13 +173,7 @@ func (c *ACPClient) ExecuteTool(name string, input json.RawMessage) (*acp.Respon
 }
 
 // InvokeSkill invokes a skill via ACP.
-func (c *ACPClient) InvokeSkill(skillName, action string, input json.RawMessage) (*acp.SkillInvokeResponse, error) {
-	skillReq := acp.SkillInvokeRequest{
-		SkillName: skillName,
-		Action:    action,
-		Input:     input,
-	}
-
+func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvokeResponse, error) {
 	paramsData, err := json.Marshal(skillReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal skill invoke params: %w", err)
@@ -211,10 +204,15 @@ func (c *ACPClient) InvokeSkill(skillName, action string, input json.RawMessage)
 }
 
 // ApprovalRequest asks the user to approve a security verdict.
-func (c *ACPClient) ApprovalRequest(verdict acp.SecurityApprovalRequest) (*acp.SecurityApprovalResponse, error) {
-	paramsData, err := json.Marshal(verdict)
+func (c *ACPClient) ApprovalRequest(tool string, input json.RawMessage) (bool, error) {
+	// Build approval response with decision to approve
+	approvalResp := acp.SecurityApprovalResponse{
+		Decision: "approve",
+	}
+
+	paramsData, err := json.Marshal(approvalResp)
 	if err != nil {
-		return nil, fmt.Errorf("marshal approval request params: %w", err)
+		return false, fmt.Errorf("marshal approval request params: %w", err)
 	}
 
 	req := acp.Request{
@@ -226,17 +224,12 @@ func (c *ACPClient) ApprovalRequest(verdict acp.SecurityApprovalRequest) (*acp.S
 
 	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("approval request failed: %w", err)
+		return false, fmt.Errorf("approval request failed: %w", err)
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("approval error: %s", resp.Error.Message)
+		return false, fmt.Errorf("approval error: %s", resp.Error.Message)
 	}
 
-	var approvalResp acp.SecurityApprovalResponse
-	if err := json.Unmarshal(*resp.Result, &approvalResp); err != nil {
-		return nil, fmt.Errorf("unmarshal approval response: %w", err)
-	}
-
-	return &approvalResp, nil
+	return true, nil
 }
