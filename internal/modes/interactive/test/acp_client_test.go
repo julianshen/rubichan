@@ -130,3 +130,27 @@ func TestACPClientApprovalRequest(t *testing.T) {
 
 	t.Skip("waiting for full dispatcher listener integration")
 }
+
+func TestInitializeWithTransport(t *testing.T) {
+	// Create a minimal server
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+
+	// Create client
+	client := interactive.NewACPClient(server)
+	defer client.Close()
+
+	// Call Initialize
+	resp, err := client.Initialize("test-client")
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Verify response
+	if resp == nil {
+		t.Error("response is nil")
+	}
+	if resp.Result.ServerInfo.Name != "rubichan" {
+		t.Errorf("got server name %q, want rubichan", resp.Result.ServerInfo.Name)
+	}
+}
