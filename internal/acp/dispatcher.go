@@ -41,9 +41,37 @@ func NewResponseDispatcher(transport *StdioTransport, server *Server) *ResponseD
 func (d *ResponseDispatcher) Start() error {
 	defer close(d.listenerDone)
 
-	// For now, Start is a no-op — actual listening will be implemented in a follow-up task
-	// when we understand how the transport receives messages
-	return nil
+	for {
+		select {
+		case <-d.stopCh:
+			return nil
+		default:
+		}
+
+		// Try to read a line from the transport
+		if !d.transport.reader.Scan() {
+			// No more input or scanner error
+			if err := d.transport.reader.Err(); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		line := d.transport.reader.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		// Parse response
+		var resp Response
+		if err := json.Unmarshal(line, &resp); err != nil {
+			// Log parse error but continue
+			continue
+		}
+
+		// Route the response to waiting caller
+		d.routeResponse(&resp)
+	}
 }
 
 // SendRequest sends a request and waits for the response with the given timeout.
@@ -71,7 +99,7 @@ func (d *ResponseDispatcher) SendRequest(ctx context.Context, req Request, timeo
 	}
 
 	// Wait for response with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	select {
@@ -80,7 +108,7 @@ func (d *ResponseDispatcher) SendRequest(ctx context.Context, req Request, timeo
 			return nil, fmt.Errorf("response channel closed")
 		}
 		return resp, nil
-	case <-ctx.Done():
+	case <-timeoutCtx.Done():
 		return nil, fmt.Errorf("request timeout after %v", timeout)
 	}
 }

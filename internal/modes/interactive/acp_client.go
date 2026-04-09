@@ -1,23 +1,41 @@
 package interactive
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/acp"
 )
 
 // ACPClient is a client for communicating with the ACP server in interactive mode.
 type ACPClient struct {
-	nextID int64
-	mu     sync.Mutex
+	nextID     int64
+	mu         sync.Mutex
+	dispatcher *acp.ResponseDispatcher
+	server     *acp.Server
 }
 
-// NewACPClient creates a new interactive ACP client.
-func NewACPClient() *ACPClient {
+// NewACPClient creates an interactive ACP client given a server instance.
+func NewACPClient(server *acp.Server) *ACPClient {
+	// Create a stdio transport connected to the server
+	transport := acp.NewStdioTransport(os.Stdin, os.Stdout, server)
+
+	// Create dispatcher to route responses
+	dispatcher := acp.NewResponseDispatcher(transport, server)
+
+	// Start transport listener in background
+	go func() {
+		_ = dispatcher.Start() // Start listener, ignoring any errors (will be logged elsewhere)
+	}()
+
 	return &ACPClient{
-		nextID: 1,
+		nextID:     1,
+		dispatcher: dispatcher,
+		server:     server,
 	}
 }
 
@@ -30,43 +48,67 @@ func (c *ACPClient) getNextID() int64 {
 	return id
 }
 
+// GetNextID returns the next request ID and increments the counter (for testing).
+func (c *ACPClient) GetNextID() int64 {
+	return c.getNextID()
+}
+
+// Close stops the dispatcher and cleans up resources.
+func (c *ACPClient) Close() error {
+	if c.dispatcher != nil {
+		c.dispatcher.Stop()
+	}
+	return nil
+}
+
+// SetDispatcher sets the dispatcher for testing purposes.
+func (c *ACPClient) SetDispatcher(d *acp.ResponseDispatcher) {
+	c.dispatcher = d
+}
+
 // Initialize sends an initialize request to the ACP server.
 func (c *ACPClient) Initialize(clientName string) (*acp.InitializeResponse, error) {
-	id := c.getNextID()
-
-	params := acp.InitializeParams{
+	// Build the initialize request
+	initParams := acp.InitializeParams{
 		ClientInfo: acp.ClientInfo{
-			Name:    clientName,
+			Name:    "rubichan-interactive",
 			Version: "1.0.0",
 		},
 	}
 
-	paramsData, err := json.Marshal(params)
+	paramsData, err := json.Marshal(initParams)
 	if err != nil {
 		return nil, fmt.Errorf("marshal initialize params: %w", err)
 	}
+
+	// Get next request ID
+	id := c.getNextID()
+
+	// Build request
 	req := acp.Request{
 		JSONRPC: "2.0",
 		ID:      id,
-		Method:  "initialize",
+		Method:  acp.MethodInitialize,
 		Params:  paramsData,
 	}
 
-	// TODO: Send request over transport and wait for response
-	// For now, return a dummy response
-	resp := &acp.InitializeResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result: acp.InitializeResult{
-			ServerInfo: acp.ServerInfo{
-				Name:    "rubichan",
-				Version: "1.0.0",
-			},
-		},
+	// Send request and wait for response (5 second timeout for interactive mode)
+	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("initialize request failed: %w", err)
 	}
 
-	_ = req
-	return resp, nil
+	// Parse response
+	if resp.Error != nil {
+		return nil, fmt.Errorf("initialize error: %s (code %d)", resp.Error.Message, resp.Error.Code)
+	}
+
+	var initResp acp.InitializeResponse
+	if err := json.Unmarshal(*resp.Result, &initResp); err != nil {
+		return nil, fmt.Errorf("unmarshal initialize response: %w", err)
+	}
+
+	return &initResp, nil
 }
 
 // Prompt sends a prompt request to the agent.
