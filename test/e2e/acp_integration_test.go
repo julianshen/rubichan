@@ -76,9 +76,13 @@ func TestInteractiveModeWithACP(t *testing.T) {
 	}
 
 	// Create ACP client for interactive mode
-	client := interactive.NewACPClient(acpServer)
+	client, err := interactive.NewACPClient(acpServer)
+	if err != nil {
+		t.Errorf("failed to create interactive ACP client: %v", err)
+		return
+	}
 	if client == nil {
-		t.Error("failed to create interactive ACP client")
+		t.Error("interactive ACP client is nil")
 	}
 
 	// Test initialize handshake via the interactive client
@@ -145,9 +149,13 @@ func TestHeadlessModeWithACP(t *testing.T) {
 	}
 
 	// Create ACP client for headless mode
-	client := headless.NewACPClient()
+	client, err := headless.NewACPClient(acpServer)
+	if err != nil {
+		t.Errorf("failed to create headless ACP client: %v", err)
+		return
+	}
 	if client == nil {
-		t.Error("failed to create headless ACP client")
+		t.Error("headless ACP client is nil")
 	}
 
 	// Test code review operation setup
@@ -210,9 +218,13 @@ func TestWikiModeWithACP(t *testing.T) {
 	}
 
 	// Create ACP client for wiki mode
-	client := wiki.NewACPClient()
+	client, err := wiki.NewACPClient(acpServer)
+	if err != nil {
+		t.Errorf("failed to create wiki ACP client: %v", err)
+		return
+	}
 	if client == nil {
-		t.Error("failed to create wiki ACP client")
+		t.Error("wiki ACP client is nil")
 	}
 
 	// Test wiki client progress tracking
@@ -336,19 +348,31 @@ func TestMultipleModeClientsWithSingleAgent(t *testing.T) {
 	}
 
 	// Create all three mode clients
-	interactiveClient := interactive.NewACPClient(acpServer)
-	headlessClient := headless.NewACPClient()
-	wikiClient := wiki.NewACPClient()
+	interactiveClient, err := interactive.NewACPClient(acpServer)
+	if err != nil {
+		t.Errorf("failed to create interactive client: %v", err)
+		return
+	}
+	headlessClient, err := headless.NewACPClient(acpServer)
+	if err != nil {
+		t.Errorf("failed to create headless client: %v", err)
+		return
+	}
+	wikiClient, err := wiki.NewACPClient(acpServer)
+	if err != nil {
+		t.Errorf("failed to create wiki client: %v", err)
+		return
+	}
 
 	// Verify all clients are operational
 	if interactiveClient == nil {
-		t.Error("interactive client creation failed")
+		t.Error("interactive client is nil")
 	}
 	if headlessClient == nil {
-		t.Error("headless client creation failed")
+		t.Error("headless client is nil")
 	}
 	if wikiClient == nil {
-		t.Error("wiki client creation failed")
+		t.Error("wiki client is nil")
 	}
 
 	if acpServer == nil {

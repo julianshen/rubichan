@@ -54,10 +54,10 @@ func TestHeadlessModeACPWiring(t *testing.T) {
 		t.Fatal("ACP server not initialized in headless mode")
 	}
 
-	// Create headless ACP client (which creates its own server for external communication)
-	client := headless.NewACPClient()
-	if client == nil {
-		t.Fatal("failed to create headless ACP client")
+	// Create headless ACP client using the agent's ACP server
+	client, err := headless.NewACPClient(acpServer)
+	if err != nil {
+		t.Fatalf("failed to create headless ACP client: %v", err)
 	}
 	defer client.Close()
 

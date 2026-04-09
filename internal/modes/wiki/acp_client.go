@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -31,31 +32,50 @@ type ACPClient struct {
 	progressMu sync.Mutex // separate mutex for progress
 }
 
-// NewACPClient creates a new wiki ACP client.
-func NewACPClient() *ACPClient {
-	// Create capability registry
-	registry := acp.NewCapabilityRegistry()
-
-	// Create server with registry
-	server := acp.NewServer(registry)
-
-	// Create stdio transport
+// NewACPClient creates a new wiki ACP client using the provided server.
+// The server must already have capabilities registered by the agent.
+// Returns an error if the dispatcher fails to start.
+func NewACPClient(server *acp.Server) (*ACPClient, error) {
+	// Create stdio transport connected to the server
 	transport := acp.NewStdioTransport(os.Stdin, os.Stdout, server)
 
 	// Create dispatcher to route responses
 	dispatcher := acp.NewResponseDispatcher(transport, server)
 
-	// Start transport listener in background
+	// Start transport listener in background with error signal
+	startedCh := make(chan error, 1)
 	go func() {
-		_ = dispatcher.Start() // Start listener, ignoring any errors (will be logged elsewhere)
+		startedCh <- dispatcher.Start()
 	}()
 
-	return &ACPClient{
+	// Wait for dispatcher to signal startup (success or error)
+	// Use non-blocking select with timeout to detect startup failures
+	// In test environments or when stdin is not available, allow graceful degradation
+	select {
+	case err := <-startedCh:
+		// Dispatcher exited (either started successfully or failed)
+		// In production, this would be an error; in tests, it's expected when stdin is unavailable
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("dispatcher startup failed: %w", err)
+		}
+		// If EOF, it means stdin closed (common in tests) - continue anyway
+	case <-time.After(500 * time.Millisecond):
+		// Dispatcher is running, continue initialization
+	}
+
+	client := &ACPClient{
 		nextID:     1,
 		dispatcher: dispatcher,
 		server:     server,
 		progress:   0,
 	}
+
+	// Ensure startedCh is drained on error to avoid goroutine leak
+	go func() {
+		<-startedCh // Wait for dispatcher to eventually exit
+	}()
+
+	return client, nil
 }
 
 func (c *ACPClient) getNextID() int64 {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"sync"
 )
 
 const (
@@ -23,6 +24,10 @@ type StdioTransport struct {
 	stdout io.Writer
 	server *Server
 	reader *bufio.Scanner
+
+	// mu protects concurrent writes to stdout from multiple goroutines.
+	// This prevents interleaved JSON messages which would corrupt the wire protocol.
+	mu sync.Mutex
 }
 
 // NewStdioTransport creates a new stdio-based ACP transport.
@@ -66,11 +71,17 @@ func (t *StdioTransport) Start() error {
 }
 
 // SendMessage sends a JSON-RPC message to stdout.
+// Uses a mutex to prevent concurrent writes which would corrupt the wire protocol.
 func (t *StdioTransport) SendMessage(msg interface{}) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
+
+	// Protect concurrent writes to stdout
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	_, err = t.stdout.Write(append(data, '\n'))
 	return err
 }

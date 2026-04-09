@@ -67,7 +67,10 @@ func TestAllModeClientsWithTransport(t *testing.T) {
 
 	// Test interactive client
 	t.Run("InteractiveClientWithTransport", func(t *testing.T) {
-		client := interactive.NewACPClient(acpServer)
+		client, err := interactive.NewACPClient(acpServer)
+		if err != nil {
+			t.Fatalf("failed to create interactive client: %v", err)
+		}
 		defer client.Close()
 
 		// Initialize
@@ -82,7 +85,10 @@ func TestAllModeClientsWithTransport(t *testing.T) {
 
 	// Test headless client
 	t.Run("HeadlessClientWithTransport", func(t *testing.T) {
-		client := headless.NewACPClient()
+		client, err := headless.NewACPClient(acpServer)
+		if err != nil {
+			t.Fatalf("failed to create headless client: %v", err)
+		}
 		defer client.Close()
 
 		// Test timeout getter/setter
@@ -94,7 +100,10 @@ func TestAllModeClientsWithTransport(t *testing.T) {
 
 	// Test wiki client
 	t.Run("WikiClientWithTransport", func(t *testing.T) {
-		client := wiki.NewACPClient()
+		client, err := wiki.NewACPClient(acpServer)
+		if err != nil {
+			t.Fatalf("failed to create wiki client: %v", err)
+		}
 		defer client.Close()
 
 		// Test progress getter/setter

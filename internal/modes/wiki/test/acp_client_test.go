@@ -10,7 +10,12 @@ import (
 // TestACPClientCreateStructure tests that ACPClient can be created.
 // Full transport integration testing is done in integration tests.
 func TestACPClientCreateStructure(t *testing.T) {
-	client := wiki.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := wiki.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	if client == nil {
@@ -19,7 +24,12 @@ func TestACPClientCreateStructure(t *testing.T) {
 }
 
 func TestProgressTracking(t *testing.T) {
-	client := wiki.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := wiki.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	client.SetProgress(50)
@@ -40,7 +50,12 @@ func TestProgressTracking(t *testing.T) {
 }
 
 func TestWikiClientProgress(t *testing.T) {
-	client := wiki.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := wiki.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	if client.Progress() != 0 {
@@ -75,7 +90,12 @@ func TestGenerateDocsStructure(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	client := wiki.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := wiki.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	// Verify client was created correctly
@@ -88,7 +108,12 @@ func TestGenerateDocsStructure(t *testing.T) {
 
 // TestProgressClampingBoundaries tests clamping at boundaries
 func TestProgressClampingBoundaries(t *testing.T) {
-	client := wiki.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := wiki.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	tests := []struct {

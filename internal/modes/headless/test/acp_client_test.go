@@ -4,12 +4,18 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/acp"
 	"github.com/julianshen/rubichan/internal/modes/headless"
 )
 
 // TestACPClientStructure tests that ACPClient can be created and has correct defaults.
 func TestACPClientStructure(t *testing.T) {
-	client := headless.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := headless.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	// Verify client was created correctly
@@ -20,7 +26,12 @@ func TestACPClientStructure(t *testing.T) {
 
 // TestACPClientDefaultTimeout verifies the 30-second timeout for CI/CD operations.
 func TestACPClientDefaultTimeout(t *testing.T) {
-	client := headless.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := headless.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	if client.Timeout() != 30 {
@@ -30,7 +41,12 @@ func TestACPClientDefaultTimeout(t *testing.T) {
 
 // TestACPClientTimeoutAdjustment verifies timeout can be adjusted dynamically.
 func TestACPClientTimeoutAdjustment(t *testing.T) {
-	client := headless.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := headless.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	client.SetTimeout(60)
@@ -46,7 +62,12 @@ func TestACPClientTimeoutAdjustment(t *testing.T) {
 
 // TestACPClientConcurrentIDGeneration verifies ID generation is thread-safe.
 func TestACPClientConcurrentIDGeneration(t *testing.T) {
-	client := headless.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := headless.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	const numGoroutines = 10
@@ -87,7 +108,12 @@ func TestACPClientConcurrentIDGeneration(t *testing.T) {
 func TestRunCodeReviewWithTransport(t *testing.T) {
 	t.Skip("full transport loop requires server integration - tested in e2e")
 	/*
-	client := headless.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := headless.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	resp, err := client.RunCodeReview("func test() { return 1; }")
@@ -107,7 +133,12 @@ func TestRunCodeReviewWithTransport(t *testing.T) {
 func TestRunSecurityScanWithTransport(t *testing.T) {
 	t.Skip("full transport loop requires server integration - tested in e2e")
 	/*
-	client := headless.NewACPClient()
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	client, err := headless.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
 	defer client.Close()
 
 	resp, err := client.RunSecurityScan(false)

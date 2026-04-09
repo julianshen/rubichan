@@ -77,7 +77,9 @@ func (a *Agent) handlePrompt(params json.RawMessage) (json.RawMessage, error) {
 }
 
 // handleToolExecute handles tool/execute ACP requests.
-// This method allows clients to invoke tools directly through the ACP interface.
+// Currently a stub that returns "not_implemented" status.
+// In a full implementation, this would execute the tool and return
+// the result through the normal execution pipeline.
 func (a *Agent) handleToolExecute(params json.RawMessage) (json.RawMessage, error) {
 	var toolReq struct {
 		Tool  string          `json:"tool"`
@@ -98,12 +100,12 @@ func (a *Agent) handleToolExecute(params json.RawMessage) (json.RawMessage, erro
 		return nil, fmt.Errorf("tool not found: %s", toolReq.Tool)
 	}
 
-	// Return a stub response indicating the request was received.
-	// In a full implementation, this would execute the tool and return
-	// the result through the pipeline.
+	// Return stub response with "not_implemented" status to avoid misleading callers.
+	// This is clearly a stub that should not be used in production.
 	result := map[string]interface{}{
-		"status": "executed",
+		"status": "not_implemented",
 		"tool":   toolReq.Tool,
+		"reason": "tool/execute is a stub; use agent/prompt for full tool execution",
 	}
 
 	return json.Marshal(result)

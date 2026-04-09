@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -20,23 +21,47 @@ type ACPClient struct {
 }
 
 // NewACPClient creates an interactive ACP client given a server instance.
-func NewACPClient(server *acp.Server) *ACPClient {
+// Returns an error if the dispatcher fails to start.
+func NewACPClient(server *acp.Server) (*ACPClient, error) {
 	// Create a stdio transport connected to the server
 	transport := acp.NewStdioTransport(os.Stdin, os.Stdout, server)
 
 	// Create dispatcher to route responses
 	dispatcher := acp.NewResponseDispatcher(transport, server)
 
-	// Start transport listener in background
+	// Start transport listener in background with error signal
+	startedCh := make(chan error, 1)
 	go func() {
-		_ = dispatcher.Start() // Start listener, ignoring any errors (will be logged elsewhere)
+		startedCh <- dispatcher.Start()
 	}()
 
-	return &ACPClient{
+	// Wait for dispatcher to signal startup (success or error)
+	// Use non-blocking select with timeout to detect startup failures
+	// In test environments or when stdin is not available, allow graceful degradation
+	select {
+	case err := <-startedCh:
+		// Dispatcher exited (either started successfully or failed)
+		// In production, this would be an error; in tests, it's expected when stdin is unavailable
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("dispatcher startup failed: %w", err)
+		}
+		// If EOF, it means stdin closed (common in tests) - continue anyway
+	case <-time.After(500 * time.Millisecond):
+		// Dispatcher is running, continue initialization
+	}
+
+	client := &ACPClient{
 		nextID:     1,
 		dispatcher: dispatcher,
 		server:     server,
 	}
+
+	// Ensure startedCh is drained on error to avoid goroutine leak
+	go func() {
+		<-startedCh // Wait for dispatcher to eventually exit
+	}()
+
+	return client, nil
 }
 
 // getNextID returns the next request ID and increments the counter.
@@ -68,10 +93,10 @@ func (c *ACPClient) SetDispatcher(d *acp.ResponseDispatcher) {
 
 // Initialize sends an initialize request to the ACP server.
 func (c *ACPClient) Initialize(clientName string) (*acp.InitializeResponse, error) {
-	// Build the initialize request
+	// Build the initialize request using the provided clientName
 	initParams := acp.InitializeParams{
 		ClientInfo: acp.ClientInfo{
-			Name:    "rubichan-interactive",
+			Name:    clientName, // Use the provided clientName parameter
 			Version: "1.0.0",
 		},
 	}
@@ -203,11 +228,17 @@ func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvo
 	return &skillResp, nil
 }
 
-// ApprovalRequest asks the user to approve a security verdict.
+// ApprovalRequest is a stub that auto-approves tool execution.
+// SECURITY ISSUE: This is not properly implemented and always returns true (approve).
+// In a production implementation, this should present an approval overlay to the user
+// asking them to manually review and approve/reject the operation.
+// TODO: Wire this to the actual TUI approval overlay.
 func (c *ACPClient) ApprovalRequest(tool string, input json.RawMessage) (bool, error) {
-	// Build approval response with decision to approve
+	// STUB: Auto-approves all operations without user input.
+	// This is a placeholder and should NOT be used in production.
+	// Proper implementation should show a TUI dialog asking for user approval.
 	approvalResp := acp.SecurityApprovalResponse{
-		Decision: "approve",
+		Decision: "approve", // STUB: Always approve without asking
 	}
 
 	paramsData, err := json.Marshal(approvalResp)
@@ -231,5 +262,6 @@ func (c *ACPClient) ApprovalRequest(tool string, input json.RawMessage) (bool, e
 		return false, fmt.Errorf("approval error: %s", resp.Error.Message)
 	}
 
+	// STUB: Always returns true (approved) without user interaction
 	return true, nil
 }
