@@ -82,7 +82,7 @@ func (d *ResponseDispatcher) SendRequest(ctx context.Context, req Request, timeo
 	d.pending[req.ID] = respCh
 	d.mu.Unlock()
 
-	// Clean up when done
+	// Clean up when done (before returning from this function)
 	defer func() {
 		d.mu.Lock()
 		delete(d.pending, req.ID)
