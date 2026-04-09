@@ -99,7 +99,7 @@ func (d *ResponseDispatcher) SendRequest(ctx context.Context, req Request, timeo
 	}
 
 	// Wait for response with timeout
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	select {
