@@ -59,6 +59,16 @@ client := interactive.NewACPClient()
 resp, err := client.Initialize("my-client")
 ```
 
+### Phase 5: Transport Integration (Complete)
+
+All mode clients now use real ACP request/response communication via stdio transport:
+
+- **Interactive Client** (`internal/modes/interactive/acp_client.go`): 5-second timeout for user-facing operations
+- **Headless Client** (`internal/modes/headless/acp_client.go`): 30-second timeout for CI/CD operations  
+- **Wiki Client** (`internal/modes/wiki/acp_client.go`): 60-second timeout for batch documentation with progress tracking
+
+Transport managed by ResponseDispatcher (`internal/acp/dispatcher.go`) for request-response correlation.
+
 ## Build Commands (planned)
 
 ```bash
