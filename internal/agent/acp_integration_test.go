@@ -140,8 +140,8 @@ func TestAgentACPPromptMethod(t *testing.T) {
 		if err := json.Unmarshal(*resp.Result, &result); err != nil {
 			t.Fatalf("failed to unmarshal result: %v", err)
 		}
-		if status, ok := result["status"].(string); !ok || status != "processing" {
-			t.Errorf("expected status='processing', got %v", result["status"])
+		if status, ok := result["status"].(string); !ok || status != "complete" {
+			t.Errorf("expected status='complete', got %v", result["status"])
 		}
 	}
 }

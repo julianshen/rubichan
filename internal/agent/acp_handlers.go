@@ -52,41 +52,25 @@ func (a *Agent) handlePrompt(params json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("prompt cannot be empty")
 	}
 
-	// Execute the agent's Turn() loop with the prompt
-	maxTurns := promptReq.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = a.maxTurns
+	// Execute the agent's Turn() with the prompt
+	// Note: Full multi-turn support would require async event streaming.
+	// For now, collect events from the first turn.
+	eventsChan, err := a.Turn(context.Background(), promptReq.Prompt)
+	if err != nil {
+		return nil, fmt.Errorf("turn execution failed: %w", err)
 	}
 
-	ctx := context.Background()
-	var turnEvents []interface{}
-	var turnErr error
-
-	for i := 0; i < maxTurns; i++ {
-		events, err := a.Turn(ctx, promptReq.Prompt)
-		if err != nil {
-			turnErr = err
-			break
-		}
-		turnEvents = append(turnEvents, events)
-
-		// If this is the first turn, use response from that turn
-		if i == 0 && len(events) > 0 {
-			break
-		}
+	// Collect all events from this turn
+	var turnEvents []TurnEvent
+	for event := range eventsChan {
+		turnEvents = append(turnEvents, event)
 	}
 
 	// Build response with turn results
 	result := map[string]interface{}{
-		"prompt":   promptReq.Prompt,
-		"maxTurns": maxTurns,
-		"events":   turnEvents,
-	}
-
-	if turnErr != nil {
-		result["error"] = turnErr.Error()
-	} else {
-		result["status"] = "complete"
+		"prompt": promptReq.Prompt,
+		"events": turnEvents,
+		"status": "complete",
 	}
 
 	return json.Marshal(result)
