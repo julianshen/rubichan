@@ -41,7 +41,7 @@ func (a *SuggestionAnalyzer) Analyze(ctx context.Context, input AnalyzerInput) (
 		return &AnalyzerOutput{}, nil // non-fatal
 	}
 
-	resp, err := a.llm.Complete(ctx, buf.String())
+	resp, err := completeLLMResponse(ctx, buf.String(), a.llm, 1)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

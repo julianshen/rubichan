@@ -116,7 +116,7 @@ func (a *SecurityAnalyzer) runSubPrompt(
 		return nil, nil, fmt.Errorf("rendering prompt: %w", err)
 	}
 
-	resp, err := a.llm.Complete(ctx, buf.String())
+	resp, err := completeLLMResponse(ctx, buf.String(), a.llm, 1)
 	if err != nil {
 		return nil, nil, fmt.Errorf("LLM completion: %w", err)
 	}
