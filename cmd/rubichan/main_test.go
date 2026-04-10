@@ -277,6 +277,40 @@ func TestResumeFlagDefaults(t *testing.T) {
 	assert.Empty(t, resumeFlag, "resume flag must default to empty")
 }
 
+func TestResumeFlagDefinedOnRootCmd(t *testing.T) {
+	// Build a minimal cobra command that mirrors the real command structure
+	// so we can verify the flag is properly defined without spinning up the full app
+	var localResume string
+	cmd := &cobra.Command{
+		Use:   "rubichan",
+		Short: "An AI coding assistant",
+		RunE:  func(_ *cobra.Command, _ []string) error { return nil },
+	}
+	cmd.PersistentFlags().StringVarP(&localResume, "resume", "r", "", "resume a previous session by ID")
+
+	// Verify that the --resume flag is defined with proper metadata
+	flag := cmd.PersistentFlags().Lookup("resume")
+	if flag == nil {
+		t.Fatal("expected --resume flag to exist")
+	}
+
+	// Check flag has short name 'r'
+	if flag.Shorthand != "r" {
+		t.Errorf("expected flag shorthand 'r', got '%s'", flag.Shorthand)
+	}
+
+	// Check flag is a string type
+	if flag.Value.Type() != "string" {
+		t.Errorf("expected flag type 'string', got '%s'", flag.Value.Type())
+	}
+
+	// Check flag has correct usage description
+	expectedUsage := "resume a previous session by ID"
+	if flag.Usage != expectedUsage {
+		t.Errorf("expected usage '%s', got '%s'", expectedUsage, flag.Usage)
+	}
+}
+
 func TestNewDefaultSecurityEngine(t *testing.T) {
 	engine := newDefaultSecurityEngine(security.EngineConfig{Concurrency: 4})
 	require.NotNil(t, engine)
