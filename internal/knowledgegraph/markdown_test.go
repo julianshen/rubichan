@@ -185,6 +185,23 @@ func TestWalkKnowledgeDirEmpty(t *testing.T) {
 	require.Empty(t, read)
 }
 
+func TestValidKindsCoversAllEntityKinds(t *testing.T) {
+	// Catch drift: if a new EntityKind constant is added to pkg/knowledgegraph
+	// but not to validKinds, this test fails.
+	allKinds := []kg.EntityKind{
+		kg.KindArchitecture,
+		kg.KindDecision,
+		kg.KindGotcha,
+		kg.KindPattern,
+		kg.KindModule,
+		kg.KindIntegration,
+	}
+	for _, k := range allKinds {
+		require.True(t, validKinds[string(k)], "validKinds missing %q", k)
+	}
+	require.Len(t, validKinds, len(allKinds), "validKinds has entries not in EntityKind constants")
+}
+
 func TestValidateFrontmatterMissingID(t *testing.T) {
 	dir := tempDir(t)
 	path := filepath.Join(dir, "no-id.md")

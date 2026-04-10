@@ -512,6 +512,13 @@ func main() {
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRun: func(_ *cobra.Command, _ []string) {
+			// Suppress ANSI color globally when --no-color is set or the
+			// NO_COLOR environment variable is present (https://no-color.org/).
+			if noColor || os.Getenv("NO_COLOR") != "" {
+				lipgloss.SetColorProfile(termenv.Ascii)
+			}
+		},
 	}
 
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to config file")
@@ -1361,12 +1368,6 @@ func applyAPIKeyFlag(cfg *config.Config) {
 }
 
 func runInteractive() error {
-	// Suppress ANSI color output when --no-color flag is set or the NO_COLOR
-	// environment variable is present (https://no-color.org/).
-	if noColor || os.Getenv("NO_COLOR") != "" {
-		lipgloss.SetColorProfile(termenv.Ascii)
-	}
-
 	// Resolve config path early for bootstrap check.
 	cfgDir, err := configDir()
 	if err != nil {

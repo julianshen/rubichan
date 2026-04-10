@@ -973,7 +973,7 @@ func appendKindLayerClauses(query string, args []any, kinds []kg.EntityKind, lay
 	if len(layers) > 0 {
 		query += ` AND e.layer IN (` + repeatedPlaceholder(len(layers)) + `)`
 		for _, l := range layers {
-			args = append(args, string(l))
+			args = append(args, normalizedLayer(l))
 		}
 	}
 	return query, args
