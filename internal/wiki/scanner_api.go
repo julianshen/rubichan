@@ -11,11 +11,11 @@ import (
 
 // apiPatternDef describes a single regex-based API detection rule.
 type apiPatternDef struct {
-	Language    string
-	Kind        string
-	Regex       *regexp.Regexp
-	MethodGroup int // submatch index for HTTP method (0 = none)
-	PathGroup   int // submatch index for path/route (0 = none)
+	Language     string
+	Kind         string
+	Regex        *regexp.Regexp
+	MethodGroup  int // submatch index for HTTP method (0 = none)
+	PathGroup    int // submatch index for path/route (0 = none)
 	HandlerGroup int // submatch index for handler name (0 = none)
 }
 
@@ -24,11 +24,11 @@ var apiPatternDefs []apiPatternDef
 
 func init() {
 	type raw struct {
-		language    string
-		kind        string
-		pattern     string
-		methodGroup int
-		pathGroup   int
+		language     string
+		kind         string
+		pattern      string
+		methodGroup  int
+		pathGroup    int
 		handlerGroup int
 	}
 
@@ -145,6 +145,79 @@ func ScanAPIPatterns(files []ScannedFile, readFile func(string) ([]byte, error))
 	return results
 }
 
+// goGroupRe matches Go route group assignments like: api := router.Group("/prefix")
+var goGroupRe = regexp.MustCompile(`(\w+)\s*:?=\s*\w+\.Group\s*\(\s*"([^"]*)"`)
+
+// resolveRouteGroups rewrites Go source so that routes registered on group
+// variables have their prefix prepended, allowing the existing line-by-line
+// scanner to detect the full path.
+func resolveRouteGroups(src []byte) []byte {
+	// Build varName → prefix map.
+	groups := make(map[string]string)
+	for _, m := range goGroupRe.FindAllSubmatch(src, -1) {
+		varName := string(m[1])
+		prefix := strings.TrimRight(string(m[2]), "/")
+		groups[varName] = prefix
+	}
+	if len(groups) == 0 {
+		return src
+	}
+
+	// For each group variable, rewrite method calls to include the prefix.
+	result := src
+	for varName, prefix := range groups {
+		// Match varName.Method("path" — where path may be empty.
+		re := regexp.MustCompile(regexp.QuoteMeta(varName) + `\.((?i:Get|Post|Put|Delete|Patch|Options|Head))\s*\(\s*"([^"]*)"`)
+		result = re.ReplaceAllFunc(result, func(match []byte) []byte {
+			sub := re.FindSubmatch(match)
+			method := string(sub[1])
+			path := string(sub[2])
+			var fullPath string
+			if path == "" {
+				fullPath = prefix
+			} else {
+				fullPath = prefix + "/" + strings.TrimLeft(path, "/")
+			}
+			// Clean double slashes but preserve leading slash.
+			fullPath = strings.ReplaceAll(fullPath, "//", "/")
+			return []byte(varName + "." + method + `("` + fullPath + `"`)
+		})
+	}
+	return result
+}
+
+// pythonBlueprintRe matches Flask Blueprint with url_prefix.
+var pythonBlueprintRe = regexp.MustCompile(`(\w+)\s*=\s*Blueprint\s*\([^)]*url_prefix\s*=\s*['"]([^'"]+)['"]`)
+
+// resolvePythonBlueprints rewrites Python source so that routes registered on
+// Blueprint variables have the url_prefix prepended.
+func resolvePythonBlueprints(src []byte) []byte {
+	groups := make(map[string]string)
+	for _, m := range pythonBlueprintRe.FindAllSubmatch(src, -1) {
+		varName := string(m[1])
+		prefix := strings.TrimRight(string(m[2]), "/")
+		groups[varName] = prefix
+	}
+	if len(groups) == 0 {
+		return src
+	}
+
+	result := src
+	for varName, prefix := range groups {
+		// Rewrite @varName.method('/path') and @varName.route('/path') patterns.
+		re := regexp.MustCompile(`@` + regexp.QuoteMeta(varName) + `\.(get|post|put|delete|patch|route)\s*\(\s*['"]([^'"]+)['"]`)
+		result = re.ReplaceAllFunc(result, func(match []byte) []byte {
+			sub := re.FindSubmatch(match)
+			method := string(sub[1])
+			path := string(sub[2])
+			fullPath := prefix + "/" + strings.TrimLeft(path, "/")
+			fullPath = strings.ReplaceAll(fullPath, "//", "/")
+			return []byte("@" + varName + "." + method + `('` + fullPath + `'`)
+		})
+	}
+	return result
+}
+
 // scanFile processes a single ScannedFile and returns its API patterns.
 func scanFile(f ScannedFile, readFile func(string) ([]byte, error)) []APIPattern {
 	var results []APIPattern
@@ -184,6 +257,15 @@ func scanFile(f ScannedFile, readFile func(string) ([]byte, error)) []APIPattern
 	content, err := readFile(f.Path)
 	if err != nil {
 		return nil
+	}
+
+	// Resolve route groups / blueprints so prefixed paths are visible to
+	// the line-by-line regex scanner.
+	if f.Language == "go" {
+		content = resolveRouteGroups(content)
+	}
+	if f.Language == "python" {
+		content = resolvePythonBlueprints(content)
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(content))
