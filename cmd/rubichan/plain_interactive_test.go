@@ -187,3 +187,14 @@ func TestPlainInteractiveReadLineCtxCancelled(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+func TestPlainInteractiveDisplayExitMessageNoAgent(t *testing.T) {
+	out := &bytes.Buffer{}
+	host := newPlainInteractiveHost(bytes.NewBufferString(""), out, "gpt-test", 20, commands.NewRegistry())
+	// agent is nil
+
+	host.displayExitMessage()
+
+	output := out.String()
+	assert.Empty(t, output, "exit message should be empty when no agent is available")
+}
