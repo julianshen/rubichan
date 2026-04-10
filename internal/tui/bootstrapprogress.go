@@ -2,9 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/julianshen/rubichan/internal/terminal"
 )
 
 // BootstrapProgressMsg carries progress updates during knowledge graph bootstrap.
@@ -23,14 +26,16 @@ type BootstrapProgressOverlay struct {
 	error    string
 	width    int
 	height   int
+	caps     *terminal.Caps
 }
 
 // NewBootstrapProgressOverlay creates a new progress overlay.
-func NewBootstrapProgressOverlay(width, height int) *BootstrapProgressOverlay {
+func NewBootstrapProgressOverlay(width, height int, caps *terminal.Caps) *BootstrapProgressOverlay {
 	return &BootstrapProgressOverlay{
 		messages: []string{"🚀 Knowledge Graph Bootstrap Started"},
 		width:    width,
 		height:   height,
+		caps:     caps,
 	}
 }
 
@@ -43,14 +48,27 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			b.error = msg.Error
 			b.messages = append(b.messages, fmt.Sprintf("❌ Error: %s", msg.Error))
 			b.done = true
+			if b.caps != nil && b.caps.ProgressBar {
+				terminal.ClearProgress(os.Stderr)
+			}
 		} else if msg.Phase == "complete" {
 			b.messages = append(b.messages, "✅ Bootstrap complete!")
 			b.done = true
+			if b.caps != nil && b.caps.ProgressBar {
+				terminal.ClearProgress(os.Stderr)
+			}
 		} else {
 			if msg.Count > 0 {
 				b.messages = append(b.messages, fmt.Sprintf("  %s... found %d", msg.Message, msg.Count))
 			} else {
 				b.messages = append(b.messages, fmt.Sprintf("  %s...", msg.Message))
+			}
+			if b.caps != nil && b.caps.ProgressBar {
+				percent := len(b.messages) * 15
+				if percent > 95 {
+					percent = 95
+				}
+				terminal.SetProgress(os.Stderr, terminal.ProgressNormal, percent)
 			}
 		}
 	case tea.WindowSizeMsg:

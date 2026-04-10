@@ -415,6 +415,13 @@ func (m *Model) TermCaps() *terminal.Caps {
 	return m.termCaps
 }
 
+// notifyIfSupported sends a desktop notification if the terminal supports it.
+func (m *Model) notifyIfSupported(message string) {
+	if m.termCaps != nil && m.termCaps.Notifications {
+		terminal.Notify(os.Stderr, message)
+	}
+}
+
 func (m *Model) refreshRenderers() {
 	darkBg := true
 	if m.termCaps != nil {

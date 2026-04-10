@@ -171,6 +171,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		showBatchHint := m.toolApprovalCount[msg.tool] > 1
 
 		m.activeOverlay = NewApprovalOverlay(msg.tool, msg.input, workDir, m.width, msg.options, showBatchHint)
+		m.notifyIfSupported("Rubichan needs approval to proceed")
 		m.pendingApproval = &approvalRequest{
 			tool:          msg.tool,
 			input:         msg.input,
