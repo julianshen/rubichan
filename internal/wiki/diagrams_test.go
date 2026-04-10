@@ -244,6 +244,8 @@ func TestFirstSentence(t *testing.T) {
 		{name: "no terminator", in: "No sentence ending here", want: "No sentence ending here"},
 		{name: "empty", in: "", want: ""},
 		{name: "just period", in: ".", want: "."},
+		{name: "abbreviation e.g.", in: "Supports e.g. JSON and YAML.", want: "Supports e.g."},
+		{name: "decimal v2.0", in: "Uses v2.0 of the API. Next version coming.", want: "Uses v2.0 of the API."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

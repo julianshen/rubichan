@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 )
 
 // DiagramConfig controls diagram generation behavior.
@@ -58,7 +59,8 @@ func GenerateDiagrams(ctx context.Context, files []ScannedFile, analysis *Analys
 	return diagrams, nil
 }
 
-// generateArchitectureDiagram creates a graph TD showing modules with their summaries.
+// generateArchitectureDiagram creates a graph TD showing modules with short summary
+// labels and import-based edges between them.
 func generateArchitectureDiagram(files []ScannedFile, modules []ModuleAnalysis) Diagram {
 	knownModules := make(map[string]bool, len(modules))
 	for _, m := range modules {
@@ -154,6 +156,7 @@ func generateDataFlowDiagram(modules []ModuleAnalysis) Diagram {
 }
 
 // generateSequenceDiagram uses the LLM to generate a Mermaid sequence diagram.
+// It applies the truncation guard to retry if the response appears cut off.
 func generateSequenceDiagram(ctx context.Context, architecture string, llm LLMCompleter) (Diagram, error) {
 	prompt := fmt.Sprintf(`Given the following architecture overview, generate a Mermaid sequenceDiagram showing the key interactions between components.
 
@@ -162,7 +165,7 @@ Architecture:
 
 Respond with ONLY the Mermaid diagram code starting with "sequenceDiagram".`, architecture)
 
-	response, err := llm.Complete(ctx, prompt)
+	response, err := completeLLMResponse(ctx, prompt, llm, 1)
 	if err != nil {
 		return Diagram{}, fmt.Errorf("LLM completion: %w", err)
 	}
@@ -174,13 +177,22 @@ Respond with ONLY the Mermaid diagram code starting with "sequenceDiagram".`, ar
 	}, nil
 }
 
-// firstSentence returns text up to and including the first sentence
-// terminator (., !, or ?). If no terminator is found, the whole string
-// is returned.
+// firstSentence returns text up to and including the first sentence-ending
+// period, exclamation, or question mark. Periods followed immediately by a
+// letter or digit (e.g., "v2.0", "e.g.") are skipped to avoid splitting on
+// abbreviations and decimals. Returns the whole string if no terminator found.
 func firstSentence(s string) string {
-	for i, r := range s {
-		if r == '.' || r == '!' || r == '?' {
-			return s[:i+1]
+	runes := []rune(s)
+	for i, r := range runes {
+		if r == '!' || r == '?' {
+			return string(runes[:i+1])
+		}
+		if r == '.' {
+			// Skip periods followed by a letter or digit (abbreviations, decimals).
+			if i+1 < len(runes) && (unicode.IsLetter(runes[i+1]) || unicode.IsDigit(runes[i+1])) {
+				continue
+			}
+			return string(runes[:i+1])
 		}
 	}
 	return s

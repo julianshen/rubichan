@@ -19,7 +19,7 @@ func TestIsResponseTruncated(t *testing.T) {
 		{"mid-word", "The applic", true},
 		{"ends with colon", "The following:", true},
 		{"ends with comma", "including foo, bar,", true},
-		{"ends with semicolon", "var x = 1;", true},
+		{"ends with semicolon", "var x = 1;", false},
 		{"code block open", "```go\nfunc main() {\n", true},
 		{"code block closed", "```go\nfunc main() {}\n```\n", false},
 		{"empty", "", false},

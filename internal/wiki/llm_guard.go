@@ -2,6 +2,7 @@ package wiki
 
 import (
 	"context"
+	"log"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -38,7 +39,7 @@ func isResponseTruncated(s string) bool {
 	lastRune, _ := utf8.DecodeLastRuneInString(last)
 
 	// Ends with continuation punctuation.
-	if lastRune == ':' || lastRune == ',' || lastRune == ';' {
+	if lastRune == ':' || lastRune == ',' {
 		return true
 	}
 
@@ -68,6 +69,9 @@ func completeLLMResponse(ctx context.Context, prompt string, llm LLMCompleter, m
 	}
 
 	for i := 0; i < maxRetries && isResponseTruncated(resp); i++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		tail := resp
 		runes := []rune(tail)
 		if len(runes) > 200 {
@@ -76,6 +80,7 @@ func completeLLMResponse(ctx context.Context, prompt string, llm LLMCompleter, m
 		contPrompt := "Your previous response was cut off. Continue from where you left off. Your previous response ended with:\n\n..." + tail
 		cont, err := llm.Complete(ctx, contPrompt)
 		if err != nil {
+			log.Printf("WARNING: LLM continuation retry %d failed: %v", i+1, err)
 			break // Return what we have.
 		}
 		resp += cont
