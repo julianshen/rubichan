@@ -128,3 +128,31 @@ func TestSessionManagerListSortStability(t *testing.T) {
 		t.Errorf("expected oldest entry at index 2, got %v", sessions[2].CreatedAt)
 	}
 }
+
+func TestSessionManagerListFilterByDateRange(t *testing.T) {
+	now := time.Now()
+	mockStore := &mockSessionStore{
+		sessions: []SessionMetadata{
+			{ID: "old-sess", CreatedAt: now.Add(-30 * 24 * time.Hour), TurnCount: 2},
+			{ID: "week-sess", CreatedAt: now.Add(-6 * 24 * time.Hour), TurnCount: 5},
+			{ID: "today-sess", CreatedAt: now, TurnCount: 8},
+		},
+	}
+
+	sm := NewSessionManager(mockStore)
+
+	// Filter: sessions created after 7 days ago
+	recent, err := sm.ListAfter(now.Add(-7 * 24 * time.Hour))
+	if err != nil {
+		t.Fatalf("ListAfter failed: %v", err)
+	}
+
+	if len(recent) != 2 {
+		t.Errorf("expected 2 recent sessions, got %d", len(recent))
+	}
+
+	// Verify newest is still first
+	if recent[0].ID != "today-sess" {
+		t.Errorf("expected 'today-sess' first, got %s", recent[0].ID)
+	}
+}

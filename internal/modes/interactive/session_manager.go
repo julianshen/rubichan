@@ -64,3 +64,20 @@ func (sm *SessionManager) Load(id string) ([]Turn, error) {
 	}
 	return turns, nil
 }
+
+// ListAfter returns sessions created after the given time, sorted newest first.
+func (sm *SessionManager) ListAfter(cutoff time.Time) ([]SessionMetadata, error) {
+	all, err := sm.List()
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []SessionMetadata
+	for _, s := range all {
+		if s.CreatedAt.After(cutoff) {
+			filtered = append(filtered, s)
+		}
+	}
+
+	return filtered, nil
+}
