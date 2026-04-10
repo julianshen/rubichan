@@ -1932,7 +1932,7 @@ func TestModelCompletionUpDownNavigate(t *testing.T) {
 
 func TestRenderAssistantMarkdown(t *testing.T) {
 	m := &Model{}
-	r, err := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80, true)
 	require.NoError(t, err)
 	m.mdRenderer = r
 
@@ -1954,7 +1954,7 @@ func TestRenderAssistantMarkdown(t *testing.T) {
 
 func TestRenderAssistantMarkdownEmpty(t *testing.T) {
 	m := &Model{}
-	r, err := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80, true)
 	require.NoError(t, err)
 	m.mdRenderer = r
 
@@ -1970,7 +1970,7 @@ func TestRenderAssistantMarkdownEmpty(t *testing.T) {
 
 func TestRenderAssistantMarkdownSanitizesProtocolContent(t *testing.T) {
 	m := &Model{}
-	r, err := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80, true)
 	require.NoError(t, err)
 	m.mdRenderer = r
 

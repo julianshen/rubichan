@@ -7,8 +7,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewMarkdownRenderer_DarkMode(t *testing.T) {
+	r, err := NewMarkdownRenderer(80, true)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	output, err := r.Render("**bold**")
+	require.NoError(t, err)
+	assert.NotEmpty(t, output)
+}
+
+func TestNewMarkdownRenderer_LightMode(t *testing.T) {
+	r, err := NewMarkdownRenderer(80, false)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	output, err := r.Render("**bold**")
+	require.NoError(t, err)
+	assert.NotEmpty(t, output)
+}
+
 func TestRenderMarkdown(t *testing.T) {
-	r, err := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80, true)
 	require.NoError(t, err)
 	result, err := r.Render("Hello **world**")
 	require.NoError(t, err)
@@ -17,7 +35,7 @@ func TestRenderMarkdown(t *testing.T) {
 }
 
 func TestRenderMarkdownCodeBlock(t *testing.T) {
-	r, err := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80, true)
 	require.NoError(t, err)
 	md := "```go\nfmt.Println(\"hello\")\n```"
 	result, err := r.Render(md)
@@ -26,7 +44,7 @@ func TestRenderMarkdownCodeBlock(t *testing.T) {
 }
 
 func TestRenderMarkdownBoldStripsMarkers(t *testing.T) {
-	r, err := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80, true)
 	require.NoError(t, err)
 	result, err := r.Render("Hello **world**")
 	require.NoError(t, err)
@@ -36,7 +54,7 @@ func TestRenderMarkdownBoldStripsMarkers(t *testing.T) {
 }
 
 func TestRenderMarkdownEmpty(t *testing.T) {
-	r, err := NewMarkdownRenderer(80)
+	r, err := NewMarkdownRenderer(80, true)
 	require.NoError(t, err)
 	result, err := r.Render("")
 	require.NoError(t, err)

@@ -25,13 +25,18 @@ var assistantProtocolMarkers = []struct {
 	{token: "assistantfinal", keep: true},
 }
 
-// NewMarkdownRenderer creates a MarkdownRenderer with dark style
-// and the given word wrap width. Dark style is used instead of auto-detect
-// because the TUI runs inside Bubble Tea which manages the terminal directly.
-// Returns an error if the Glamour renderer cannot be created.
-func NewMarkdownRenderer(width int) (*MarkdownRenderer, error) {
+// NewMarkdownRenderer creates a MarkdownRenderer with the appropriate style
+// for the given background and word wrap width. Pass darkBackground true for
+// dark terminals (uses "dark" glamour style) or false for light terminals
+// (uses "light" glamour style). Returns an error if the Glamour renderer
+// cannot be created.
+func NewMarkdownRenderer(width int, darkBackground bool) (*MarkdownRenderer, error) {
+	style := "light"
+	if darkBackground {
+		style = "dark"
+	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
+		glamour.WithStandardStyle(style),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {

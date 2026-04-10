@@ -184,7 +184,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 
 	// Glamour renderer creation is unlikely to fail with static "dark" style,
 	// but handle it gracefully — Render falls back to raw text if renderer is nil.
-	mdRenderer, _ := NewMarkdownRenderer(80)
+	mdRenderer, _ := NewMarkdownRenderer(80, true)
 
 	// Create archive directory and initialize TurnCache + TurnWindow
 	// Use default archive path (~/.rubichan/archive)
@@ -397,7 +397,7 @@ func (m *Model) SetPlainMode(enabled bool) {
 }
 
 func (m *Model) refreshRenderers() {
-	mdRenderer, err := NewMarkdownRenderer(m.width)
+	mdRenderer, err := NewMarkdownRenderer(m.width, true)
 	if err == nil {
 		m.mdRenderer = mdRenderer
 	} else if m.debug {
