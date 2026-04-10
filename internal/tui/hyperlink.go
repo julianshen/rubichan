@@ -2,32 +2,10 @@ package tui
 
 import (
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 )
-
-// supportedTerminals lists TERM_PROGRAM values known to support OSC 8.
-var supportedTerminals = map[string]bool{
-	"iTerm.app":      true,
-	"WezTerm":        true,
-	"kitty":          true,
-	"ghostty":        true,
-	"vscode":         true,
-	"Hyper":          true,
-	"Tabby":          true,
-	"rio":            true,
-	"contour":        true,
-	"alacritty":      true,
-	"Apple_Terminal": true,
-}
-
-// SupportsHyperlinks returns true if the current terminal supports OSC 8 links.
-func SupportsHyperlinks() bool {
-	tp := os.Getenv("TERM_PROGRAM")
-	return supportedTerminals[tp]
-}
 
 // filePathPattern matches file paths that look like:
 // - Absolute paths: /foo/bar.go
@@ -36,10 +14,11 @@ func SupportsHyperlinks() bool {
 var filePathPattern = regexp.MustCompile(`(?:^|[\s:])(/[^\s:]+\.[a-zA-Z0-9]+|\.\.?/[^\s:]+\.[a-zA-Z0-9]+|[a-zA-Z0-9_][a-zA-Z0-9_./+-]*\.[a-zA-Z0-9]+)`)
 
 // LinkifyFilePaths wraps recognized file paths in OSC 8 hyperlinks.
-// Only activates when the terminal supports it.
+// hyperlinkSupported must be true for linkification to occur; callers are
+// responsible for detecting terminal capability and passing the result.
 // TODO: Wire into viewportContent() once Model carries a workDir field.
-func LinkifyFilePaths(text string, workDir string) string {
-	if !SupportsHyperlinks() {
+func LinkifyFilePaths(text string, workDir string, hyperlinkSupported bool) string {
+	if !hyperlinkSupported {
 		return text
 	}
 
