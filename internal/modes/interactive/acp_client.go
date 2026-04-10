@@ -17,6 +17,7 @@ type ACPClient struct {
 	sessionMgr  *SessionManager         // NEW - for session loading
 	resumeID    string                  // NEW - optional session ID to resume
 	loadedTurns []Turn                  // NEW - turns loaded from resume session
+	loadError   error                   // NEW - tracks session load errors
 	nextID      int64
 	mu          sync.Mutex
 	dispatcher  *acp.ResponseDispatcher
@@ -58,6 +59,7 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 		sessionMgr:  sessionMgr,
 		resumeID:    resumeID,
 		loadedTurns: []Turn{},
+		loadError:   nil,
 		nextID:      1,
 		dispatcher:  dispatcher,
 		server:      server,
@@ -68,8 +70,9 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 		turns, err := sessionMgr.Load(resumeID)
 		if err == nil {
 			client.loadedTurns = turns
+		} else {
+			client.loadError = fmt.Errorf("load session %s: %w", resumeID, err)
 		}
-		// Silently ignore errors on load; will show resume prompt
 	}
 
 	// Ensure startedCh is drained on error to avoid goroutine leak
@@ -88,6 +91,7 @@ func NewACPClientWithResume(sessionMgr *SessionManager, resumeID string) *ACPCli
 		sessionMgr:  sessionMgr,
 		resumeID:    resumeID,
 		loadedTurns: []Turn{},
+		loadError:   nil,
 		nextID:      1,
 		dispatcher:  nil,
 		server:      nil,
@@ -98,8 +102,9 @@ func NewACPClientWithResume(sessionMgr *SessionManager, resumeID string) *ACPCli
 		turns, err := sessionMgr.Load(resumeID)
 		if err == nil {
 			client.loadedTurns = turns
+		} else {
+			client.loadError = fmt.Errorf("load session %s: %w", resumeID, err)
 		}
-		// Silently ignore errors on load
 	}
 
 	return client
@@ -122,6 +127,11 @@ func (c *ACPClient) GetNextID() int64 {
 // LoadedTurns returns turns loaded from resume session.
 func (ac *ACPClient) LoadedTurns() ([]Turn, error) {
 	return ac.loadedTurns, nil
+}
+
+// LoadError returns any error that occurred during session loading.
+func (ac *ACPClient) LoadError() error {
+	return ac.loadError
 }
 
 // Close stops the dispatcher and cleans up resources.

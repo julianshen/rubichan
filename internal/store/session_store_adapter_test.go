@@ -229,6 +229,97 @@ func TestSessionStoreAdapterLoadSessionNotFound(t *testing.T) {
 	}
 }
 
+// TestSessionStoreAdapterLoadSessionIncompleteLastTurn tests that pending turns
+// without agent response are preserved (Issue 1).
+func TestSessionStoreAdapterLoadSessionIncompleteLastTurn(t *testing.T) {
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	// Create a session
+	_, err = store.db.Exec(
+		`INSERT INTO sessions (id, title, model, created_at, updated_at)
+		 VALUES (?, ?, ?, datetime('now'), datetime('now'))`,
+		"sess-incomplete", "Incomplete Test", "claude-3-5-sonnet",
+	)
+	if err != nil {
+		t.Fatalf("insert session failed: %v", err)
+	}
+
+	// Add first complete turn (user + assistant)
+	userContent1 := []provider.ContentBlock{
+		{Type: "text", Text: "First question?"},
+	}
+	userJSON1, _ := json.Marshal(userContent1)
+
+	_, err = store.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at)
+		 VALUES (?, ?, ?, ?, datetime('now'))`,
+		"sess-incomplete", 0, "user", string(userJSON1),
+	)
+	if err != nil {
+		t.Fatalf("insert first user message failed: %v", err)
+	}
+
+	respContent1 := []provider.ContentBlock{
+		{Type: "text", Text: "First answer"},
+	}
+	respJSON1, _ := json.Marshal(respContent1)
+
+	_, err = store.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at)
+		 VALUES (?, ?, ?, ?, datetime('now'))`,
+		"sess-incomplete", 1, "assistant", string(respJSON1),
+	)
+	if err != nil {
+		t.Fatalf("insert first assistant message failed: %v", err)
+	}
+
+	// Add incomplete turn (user message only, no assistant response)
+	userContent2 := []provider.ContentBlock{
+		{Type: "text", Text: "Second question?"},
+	}
+	userJSON2, _ := json.Marshal(userContent2)
+
+	_, err = store.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at)
+		 VALUES (?, ?, ?, ?, datetime('now'))`,
+		"sess-incomplete", 2, "user", string(userJSON2),
+	)
+	if err != nil {
+		t.Fatalf("insert second user message failed: %v", err)
+	}
+
+	adapter := NewSessionStoreAdapter(store)
+	turns, err := adapter.LoadSession("sess-incomplete")
+	if err != nil {
+		t.Fatalf("LoadSession failed: %v", err)
+	}
+
+	// Should have 2 turns: one complete, one incomplete
+	if len(turns) != 2 {
+		t.Errorf("expected 2 turns (one incomplete), got %d", len(turns))
+	}
+
+	// First turn should be complete
+	if turns[0].UserInput != "First question?" {
+		t.Errorf("expected first user input 'First question?', got %q", turns[0].UserInput)
+	}
+	if turns[0].AgentResp != "First answer" {
+		t.Errorf("expected first agent response 'First answer', got %q", turns[0].AgentResp)
+	}
+
+	// Second turn should be incomplete (no agent response)
+	if turns[1].UserInput != "Second question?" {
+		t.Errorf("expected second user input 'Second question?', got %q", turns[1].UserInput)
+	}
+	if turns[1].AgentResp != "" {
+		t.Errorf("expected second agent response to be empty, got %q", turns[1].AgentResp)
+	}
+}
+
 func TestSessionStoreAdapterExtractTextFromContentBlock(t *testing.T) {
 	store, err := NewStore(":memory:")
 	if err != nil {

@@ -33,6 +33,12 @@ func TestACPClientInitWithResumeFlagLoadsSession(t *testing.T) {
 	if turns[0].UserInput != "hello" {
 		t.Errorf("expected turn input 'hello', got %s", turns[0].UserInput)
 	}
+
+	// Verify no load error on successful load
+	loadErr := client.LoadError()
+	if loadErr != nil {
+		t.Errorf("expected LoadError to be nil on successful load, got: %v", loadErr)
+	}
 }
 
 func TestACPClientNoSessionLoading(t *testing.T) {
@@ -63,9 +69,18 @@ func TestACPClientLoadSessionError(t *testing.T) {
 		t.Fatalf("LoadedTurns failed: %v", err)
 	}
 
-	// Should return empty slice, not error, when session doesn't exist
+	// Should return empty slice when session doesn't exist
 	if len(turns) != 0 {
 		t.Errorf("expected 0 turns on load error, got %d", len(turns))
+	}
+
+	// Verify that the load error is captured
+	loadErr := client.LoadError()
+	if loadErr == nil {
+		t.Errorf("expected LoadError to return an error for nonexistent session, got nil")
+	}
+	if loadErr.Error() != "load session nonexistent-session: session not found" {
+		t.Errorf("expected error containing 'session not found', got: %v", loadErr)
 	}
 }
 

@@ -16,8 +16,11 @@ type SessionSelector struct {
 
 // NewSessionSelector creates a selector from a list of sessions
 func NewSessionSelector(sessions []SessionMetadata) *SessionSelector {
+	// Defensively copy to prevent caller mutation
+	sessionsCopy := make([]SessionMetadata, len(sessions))
+	copy(sessionsCopy, sessions)
 	return &SessionSelector{
-		sessions: sessions,
+		sessions: sessionsCopy,
 		index:    0,
 	}
 }
@@ -37,7 +40,10 @@ func (ss *SessionSelector) Selected() SessionMetadata {
 
 // Sessions returns all sessions
 func (ss *SessionSelector) Sessions() []SessionMetadata {
-	return ss.sessions
+	// Return copy, not mutable reference
+	out := make([]SessionMetadata, len(ss.sessions))
+	copy(out, ss.sessions)
+	return out
 }
 
 // MoveUp moves selection up (previous session)

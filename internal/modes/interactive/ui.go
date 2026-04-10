@@ -43,9 +43,10 @@ func (t *InteractiveTUI) SetACPClient(client *ACPClient) {
 	t.acpClient = client
 }
 
-// HandleResumeCommand shows the session selector overlay for mid-session resumption
-// Called when user types /resume command
-func (tui *InteractiveTUI) HandleResumeCommand() error {
+// resumeSessionFlow is the shared implementation for session resumption.
+// It lists available sessions, constructs a session selector overlay with a callback,
+// and captures any errors from the callback (user cancellation or load failures).
+func (tui *InteractiveTUI) resumeSessionFlow() error {
 	if tui.sessionMgr == nil {
 		return fmt.Errorf("session manager not available")
 	}
@@ -83,9 +84,11 @@ func (tui *InteractiveTUI) HandleResumeCommand() error {
 	// Create and show overlay
 	overlay := NewSessionSelectorOverlay(sessions, callback)
 
-	// In a real implementation, this would integrate with the Bubble Tea model
-	// For now, we just set up the infrastructure
-	_ = overlay // Use overlay to avoid lint error
+	// TODO: Integrate overlay into Bubble Tea event loop.
+	// Currently, the overlay is constructed with callback but never displayed or
+	// routed keyboard events. Full implementation requires wiring into the TUI
+	// model's View() and Update() methods.
+	_ = overlay
 
 	if callbackErr != nil {
 		return callbackErr
@@ -94,54 +97,18 @@ func (tui *InteractiveTUI) HandleResumeCommand() error {
 	return nil
 }
 
-// PromptResumeSession shows session selector overlay and loads selected session
+// HandleResumeCommand displays the session selector overlay for the user to choose
+// a previous session to resume. Called when the user types /resume during interactive
+// conversation. Returns error if no sessions exist or if loading the selected session fails.
+func (tui *InteractiveTUI) HandleResumeCommand() error {
+	return tui.resumeSessionFlow()
+}
+
+// PromptResumeSession is deprecated in favor of HandleResumeCommand.
+// Kept for backward compatibility. Uses the same underlying logic.
 func (tui *InteractiveTUI) PromptResumeSession(ctx context.Context) error {
-	if tui.sessionMgr == nil {
-		return fmt.Errorf("session manager not available")
-	}
-
-	sessions, err := tui.sessionMgr.List()
-	if err != nil {
-		return fmt.Errorf("list sessions: %w", err)
-	}
-
-	if len(sessions) == 0 {
-		return fmt.Errorf("no sessions to resume")
-	}
-
-	// Callback handles selection or cancellation
-	var callbackErr error
-
-	callback := func(selected SessionMetadata, err error) {
-		if err != nil {
-			// User cancelled, nothing to do
-			callbackErr = err
-			return
-		}
-
-		// Load selected session
-		turns, err := tui.sessionMgr.Load(selected.ID)
-		if err != nil {
-			callbackErr = fmt.Errorf("load session: %w", err)
-			return
-		}
-
-		// Restore turns into TUI state
-		tui.restoreTurns(turns)
-	}
-
-	// Create and show overlay
-	overlay := NewSessionSelectorOverlay(sessions, callback)
-
-	// In a real implementation, this would integrate with the Bubble Tea model
-	// For now, we just set up the infrastructure
-	_ = overlay // Use overlay to avoid lint error
-
-	if callbackErr != nil {
-		return callbackErr
-	}
-
-	return nil
+	// ctx parameter unused; kept for API compatibility
+	return tui.resumeSessionFlow()
 }
 
 // restoreTurns re-hydrates conversation history into TUI state

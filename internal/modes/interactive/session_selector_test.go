@@ -104,6 +104,43 @@ func TestSessionSelectorSelectedReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestSessionSelectorDefensiveCopyInConstructor(t *testing.T) {
+	// Verify that caller cannot mutate selector via the original slice
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+		{ID: "sess-2", CreatedAt: time.Now().Add(-1 * time.Hour), TurnCount: 3},
+	}
+
+	sel := NewSessionSelector(sessions)
+
+	// Mutate original slice
+	sessions[0].ID = "mutated"
+
+	// Selector should not be affected
+	if sel.Sessions()[0].ID != "sess-1" {
+		t.Errorf("selector was mutated by caller: expected sess-1, got %s", sel.Sessions()[0].ID)
+	}
+}
+
+func TestSessionSelectorSessionsReturnsCopy(t *testing.T) {
+	// Verify that caller cannot mutate selector via Sessions() return value
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+		{ID: "sess-2", CreatedAt: time.Now().Add(-1 * time.Hour), TurnCount: 3},
+	}
+
+	sel := NewSessionSelector(sessions)
+	retrieved := sel.Sessions()
+
+	// Mutate returned slice
+	retrieved[0].ID = "mutated"
+
+	// Selector should not be affected
+	if sel.Sessions()[0].ID != "sess-1" {
+		t.Errorf("selector was mutated via Sessions() return: expected sess-1, got %s", sel.Sessions()[0].ID)
+	}
+}
+
 func TestSessionSelectorOverlayRender(t *testing.T) {
 	sessions := []SessionMetadata{
 		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},

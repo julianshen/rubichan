@@ -144,6 +144,16 @@ func (ssa *SessionStoreAdapter) LoadSession(id string) ([]interactive.Turn, erro
 		}
 	}
 
+	// Append any pending turn that lacks an agent response (Issue 1)
+	if userInput != "" && currentTurnID != "" {
+		turns = append(turns, interactive.Turn{
+			ID:        currentTurnID,
+			Timestamp: messages[len(messages)-1].CreatedAt,
+			UserInput: userInput,
+			AgentResp: "",
+		})
+	}
+
 	return turns, nil
 }
 
