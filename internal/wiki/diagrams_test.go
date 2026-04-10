@@ -196,6 +196,41 @@ func TestGenerateDiagramsEmptyLLMResponseForSequence(t *testing.T) {
 	assert.Contains(t, logOutput, "empty response")
 }
 
+func TestGenerateArchitectureDiagram_HasEdges(t *testing.T) {
+	files := []ScannedFile{
+		{Path: "handler.go", Language: "go", Module: "internal/handler", Imports: []string{"github.com/example/internal/store"}},
+		{Path: "store.go", Language: "go", Module: "internal/store", Imports: []string{}},
+	}
+	modules := []ModuleAnalysis{
+		{Module: "internal/handler", Summary: "HTTP handler"},
+		{Module: "internal/store", Summary: "Data store"},
+	}
+
+	diagram := generateArchitectureDiagram(files, modules)
+
+	assert.Equal(t, "Architecture Overview", diagram.Title)
+	assert.Equal(t, "architecture", diagram.Type)
+	assert.Contains(t, diagram.Content, "graph TD")
+	// Should contain nodes.
+	assert.Contains(t, diagram.Content, "internal_handler")
+	assert.Contains(t, diagram.Content, "internal_store")
+	// Should contain edge from handler to store.
+	assert.Contains(t, diagram.Content, "internal_handler --> internal_store")
+}
+
+func TestGenerateArchitectureDiagram_NilFiles(t *testing.T) {
+	modules := []ModuleAnalysis{
+		{Module: "internal/handler", Summary: "HTTP handler"},
+	}
+
+	diagram := generateArchitectureDiagram(nil, modules)
+
+	assert.Equal(t, "Architecture Overview", diagram.Title)
+	assert.Contains(t, diagram.Content, "graph TD")
+	assert.Contains(t, diagram.Content, "internal_handler")
+	assert.NotContains(t, diagram.Content, "-->")
+}
+
 // validatingLLMCompleter is a mock LLM that validates empty responses,
 // matching the behavior of the real LLMCompleter.Complete().
 type validatingLLMCompleter struct {

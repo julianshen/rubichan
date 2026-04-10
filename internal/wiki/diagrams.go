@@ -32,7 +32,7 @@ func GenerateDiagrams(ctx context.Context, files []ScannedFile, analysis *Analys
 	var diagrams []Diagram
 
 	// 1. Architecture overview (programmatic).
-	diagrams = append(diagrams, generateArchitectureDiagram(analysis.Modules))
+	diagrams = append(diagrams, generateArchitectureDiagram(files, analysis.Modules))
 
 	// 2. Dependency graph (programmatic).
 	diagrams = append(diagrams, generateDependencyDiagram(files, analysis.Modules))
@@ -59,7 +59,12 @@ func GenerateDiagrams(ctx context.Context, files []ScannedFile, analysis *Analys
 }
 
 // generateArchitectureDiagram creates a graph TD showing modules with their summaries.
-func generateArchitectureDiagram(modules []ModuleAnalysis) Diagram {
+func generateArchitectureDiagram(files []ScannedFile, modules []ModuleAnalysis) Diagram {
+	knownModules := make(map[string]bool, len(modules))
+	for _, m := range modules {
+		knownModules[m.Module] = true
+	}
+
 	var b strings.Builder
 	b.WriteString("graph TD\n")
 
@@ -67,6 +72,28 @@ func generateArchitectureDiagram(modules []ModuleAnalysis) Diagram {
 		id := sanitizeID(m.Module)
 		summary := truncateUTF8(m.Summary, 40)
 		fmt.Fprintf(&b, "    %s[\"%s\\n%s\"]\n", id, escapeMermaid(m.Module), escapeMermaid(summary))
+	}
+
+	// Draw edges based on import relationships between known modules.
+	seen := make(map[string]bool)
+	for _, f := range files {
+		if !knownModules[f.Module] {
+			continue
+		}
+		for _, imp := range f.Imports {
+			for mod := range knownModules {
+				if mod == f.Module {
+					continue
+				}
+				if strings.Contains(imp, mod) {
+					edge := f.Module + " -> " + mod
+					if !seen[edge] {
+						seen[edge] = true
+						fmt.Fprintf(&b, "    %s --> %s\n", sanitizeID(f.Module), sanitizeID(mod))
+					}
+				}
+			}
+		}
 	}
 
 	return Diagram{
