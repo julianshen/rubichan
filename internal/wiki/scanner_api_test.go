@@ -156,6 +156,103 @@ func Add(a, b int) int {
 	assert.Empty(t, patterns)
 }
 
+func TestScanAPIPatterns_GoRouteGroup(t *testing.T) {
+	src := `package main
+
+import "github.com/gin-gonic/gin"
+
+func main() {
+	r := gin.Default()
+	api := r.Group("/todos")
+	api.GET("/:id", getHandler)
+	api.POST("", createHandler)
+	api.PUT("/:id", updateHandler)
+	api.DELETE("/:id", deleteHandler)
+
+	v2 := r.Group("/v2/items")
+	v2.GET("/list", listItems)
+}
+`
+	files := []ScannedFile{{Path: "main.go", Language: "go"}}
+	reader := fakeReader(map[string]string{"main.go": src})
+
+	patterns := ScanAPIPatterns(files, reader)
+
+	var httpPatterns []APIPattern
+	for _, p := range patterns {
+		if p.Kind == "http" {
+			httpPatterns = append(httpPatterns, p)
+		}
+	}
+	require.Len(t, httpPatterns, 5, "expected 5 HTTP routes from two groups")
+
+	// Build a set of method+path for verification.
+	routes := make(map[string]bool)
+	for _, p := range httpPatterns {
+		routes[p.Method+" "+p.Path] = true
+	}
+	assert.True(t, routes["GET /todos/:id"], "missing GET /todos/:id")
+	assert.True(t, routes["POST /todos"], "missing POST /todos")
+	assert.True(t, routes["PUT /todos/:id"], "missing PUT /todos/:id")
+	assert.True(t, routes["DELETE /todos/:id"], "missing DELETE /todos/:id")
+	assert.True(t, routes["GET /v2/items/list"], "missing GET /v2/items/list")
+}
+
+func TestScanAPIPatterns_PythonBlueprint(t *testing.T) {
+	src := `from flask import Flask, Blueprint
+
+bp = Blueprint('todos', __name__, url_prefix='/todos')
+
+@bp.get('/active')
+def get_active():
+    pass
+
+@bp.post('/create')
+def create_todo():
+    pass
+
+@bp.route('/all')
+def list_all():
+    pass
+`
+	files := []ScannedFile{{Path: "app.py", Language: "python"}}
+	reader := fakeReader(map[string]string{"app.py": src})
+
+	patterns := ScanAPIPatterns(files, reader)
+
+	var httpPatterns []APIPattern
+	for _, p := range patterns {
+		if p.Kind == "http" {
+			httpPatterns = append(httpPatterns, p)
+		}
+	}
+	require.Len(t, httpPatterns, 3, "expected 3 HTTP routes from blueprint")
+
+	paths := make(map[string]bool)
+	for _, p := range httpPatterns {
+		paths[p.Path] = true
+	}
+	assert.True(t, paths["/todos/active"], "missing /todos/active")
+	assert.True(t, paths["/todos/create"], "missing /todos/create")
+	assert.True(t, paths["/todos/all"], "missing /todos/all")
+}
+
+func TestResolveRouteGroups_EmptyPath(t *testing.T) {
+	src := []byte(`api := r.Group("/todos")
+api.GET("", listHandler)
+`)
+	result := resolveRouteGroups(src)
+	assert.Contains(t, string(result), `api.GET("/todos"`)
+}
+
+func TestResolveRouteGroups_NoGroups(t *testing.T) {
+	src := []byte(`r.GET("/health", healthHandler)
+r.POST("/items", createItem)
+`)
+	result := resolveRouteGroups(src)
+	assert.Equal(t, string(src), string(result))
+}
+
 func TestScanAPIPatterns_MultipleInOneFile(t *testing.T) {
 	src := `package main
 

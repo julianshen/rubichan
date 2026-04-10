@@ -29,8 +29,50 @@ func TestAssembleCreatesIndexPage(t *testing.T) {
 		}
 	}
 	require.NotNil(t, indexDoc, "_index.md should exist")
-	assert.Contains(t, indexDoc.Content, "Layered architecture with HTTP handlers")
+	// After deduplication, index should contain only the first sentence + link
+	assert.Contains(t, indexDoc.Content, "Layered architecture with HTTP handlers and a persistence layer.")
+	assert.Contains(t, indexDoc.Content, "See [Architecture Overview](architecture/overview.md) for details.")
 	assert.Contains(t, indexDoc.Content, "internal/handler")
+}
+
+func TestAssemble_NoDuplicateBlocks(t *testing.T) {
+	multiSentenceArch := "The system uses a layered architecture. It separates concerns into handlers, services, and repositories. Each layer communicates through well-defined interfaces."
+
+	analysis := &AnalysisResult{
+		Architecture: multiSentenceArch,
+		Modules: []ModuleAnalysis{
+			{Module: "internal/handler", Summary: "HTTP handler"},
+		},
+	}
+
+	docs, err := Assemble(analysis, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	var indexDoc, archDoc *Document
+	for i := range docs {
+		switch docs[i].Path {
+		case "_index.md":
+			indexDoc = &docs[i]
+		case "architecture/overview.md":
+			archDoc = &docs[i]
+		}
+	}
+
+	require.NotNil(t, indexDoc, "_index.md should exist")
+	require.NotNil(t, archDoc, "architecture/overview.md should exist")
+
+	// The full multi-sentence text should appear in the architecture overview page.
+	assert.Contains(t, archDoc.Content, multiSentenceArch)
+
+	// The full text must NOT appear in the index page.
+	assert.NotContains(t, indexDoc.Content, multiSentenceArch)
+
+	// The index page should contain only the first sentence.
+	assert.Contains(t, indexDoc.Content, "The system uses a layered architecture.")
+	assert.NotContains(t, indexDoc.Content, "It separates concerns")
+
+	// The index page should contain the link to the overview.
+	assert.Contains(t, indexDoc.Content, "See [Architecture Overview](architecture/overview.md) for details.")
 }
 
 func TestAssembleCreatesModulePages(t *testing.T) {

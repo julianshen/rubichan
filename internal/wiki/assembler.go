@@ -31,15 +31,17 @@ func Assemble(analysis *AnalysisResult, diagrams []Diagram, skillSections []Skil
 	return docs, nil
 }
 
-// buildIndexPage creates _index.md with architecture text and a bullet list of modules.
+// buildIndexPage creates _index.md with a first-sentence architecture summary
+// (linking to the full overview) and a bullet list of modules.
 func buildIndexPage(analysis *AnalysisResult) Document {
 	var b strings.Builder
 	b.WriteString("# Project Overview\n\n")
 
 	if analysis.Architecture != "" {
 		b.WriteString("## Architecture\n\n")
-		b.WriteString(analysis.Architecture)
-		b.WriteString("\n\n")
+		summary := firstSentence(analysis.Architecture)
+		b.WriteString(summary)
+		b.WriteString(" See [Architecture Overview](architecture/overview.md) for details.\n\n")
 	}
 
 	if len(analysis.Modules) > 0 {

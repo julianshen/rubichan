@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 )
 
 // DiagramConfig controls diagram generation behavior.
@@ -32,7 +33,7 @@ func GenerateDiagrams(ctx context.Context, files []ScannedFile, analysis *Analys
 	var diagrams []Diagram
 
 	// 1. Architecture overview (programmatic).
-	diagrams = append(diagrams, generateArchitectureDiagram(analysis.Modules))
+	diagrams = append(diagrams, generateArchitectureDiagram(files, analysis.Modules))
 
 	// 2. Dependency graph (programmatic).
 	diagrams = append(diagrams, generateDependencyDiagram(files, analysis.Modules))
@@ -58,16 +59,29 @@ func GenerateDiagrams(ctx context.Context, files []ScannedFile, analysis *Analys
 	return diagrams, nil
 }
 
-// generateArchitectureDiagram creates a graph TD showing modules with their summaries.
-func generateArchitectureDiagram(modules []ModuleAnalysis) Diagram {
+// generateArchitectureDiagram creates a graph TD showing modules with short summary
+// labels and import-based edges between them.
+func generateArchitectureDiagram(files []ScannedFile, modules []ModuleAnalysis) Diagram {
+	knownModules := make(map[string]bool, len(modules))
+	for _, m := range modules {
+		knownModules[m.Module] = true
+	}
+
 	var b strings.Builder
 	b.WriteString("graph TD\n")
 
 	for _, m := range modules {
 		id := sanitizeID(m.Module)
-		summary := truncateUTF8(m.Summary, 40)
-		fmt.Fprintf(&b, "    %s[\"%s\\n%s\"]\n", id, escapeMermaid(m.Module), escapeMermaid(summary))
+		summary := firstSentence(m.Summary)
+		summary = truncateUTF8(summary, 60)
+		if summary != "" {
+			fmt.Fprintf(&b, "    %s[\"%s\\n%s\"]\n", id, escapeMermaid(m.Module), escapeMermaid(summary))
+		} else {
+			fmt.Fprintf(&b, "    %s[\"%s\"]\n", id, escapeMermaid(m.Module))
+		}
 	}
+
+	writeModuleEdges(&b, files, knownModules)
 
 	return Diagram{
 		Title:   "Architecture Overview",
@@ -78,7 +92,6 @@ func generateArchitectureDiagram(modules []ModuleAnalysis) Diagram {
 
 // generateDependencyDiagram creates a graph LR showing import relationships between known modules.
 func generateDependencyDiagram(files []ScannedFile, modules []ModuleAnalysis) Diagram {
-	// Build a set of known module names for matching.
 	knownModules := make(map[string]bool, len(modules))
 	for _, m := range modules {
 		knownModules[m.Module] = true
@@ -87,7 +100,18 @@ func generateDependencyDiagram(files []ScannedFile, modules []ModuleAnalysis) Di
 	var b strings.Builder
 	b.WriteString("graph LR\n")
 
-	// For each file, check if any import path contains a known module name.
+	writeModuleEdges(&b, files, knownModules)
+
+	return Diagram{
+		Title:   "Module Dependencies",
+		Type:    "dependency",
+		Content: b.String(),
+	}
+}
+
+// writeModuleEdges writes Mermaid edge lines for import relationships between
+// known modules. It deduplicates edges so each A→B pair appears once.
+func writeModuleEdges(b *strings.Builder, files []ScannedFile, knownModules map[string]bool) {
 	seen := make(map[string]bool)
 	for _, f := range files {
 		if !knownModules[f.Module] {
@@ -98,23 +122,15 @@ func generateDependencyDiagram(files []ScannedFile, modules []ModuleAnalysis) Di
 				if mod == f.Module {
 					continue
 				}
-				if strings.Contains(imp, mod) {
-					edge := f.Module + " -> " + mod
+				if imp == mod || strings.HasSuffix(imp, "/"+mod) {
+					edge := f.Module + "|" + mod
 					if !seen[edge] {
 						seen[edge] = true
-						fromID := sanitizeID(f.Module)
-						toID := sanitizeID(mod)
-						fmt.Fprintf(&b, "    %s --> %s\n", fromID, toID)
+						fmt.Fprintf(b, "    %s --> %s\n", sanitizeID(f.Module), sanitizeID(mod))
 					}
 				}
 			}
 		}
-	}
-
-	return Diagram{
-		Title:   "Module Dependencies",
-		Type:    "dependency",
-		Content: b.String(),
 	}
 }
 
@@ -140,6 +156,7 @@ func generateDataFlowDiagram(modules []ModuleAnalysis) Diagram {
 }
 
 // generateSequenceDiagram uses the LLM to generate a Mermaid sequence diagram.
+// It applies the truncation guard to retry if the response appears cut off.
 func generateSequenceDiagram(ctx context.Context, architecture string, llm LLMCompleter) (Diagram, error) {
 	prompt := fmt.Sprintf(`Given the following architecture overview, generate a Mermaid sequenceDiagram showing the key interactions between components.
 
@@ -148,7 +165,7 @@ Architecture:
 
 Respond with ONLY the Mermaid diagram code starting with "sequenceDiagram".`, architecture)
 
-	response, err := llm.Complete(ctx, prompt)
+	response, err := completeLLMResponse(ctx, prompt, llm, 1)
 	if err != nil {
 		return Diagram{}, fmt.Errorf("LLM completion: %w", err)
 	}
@@ -158,6 +175,27 @@ Respond with ONLY the Mermaid diagram code starting with "sequenceDiagram".`, ar
 		Type:    "sequence",
 		Content: strings.TrimSpace(response),
 	}, nil
+}
+
+// firstSentence returns text up to and including the first sentence-ending
+// period, exclamation, or question mark. Periods followed immediately by a
+// letter or digit (e.g., "v2.0", "e.g.") are skipped to avoid splitting on
+// abbreviations and decimals. Returns the whole string if no terminator found.
+func firstSentence(s string) string {
+	runes := []rune(s)
+	for i, r := range runes {
+		if r == '!' || r == '?' {
+			return string(runes[:i+1])
+		}
+		if r == '.' {
+			// Skip periods followed by a letter or digit (abbreviations, decimals).
+			if i+1 < len(runes) && (unicode.IsLetter(runes[i+1]) || unicode.IsDigit(runes[i+1])) {
+				continue
+			}
+			return string(runes[:i+1])
+		}
+	}
+	return s
 }
 
 // truncateUTF8 truncates s to at most maxRunes Unicode code points,

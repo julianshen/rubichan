@@ -103,7 +103,7 @@ func (a *APIAnalyzer) generateKindDoc(ctx context.Context, grp apiGroupConfig, p
 		return Document{}, fmt.Errorf("rendering api prompt: %w", err)
 	}
 
-	resp, err := a.llm.Complete(ctx, buf.String())
+	resp, err := completeLLMResponse(ctx, buf.String(), a.llm, 1)
 	if err != nil {
 		return Document{}, fmt.Errorf("LLM completion for %s: %w", grp.kind, err)
 	}
