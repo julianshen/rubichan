@@ -38,8 +38,9 @@ func buildIndexPage(analysis *AnalysisResult) Document {
 
 	if analysis.Architecture != "" {
 		b.WriteString("## Architecture\n\n")
-		b.WriteString(analysis.Architecture)
-		b.WriteString("\n\n")
+		summary := firstSentence(analysis.Architecture)
+		b.WriteString(summary)
+		b.WriteString(" See [Architecture Overview](architecture/overview.md) for details.\n\n")
 	}
 
 	if len(analysis.Modules) > 0 {
