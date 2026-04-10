@@ -18,6 +18,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/checkpoint"
+	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
@@ -143,6 +144,7 @@ type Model struct {
 	debug             bool
 	lastPrompt        string
 	termCaps          *terminal.Caps
+	cmuxClient        cmux.Caller    // nil when not running in cmux
 	sessionState      *session.State
 	eventSink         session.EventSink
 	toolApprovalCount map[string]int // per-turn count of times each tool was approved
@@ -409,8 +411,21 @@ func (m *Model) TermCaps() *terminal.Caps {
 	return m.termCaps
 }
 
+// SetCmuxClient sets the cmux client for rich sidebar/notification dispatch.
+// Pass nil when not running inside cmux.
+func (m *Model) SetCmuxClient(client cmux.Caller) {
+	m.cmuxClient = client
+}
+
 // notifyIfSupported sends a desktop notification if the terminal supports it.
 func (m *Model) notifyIfSupported(message string) {
+	if m.cmuxClient != nil {
+		m.cmuxClient.Call("notification.create", map[string]string{
+			"title": "Rubichan",
+			"body":  message,
+		})
+		return
+	}
 	if m.termCaps != nil && m.termCaps.Notifications {
 		terminal.Notify(os.Stderr, message)
 	}

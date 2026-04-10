@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/terminal"
 )
 
@@ -24,18 +25,20 @@ type BootstrapProgressOverlay struct {
 	phase    string
 	done     bool
 	error    string
-	width    int
-	height   int
-	caps     *terminal.Caps
+	width      int
+	height     int
+	caps       *terminal.Caps
+	cmuxClient cmux.Caller
 }
 
 // NewBootstrapProgressOverlay creates a new progress overlay.
-func NewBootstrapProgressOverlay(width, height int, caps *terminal.Caps) *BootstrapProgressOverlay {
+func NewBootstrapProgressOverlay(width, height int, caps *terminal.Caps, cmuxClient cmux.Caller) *BootstrapProgressOverlay {
 	return &BootstrapProgressOverlay{
-		messages: []string{"🚀 Knowledge Graph Bootstrap Started"},
-		width:    width,
-		height:   height,
-		caps:     caps,
+		messages:   []string{"🚀 Knowledge Graph Bootstrap Started"},
+		width:      width,
+		height:     height,
+		caps:       caps,
+		cmuxClient: cmuxClient,
 	}
 }
 
@@ -51,13 +54,17 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			b.error = msg.Error
 			b.messages = append(b.messages, fmt.Sprintf("❌ Error: %s", msg.Error))
 			b.done = true
-			if b.caps != nil && b.caps.ProgressBar {
+			if b.cmuxClient != nil {
+				b.cmuxClient.Call("clear-progress", nil)
+			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.ClearProgress(os.Stderr)
 			}
 		} else if msg.Phase == "complete" {
 			b.messages = append(b.messages, "✅ Bootstrap complete!")
 			b.done = true
-			if b.caps != nil && b.caps.ProgressBar {
+			if b.cmuxClient != nil {
+				b.cmuxClient.Call("clear-progress", nil)
+			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.ClearProgress(os.Stderr)
 			}
 		} else {
@@ -66,11 +73,16 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			} else {
 				b.messages = append(b.messages, fmt.Sprintf("  %s...", msg.Message))
 			}
-			if b.caps != nil && b.caps.ProgressBar {
-				percent := len(b.messages) * 15
-				if percent > 95 {
-					percent = 95
-				}
+			percent := len(b.messages) * 15
+			if percent > 95 {
+				percent = 95
+			}
+			if b.cmuxClient != nil {
+				b.cmuxClient.Call("set-progress", map[string]any{
+					"value": float64(percent) / 100.0,
+					"label": msg.Message,
+				})
+			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.SetProgress(os.Stderr, terminal.ProgressNormal, percent)
 			}
 		}
