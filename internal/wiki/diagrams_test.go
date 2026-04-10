@@ -231,6 +231,58 @@ func TestGenerateArchitectureDiagram_NilFiles(t *testing.T) {
 	assert.NotContains(t, diagram.Content, "-->")
 }
 
+func TestFirstSentence(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "single sentence", in: "Handles HTTP requests.", want: "Handles HTTP requests."},
+		{name: "multiple sentences", in: "Handles HTTP requests. Also does routing.", want: "Handles HTTP requests."},
+		{name: "exclamation", in: "Important module! Do not remove.", want: "Important module!"},
+		{name: "question", in: "Is this needed? Probably.", want: "Is this needed?"},
+		{name: "no terminator", in: "No sentence ending here", want: "No sentence ending here"},
+		{name: "empty", in: "", want: ""},
+		{name: "just period", in: ".", want: "."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, firstSentence(tt.in))
+		})
+	}
+}
+
+func TestArchitectureDiagramShortLabels(t *testing.T) {
+	modules := []ModuleAnalysis{
+		{
+			Module:  "internal/handler",
+			Summary: "The provided text describes a module structure for handling HTTP requests and routing them to appropriate handlers.",
+		},
+		{
+			Module:  "internal/store",
+			Summary: "Persistence layer for data storage.",
+		},
+		{
+			Module:  "internal/empty",
+			Summary: "",
+		},
+	}
+
+	diagram := generateArchitectureDiagram(nil, modules)
+
+	// Long first sentence should be capped at 60 runes.
+	// First sentence: "The provided text describes a module structure for handling HTTP requests and routing them to appropriate handlers."
+	// After truncateUTF8(_, 60): "The provided text describes a module structure for handling "
+	assert.Contains(t, diagram.Content, "The provided text describes a module structure for handling ")
+	assert.NotContains(t, diagram.Content, "appropriate handlers.")
+	// Short summary should use first sentence as-is.
+	assert.Contains(t, diagram.Content, "Persistence layer for data storage.")
+	// Empty summary module should have no \\n separator.
+	assert.Contains(t, diagram.Content, `internal_empty["internal/empty"]`)
+	// Should NOT contain truncated mid-word text.
+	assert.NotContains(t, diagram.Content, "str...")
+}
+
 // validatingLLMCompleter is a mock LLM that validates empty responses,
 // matching the behavior of the real LLMCompleter.Complete().
 type validatingLLMCompleter struct {

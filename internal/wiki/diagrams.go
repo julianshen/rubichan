@@ -70,8 +70,13 @@ func generateArchitectureDiagram(files []ScannedFile, modules []ModuleAnalysis) 
 
 	for _, m := range modules {
 		id := sanitizeID(m.Module)
-		summary := truncateUTF8(m.Summary, 40)
-		fmt.Fprintf(&b, "    %s[\"%s\\n%s\"]\n", id, escapeMermaid(m.Module), escapeMermaid(summary))
+		summary := firstSentence(m.Summary)
+		summary = truncateUTF8(summary, 60)
+		if summary != "" {
+			fmt.Fprintf(&b, "    %s[\"%s\\n%s\"]\n", id, escapeMermaid(m.Module), escapeMermaid(summary))
+		} else {
+			fmt.Fprintf(&b, "    %s[\"%s\"]\n", id, escapeMermaid(m.Module))
+		}
 	}
 
 	// Draw edges based on import relationships between known modules.
@@ -185,6 +190,18 @@ Respond with ONLY the Mermaid diagram code starting with "sequenceDiagram".`, ar
 		Type:    "sequence",
 		Content: strings.TrimSpace(response),
 	}, nil
+}
+
+// firstSentence returns text up to and including the first sentence
+// terminator (., !, or ?). If no terminator is found, the whole string
+// is returned.
+func firstSentence(s string) string {
+	for i, r := range s {
+		if r == '.' || r == '!' || r == '?' {
+			return s[:i+1]
+		}
+	}
+	return s
 }
 
 // truncateUTF8 truncates s to at most maxRunes Unicode code points,
