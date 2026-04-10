@@ -79,27 +79,7 @@ func generateArchitectureDiagram(files []ScannedFile, modules []ModuleAnalysis) 
 		}
 	}
 
-	// Draw edges based on import relationships between known modules.
-	seen := make(map[string]bool)
-	for _, f := range files {
-		if !knownModules[f.Module] {
-			continue
-		}
-		for _, imp := range f.Imports {
-			for mod := range knownModules {
-				if mod == f.Module {
-					continue
-				}
-				if strings.Contains(imp, mod) {
-					edge := f.Module + " -> " + mod
-					if !seen[edge] {
-						seen[edge] = true
-						fmt.Fprintf(&b, "    %s --> %s\n", sanitizeID(f.Module), sanitizeID(mod))
-					}
-				}
-			}
-		}
-	}
+	writeModuleEdges(&b, files, knownModules)
 
 	return Diagram{
 		Title:   "Architecture Overview",
@@ -110,7 +90,6 @@ func generateArchitectureDiagram(files []ScannedFile, modules []ModuleAnalysis) 
 
 // generateDependencyDiagram creates a graph LR showing import relationships between known modules.
 func generateDependencyDiagram(files []ScannedFile, modules []ModuleAnalysis) Diagram {
-	// Build a set of known module names for matching.
 	knownModules := make(map[string]bool, len(modules))
 	for _, m := range modules {
 		knownModules[m.Module] = true
@@ -119,7 +98,18 @@ func generateDependencyDiagram(files []ScannedFile, modules []ModuleAnalysis) Di
 	var b strings.Builder
 	b.WriteString("graph LR\n")
 
-	// For each file, check if any import path contains a known module name.
+	writeModuleEdges(&b, files, knownModules)
+
+	return Diagram{
+		Title:   "Module Dependencies",
+		Type:    "dependency",
+		Content: b.String(),
+	}
+}
+
+// writeModuleEdges writes Mermaid edge lines for import relationships between
+// known modules. It deduplicates edges so each A→B pair appears once.
+func writeModuleEdges(b *strings.Builder, files []ScannedFile, knownModules map[string]bool) {
 	seen := make(map[string]bool)
 	for _, f := range files {
 		if !knownModules[f.Module] {
@@ -131,22 +121,14 @@ func generateDependencyDiagram(files []ScannedFile, modules []ModuleAnalysis) Di
 					continue
 				}
 				if strings.Contains(imp, mod) {
-					edge := f.Module + " -> " + mod
+					edge := f.Module + "|" + mod
 					if !seen[edge] {
 						seen[edge] = true
-						fromID := sanitizeID(f.Module)
-						toID := sanitizeID(mod)
-						fmt.Fprintf(&b, "    %s --> %s\n", fromID, toID)
+						fmt.Fprintf(b, "    %s --> %s\n", sanitizeID(f.Module), sanitizeID(mod))
 					}
 				}
 			}
 		}
-	}
-
-	return Diagram{
-		Title:   "Module Dependencies",
-		Type:    "dependency",
-		Content: b.String(),
 	}
 }
 

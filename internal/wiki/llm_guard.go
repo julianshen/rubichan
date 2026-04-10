@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // isResponseTruncated detects if an LLM response appears to have been cut off
@@ -34,7 +35,7 @@ func isResponseTruncated(s string) bool {
 		return false
 	}
 
-	lastRune := rune(last[len(last)-1])
+	lastRune, _ := utf8.DecodeLastRuneInString(last)
 
 	// Ends with continuation punctuation.
 	if lastRune == ':' || lastRune == ',' || lastRune == ';' {

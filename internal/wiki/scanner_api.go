@@ -3,6 +3,7 @@ package wiki
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -148,74 +149,71 @@ func ScanAPIPatterns(files []ScannedFile, readFile func(string) ([]byte, error))
 // goGroupRe matches Go route group assignments like: api := router.Group("/prefix")
 var goGroupRe = regexp.MustCompile(`(\w+)\s*:?=\s*\w+\.Group\s*\(\s*"([^"]*)"`)
 
-// resolveRouteGroups rewrites Go source so that routes registered on group
-// variables have their prefix prepended, allowing the existing line-by-line
-// scanner to detect the full path.
-func resolveRouteGroups(src []byte) []byte {
-	// Build varName → prefix map.
+// pythonBlueprintRe matches Flask Blueprint with url_prefix.
+var pythonBlueprintRe = regexp.MustCompile(`(\w+)\s*=\s*Blueprint\s*\([^)]*url_prefix\s*=\s*['"]([^'"]+)['"]`)
+
+// resolveGroupPrefixes is the shared skeleton for rewriting route registrations
+// that use a prefix variable (Go route groups, Python blueprints). It finds
+// group declarations via groupRe, then rewrites route calls via callPattern.
+//
+// callPattern is a format string with one %s verb for the quoted variable name.
+// rewriteCall formats the replacement text given (varName, method, fullPath).
+func resolveGroupPrefixes(
+	src []byte,
+	groupRe *regexp.Regexp,
+	callPattern string,
+	rewriteCall func(varName, method, fullPath string) []byte,
+) []byte {
 	groups := make(map[string]string)
-	for _, m := range goGroupRe.FindAllSubmatch(src, -1) {
-		varName := string(m[1])
-		prefix := strings.TrimRight(string(m[2]), "/")
-		groups[varName] = prefix
+	for _, m := range groupRe.FindAllSubmatch(src, -1) {
+		groups[string(m[1])] = strings.TrimRight(string(m[2]), "/")
 	}
 	if len(groups) == 0 {
 		return src
 	}
 
-	// For each group variable, rewrite method calls to include the prefix.
 	result := src
 	for varName, prefix := range groups {
-		// Match varName.Method("path" — where path may be empty.
-		re := regexp.MustCompile(regexp.QuoteMeta(varName) + `\.((?i:Get|Post|Put|Delete|Patch|Options|Head))\s*\(\s*"([^"]*)"`)
+		re := regexp.MustCompile(fmt.Sprintf(callPattern, regexp.QuoteMeta(varName)))
 		result = re.ReplaceAllFunc(result, func(match []byte) []byte {
 			sub := re.FindSubmatch(match)
 			method := string(sub[1])
 			path := string(sub[2])
-			var fullPath string
-			if path == "" {
-				fullPath = prefix
-			} else {
-				fullPath = prefix + "/" + strings.TrimLeft(path, "/")
-			}
-			// Clean double slashes but preserve leading slash.
-			fullPath = strings.ReplaceAll(fullPath, "//", "/")
-			return []byte(varName + "." + method + `("` + fullPath + `"`)
+			fullPath := joinPrefixPath(prefix, path)
+			return rewriteCall(varName, method, fullPath)
 		})
 	}
 	return result
 }
 
-// pythonBlueprintRe matches Flask Blueprint with url_prefix.
-var pythonBlueprintRe = regexp.MustCompile(`(\w+)\s*=\s*Blueprint\s*\([^)]*url_prefix\s*=\s*['"]([^'"]+)['"]`)
+func joinPrefixPath(prefix, path string) string {
+	if path == "" {
+		return prefix
+	}
+	full := prefix + "/" + strings.TrimLeft(path, "/")
+	return strings.ReplaceAll(full, "//", "/")
+}
+
+// resolveRouteGroups rewrites Go source so that routes registered on group
+// variables have their prefix prepended.
+func resolveRouteGroups(src []byte) []byte {
+	return resolveGroupPrefixes(src, goGroupRe,
+		`%s\.((?i:Get|Post|Put|Delete|Patch|Options|Head))\s*\(\s*"([^"]*)"`,
+		func(varName, method, fullPath string) []byte {
+			return []byte(varName + "." + method + `("` + fullPath + `"`)
+		},
+	)
+}
 
 // resolvePythonBlueprints rewrites Python source so that routes registered on
 // Blueprint variables have the url_prefix prepended.
 func resolvePythonBlueprints(src []byte) []byte {
-	groups := make(map[string]string)
-	for _, m := range pythonBlueprintRe.FindAllSubmatch(src, -1) {
-		varName := string(m[1])
-		prefix := strings.TrimRight(string(m[2]), "/")
-		groups[varName] = prefix
-	}
-	if len(groups) == 0 {
-		return src
-	}
-
-	result := src
-	for varName, prefix := range groups {
-		// Rewrite @varName.method('/path') and @varName.route('/path') patterns.
-		re := regexp.MustCompile(`@` + regexp.QuoteMeta(varName) + `\.(get|post|put|delete|patch|route)\s*\(\s*['"]([^'"]+)['"]`)
-		result = re.ReplaceAllFunc(result, func(match []byte) []byte {
-			sub := re.FindSubmatch(match)
-			method := string(sub[1])
-			path := string(sub[2])
-			fullPath := prefix + "/" + strings.TrimLeft(path, "/")
-			fullPath = strings.ReplaceAll(fullPath, "//", "/")
+	return resolveGroupPrefixes(src, pythonBlueprintRe,
+		`@%s\.(get|post|put|delete|patch|route)\s*\(\s*['"]([^'"]+)['"]`,
+		func(varName, method, fullPath string) []byte {
 			return []byte("@" + varName + "." + method + `('` + fullPath + `'`)
-		})
-	}
-	return result
+		},
+	)
 }
 
 // scanFile processes a single ScannedFile and returns its API patterns.
