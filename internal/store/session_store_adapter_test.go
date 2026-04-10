@@ -431,3 +431,69 @@ func TestSessionStoreAdapterLoadSessionSingleListCall(t *testing.T) {
 		t.Errorf("expected 0 turns, got %d", len(turns))
 	}
 }
+
+// TestSessionStoreAdapterGetSessionMetadataReturnsErrorOnGetMessagesFail
+// verifies that GetSessionMetadata returns an error instead of silently
+// defaulting when GetMessages fails (Issue 3).
+func TestSessionStoreAdapterGetSessionMetadataReturnsErrorOnGetMessagesFail(t *testing.T) {
+	// Create a mock store that will fail on GetMessages
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	// Create a session
+	_, err = store.db.Exec(
+		`INSERT INTO sessions (id, title, model, working_dir, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		"sess-test", "Test Session", "claude-3-5-sonnet", "/test/dir",
+	)
+	if err != nil {
+		t.Fatalf("insert session failed: %v", err)
+	}
+
+	// Close the store to cause GetMessages to fail
+	store.Close()
+
+	adapter := NewSessionStoreAdapter(store)
+	_, err = adapter.GetSessionMetadata("sess-test")
+
+	// Should return an error instead of silently defaulting
+	if err == nil {
+		t.Fatal("expected error when GetMessages fails, but got nil")
+	}
+}
+
+// TestSessionStoreAdapterListSessionsReturnsErrorOnGetMessagesFail
+// verifies that ListSessions returns an error instead of silently
+// defaulting when GetMessages fails (Issue 3).
+func TestSessionStoreAdapterListSessionsReturnsErrorOnGetMessagesFail(t *testing.T) {
+	// Create a mock store that will fail on GetMessages
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	// Create a session
+	_, err = store.db.Exec(
+		`INSERT INTO sessions (id, title, model, working_dir, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
+		"sess-test", "Test Session", "claude-3-5-sonnet", "/test/dir",
+	)
+	if err != nil {
+		t.Fatalf("insert session failed: %v", err)
+	}
+
+	// Close the store to cause GetMessages to fail
+	store.Close()
+
+	adapter := NewSessionStoreAdapter(store)
+	_, err = adapter.ListSessions()
+
+	// Should return an error instead of silently defaulting
+	if err == nil {
+		t.Fatal("expected error when GetMessages fails, but got nil")
+	}
+}
