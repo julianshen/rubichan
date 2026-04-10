@@ -311,6 +311,20 @@ func TestResumeFlagDefinedOnRootCmd(t *testing.T) {
 	}
 }
 
+func TestNoColorFlagDefined(t *testing.T) {
+	var localNoColor bool
+	cmd := &cobra.Command{
+		Use:  "rubichan",
+		RunE: func(_ *cobra.Command, _ []string) error { return nil },
+	}
+	cmd.PersistentFlags().BoolVar(&localNoColor, "no-color", false, "suppress all ANSI color output (also respects NO_COLOR env var)")
+
+	flag := cmd.PersistentFlags().Lookup("no-color")
+	require.NotNil(t, flag, "--no-color flag must exist")
+	assert.Equal(t, "bool", flag.Value.Type())
+	assert.Contains(t, flag.Usage, "NO_COLOR")
+}
+
 func TestNewDefaultSecurityEngine(t *testing.T) {
 	engine := newDefaultSecurityEngine(security.EngineConfig{Concurrency: 4})
 	require.NotNil(t, engine)

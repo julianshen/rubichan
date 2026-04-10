@@ -19,7 +19,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
 	"github.com/sourcegraph/conc"
@@ -87,6 +89,7 @@ var (
 	apiBaseFlag      string
 	apiKeyFlag       string
 	autoApprove      bool
+	noColor          bool
 	noAltScreen      bool
 	noMouse          bool
 	plainTUI         bool
@@ -517,6 +520,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&apiBaseFlag, "api-base", "", "base URL for OpenAI-compatible API (e.g. http://localhost:1234/v1)")
 	rootCmd.PersistentFlags().StringVar(&apiKeyFlag, "api-key", "", "API key for the provider (use 'none' for local servers)")
 	rootCmd.PersistentFlags().BoolVar(&autoApprove, "auto-approve", false, "auto-approve all tool calls (dangerous: enables RCE)")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "suppress all ANSI color output (also respects NO_COLOR env var)")
 	rootCmd.PersistentFlags().BoolVar(&noAltScreen, "no-alt-screen", false, "run interactive TUI in the normal terminal buffer")
 	rootCmd.PersistentFlags().BoolVar(&noMouse, "no-mouse", false, "disable mouse tracking in the interactive TUI")
 	rootCmd.PersistentFlags().BoolVar(&plainTUI, "plain-tui", false, "run a reduced interactive TUI optimized for PTY capture and automation")
@@ -1357,6 +1361,12 @@ func applyAPIKeyFlag(cfg *config.Config) {
 }
 
 func runInteractive() error {
+	// Suppress ANSI color output when --no-color flag is set or the NO_COLOR
+	// environment variable is present (https://no-color.org/).
+	if noColor || os.Getenv("NO_COLOR") != "" {
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
+
 	// Resolve config path early for bootstrap check.
 	cfgDir, err := configDir()
 	if err != nil {
