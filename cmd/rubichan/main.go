@@ -1914,7 +1914,9 @@ func runHeadless() error {
 	}
 	defer wtCleanup()
 
-	// Emit working directory for terminal tab title/breadcrumbs.
+	// Emit OSC 7 unconditionally — terminals that don't support it silently ignore
+	// unknown sequences, and there's no visual side effect. This sets the tab
+	// title / breadcrumb path in terminals that support it (Ghostty, iTerm2, etc.).
 	terminal.SetWorkingDirectory(os.Stderr, cwd)
 
 	// Resolve input: code-review mode builds prompt from diff, others need explicit input.

@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"log"
 	"os"
 	"time"
 
@@ -25,11 +26,15 @@ func renderMermaidInline(caps *terminal.Caps, mermaidSrc string) bool {
 
 	pngData, err := terminal.RenderMermaid(ctx, mermaidSrc, caps.DarkBackground)
 	if err != nil {
+		log.Printf("mermaid inline render failed: %v", err)
 		return false
 	}
 
 	var buf bytes.Buffer
 	terminal.KittyImage(&buf, pngData)
-	buf.WriteTo(os.Stderr) //nolint:errcheck
+	if _, err := buf.WriteTo(os.Stderr); err != nil {
+		log.Printf("failed to write kitty graphics to stderr: %v", err)
+		return false
+	}
 	return true
 }

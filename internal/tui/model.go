@@ -184,8 +184,7 @@ func NewModel(a *agent.Agent, appName, modelName string, maxTurns int, configPat
 	sb.SetModel(modelName)
 	sb.SetTurn(0, maxTurns)
 
-	// Glamour renderer creation is unlikely to fail with static "dark" style,
-	// but handle it gracefully — Render falls back to raw text if renderer is nil.
+	// Initial dark style; refreshed by SetTermCaps() once terminal capabilities are detected.
 	mdRenderer, _ := NewMarkdownRenderer(80, true)
 
 	// Create archive directory and initialize TurnCache + TurnWindow

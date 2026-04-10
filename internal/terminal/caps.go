@@ -10,7 +10,7 @@ type Caps struct {
 	ProgressBar     bool // OSC 9;4 (ConEmu/Ghostty)
 	Notifications   bool // OSC 9
 	SyncRendering   bool // Mode 2026
-	LightDarkMode   bool // Mode 2031 + OSC 10/11
+	LightDarkMode   bool // OSC 11 background color query
 	ClipboardAccess bool // OSC 52
 	FocusEvents     bool // Mode 1004
 	DarkBackground  bool // detected via OSC 11 query (defaults true)
@@ -81,7 +81,10 @@ type Prober interface {
 	ProbeKittyKeyboard() bool
 }
 
-// Detect probes the current terminal and returns its capabilities.
+// Detect returns terminal capabilities using the TERM_PROGRAM fast path only.
+// Runtime probing (StdioProber) is not wired here because it requires raw
+// terminal I/O that conflicts with Bubble Tea's terminal management. Use
+// DetectWithProber for environments where stdin/stdout are available for probing.
 func Detect() *Caps {
 	return DetectWithEnv(os.Getenv("TERM_PROGRAM"), nil)
 }
@@ -91,7 +94,10 @@ func DetectWithProber(prober Prober) *Caps {
 	return DetectWithEnv(os.Getenv("TERM_PROGRAM"), prober)
 }
 
-// DetectWithEnv is the testable core of Detect.
+// DetectWithEnv detects terminal capabilities using a two-phase strategy: first
+// a fast lookup by termProgram against the known-terminals table, then optional
+// runtime probing via prober for capabilities that vary per user config (e.g.,
+// background color). Pass nil for prober to skip runtime probing.
 func DetectWithEnv(termProgram string, prober Prober) *Caps {
 	caps := &Caps{
 		DarkBackground: true,

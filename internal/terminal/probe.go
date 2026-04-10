@@ -83,12 +83,10 @@ func (p *StdioProber) parseBackgroundResponse(resp string) bool {
 		return true // default to dark
 	}
 	rgb := resp[idx+4:]
-	// strip any trailing escape or non-hex characters
 	parts := strings.SplitN(rgb, "/", 3)
 	if len(parts) != 3 {
 		return true
 	}
-	// each part may have trailing non-hex chars; take first 4 chars
 	r := parseHexComponent(parts[0])
 	g := parseHexComponent(parts[1])
 	b := parseHexComponent(parts[2])
@@ -96,8 +94,9 @@ func (p *StdioProber) parseBackgroundResponse(resp string) bool {
 	return avg < 0x8000
 }
 
+// parseHexComponent extracts up to 4 hex digits from s, stripping surrounding
+// non-hex characters (e.g., trailing escape sequences from terminal responses).
 func parseHexComponent(s string) int64 {
-	// take up to 4 hex digits
 	clean := strings.TrimFunc(s, func(r rune) bool {
 		return !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F'))
 	})
