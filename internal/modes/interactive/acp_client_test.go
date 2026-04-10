@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,6 +54,12 @@ func TestACPClientNoSessionLoading(t *testing.T) {
 	if len(turns) != 0 {
 		t.Errorf("expected 0 turns when not resuming, got %d", len(turns))
 	}
+
+	// Verify no load error when no resume attempted
+	loadErr := client.LoadError()
+	if loadErr != nil {
+		t.Errorf("expected LoadError to be nil when no resume attempted, got: %v", loadErr)
+	}
 }
 
 func TestACPClientLoadSessionError(t *testing.T) {
@@ -79,8 +86,10 @@ func TestACPClientLoadSessionError(t *testing.T) {
 	if loadErr == nil {
 		t.Errorf("expected LoadError to return an error for nonexistent session, got nil")
 	}
-	if loadErr.Error() != "load session nonexistent-session: session not found" {
-		t.Errorf("expected error containing 'session not found', got: %v", loadErr)
+	// Error is wrapped twice: once by SessionManager.Load, once by ACPClient
+	errMsg := loadErr.Error()
+	if !strings.Contains(errMsg, "session not found") {
+		t.Errorf("expected error containing 'session not found', got: %s", errMsg)
 	}
 }
 

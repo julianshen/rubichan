@@ -71,7 +71,7 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 		if err == nil {
 			client.loadedTurns = turns
 		} else {
-			client.loadError = fmt.Errorf("load session %s: %w", resumeID, err)
+			client.loadError = err
 		}
 	}
 
@@ -103,7 +103,7 @@ func NewACPClientWithResume(sessionMgr *SessionManager, resumeID string) *ACPCli
 		if err == nil {
 			client.loadedTurns = turns
 		} else {
-			client.loadError = fmt.Errorf("load session %s: %w", resumeID, err)
+			client.loadError = err
 		}
 	}
 

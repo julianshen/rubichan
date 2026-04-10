@@ -60,31 +60,17 @@ func (ssa *SessionStoreAdapter) ListSessions() ([]interactive.SessionMetadata, e
 // LoadSession implements interactive.SessionStore.LoadSession.
 // It converts stored messages back to Turn objects.
 func (ssa *SessionStoreAdapter) LoadSession(id string) ([]interactive.Turn, error) {
-	// Verify session exists
-	sessions, err := ssa.store.ListSessions(1)
+	// Verify session exists (Issue 2: consolidate into single ListSessions call)
+	allSessions, err := ssa.store.ListSessions(10000)
 	if err != nil {
-		return nil, fmt.Errorf("check session exists: %w", err)
+		return nil, fmt.Errorf("load session: check existence: %w", err)
 	}
 
 	var sessionFound bool
-	for _, s := range sessions {
+	for _, s := range allSessions {
 		if s.ID == id {
 			sessionFound = true
 			break
-		}
-	}
-
-	if !sessionFound {
-		// Check more sessions
-		allSessions, err := ssa.store.ListSessions(10000)
-		if err != nil {
-			return nil, fmt.Errorf("load session: check existence: %w", err)
-		}
-		for _, s := range allSessions {
-			if s.ID == id {
-				sessionFound = true
-				break
-			}
 		}
 	}
 
