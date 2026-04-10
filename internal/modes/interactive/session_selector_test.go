@@ -1,6 +1,7 @@
 package interactive
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -221,6 +222,104 @@ func TestSessionSelectorOverlayCancel(t *testing.T) {
 
 	if errReceived == nil {
 		t.Error("expected error on cancel, got nil")
+	}
+}
+
+func TestSessionSelectorOverlayVimNavigation(t *testing.T) {
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+		{ID: "sess-2", CreatedAt: time.Now().Add(-1 * time.Hour), TurnCount: 3},
+	}
+
+	overlay := NewSessionSelectorOverlay(sessions, nil)
+
+	// Test 'j' moves down
+	_, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if overlay.selector.SelectedIndex() != 1 {
+		t.Errorf("expected 'j' to move down to index 1, got %d", overlay.selector.SelectedIndex())
+	}
+
+	// Test 'k' moves up
+	_, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if overlay.selector.SelectedIndex() != 0 {
+		t.Errorf("expected 'k' to move up to index 0, got %d", overlay.selector.SelectedIndex())
+	}
+}
+
+func TestSessionSelectorOverlayQuitKey(t *testing.T) {
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+	}
+
+	errReceived := false
+	overlay := NewSessionSelectorOverlay(sessions, func(s SessionMetadata, err error) {
+		if err != nil {
+			errReceived = true
+		}
+	})
+
+	_, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	if !errReceived {
+		t.Error("expected 'q' to cancel with error")
+	}
+}
+
+func TestTimeAgoEdgeCases(t *testing.T) {
+	now := time.Now()
+
+	// 30 seconds ago
+	result := timeAgo(now.Add(-30 * time.Second))
+	if result != "just now" {
+		t.Errorf("expected 'just now' for 30 seconds, got %s", result)
+	}
+
+	// 59 seconds ago
+	result = timeAgo(now.Add(-59 * time.Second))
+	if result != "just now" {
+		t.Errorf("expected 'just now' for 59 seconds, got %s", result)
+	}
+
+	// 1 minute ago
+	result = timeAgo(now.Add(-1 * time.Minute))
+	if result != "1 min ago" {
+		t.Errorf("expected '1 min ago' for 1 minute, got %s", result)
+	}
+
+	// 5 minutes ago
+	result = timeAgo(now.Add(-5 * time.Minute))
+	if result != "5 min ago" {
+		t.Errorf("expected '5 min ago' for 5 minutes, got %s", result)
+	}
+
+	// 1 hour ago
+	result = timeAgo(now.Add(-1 * time.Hour))
+	if result != "1 hours ago" {
+		t.Errorf("expected '1 hours ago' for 1 hour, got %s", result)
+	}
+
+	// 2 hours ago
+	result = timeAgo(now.Add(-2 * time.Hour))
+	if result != "2 hours ago" {
+		t.Errorf("expected '2 hours ago' for 2 hours, got %s", result)
+	}
+
+	// 23 hours ago (still in hours range)
+	result = timeAgo(now.Add(-23 * time.Hour))
+	if result != "23 hours ago" {
+		t.Errorf("expected '23 hours ago' for 23 hours, got %s", result)
+	}
+
+	// 24 hours ago (switches to date format)
+	result = timeAgo(now.Add(-24 * time.Hour))
+	if !strings.Contains(result, "ago") && !strings.Contains(result, ",") {
+		t.Errorf("expected date format for 24 hours, got %s", result)
+	}
+
+	// 7 days ago (should be date format)
+	result = timeAgo(now.Add(-7 * 24 * time.Hour))
+	if !strings.Contains(result, ",") {
+		t.Errorf("expected date format for 7 days, got %s", result)
 	}
 }
 

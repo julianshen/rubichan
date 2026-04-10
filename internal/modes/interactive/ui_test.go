@@ -135,3 +135,58 @@ func TestPromptResumeSessionReturnsErrorWhenNoSessions(t *testing.T) {
 		t.Fatal("expected error when no sessions exist")
 	}
 }
+
+func TestInteractiveTUISessionManagerGetterSetter(t *testing.T) {
+	mockMgr := &mockSessionStore{sessions: []SessionMetadata{}}
+	sessionMgr := NewSessionManager(mockMgr)
+	tui := NewInteractiveTUI(sessionMgr, nil)
+
+	retrieved := tui.SessionManager()
+	if retrieved != sessionMgr {
+		t.Error("SessionManager() should return same instance passed to constructor")
+	}
+
+	newMockMgr := &mockSessionStore{
+		sessions: []SessionMetadata{
+			{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+		},
+	}
+	newMgr := NewSessionManager(newMockMgr)
+	tui.SetSessionManager(newMgr)
+	retrieved = tui.SessionManager()
+	if retrieved != newMgr {
+		t.Error("SetSessionManager() should update the manager")
+	}
+}
+
+func TestInteractiveTUIACPClientGetterSetter(t *testing.T) {
+	tui := NewInteractiveTUI(nil, nil)
+
+	if tui.ACPClient() != nil {
+		t.Error("ACPClient() should be nil when not set")
+	}
+
+	client := NewACPClientWithResume(nil, "")
+	tui.SetACPClient(client)
+	retrieved := tui.ACPClient()
+	if retrieved != client {
+		t.Error("SetACPClient() should update the client")
+	}
+}
+
+func TestInteractiveTUIRestoreTurns(t *testing.T) {
+	tui := NewInteractiveTUI(nil, nil)
+
+	turns := []Turn{
+		{ID: "turn-1", Timestamp: time.Now(), UserInput: "hello", AgentResp: "hi"},
+	}
+
+	tui.restoreTurns(turns)
+	// Verify turns are stored by checking internal state
+	if len(tui.turns) != 1 {
+		t.Errorf("expected 1 restored turn, got %d", len(tui.turns))
+	}
+	if tui.turns[0].UserInput != "hello" {
+		t.Errorf("expected restored turn input 'hello', got %s", tui.turns[0].UserInput)
+	}
+}

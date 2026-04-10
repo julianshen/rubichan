@@ -14,10 +14,10 @@ import (
 
 // ACPClient is a client for communicating with the ACP server in interactive mode.
 type ACPClient struct {
-	sessionMgr  *SessionManager         // NEW - for session loading
-	resumeID    string                  // NEW - optional session ID to resume
-	loadedTurns []Turn                  // NEW - turns loaded from resume session
-	loadError   error                   // NEW - tracks session load errors
+	sessionMgr  *SessionManager // NEW - for session loading
+	resumeID    string          // NEW - optional session ID to resume
+	loadedTurns []Turn          // NEW - turns loaded from resume session
+	loadError   error           // NEW - tracks session load errors
 	nextID      int64
 	mu          sync.Mutex
 	dispatcher  *acp.ResponseDispatcher
