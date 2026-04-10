@@ -827,9 +827,31 @@ func (g *KnowledgeGraph) Close() error {
 // Helper functions
 
 func (g *KnowledgeGraph) vectorSearch(ctx context.Context, queryVec []float32, req kg.QueryRequest) ([]kg.ScoredEntity, error) {
-	rows, err := g.db.QueryContext(ctx, `
-		SELECT entity_id, vector, dims FROM embeddings
-	`)
+	// Pre-filter embeddings via JOIN when Kind/Layer filters are set,
+	// reducing the number of vectors to score.
+	query := `SELECT em.entity_id, em.vector, em.dims FROM embeddings em`
+	var args []any
+	if len(req.KindFilter) > 0 || len(req.LayerFilter) > 0 {
+		query += ` JOIN entities e ON e.id = em.entity_id WHERE 1=1`
+		if len(req.KindFilter) > 0 {
+			placeholders := make([]string, len(req.KindFilter))
+			for i, k := range req.KindFilter {
+				placeholders[i] = "?"
+				args = append(args, string(k))
+			}
+			query += ` AND e.kind IN (` + strings.Join(placeholders, ",") + `)`
+		}
+		if len(req.LayerFilter) > 0 {
+			placeholders := make([]string, len(req.LayerFilter))
+			for i, l := range req.LayerFilter {
+				placeholders[i] = "?"
+				args = append(args, string(l))
+			}
+			query += ` AND e.layer IN (` + strings.Join(placeholders, ",") + `)`
+		}
+	}
+
+	rows, err := g.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("vectorSearch: %w", err)
 	}
@@ -863,37 +885,62 @@ func (g *KnowledgeGraph) vectorSearch(ctx context.Context, queryVec []float32, r
 		return scoredResults[i].score > scoredResults[j].score
 	})
 
-	// Convert to ScoredEntity with post-fetch filtering
+	// Cap candidates before entity fetches to avoid N+1 on entire table.
+	candidateLimit := req.Limit
+	if candidateLimit <= 0 {
+		candidateLimit = 20
+	}
+	// Fetch extra candidates to account for possible cache misses.
+	candidateLimit *= 2
+	if candidateLimit > len(scoredResults) {
+		candidateLimit = len(scoredResults)
+	}
+	scoredResults = scoredResults[:candidateLimit]
+
+	// Fetch full entities (filters already applied in SQL when set).
 	var results []kg.ScoredEntity
 	for _, s := range scoredResults {
 		e, err := g.Get(ctx, s.id)
-		if err != nil {
+		if err != nil || e == nil {
 			continue
 		}
-		if e != nil {
-			// Apply KindFilter
-			if len(req.KindFilter) > 0 && !containsKind(req.KindFilter, e.Kind) {
-				continue
-			}
-			// Apply LayerFilter
-			if len(req.LayerFilter) > 0 && !containsLayer(req.LayerFilter, e.Layer) {
-				continue
-			}
-			results = append(results, kg.ScoredEntity{
-				Entity:          e,
-				Score:           s.score,
-				EstimatedTokens: estimateTokens(e),
-			})
-		}
+		results = append(results, kg.ScoredEntity{
+			Entity:          e,
+			Score:           s.score,
+			EstimatedTokens: estimateTokens(e),
+		})
 	}
 
 	return results, nil
 }
 
 func (g *KnowledgeGraph) ftsSearch(ctx context.Context, query string, req kg.QueryRequest) ([]kg.ScoredEntity, error) {
-	rows, err := g.db.QueryContext(ctx, `
-		SELECT id FROM entities_fts WHERE entities_fts MATCH ? ORDER BY rank LIMIT 100
-	`, query)
+	// Push Kind/Layer filtering into SQL via JOIN to reduce entity fetches.
+	sql := `SELECT entities_fts.id FROM entities_fts`
+	args := []any{query}
+	if len(req.KindFilter) > 0 || len(req.LayerFilter) > 0 {
+		sql += ` JOIN entities e ON e.id = entities_fts.id`
+	}
+	sql += ` WHERE entities_fts MATCH ?`
+	if len(req.KindFilter) > 0 {
+		placeholders := make([]string, len(req.KindFilter))
+		for i, k := range req.KindFilter {
+			placeholders[i] = "?"
+			args = append(args, string(k))
+		}
+		sql += ` AND e.kind IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	if len(req.LayerFilter) > 0 {
+		placeholders := make([]string, len(req.LayerFilter))
+		for i, l := range req.LayerFilter {
+			placeholders[i] = "?"
+			args = append(args, string(l))
+		}
+		sql += ` AND e.layer IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	sql += ` ORDER BY rank LIMIT 100`
+
+	rows, err := g.db.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("ftsSearch: %w", err)
 	}
@@ -907,24 +954,14 @@ func (g *KnowledgeGraph) ftsSearch(ctx context.Context, query string, req kg.Que
 		}
 
 		e, err := g.Get(ctx, id)
-		if err != nil {
+		if err != nil || e == nil {
 			continue
 		}
-		if e != nil {
-			// Apply KindFilter
-			if len(req.KindFilter) > 0 && !containsKind(req.KindFilter, e.Kind) {
-				continue
-			}
-			// Apply LayerFilter
-			if len(req.LayerFilter) > 0 && !containsLayer(req.LayerFilter, e.Layer) {
-				continue
-			}
-			results = append(results, kg.ScoredEntity{
-				Entity:          e,
-				Score:           0.5, // FTS doesn't provide scores; use neutral value
-				EstimatedTokens: estimateTokens(e),
-			})
-		}
+		results = append(results, kg.ScoredEntity{
+			Entity:          e,
+			Score:           0.5, // FTS doesn't provide scores; use neutral value
+			EstimatedTokens: estimateTokens(e),
+		})
 	}
 
 	return results, nil
