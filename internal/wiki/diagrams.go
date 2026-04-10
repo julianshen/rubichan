@@ -122,7 +122,7 @@ func writeModuleEdges(b *strings.Builder, files []ScannedFile, knownModules map[
 				if mod == f.Module {
 					continue
 				}
-				if strings.Contains(imp, mod) {
+				if imp == mod || strings.HasSuffix(imp, "/"+mod) {
 					edge := f.Module + "|" + mod
 					if !seen[edge] {
 						seen[edge] = true
