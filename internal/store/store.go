@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -544,6 +545,23 @@ func (s *Store) DeleteSession(id string) error {
 	return tx.Commit()
 }
 
+// DeleteEmptySessions removes sessions that have zero messages and were created
+// before the given cutoff time. Sessions that have active forks are skipped.
+// Returns the number of sessions deleted.
+func (s *Store) DeleteEmptySessions(olderThan time.Time) (int64, error) {
+	result, err := s.db.Exec(
+		`DELETE FROM sessions
+		 WHERE id NOT IN (SELECT DISTINCT session_id FROM messages)
+		   AND id NOT IN (SELECT DISTINCT forked_from FROM sessions WHERE forked_from IS NOT NULL AND forked_from != '')
+		   AND created_at < ?`,
+		olderThan.Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete empty sessions: %w", err)
+	}
+	return result.RowsAffected()
+}
+
 // ForkSession creates a new session by deep-copying all data from the source.
 func (s *Store) ForkSession(sourceID, newID string) error {
 	src, err := s.GetSession(sourceID)
@@ -657,6 +675,8 @@ func (s *Store) GetCachedRegistry(name string) (*RegistryEntry, error) {
 
 // AppendMessage adds a message to a session, auto-incrementing the sequence number.
 // The content blocks are serialized to JSON for storage.
+// On the first user message, if the session title is empty, it auto-generates a
+// title from the first 50 characters of the message text.
 func (s *Store) AppendMessage(sessionID, role string, content []provider.ContentBlock) error {
 	contentJSON, err := json.Marshal(content)
 	if err != nil {
@@ -675,7 +695,50 @@ func (s *Store) AppendMessage(sessionID, role string, content []provider.Content
 	if err != nil {
 		return fmt.Errorf("append message: %w", err)
 	}
+
+	// Auto-title: on first user message, set session title if still empty.
+	if role == "user" {
+		s.autoTitleSession(sessionID, content)
+	}
+
 	return nil
+}
+
+// autoTitleSession sets the session title from the first user message text,
+// but only if the title is currently empty. Errors are silently ignored
+// because titling is best-effort and should not block message persistence.
+func (s *Store) autoTitleSession(sessionID string, content []provider.ContentBlock) {
+	var title string
+	err := s.db.QueryRow(`SELECT title FROM sessions WHERE id = ?`, sessionID).Scan(&title)
+	if err != nil || title != "" {
+		return
+	}
+
+	text := extractMessageText(content)
+	if text == "" {
+		return
+	}
+
+	const maxTitleLen = 50
+	if len(text) > maxTitleLen {
+		text = text[:maxTitleLen]
+	}
+
+	_, _ = s.db.Exec(
+		`UPDATE sessions SET title = ?, updated_at = datetime('now') WHERE id = ? AND title = ''`,
+		text, sessionID,
+	)
+}
+
+// extractMessageText returns the concatenated text from content blocks.
+func extractMessageText(content []provider.ContentBlock) string {
+	var parts []string
+	for _, block := range content {
+		if block.Type == "text" && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // GetMessages retrieves all messages for a session, ordered by sequence number.

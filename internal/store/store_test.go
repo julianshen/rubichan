@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/stretchr/testify/assert"
@@ -1170,4 +1171,146 @@ func TestSkillInstallStateDefaultsForMissingColumns(t *testing.T) {
 	assert.Equal(t, "", got.SourceRef)
 	assert.Equal(t, "", got.Category)
 	assert.Equal(t, "", got.Tags)
+}
+
+func TestAppendMessageAutoTitlesSession(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "auto-title", Model: "gpt-4"}))
+
+	// First user message should auto-title
+	err = s.AppendMessage("auto-title", "user", []provider.ContentBlock{
+		{Type: "text", Text: "Fix the login bug in auth module"},
+	})
+	require.NoError(t, err)
+
+	got, err := s.GetSession("auto-title")
+	require.NoError(t, err)
+	assert.Equal(t, "Fix the login bug in auth module", got.Title)
+}
+
+func TestAppendMessageAutoTitleTruncatesLongText(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "long-title", Model: "gpt-4"}))
+
+	longText := "This is a very long message that should be truncated to fifty characters maximum"
+	err = s.AppendMessage("long-title", "user", []provider.ContentBlock{
+		{Type: "text", Text: longText},
+	})
+	require.NoError(t, err)
+
+	got, err := s.GetSession("long-title")
+	require.NoError(t, err)
+	assert.Len(t, got.Title, 50)
+	assert.Equal(t, longText[:50], got.Title)
+}
+
+func TestAppendMessageDoesNotOverwriteExistingTitle(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "keep-title", Model: "gpt-4", Title: "My Session"}))
+
+	err = s.AppendMessage("keep-title", "user", []provider.ContentBlock{
+		{Type: "text", Text: "This should not replace the title"},
+	})
+	require.NoError(t, err)
+
+	got, err := s.GetSession("keep-title")
+	require.NoError(t, err)
+	assert.Equal(t, "My Session", got.Title, "existing title should not be overwritten")
+}
+
+func TestAppendMessageAssistantDoesNotAutoTitle(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(Session{ID: "no-asst-title", Model: "gpt-4"}))
+
+	// Assistant message should not auto-title
+	err = s.AppendMessage("no-asst-title", "assistant", []provider.ContentBlock{
+		{Type: "text", Text: "Hello, how can I help?"},
+	})
+	require.NoError(t, err)
+
+	got, err := s.GetSession("no-asst-title")
+	require.NoError(t, err)
+	assert.Empty(t, got.Title, "assistant messages should not auto-title")
+}
+
+func TestDeleteEmptySessions(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Create sessions with different ages
+	_, err = s.db.Exec(
+		`INSERT INTO sessions (id, title, model, created_at, updated_at) VALUES
+		 ('empty-old', '', 'gpt-4', datetime('now', '-2 days'), datetime('now', '-2 days')),
+		 ('empty-new', '', 'gpt-4', datetime('now'), datetime('now')),
+		 ('has-msgs', '', 'gpt-4', datetime('now', '-2 days'), datetime('now', '-2 days'))`)
+	require.NoError(t, err)
+
+	// Add a message to 'has-msgs'
+	_, err = s.db.Exec(
+		`INSERT INTO messages (session_id, seq, role, content, created_at) VALUES (?, ?, ?, ?, datetime('now'))`,
+		"has-msgs", 0, "user", `[{"type":"text","text":"hello"}]`,
+	)
+	require.NoError(t, err)
+
+	// Delete empty sessions older than 1 day
+	cutoff := time.Now().Add(-24 * time.Hour)
+	deleted, err := s.DeleteEmptySessions(cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted, "should delete only the old empty session")
+
+	// 'empty-old' should be gone
+	got, err := s.GetSession("empty-old")
+	require.NoError(t, err)
+	assert.Nil(t, got, "old empty session should be deleted")
+
+	// 'empty-new' should remain (too recent)
+	got, err = s.GetSession("empty-new")
+	require.NoError(t, err)
+	assert.NotNil(t, got, "new empty session should remain")
+
+	// 'has-msgs' should remain (has messages)
+	got, err = s.GetSession("has-msgs")
+	require.NoError(t, err)
+	assert.NotNil(t, got, "session with messages should remain")
+}
+
+func TestDeleteEmptySessionsSkipsForkedSources(t *testing.T) {
+	s, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Create source session (empty but has a fork)
+	_, err = s.db.Exec(
+		`INSERT INTO sessions (id, title, model, created_at, updated_at) VALUES
+		 ('source', '', 'gpt-4', datetime('now', '-2 days'), datetime('now', '-2 days')),
+		 ('fork-1', '', 'gpt-4', datetime('now'), datetime('now'))`)
+	require.NoError(t, err)
+
+	// Mark fork-1 as forked from source
+	_, err = s.db.Exec(`UPDATE sessions SET forked_from = 'source' WHERE id = 'fork-1'`)
+	require.NoError(t, err)
+
+	// Delete empty sessions older than 1 day
+	cutoff := time.Now().Add(-24 * time.Hour)
+	deleted, err := s.DeleteEmptySessions(cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), deleted, "should not delete session that is a fork source")
+
+	// Source should remain
+	got, err := s.GetSession("source")
+	require.NoError(t, err)
+	assert.NotNil(t, got, "fork source should not be deleted")
 }
