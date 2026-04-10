@@ -1,9 +1,14 @@
 package terminal
 
 import (
+	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDetectWithEnv_Ghostty(t *testing.T) {
@@ -53,4 +58,50 @@ func TestDetectWithEnv_EmptyTermProgram(t *testing.T) {
 	caps := DetectWithEnv("", nil)
 	assert.False(t, caps.Hyperlinks)
 	assert.False(t, caps.KittyGraphics)
+}
+
+func TestDetectWithEnv_CmuxSocket_Detected(t *testing.T) {
+	t.Setenv("CMUX_WORKSPACE_ID", "ws-123")
+	// Create fake cmux socket that responds to system.ping.
+	// Use os.MkdirTemp with a short prefix to stay within the Unix socket
+	// path limit of 104 characters on macOS.
+	dir, err := os.MkdirTemp("", "cmux")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "cmux.sock")
+	ln, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		enc := json.NewEncoder(conn)
+		for {
+			var req map[string]any
+			if err := dec.Decode(&req); err != nil {
+				return
+			}
+			enc.Encode(map[string]any{"id": req["id"], "ok": true, "result": map[string]bool{"pong": true}}) //nolint:errcheck
+		}
+	}()
+	t.Setenv("CMUX_SOCKET_PATH", sock)
+	caps := DetectWithEnv("ghostty", nil)
+	assert.True(t, caps.CmuxSocket)
+}
+
+func TestDetectWithEnv_CmuxSocket_NoEnvVar(t *testing.T) {
+	t.Setenv("CMUX_WORKSPACE_ID", "")
+	caps := DetectWithEnv("ghostty", nil)
+	assert.False(t, caps.CmuxSocket)
+}
+
+func TestDetectWithEnv_CmuxSocket_BadSocket(t *testing.T) {
+	t.Setenv("CMUX_WORKSPACE_ID", "ws-123")
+	t.Setenv("CMUX_SOCKET_PATH", "/nonexistent/cmux.sock")
+	caps := DetectWithEnv("ghostty", nil)
+	assert.False(t, caps.CmuxSocket)
 }
