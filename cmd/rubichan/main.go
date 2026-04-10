@@ -58,6 +58,7 @@ import (
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
+	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/browser"
 	dbtools "github.com/julianshen/rubichan/internal/tools/db"
@@ -1370,6 +1371,15 @@ func applyAPIKeyFlag(cfg *config.Config) {
 
 func runInteractive() error {
 	caps := terminal.Detect()
+
+	var cmuxClient cmux.Caller
+	if caps.CmuxSocket {
+		if cc, err := cmux.Dial(cmux.SocketPath()); err == nil {
+			cmuxClient = cc
+			defer cc.Close()
+		}
+	}
+
 	// Resolve config path early for bootstrap check.
 	cfgDir, err := configDir()
 	if err != nil {
@@ -1680,6 +1690,7 @@ func runInteractive() error {
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
 	model.SetTermCaps(caps)
+	model.SetCmuxClient(cmuxClient)
 	model.SetDebug(debugMode)
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
@@ -1841,6 +1852,25 @@ func runInteractive() error {
 		}
 	}
 
+	// Register cmux tools when running inside cmux terminal.
+	if cmuxClient != nil {
+		cmuxTools := []tools.Tool{
+			tools.NewCmuxBrowserNavigate(cmuxClient),
+			tools.NewCmuxBrowserSnapshot(cmuxClient),
+			tools.NewCmuxBrowserClick(cmuxClient),
+			tools.NewCmuxBrowserType(cmuxClient),
+			tools.NewCmuxBrowserWait(cmuxClient),
+			tools.NewCmuxSplit(cmuxClient),
+			tools.NewCmuxSend(cmuxClient),
+			tools.NewCmuxOrchestrate(cmuxClient),
+		}
+		for _, t := range cmuxTools {
+			if err := registry.Register(t); err != nil {
+				log.Printf("warning: registering cmux tool %q: %v", t.Name(), err)
+			}
+		}
+	}
+
 	// Wire the agent into the TUI model now that both exist.
 	model.SetAgent(a)
 	model.SetWikiConfig(tui.WikiCommandConfig{
@@ -1898,6 +1928,14 @@ func runHeadless() error {
 	}
 
 	caps := terminal.Detect()
+
+	var cmuxClient cmux.Caller
+	if caps.CmuxSocket {
+		if cc, err := cmux.Dial(cmux.SocketPath()); err == nil {
+			cmuxClient = cc
+			defer cc.Close()
+		}
+	}
 
 	if maxTurnsFlag > 0 {
 		cfg.Agent.MaxTurns = maxTurnsFlag
@@ -2275,7 +2313,23 @@ func runHeadless() error {
 	}
 
 	// Terminal notifications for headless completion.
-	if caps.Notifications {
+	if cmuxClient != nil {
+		cmuxClient.Call("notification.create", map[string]string{
+			"title": "Rubichan",
+			"subtitle": "Code Review",
+			"body": "Code review complete",
+		})
+		if secReport != nil {
+			summary := secReport.Summary()
+			highSeverityCount := summary.Critical + summary.High
+			if highSeverityCount > 0 {
+				cmuxClient.Call("notification.create", map[string]string{
+					"title": "Rubichan",
+					"body": fmt.Sprintf("%d high-severity security findings detected", highSeverityCount),
+				})
+			}
+		}
+	} else if caps.Notifications {
 		terminal.Notify(os.Stderr, "Code review complete")
 		if secReport != nil {
 			summary := secReport.Summary()
@@ -3110,6 +3164,14 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency int) error {
 	caps := terminal.Detect()
 
+	var cmuxClient cmux.Caller
+	if caps.CmuxSocket {
+		if cc, err := cmux.Dial(cmux.SocketPath()); err == nil {
+			cmuxClient = cc
+			defer cc.Close()
+		}
+	}
+
 	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
@@ -3126,13 +3188,23 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 		ProgressFunc: func(stage string, current, total int) {
 			if total > 0 {
 				fmt.Fprintf(os.Stderr, "[%s] %d/%d\n", stage, current, total)
-				if caps.ProgressBar {
-					percent := current * 100 / total
+				percent := current * 100 / total
+				if cmuxClient != nil {
+					cmuxClient.Call("set-progress", map[string]any{
+						"value": float64(percent) / 100.0,
+						"label": stage,
+					})
+				} else if caps.ProgressBar {
 					terminal.SetProgress(os.Stderr, terminal.ProgressNormal, percent)
 				}
 			} else {
 				fmt.Fprintf(os.Stderr, "[%s]\n", stage)
-				if caps.ProgressBar {
+				if cmuxClient != nil {
+					cmuxClient.Call("set-progress", map[string]any{
+						"value": 0.0,
+						"label": stage,
+					})
+				} else if caps.ProgressBar {
 					terminal.SetProgress(os.Stderr, terminal.ProgressIndeterminate, 0)
 				}
 			}
@@ -3141,18 +3213,30 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 
 	result, err := wiki.Run(context.Background(), wikiCfg, llm, par)
 
-	if caps.ProgressBar {
+	if cmuxClient != nil {
+		cmuxClient.Call("clear-progress", nil)
+	} else if caps.ProgressBar {
 		terminal.ClearProgress(os.Stderr)
 	}
 
 	if err != nil {
-		if caps.Notifications {
+		if cmuxClient != nil {
+			cmuxClient.Call("notification.create", map[string]string{
+				"title": "Rubichan", "body": "Wiki generation failed",
+			})
+		} else if caps.Notifications {
 			terminal.Notify(os.Stderr, "Wiki generation failed")
 		}
 		return err
 	}
 
-	if caps.Notifications {
+	if cmuxClient != nil {
+		cmuxClient.Call("notification.create", map[string]string{
+			"title":    "Rubichan",
+			"subtitle": "Wiki Generation",
+			"body":     fmt.Sprintf("Wiki complete — %d documents rendered", result.Documents),
+		})
+	} else if caps.Notifications {
 		terminal.Notify(os.Stderr, fmt.Sprintf("Wiki complete — %d documents rendered", result.Documents))
 	}
 
