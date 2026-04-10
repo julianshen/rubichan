@@ -185,6 +185,90 @@ func TestWalkKnowledgeDirEmpty(t *testing.T) {
 	require.Empty(t, read)
 }
 
+func TestValidKindsCoversAllEntityKinds(t *testing.T) {
+	// Catch drift: if a new EntityKind constant is added to pkg/knowledgegraph
+	// but not to validKinds, this test fails.
+	allKinds := []kg.EntityKind{
+		kg.KindArchitecture,
+		kg.KindDecision,
+		kg.KindGotcha,
+		kg.KindPattern,
+		kg.KindModule,
+		kg.KindIntegration,
+	}
+	for _, k := range allKinds {
+		require.True(t, validKinds[string(k)], "validKinds missing %q", k)
+	}
+	require.Len(t, validKinds, len(allKinds), "validKinds has entries not in EntityKind constants")
+}
+
+func TestValidateFrontmatterMissingID(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "no-id.md")
+	content := "---\nkind: gotcha\ntitle: No ID\n---\nBody text."
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := readEntityFile(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing required field 'id'")
+}
+
+func TestValidateFrontmatterMissingKind(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "no-kind.md")
+	content := "---\nid: test-001\ntitle: No Kind\n---\nBody text."
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := readEntityFile(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing required field 'kind'")
+}
+
+func TestValidateFrontmatterInvalidKind(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "bad-kind.md")
+	content := "---\nid: test-001\nkind: foobar\ntitle: Bad Kind\n---\nBody."
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := readEntityFile(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid kind")
+}
+
+func TestValidateFrontmatterBadConfidence(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, "bad-conf.md")
+	content := "---\nid: test-001\nkind: gotcha\nconfidence: 1.5\n---\nBody."
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	_, err := readEntityFile(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confidence must be between")
+}
+
+func TestWalkKnowledgeDirSkipsInvalidFiles(t *testing.T) {
+	dir := tempDir(t)
+
+	// Write a valid entity
+	valid := &kg.Entity{
+		ID: "valid-001", Kind: kg.KindArchitecture, Title: "Valid",
+		Source: kg.SourceManual, Created: time.Now(), Updated: time.Now(),
+	}
+	require.NoError(t, writeEntityFile(dir, valid))
+
+	// Write an invalid file (missing ID) directly
+	badDir := filepath.Join(dir, "gotcha")
+	require.NoError(t, os.MkdirAll(badDir, 0o755))
+	badPath := filepath.Join(badDir, "invalid.md")
+	require.NoError(t, os.WriteFile(badPath, []byte("---\nkind: gotcha\n---\nNo ID here."), 0o644))
+
+	// Walk should skip the invalid file and return the valid one
+	entities, err := walkKnowledgeDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entities, 1)
+	require.Equal(t, "valid-001", entities[0].ID)
+}
+
 func TestReadEntityMissingFrontmatter(t *testing.T) {
 	dir := tempDir(t)
 	path := filepath.Join(dir, "bad.md")
