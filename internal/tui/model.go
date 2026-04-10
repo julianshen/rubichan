@@ -25,6 +25,7 @@ import (
 	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
@@ -141,6 +142,7 @@ type Model struct {
 	plainMode         bool
 	debug             bool
 	lastPrompt        string
+	termCaps          *terminal.Caps
 	sessionState      *session.State
 	eventSink         session.EventSink
 	toolApprovalCount map[string]int // per-turn count of times each tool was approved
@@ -396,8 +398,29 @@ func (m *Model) SetPlainMode(enabled bool) {
 	m.viewport.SetContent(m.viewportContent())
 }
 
+// SetTermCaps sets the terminal capabilities. When set, it refreshes the
+// markdown renderer to match the terminal's background brightness.
+func (m *Model) SetTermCaps(caps *terminal.Caps) {
+	m.termCaps = caps
+	// Refresh markdown renderer with correct theme.
+	if caps != nil {
+		if mdRenderer, err := NewMarkdownRenderer(m.width, caps.DarkBackground); err == nil {
+			m.mdRenderer = mdRenderer
+		}
+	}
+}
+
+// TermCaps returns the terminal capabilities, or nil if not detected.
+func (m *Model) TermCaps() *terminal.Caps {
+	return m.termCaps
+}
+
 func (m *Model) refreshRenderers() {
-	mdRenderer, err := NewMarkdownRenderer(m.width, true)
+	darkBg := true
+	if m.termCaps != nil {
+		darkBg = m.termCaps.DarkBackground
+	}
+	mdRenderer, err := NewMarkdownRenderer(m.width, darkBg)
 	if err == nil {
 		m.mdRenderer = mdRenderer
 	} else if m.debug {

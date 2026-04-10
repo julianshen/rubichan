@@ -56,6 +56,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills/sandbox"
 	starengine "github.com/julianshen/rubichan/internal/skills/starlark"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/browser"
@@ -1368,6 +1369,7 @@ func applyAPIKeyFlag(cfg *config.Config) {
 }
 
 func runInteractive() error {
+	caps := terminal.Detect()
 	// Resolve config path early for bootstrap check.
 	cfgDir, err := configDir()
 	if err != nil {
@@ -1677,6 +1679,7 @@ func runInteractive() error {
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
+	model.SetTermCaps(caps)
 	model.SetDebug(debugMode)
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
@@ -1868,6 +1871,11 @@ func runInteractive() error {
 	if !noAltScreen {
 		programOpts = append(programOpts, tea.WithAltScreen())
 	}
+	// TODO: enable Kitty keyboard protocol when bubbletea adds support.
+	// Once bubbletea exposes tea.WithKittyKeyboard(), add:
+	//   if caps.KittyKeyboard {
+	//       programOpts = append(programOpts, tea.WithKittyKeyboard(...))
+	//   }
 	prog := tea.NewProgram(model, programOpts...)
 	if _, err := prog.Run(); err != nil {
 		if err := handleInteractiveProgramError(err, runCtx, "running TUI"); err != nil {
