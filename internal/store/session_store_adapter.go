@@ -32,9 +32,8 @@ func (ssa *SessionStoreAdapter) ListSessions() ([]interactive.SessionMetadata, e
 		// Count the turns (messages) in this session
 		messages, err := ssa.store.GetMessages(sess.ID)
 		if err != nil {
-			// If we can't get messages, skip turn count but continue
-			// The session still exists, we just won't know the turn count
-			messages = []StoredMessage{}
+			// Return error instead of silently defaulting (Issue 3)
+			return nil, fmt.Errorf("get messages for session %s: %w", sess.ID, err)
 		}
 
 		// Each turn is represented as a pair of messages (user + agent response)
@@ -174,7 +173,8 @@ func (ssa *SessionStoreAdapter) GetSessionMetadata(id string) (interactive.Sessi
 	// Count turns
 	messages, err := ssa.store.GetMessages(id)
 	if err != nil {
-		messages = []StoredMessage{} // Default to no messages if we can't retrieve
+		// Return error instead of silently defaulting (Issue 3)
+		return interactive.SessionMetadata{}, fmt.Errorf("get messages for session %s: %w", id, err)
 	}
 
 	turnCount := 0
