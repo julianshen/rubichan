@@ -490,7 +490,7 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 			return fmt.Errorf("rebuildIndex: marshal tags for entity %s: %w", e.ID, err)
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence)
+			`INSERT OR REPLACE INTO entities(id, kind, layer, title, tags_json, body, source, created_at, updated_at, confidence)
 			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.ID, string(e.Kind), normalizedLayer(e.Layer), e.Title, string(tagsJSON), e.Body, string(e.Source),
 			e.Created.Format(time.RFC3339), e.Updated.Format(time.RFC3339), e.Confidence,
@@ -502,7 +502,7 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 		// Insert relationships
 		for _, rel := range e.Relationships {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO relationships(source_id, kind, target_id) VALUES(?, ?, ?)`,
+				`INSERT OR REPLACE INTO relationships(source_id, kind, target_id) VALUES(?, ?, ?)`,
 				e.ID, string(rel.Kind), rel.Target,
 			); err != nil {
 				return fmt.Errorf("rebuildIndex: insert relationship: %w", err)
@@ -512,7 +512,7 @@ func (g *KnowledgeGraph) rebuildIndexInternal(ctx context.Context) error {
 		// Populate FTS (must do within transaction using same connection)
 		tagsStr := strings.Join(e.Tags, " ")
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO entities_fts(id, title, body, tags) VALUES(?, ?, ?, ?)`,
+			`INSERT OR REPLACE INTO entities_fts(id, title, body, tags) VALUES(?, ?, ?, ?)`,
 			e.ID, e.Title, e.Body, tagsStr,
 		); err != nil {
 			return fmt.Errorf("rebuildIndex: insert FTS: %w", err)

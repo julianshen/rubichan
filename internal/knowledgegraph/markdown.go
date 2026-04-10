@@ -193,6 +193,12 @@ func walkKnowledgeDir(knowledgeDir string) ([]*kg.Entity, error) {
 			return err
 		}
 
+		// Skip entities with empty IDs — these would cause UNIQUE constraint
+		// violations when multiple such files exist.
+		if e.ID == "" {
+			return nil
+		}
+
 		entities = append(entities, e)
 		return nil
 	})

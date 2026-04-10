@@ -395,3 +395,44 @@ func TestWalkKnowledgeDirFindsAllLayers(t *testing.T) {
 	require.Equal(t, kg.EntityLayerTeam, found["team-001"])
 	require.Equal(t, kg.EntityLayerSession, found["session-001"])
 }
+
+func TestWalkKnowledgeDirSkipsEmptyIDs(t *testing.T) {
+	dir := tempDir(t)
+	kindDir := filepath.Join(dir, "module")
+	require.NoError(t, os.MkdirAll(kindDir, 0o755))
+
+	// Write a valid entity
+	validContent := `---
+id: valid-001
+kind: module
+title: Valid Module
+source: manual
+---
+Valid body.`
+	require.NoError(t, os.WriteFile(filepath.Join(kindDir, "valid.md"), []byte(validContent), 0o644))
+
+	// Write an entity with empty id field
+	emptyIDContent := `---
+id: ""
+kind: module
+title: No ID Module
+source: manual
+---
+Empty ID body.`
+	require.NoError(t, os.WriteFile(filepath.Join(kindDir, "empty-id.md"), []byte(emptyIDContent), 0o644))
+
+	// Write an entity with missing id field entirely
+	missingIDContent := `---
+kind: module
+title: Missing ID Module
+source: manual
+---
+Missing ID body.`
+	require.NoError(t, os.WriteFile(filepath.Join(kindDir, "missing-id.md"), []byte(missingIDContent), 0o644))
+
+	// Walk should only return the valid entity
+	read, err := walkKnowledgeDir(dir)
+	require.NoError(t, err)
+	require.Len(t, read, 1, "should skip entities with empty IDs")
+	require.Equal(t, "valid-001", read[0].ID)
+}
