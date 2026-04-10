@@ -56,6 +56,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills/sandbox"
 	starengine "github.com/julianshen/rubichan/internal/skills/starlark"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/browser"
@@ -1368,6 +1369,7 @@ func applyAPIKeyFlag(cfg *config.Config) {
 }
 
 func runInteractive() error {
+	caps := terminal.Detect()
 	// Resolve config path early for bootstrap check.
 	cfgDir, err := configDir()
 	if err != nil {
@@ -1677,6 +1679,7 @@ func runInteractive() error {
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
+	model.SetTermCaps(caps)
 	model.SetDebug(debugMode)
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
@@ -1868,6 +1871,7 @@ func runInteractive() error {
 	if !noAltScreen {
 		programOpts = append(programOpts, tea.WithAltScreen())
 	}
+	// TODO: enable Kitty keyboard (caps.KittyKeyboard) when bubbletea adds tea.WithKittyKeyboard().
 	prog := tea.NewProgram(model, programOpts...)
 	if _, err := prog.Run(); err != nil {
 		if err := handleInteractiveProgramError(err, runCtx, "running TUI"); err != nil {
@@ -1893,6 +1897,8 @@ func runHeadless() error {
 		return err
 	}
 
+	caps := terminal.Detect()
+
 	if maxTurnsFlag > 0 {
 		cfg.Agent.MaxTurns = maxTurnsFlag
 	}
@@ -1907,6 +1913,11 @@ func runHeadless() error {
 		return fmt.Errorf("worktree setup: %w", err)
 	}
 	defer wtCleanup()
+
+	// Emit OSC 7 unconditionally — terminals that don't support it silently ignore
+	// unknown sequences, and there's no visual side effect. This sets the tab
+	// title / breadcrumb path in terminals that support it (Ghostty, iTerm2, etc.).
+	terminal.SetWorkingDirectory(os.Stderr, cwd)
 
 	// Resolve input: code-review mode builds prompt from diff, others need explicit input.
 	var promptText string
@@ -2260,6 +2271,18 @@ func runHeadless() error {
 			Medium:   summary.Medium,
 			Low:      summary.Low,
 			Info:     summary.Info,
+		}
+	}
+
+	// Terminal notifications for headless completion.
+	if caps.Notifications {
+		terminal.Notify(os.Stderr, "Code review complete")
+		if secReport != nil {
+			summary := secReport.Summary()
+			highSeverityCount := summary.Critical + summary.High
+			if highSeverityCount > 0 {
+				terminal.Notify(os.Stderr, fmt.Sprintf("%d high-severity security findings detected", highSeverityCount))
+			}
 		}
 	}
 
@@ -3085,6 +3108,8 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 // It creates an LLM provider, a parser, and delegates to wiki.Run, emitting
 // progress updates to stderr.
 func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency int) error {
+	caps := terminal.Detect()
+
 	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
 		return fmt.Errorf("creating provider: %w", err)
@@ -3101,15 +3126,34 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 		ProgressFunc: func(stage string, current, total int) {
 			if total > 0 {
 				fmt.Fprintf(os.Stderr, "[%s] %d/%d\n", stage, current, total)
+				if caps.ProgressBar {
+					percent := current * 100 / total
+					terminal.SetProgress(os.Stderr, terminal.ProgressNormal, percent)
+				}
 			} else {
 				fmt.Fprintf(os.Stderr, "[%s]\n", stage)
+				if caps.ProgressBar {
+					terminal.SetProgress(os.Stderr, terminal.ProgressIndeterminate, 0)
+				}
 			}
 		},
 	}
 
 	result, err := wiki.Run(context.Background(), wikiCfg, llm, par)
+
+	if caps.ProgressBar {
+		terminal.ClearProgress(os.Stderr)
+	}
+
 	if err != nil {
+		if caps.Notifications {
+			terminal.Notify(os.Stderr, "Wiki generation failed")
+		}
 		return err
+	}
+
+	if caps.Notifications {
+		terminal.Notify(os.Stderr, fmt.Sprintf("Wiki complete — %d documents rendered", result.Documents))
 	}
 
 	switch outputFlag {

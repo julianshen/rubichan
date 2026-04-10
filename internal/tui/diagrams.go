@@ -1,0 +1,40 @@
+package tui
+
+import (
+	"bytes"
+	"context"
+	"log"
+	"os"
+	"time"
+
+	"github.com/julianshen/rubichan/internal/terminal"
+)
+
+// renderMermaidInline attempts to render a Mermaid diagram as an inline image.
+// Returns true and writes the image to stderr if successful.
+// Returns false if rendering is not available (no mmdc, no Kitty graphics).
+//
+// TODO: Wire into the viewport rendering path to replace Mermaid code blocks
+// with inline images when viewing wiki output or architecture diagrams.
+func renderMermaidInline(caps *terminal.Caps, mermaidSrc string) bool {
+	if caps == nil || !caps.KittyGraphics || !terminal.MmdcAvailable() {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pngData, err := terminal.RenderMermaid(ctx, mermaidSrc, caps.DarkBackground)
+	if err != nil {
+		log.Printf("mermaid inline render failed: %v", err)
+		return false
+	}
+
+	var buf bytes.Buffer
+	terminal.KittyImage(&buf, pngData)
+	if _, err := buf.WriteTo(os.Stderr); err != nil {
+		log.Printf("failed to write kitty graphics to stderr: %v", err)
+		return false
+	}
+	return true
+}
