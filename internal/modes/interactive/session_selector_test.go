@@ -3,6 +3,8 @@ package interactive
 import (
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestSessionSelectorInit(t *testing.T) {
@@ -100,4 +102,96 @@ func TestSessionSelectorSelectedReturnsEmpty(t *testing.T) {
 	if selected.ID != "" {
 		t.Errorf("expected empty SessionMetadata for empty selector, got %v", selected)
 	}
+}
+
+func TestSessionSelectorOverlayRender(t *testing.T) {
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+	}
+
+	overlay := NewSessionSelectorOverlay(sessions, nil)
+	output := overlay.View()
+
+	if output == "" {
+		t.Error("expected non-empty View output")
+	}
+
+	// Should contain session ID
+	if !contains(output, "sess-1") {
+		t.Error("expected output to contain session ID sess-1")
+	}
+
+	// Should contain turn count
+	if !contains(output, "5") {
+		t.Error("expected output to contain turn count")
+	}
+}
+
+func TestSessionSelectorOverlayKeyNavigation(t *testing.T) {
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+		{ID: "sess-2", CreatedAt: time.Now().Add(-1 * time.Hour), TurnCount: 3},
+	}
+
+	overlay := NewSessionSelectorOverlay(sessions, func(s SessionMetadata, err error) {
+		// callback not used in this test
+	})
+
+	// Simulate down arrow
+	_, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if overlay.selector.SelectedIndex() != 1 {
+		t.Errorf("expected index 1 after down, got %d", overlay.selector.SelectedIndex())
+	}
+
+	// Simulate up arrow
+	_, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if overlay.selector.SelectedIndex() != 0 {
+		t.Errorf("expected index 0 after up, got %d", overlay.selector.SelectedIndex())
+	}
+}
+
+func TestSessionSelectorOverlayEnter(t *testing.T) {
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+	}
+
+	selectedSession := SessionMetadata{}
+	overlay := NewSessionSelectorOverlay(sessions, func(s SessionMetadata, err error) {
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		selectedSession = s
+	})
+
+	_, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if selectedSession.ID != "sess-1" {
+		t.Errorf("expected selected session ID sess-1, got %s", selectedSession.ID)
+	}
+}
+
+func TestSessionSelectorOverlayCancel(t *testing.T) {
+	sessions := []SessionMetadata{
+		{ID: "sess-1", CreatedAt: time.Now(), TurnCount: 5},
+	}
+
+	var errReceived error
+	overlay := NewSessionSelectorOverlay(sessions, func(s SessionMetadata, err error) {
+		errReceived = err
+	})
+
+	_, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if errReceived == nil {
+		t.Error("expected error on cancel, got nil")
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
