@@ -15,8 +15,8 @@ func TestACPClientInitializeStructure(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	// Create client
-	client, err := interactive.NewACPClient(server)
+	// Create client (with no session manager or resume ID)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestACPClientConcurrentIDGeneration(t *testing.T) {
 	server := acp.NewServer(registry)
 
 	// Create client
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestACPClientInitializeReturnsResponse(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestACPClientPrompt(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestACPClientPrompt(t *testing.T) {
 func TestPromptWithTransport(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestACPClientExecuteTool(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestACPClientExecuteTool(t *testing.T) {
 func TestExecuteToolWithTransport(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestACPClientInvokeSkill(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestACPClientInvokeSkill(t *testing.T) {
 func TestInvokeSkillWithTransport(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestACPClientApprovalRequest(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestACPClientApprovalRequest(t *testing.T) {
 func TestApprovalRequestWithTransport(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestInitializeWithTransport(t *testing.T) {
 	server := acp.NewServer(registry)
 
 	// Create client
-	client, err := interactive.NewACPClient(server)
+	client, err := interactive.NewACPClient(nil, "", server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}

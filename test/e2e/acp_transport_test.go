@@ -67,7 +67,7 @@ func TestAllModeClientsWithTransport(t *testing.T) {
 
 	// Test interactive client
 	t.Run("InteractiveClientWithTransport", func(t *testing.T) {
-		client, err := interactive.NewACPClient(acpServer)
+		client, err := interactive.NewACPClient(nil, "", acpServer)
 		if err != nil {
 			t.Fatalf("failed to create interactive client: %v", err)
 		}

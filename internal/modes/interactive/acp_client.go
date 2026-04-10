@@ -14,15 +14,19 @@ import (
 
 // ACPClient is a client for communicating with the ACP server in interactive mode.
 type ACPClient struct {
-	nextID     int64
-	mu         sync.Mutex
-	dispatcher *acp.ResponseDispatcher
-	server     *acp.Server
+	sessionMgr  *SessionManager         // NEW - for session loading
+	resumeID    string                  // NEW - optional session ID to resume
+	loadedTurns []Turn                  // NEW - turns loaded from resume session
+	nextID      int64
+	mu          sync.Mutex
+	dispatcher  *acp.ResponseDispatcher
+	server      *acp.Server
 }
 
-// NewACPClient creates an interactive ACP client given a server instance.
+// NewACPClient creates an interactive ACP client given a server instance and optional session manager.
+// If sessionMgr is provided and resumeID is not empty, the session will be auto-loaded.
 // Returns an error if the dispatcher fails to start.
-func NewACPClient(server *acp.Server) (*ACPClient, error) {
+func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Server) (*ACPClient, error) {
 	// Create a stdio transport connected to the server
 	transport := acp.NewStdioTransport(os.Stdin, os.Stdout, server)
 
@@ -51,9 +55,21 @@ func NewACPClient(server *acp.Server) (*ACPClient, error) {
 	}
 
 	client := &ACPClient{
-		nextID:     1,
-		dispatcher: dispatcher,
-		server:     server,
+		sessionMgr:  sessionMgr,
+		resumeID:    resumeID,
+		loadedTurns: []Turn{},
+		nextID:      1,
+		dispatcher:  dispatcher,
+		server:      server,
+	}
+
+	// Load session if resumeID provided
+	if resumeID != "" && sessionMgr != nil {
+		turns, err := sessionMgr.Load(resumeID)
+		if err == nil {
+			client.loadedTurns = turns
+		}
+		// Silently ignore errors on load; will show resume prompt
 	}
 
 	// Ensure startedCh is drained on error to avoid goroutine leak
@@ -62,6 +78,31 @@ func NewACPClient(server *acp.Server) (*ACPClient, error) {
 	}()
 
 	return client, nil
+}
+
+// NewACPClientWithResume creates an ACPClient with session resumption.
+// This is a convenience constructor for testing that doesn't require a server instance.
+// It is not used in production code.
+func NewACPClientWithResume(sessionMgr *SessionManager, resumeID string) *ACPClient {
+	client := &ACPClient{
+		sessionMgr:  sessionMgr,
+		resumeID:    resumeID,
+		loadedTurns: []Turn{},
+		nextID:      1,
+		dispatcher:  nil,
+		server:      nil,
+	}
+
+	// Load session if resumeID provided
+	if resumeID != "" && sessionMgr != nil {
+		turns, err := sessionMgr.Load(resumeID)
+		if err == nil {
+			client.loadedTurns = turns
+		}
+		// Silently ignore errors on load
+	}
+
+	return client
 }
 
 // getNextID returns the next request ID and increments the counter.
@@ -76,6 +117,11 @@ func (c *ACPClient) getNextID() int64 {
 // GetNextID returns the next request ID and increments the counter (for testing).
 func (c *ACPClient) GetNextID() int64 {
 	return c.getNextID()
+}
+
+// LoadedTurns returns turns loaded from resume session.
+func (ac *ACPClient) LoadedTurns() ([]Turn, error) {
+	return ac.loadedTurns, nil
 }
 
 // Close stops the dispatcher and cleans up resources.

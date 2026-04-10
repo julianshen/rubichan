@@ -3,6 +3,7 @@ package wiki_test
 import (
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/acp"
 	"github.com/julianshen/rubichan/internal/modes/wiki"
 )
 
@@ -11,10 +12,13 @@ import (
 // separate wiki.Run() pipeline. The ACP client would be used if wiki
 // functionality needs to be exposed via ACP in the future.
 func TestWikiModeACPClient(t *testing.T) {
-	// Create wiki ACP client (which creates its own server)
-	client := wiki.NewACPClient()
-	if client == nil {
-		t.Fatal("failed to create wiki ACP client")
+	// Create wiki ACP client with a server instance
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+
+	client, err := wiki.NewACPClient(server)
+	if err != nil {
+		t.Fatalf("failed to create wiki ACP client: %v", err)
 	}
 	defer client.Close()
 
