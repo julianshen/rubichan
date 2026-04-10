@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -47,18 +48,15 @@ func (sm *SessionManager) List() ([]SessionMetadata, error) {
 	}
 
 	// Sort by CreatedAt descending (newest first)
-	for i := 0; i < len(sessions)-1; i++ {
-		for j := i + 1; j < len(sessions); j++ {
-			if sessions[j].CreatedAt.After(sessions[i].CreatedAt) {
-				sessions[i], sessions[j] = sessions[j], sessions[i]
-			}
-		}
-	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+	})
 
 	return sessions, nil
 }
 
-// Load retrieves a session's turn history.
+// Load retrieves a session's turn history by ID.
+// The returned slice should not be mutated by the caller.
 func (sm *SessionManager) Load(id string) ([]Turn, error) {
 	turns, err := sm.store.LoadSession(id)
 	if err != nil {
