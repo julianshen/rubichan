@@ -53,6 +53,9 @@ func (p *StdioProber) ProbeKittyKeyboard() bool {
 }
 
 // readWithTimeout reads a response from the terminal, timing out after p.timeout.
+// Note: if the timeout fires, the goroutine reading from p.r will leak until the
+// process exits. This is acceptable because Detect() is called once at startup
+// and at most 3 goroutines can leak (one per probe type).
 func (p *StdioProber) readWithTimeout() (string, bool) {
 	type result struct {
 		data string

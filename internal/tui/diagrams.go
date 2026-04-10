@@ -12,6 +12,9 @@ import (
 // renderMermaidInline attempts to render a Mermaid diagram as an inline image.
 // Returns true and writes the image to stderr if successful.
 // Returns false if rendering is not available (no mmdc, no Kitty graphics).
+//
+// TODO: Wire into the viewport rendering path to replace Mermaid code blocks
+// with inline images when viewing wiki output or architecture diagrams.
 func renderMermaidInline(caps *terminal.Caps, mermaidSrc string) bool {
 	if caps == nil || !caps.KittyGraphics || !terminal.MmdcAvailable() {
 		return false
