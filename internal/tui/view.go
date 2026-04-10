@@ -31,33 +31,33 @@ func (m *Model) View() string {
 	var b strings.Builder
 
 	if m.plainMode {
-		b.WriteString(m.viewport.View())
+		b.WriteString(stripANSI(m.viewport.View()))
 		b.WriteString("\n")
 		switch m.state {
 		case StateStreaming:
 			elapsed := ""
 			if !m.turnStartTime.IsZero() {
-				elapsed = styleTextDim.Render(fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime))))
+				elapsed = fmt.Sprintf(" %s", formatElapsed(time.Since(m.turnStartTime)))
 			}
 			label := "Generating..."
 			if m.thinkingActive {
 				label = "Thinking..."
 			}
-			b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(label), elapsed))
+			b.WriteString(fmt.Sprintf("%s%s", label, elapsed))
 		case StateAwaitingApproval:
 			if m.activeOverlay != nil {
-				b.WriteString(m.activeOverlay.View())
+				b.WriteString(stripANSI(m.activeOverlay.View()))
 			} else if m.approvalPrompt != nil {
-				b.WriteString(m.approvalPrompt.View())
+				b.WriteString(stripANSI(m.approvalPrompt.View()))
 			} else {
-				b.WriteString(m.statusBar.View())
+				b.WriteString(stripANSI(m.statusBar.View()))
 			}
 		default:
-			b.WriteString(m.statusBar.View())
+			b.WriteString(stripANSI(m.statusBar.View()))
 		}
 		b.WriteString("\n")
-		b.WriteString(inputPromptStyle.Render("❯ "))
-		b.WriteString(m.input.View())
+		b.WriteString("❯ ")
+		b.WriteString(stripANSI(m.input.View()))
 		return b.String()
 	}
 

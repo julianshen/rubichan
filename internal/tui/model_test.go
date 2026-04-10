@@ -225,6 +225,9 @@ func TestModelViewPlainModeOmitsHeaderChrome(t *testing.T) {
 	assert.NotContains(t, view, "rubichan · claude-3")
 	assert.NotContains(t, view, "━━━━━━━━")
 	assert.Contains(t, view, "❯ ")
+
+	// Verify no ANSI escape sequences leak into plain mode output
+	assert.Equal(t, view, stripANSI(view), "plain mode should not contain ANSI escape sequences")
 }
 
 func TestModelSetPlainModeClearsBannerContent(t *testing.T) {
