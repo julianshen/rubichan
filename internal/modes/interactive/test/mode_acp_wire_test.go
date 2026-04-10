@@ -55,7 +55,7 @@ func TestInteractiveModeACPWiring(t *testing.T) {
 	}
 
 	// Create interactive ACP client (simulating what the TUI would do)
-	client, err := interactive.NewACPClient(acpServer)
+	client, err := interactive.NewACPClient(nil, "", acpServer)
 	if err != nil {
 		t.Fatalf("failed to create interactive ACP client: %v", err)
 	}

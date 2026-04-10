@@ -170,6 +170,7 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			h.displayExitMessage()
 			return interactiveExitError(ctx)
 		default:
 		}
@@ -180,9 +181,11 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 		line, err := h.readLineCtx(ctx)
 		if err != nil {
 			if err == io.EOF {
+				h.displayExitMessage()
 				return nil
 			}
 			if ctx.Err() != nil {
+				h.displayExitMessage()
 				return interactiveExitError(ctx)
 			}
 			return err
@@ -202,6 +205,7 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 				return err
 			}
 			if shouldQuit {
+				h.displayExitMessage()
 				return nil
 			}
 			continue
@@ -212,6 +216,7 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 				return err
 			}
 			if shouldQuit {
+				h.displayExitMessage()
 				return nil
 			}
 			continue
@@ -220,6 +225,27 @@ func (h *plainInteractiveHost) Run(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+func (h *plainInteractiveHost) displayExitMessage() {
+	if h.agent == nil {
+		return
+	}
+
+	sessionID := h.agent.SessionID()
+	if sessionID == "" {
+		return
+	}
+
+	// Format exit message showing session ID and resume instructions
+	msg := fmt.Sprintf(
+		"\nSession saved: %s\n"+
+			"Resume your session next time:\n"+
+			"  • Type:    /resume\n"+
+			"  • Or:      --resume %s\n",
+		sessionID, sessionID)
+
+	_, _ = fmt.Fprint(h.out, msg)
 }
 
 func (h *plainInteractiveHost) handleCommand(ctx context.Context, line string) (bool, error) {

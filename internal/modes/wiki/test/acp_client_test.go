@@ -90,8 +90,6 @@ func TestGenerateDocsStructure(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 
-	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
 	client, err := wiki.NewACPClient(server)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)

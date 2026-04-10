@@ -76,7 +76,7 @@ func TestInteractiveModeWithACP(t *testing.T) {
 	}
 
 	// Create ACP client for interactive mode
-	client, err := interactive.NewACPClient(acpServer)
+	client, err := interactive.NewACPClient(nil, "", acpServer)
 	if err != nil {
 		t.Errorf("failed to create interactive ACP client: %v", err)
 		return
@@ -348,7 +348,7 @@ func TestMultipleModeClientsWithSingleAgent(t *testing.T) {
 	}
 
 	// Create all three mode clients
-	interactiveClient, err := interactive.NewACPClient(acpServer)
+	interactiveClient, err := interactive.NewACPClient(nil, "", acpServer)
 	if err != nil {
 		t.Errorf("failed to create interactive client: %v", err)
 		return
