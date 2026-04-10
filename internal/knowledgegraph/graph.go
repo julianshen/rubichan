@@ -833,22 +833,7 @@ func (g *KnowledgeGraph) vectorSearch(ctx context.Context, queryVec []float32, r
 	var args []any
 	if len(req.KindFilter) > 0 || len(req.LayerFilter) > 0 {
 		query += ` JOIN entities e ON e.id = em.entity_id WHERE 1=1`
-		if len(req.KindFilter) > 0 {
-			placeholders := make([]string, len(req.KindFilter))
-			for i, k := range req.KindFilter {
-				placeholders[i] = "?"
-				args = append(args, string(k))
-			}
-			query += ` AND e.kind IN (` + strings.Join(placeholders, ",") + `)`
-		}
-		if len(req.LayerFilter) > 0 {
-			placeholders := make([]string, len(req.LayerFilter))
-			for i, l := range req.LayerFilter {
-				placeholders[i] = "?"
-				args = append(args, string(l))
-			}
-			query += ` AND e.layer IN (` + strings.Join(placeholders, ",") + `)`
-		}
+		query, args = appendKindLayerClauses(query, args, req.KindFilter, req.LayerFilter)
 	}
 
 	rows, err := g.db.QueryContext(ctx, query, args...)
@@ -922,22 +907,7 @@ func (g *KnowledgeGraph) ftsSearch(ctx context.Context, query string, req kg.Que
 		sql += ` JOIN entities e ON e.id = entities_fts.id`
 	}
 	sql += ` WHERE entities_fts MATCH ?`
-	if len(req.KindFilter) > 0 {
-		placeholders := make([]string, len(req.KindFilter))
-		for i, k := range req.KindFilter {
-			placeholders[i] = "?"
-			args = append(args, string(k))
-		}
-		sql += ` AND e.kind IN (` + strings.Join(placeholders, ",") + `)`
-	}
-	if len(req.LayerFilter) > 0 {
-		placeholders := make([]string, len(req.LayerFilter))
-		for i, l := range req.LayerFilter {
-			placeholders[i] = "?"
-			args = append(args, string(l))
-		}
-		sql += ` AND e.layer IN (` + strings.Join(placeholders, ",") + `)`
-	}
+	sql, args = appendKindLayerClauses(sql, args, req.KindFilter, req.LayerFilter)
 	sql += ` ORDER BY rank LIMIT 100`
 
 	rows, err := g.db.QueryContext(ctx, sql, args...)
@@ -991,27 +961,22 @@ func normalizedLayer(l kg.EntityLayer) string {
 	return string(l)
 }
 
-// containsKind checks if a kind is in the filter list.
-func containsKind(kinds []kg.EntityKind, k kg.EntityKind) bool {
-	for _, kind := range kinds {
-		if kind == k {
-			return true
+// appendKindLayerClauses appends AND e.kind IN (...) and/or AND e.layer IN (...)
+// clauses to the query, returning the updated query and args.
+func appendKindLayerClauses(query string, args []any, kinds []kg.EntityKind, layers []kg.EntityLayer) (string, []any) {
+	if len(kinds) > 0 {
+		query += ` AND e.kind IN (` + repeatedPlaceholder(len(kinds)) + `)`
+		for _, k := range kinds {
+			args = append(args, string(k))
 		}
 	}
-	return false
-}
-
-// containsLayer checks if a layer is in the filter list.
-// Treats empty layer as base for matching purposes.
-func containsLayer(layers []kg.EntityLayer, l kg.EntityLayer) bool {
-	normalizedL := normalizedLayer(l)
-	for _, layer := range layers {
-		normalizedFilter := normalizedLayer(layer)
-		if normalizedFilter == normalizedL {
-			return true
+	if len(layers) > 0 {
+		query += ` AND e.layer IN (` + repeatedPlaceholder(len(layers)) + `)`
+		for _, l := range layers {
+			args = append(args, string(l))
 		}
 	}
-	return false
+	return query, args
 }
 
 func repeatedPlaceholder(count int) string {
