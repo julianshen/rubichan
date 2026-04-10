@@ -1901,6 +1901,8 @@ func runHeadless() error {
 		return err
 	}
 
+	caps := terminal.Detect()
+
 	if maxTurnsFlag > 0 {
 		cfg.Agent.MaxTurns = maxTurnsFlag
 	}
@@ -1915,6 +1917,9 @@ func runHeadless() error {
 		return fmt.Errorf("worktree setup: %w", err)
 	}
 	defer wtCleanup()
+
+	// Emit working directory for terminal tab title/breadcrumbs.
+	terminal.SetWorkingDirectory(os.Stderr, cwd)
 
 	// Resolve input: code-review mode builds prompt from diff, others need explicit input.
 	var promptText string
@@ -2268,6 +2273,18 @@ func runHeadless() error {
 			Medium:   summary.Medium,
 			Low:      summary.Low,
 			Info:     summary.Info,
+		}
+	}
+
+	// Terminal notifications for headless completion.
+	if caps.Notifications {
+		terminal.Notify(os.Stderr, "Code review complete")
+		if secReport != nil {
+			summary := secReport.Summary()
+			highSeverityCount := summary.Critical + summary.High
+			if highSeverityCount > 0 {
+				terminal.Notify(os.Stderr, fmt.Sprintf("%d high-severity security findings detected", highSeverityCount))
+			}
 		}
 	}
 
