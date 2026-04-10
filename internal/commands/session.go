@@ -51,12 +51,9 @@ func (c *sessionsCommand) Execute(_ context.Context, _ []string) (Result, error)
 			}
 			title += fmt.Sprintf(" (forked from %s)", fid)
 		}
-		sid := s.ID
-		if len(sid) > 8 {
-			sid = sid[:8]
-		}
+		// Show full session ID so output is usable with --resume.
 		fmt.Fprintf(&sb, "  %s  %-30s  %s  %s\n",
-			sid, title, s.Model, s.UpdatedAt.Format("2006-01-02 15:04"))
+			s.ID, title, s.Model, s.UpdatedAt.Format("2006-01-02 15:04"))
 	}
 	return Result{Output: sb.String()}, nil
 }

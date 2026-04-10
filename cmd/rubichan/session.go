@@ -59,7 +59,7 @@ func sessionListCmd() *cobra.Command {
 					title += fmt.Sprintf(" (forked from %s)", truncateID(sess.ForkedFrom))
 				}
 				ago := time.Since(sess.UpdatedAt).Truncate(time.Minute)
-				fmt.Printf("%-10s  %-35s  %-15s  %s ago\n", truncateID(sess.ID), title, sess.Model, ago)
+				fmt.Printf("%-36s  %-35s  %-15s  %s ago\n", sess.ID, title, sess.Model, ago)
 			}
 			return nil
 		},

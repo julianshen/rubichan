@@ -25,9 +25,9 @@ func TestSessionsCommand(t *testing.T) {
 
 	result, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Contains(t, result.Output, "abc-1234")
+	assert.Contains(t, result.Output, "abc-12345")
 	assert.Contains(t, result.Output, "Fix auth")
-	assert.Contains(t, result.Output, "forked from abc-1234")
+	assert.Contains(t, result.Output, "forked from abc-1234") // forked-from stays truncated
 }
 
 func TestSessionsCommandEmpty(t *testing.T) {
@@ -44,6 +44,19 @@ func TestSessionsCommandNilCallback(t *testing.T) {
 	result, err := cmd.Execute(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "not available")
+}
+
+func TestSessionsCommandShowsFullID(t *testing.T) {
+	fullUUID := "8a5b6c0f-1234-5678-abcd-ef0123456789"
+	sessions := []store.Session{
+		{ID: fullUUID, Title: "Test", Model: "opus", UpdatedAt: time.Now()},
+	}
+	cmd := commands.NewSessionsCommand(func() ([]store.Session, error) {
+		return sessions, nil
+	})
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, fullUUID, "full session UUID must appear in output for --resume")
 }
 
 func TestForkCommand(t *testing.T) {
