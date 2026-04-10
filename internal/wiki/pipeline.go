@@ -156,6 +156,18 @@ func Run(ctx context.Context, cfg Config, llm LLMCompleter, p *parser.Parser) (*
 		return nil, err
 	}
 
+	// Stage 5b: Validate — cross-check claims against actual project data.
+	cfg.progress("validating", 0, len(documents), "wiki: validating claims...")
+	projectFiles := readProjectFiles(cfg.Dir, files)
+	valWarnings := ValidateDocs(documents, projectFiles)
+	if len(valWarnings) > 0 {
+		documents = stripFalseClaims(documents, valWarnings)
+		log.Printf("wiki: validation stripped %d unverified claims", len(valWarnings))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Stage 6: Change history — read existing docs, diff, append changelog entries.
 	cfg.progress("changelog", 0, len(documents), "wiki: applying change history...")
 	existing := readExistingDocs(cfg.OutputDir)

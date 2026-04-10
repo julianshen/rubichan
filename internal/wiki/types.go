@@ -56,16 +56,16 @@ type Document struct {
 
 // WikiResult summarises the outcome of a successful wiki generation run.
 type WikiResult struct {
-	OutputDir     string   `json:"output_dir"`
-	Format        string   `json:"format"`
-	Documents     int      `json:"documents"`
+	OutputDir          string   `json:"output_dir"`
+	Format             string   `json:"format"`
+	Documents          int      `json:"documents"`
 	NewDocuments       int      `json:"new_documents"`
 	UpdatedDocuments   int      `json:"updated_documents"`
 	UnchangedDocuments int      `json:"unchanged_documents"`
-	Diagrams      int      `json:"diagrams"`
-	DurationMs    int64    `json:"duration_ms"`
-	APISurfaces   []string `json:"api_surfaces,omitempty"`
-	SecurityDepth []string `json:"security_depth,omitempty"`
+	Diagrams           int      `json:"diagrams"`
+	DurationMs         int64    `json:"duration_ms"`
+	APISurfaces        []string `json:"api_surfaces,omitempty"`
+	SecurityDepth      []string `json:"security_depth,omitempty"`
 }
 
 // SkillWikiSection holds a wiki contribution from a skill.
@@ -100,6 +100,16 @@ type AnalyzerInput struct {
 	ModuleAnalyses []ModuleAnalysis
 	Architecture   string
 	APIPatterns    []APIPattern
+}
+
+// ValidationWarning represents a factual claim in wiki output that couldn't
+// be verified against the actual codebase.
+type ValidationWarning struct {
+	Document string // path of document containing the claim
+	Line     int    // approximate line number
+	Claim    string // the unverified claim text
+	Check    string // what was checked
+	Result   string // what was actually found
 }
 
 // AnalyzerOutput holds documents and diagrams from a specialized analyzer.
