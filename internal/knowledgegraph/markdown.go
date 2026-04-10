@@ -3,6 +3,7 @@ package knowledgegraph
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +104,33 @@ func writeEntityFile(knowledgeDir string, e *kg.Entity) error {
 	return nil
 }
 
+// validKinds enumerates accepted EntityKind values for frontmatter validation.
+var validKinds = map[string]bool{
+	string(kg.KindArchitecture): true,
+	string(kg.KindDecision):     true,
+	string(kg.KindGotcha):       true,
+	string(kg.KindPattern):      true,
+	string(kg.KindModule):       true,
+	string(kg.KindIntegration):  true,
+}
+
+// validateFrontmatter checks required fields and value constraints.
+func validateFrontmatter(fm *frontmatter, path string) error {
+	if strings.TrimSpace(fm.ID) == "" {
+		return fmt.Errorf("readEntityFile: %s: missing required field 'id'", path)
+	}
+	if strings.TrimSpace(fm.Kind) == "" {
+		return fmt.Errorf("readEntityFile: %s: missing required field 'kind'", path)
+	}
+	if !validKinds[fm.Kind] {
+		return fmt.Errorf("readEntityFile: %s: invalid kind %q (valid: architecture, decision, gotcha, pattern, module, integration)", path, fm.Kind)
+	}
+	if fm.Confidence < 0 || fm.Confidence > 1 {
+		return fmt.Errorf("readEntityFile: %s: confidence must be between 0.0 and 1.0, got %g", path, fm.Confidence)
+	}
+	return nil
+}
+
 // readEntityFile parses a markdown file into an Entity.
 // Expects YAML frontmatter between --- markers, followed by markdown body.
 func readEntityFile(path string) (*kg.Entity, error) {
@@ -121,6 +149,11 @@ func readEntityFile(path string) (*kg.Entity, error) {
 	fm := &frontmatter{}
 	if err := yaml.Unmarshal(parts[1], fm); err != nil {
 		return nil, fmt.Errorf("readEntityFile: parsing YAML from %s: %w", path, err)
+	}
+
+	// Validate required fields
+	if err := validateFrontmatter(fm, path); err != nil {
+		return nil, err
 	}
 
 	// Body is parts[2], trimming leading newline
@@ -159,8 +192,8 @@ func readEntityFile(path string) (*kg.Entity, error) {
 }
 
 // walkKnowledgeDir walks all .md files in knowledgeDir and returns parsed entities.
-// Uses filepath.WalkDir for efficiency. Returns an error if any file fails to parse,
-// but accumulated entities up to that point are lost (transaction-like semantics).
+// Files with validation errors (missing ID, invalid kind, etc.) are skipped with a
+// log warning rather than aborting the entire walk.
 func walkKnowledgeDir(knowledgeDir string) ([]*kg.Entity, error) {
 	var entities []*kg.Entity
 
@@ -187,10 +220,11 @@ func walkKnowledgeDir(knowledgeDir string) ([]*kg.Entity, error) {
 			return nil
 		}
 
-		// Parse the markdown file
+		// Parse the markdown file; skip files with validation errors.
 		e, err := readEntityFile(path)
 		if err != nil {
-			return err
+			log.Printf("walkKnowledgeDir: skipping %s: %v", path, err)
+			return nil
 		}
 
 		entities = append(entities, e)
