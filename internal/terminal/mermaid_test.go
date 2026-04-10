@@ -15,7 +15,7 @@ func TestMmdcAvailable_WhenNotOnPath(t *testing.T) {
 }
 
 func TestMmdcAvailable_WhenOnPath(t *testing.T) {
-	if _, err := findMmdc(); err != nil {
+	if _, err := lookupMmdc(); err != nil {
 		t.Skip("mmdc not installed")
 	}
 	assert.True(t, MmdcAvailable())
@@ -29,7 +29,7 @@ func TestRenderMermaid_MmdcNotFound(t *testing.T) {
 }
 
 func TestRenderMermaid_Success(t *testing.T) {
-	if _, err := findMmdc(); err != nil {
+	if _, err := lookupMmdc(); err != nil {
 		t.Skip("mmdc not installed")
 	}
 	src := "graph TD\nA-->B"
@@ -44,7 +44,7 @@ func TestRenderMermaid_Success(t *testing.T) {
 }
 
 func TestRenderMermaid_CancelledContext(t *testing.T) {
-	if _, err := findMmdc(); err != nil {
+	if _, err := lookupMmdc(); err != nil {
 		t.Skip("mmdc not installed")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -53,16 +53,10 @@ func TestRenderMermaid_CancelledContext(t *testing.T) {
 	require.Error(t, err)
 }
 
-// findMmdc is the internal lookup used by both MmdcAvailable and the tests.
-// Defined here to avoid duplicating the PATH lookup in tests.
-func findMmdc() (string, error) {
-	return lookupMmdc()
-}
-
 // TestRenderMermaid_DarkMode verifies that dark mode flag is forwarded.
 // Skipped when mmdc is not installed.
 func TestRenderMermaid_DarkMode(t *testing.T) {
-	if _, err := findMmdc(); err != nil {
+	if _, err := lookupMmdc(); err != nil {
 		t.Skip("mmdc not installed")
 	}
 	src := "graph TD\nA-->B"
@@ -76,7 +70,7 @@ func TestRenderMermaid_DarkMode(t *testing.T) {
 
 // TestRenderMermaid_CleanupOnSuccess verifies no temp files linger after success.
 func TestRenderMermaid_CleanupOnSuccess(t *testing.T) {
-	if _, err := findMmdc(); err != nil {
+	if _, err := lookupMmdc(); err != nil {
 		t.Skip("mmdc not installed")
 	}
 

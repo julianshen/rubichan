@@ -19,23 +19,18 @@ func KittyImage(w io.Writer, pngData []byte) {
 	encoded := base64.StdEncoding.EncodeToString(pngData)
 
 	if len(encoded) <= kittyChunkSize {
-		// Single chunk
 		fmt.Fprintf(w, "\x1b_Ga=T,f=100,m=0;%s\x1b\\", encoded)
 		return
 	}
 
-	// Multiple chunks
 	chunks := splitIntoChunks(encoded, kittyChunkSize)
 	for i, chunk := range chunks {
 		switch {
 		case i == 0:
-			// First chunk: include action and format headers, mark more to come
 			fmt.Fprintf(w, "\x1b_Ga=T,f=100,m=1;%s\x1b\\", chunk)
 		case i == len(chunks)-1:
-			// Last chunk: signal end of payload
 			fmt.Fprintf(w, "\x1b_Gm=0;%s\x1b\\", chunk)
 		default:
-			// Continuation chunk
 			fmt.Fprintf(w, "\x1b_Gm=1;%s\x1b\\", chunk)
 		}
 	}

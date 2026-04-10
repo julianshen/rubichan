@@ -402,12 +402,7 @@ func (m *Model) SetPlainMode(enabled bool) {
 // markdown renderer to match the terminal's background brightness.
 func (m *Model) SetTermCaps(caps *terminal.Caps) {
 	m.termCaps = caps
-	// Refresh markdown renderer with correct theme.
-	if caps != nil {
-		if mdRenderer, err := NewMarkdownRenderer(m.width, caps.DarkBackground); err == nil {
-			m.mdRenderer = mdRenderer
-		}
-	}
+	m.refreshRenderers()
 }
 
 // TermCaps returns the terminal capabilities, or nil if not detected.

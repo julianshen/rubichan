@@ -1871,11 +1871,7 @@ func runInteractive() error {
 	if !noAltScreen {
 		programOpts = append(programOpts, tea.WithAltScreen())
 	}
-	// TODO: enable Kitty keyboard protocol when bubbletea adds support.
-	// Once bubbletea exposes tea.WithKittyKeyboard(), add:
-	//   if caps.KittyKeyboard {
-	//       programOpts = append(programOpts, tea.WithKittyKeyboard(...))
-	//   }
+	// TODO: enable Kitty keyboard (caps.KittyKeyboard) when bubbletea adds tea.WithKittyKeyboard().
 	prog := tea.NewProgram(model, programOpts...)
 	if _, err := prog.Run(); err != nil {
 		if err := handleInteractiveProgramError(err, runCtx, "running TUI"); err != nil {

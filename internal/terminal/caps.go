@@ -16,73 +16,61 @@ type Caps struct {
 	DarkBackground  bool // detected via OSC 11 query (defaults true)
 }
 
-type knownTerminal struct {
-	Hyperlinks    bool
-	KittyGraphics bool
-	KittyKeyboard bool
-	ProgressBar   bool
-	Notifications bool
-	SyncRendering bool
-	LightDarkMode bool
-	Clipboard     bool
-	FocusEvents   bool
-}
-
-var knownTerminals = map[string]knownTerminal{
+var knownTerminals = map[string]Caps{
 	"ghostty": {
 		Hyperlinks: true, KittyGraphics: true, KittyKeyboard: true,
 		ProgressBar: true, Notifications: true, SyncRendering: true,
-		LightDarkMode: true, Clipboard: true, FocusEvents: true,
+		LightDarkMode: true, ClipboardAccess: true, FocusEvents: true,
 	},
 	"kitty": {
 		Hyperlinks: true, KittyGraphics: true, KittyKeyboard: true,
 		ProgressBar: false, Notifications: true, SyncRendering: true,
-		LightDarkMode: true, Clipboard: true, FocusEvents: true,
+		LightDarkMode: true, ClipboardAccess: true, FocusEvents: true,
 	},
 	"WezTerm": {
 		Hyperlinks: true, KittyGraphics: true, KittyKeyboard: true,
 		ProgressBar: true, Notifications: true, SyncRendering: true,
-		LightDarkMode: true, Clipboard: true, FocusEvents: true,
+		LightDarkMode: true, ClipboardAccess: true, FocusEvents: true,
 	},
 	"iTerm.app": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: false,
 		ProgressBar: false, Notifications: true, SyncRendering: false,
-		LightDarkMode: true, Clipboard: true, FocusEvents: true,
+		LightDarkMode: true, ClipboardAccess: true, FocusEvents: true,
 	},
 	"vscode": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: false,
 		ProgressBar: false, Notifications: false, SyncRendering: false,
-		LightDarkMode: false, Clipboard: true, FocusEvents: false,
+		LightDarkMode: false, ClipboardAccess: true, FocusEvents: false,
 	},
 	"alacritty": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: true,
 		ProgressBar: false, Notifications: false, SyncRendering: true,
-		LightDarkMode: false, Clipboard: false, FocusEvents: true,
+		LightDarkMode: false, ClipboardAccess: false, FocusEvents: true,
 	},
 	"Apple_Terminal": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: false,
 		ProgressBar: false, Notifications: false, SyncRendering: false,
-		LightDarkMode: false, Clipboard: false, FocusEvents: false,
+		LightDarkMode: false, ClipboardAccess: false, FocusEvents: false,
 	},
 	"Hyper": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: false,
 		ProgressBar: false, Notifications: false, SyncRendering: false,
-		LightDarkMode: false, Clipboard: false, FocusEvents: false,
+		LightDarkMode: false, ClipboardAccess: false, FocusEvents: false,
 	},
 	"Tabby": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: false,
 		ProgressBar: false, Notifications: false, SyncRendering: false,
-		LightDarkMode: false, Clipboard: false, FocusEvents: false,
+		LightDarkMode: false, ClipboardAccess: false, FocusEvents: false,
 	},
 	"rio": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: false,
 		ProgressBar: false, Notifications: false, SyncRendering: false,
-		LightDarkMode: false, Clipboard: false, FocusEvents: false,
+		LightDarkMode: false, ClipboardAccess: false, FocusEvents: false,
 	},
 	"contour": {
 		Hyperlinks: true, KittyGraphics: false, KittyKeyboard: false,
 		ProgressBar: false, Notifications: false, SyncRendering: false,
-		LightDarkMode: false, Clipboard: false, FocusEvents: false,
+		LightDarkMode: false, ClipboardAccess: false, FocusEvents: false,
 	},
 }
 
@@ -110,16 +98,8 @@ func DetectWithEnv(termProgram string, prober Prober) *Caps {
 	}
 
 	if kt, ok := knownTerminals[termProgram]; ok {
-		caps.Hyperlinks = kt.Hyperlinks
-		caps.KittyGraphics = kt.KittyGraphics
-		caps.KittyKeyboard = kt.KittyKeyboard
-		caps.ProgressBar = kt.ProgressBar
-		caps.Notifications = kt.Notifications
-		caps.SyncRendering = kt.SyncRendering
-		caps.LightDarkMode = kt.LightDarkMode
-		caps.ClipboardAccess = kt.Clipboard
-		caps.FocusEvents = kt.FocusEvents
-
+		*caps = kt
+		caps.DarkBackground = true
 		if prober != nil {
 			if isDark, supported := prober.ProbeBackground(); supported {
 				caps.DarkBackground = isDark
