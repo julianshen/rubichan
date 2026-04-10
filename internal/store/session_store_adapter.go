@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/julianshen/rubichan/internal/modes/interactive"
 	"github.com/julianshen/rubichan/internal/provider"
@@ -223,14 +224,20 @@ func (ssa *SessionStoreAdapter) extractTextFromContentBlock(blocks []interface{}
 		}
 	}
 
-	// Join all text parts into a single string
-	result := ""
-	for _, part := range textParts {
-		if result == "" {
-			result = part
-		} else {
-			result += "\n" + part
-		}
+	// Join all text parts into a single string using strings.Builder for efficiency (Issue 4)
+	if len(textParts) == 0 {
+		return ""
 	}
-	return result
+	if len(textParts) == 1 {
+		return textParts[0]
+	}
+
+	var builder strings.Builder
+	for i, part := range textParts {
+		if i > 0 {
+			builder.WriteString("\n")
+		}
+		builder.WriteString(part)
+	}
+	return builder.String()
 }

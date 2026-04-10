@@ -378,6 +378,59 @@ func TestSessionStoreAdapterExtractTextFromContentBlock(t *testing.T) {
 	}
 }
 
+// TestSessionStoreAdapterExtractTextFromContentBlockManyParts
+// verifies that extractTextFromContentBlock efficiently builds strings
+// from many text parts (Issue 4: strings.Builder).
+func TestSessionStoreAdapterExtractTextFromContentBlockManyParts(t *testing.T) {
+	store, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	adapter := NewSessionStoreAdapter(store)
+
+	// Create many text blocks to exercise the string building efficiency
+	content := make([]interface{}, 100)
+	for i := 0; i < 100; i++ {
+		content[i] = map[string]interface{}{
+			"type": "text",
+			"text": fmt.Sprintf("part%d", i),
+		}
+	}
+
+	result := adapter.extractTextFromContentBlock(content)
+
+	// Verify all parts are present
+	expectedParts := 100
+	newlineCount := 0
+	for _, ch := range result {
+		if ch == '\n' {
+			newlineCount++
+		}
+	}
+	if newlineCount != expectedParts-1 {
+		t.Errorf("expected %d newlines, got %d", expectedParts-1, newlineCount)
+	}
+
+	// Verify contains expected first and last part
+	if !contains(result, "part0") {
+		t.Errorf("expected result to contain 'part0'")
+	}
+	if !contains(result, "part99") {
+		t.Errorf("expected result to contain 'part99'")
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 // TestSessionStoreAdapterImplementsInterface verifies the adapter implements SessionStore
 func TestSessionStoreAdapterImplementsInterface(t *testing.T) {
 	store, err := NewStore(":memory:")
