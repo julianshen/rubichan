@@ -1369,16 +1369,23 @@ func applyAPIKeyFlag(cfg *config.Config) {
 	}
 }
 
+// dialCmux connects to the cmux daemon if running inside cmux.
+// Returns a Caller (nil if not in cmux) and a cleanup function.
+func dialCmux(caps *terminal.Caps) (cmux.Caller, func()) {
+	if !caps.CmuxSocket {
+		return nil, func() {}
+	}
+	cc, err := cmux.Dial(cmux.SocketPath())
+	if err != nil {
+		return nil, func() {}
+	}
+	return cc, func() { cc.Close() }
+}
+
 func runInteractive() error {
 	caps := terminal.Detect()
-
-	var cmuxClient cmux.Caller
-	if caps.CmuxSocket {
-		if cc, err := cmux.Dial(cmux.SocketPath()); err == nil {
-			cmuxClient = cc
-			defer cc.Close()
-		}
-	}
+	cmuxClient, closeCmux := dialCmux(caps)
+	defer closeCmux()
 
 	// Resolve config path early for bootstrap check.
 	cfgDir, err := configDir()
@@ -1928,14 +1935,8 @@ func runHeadless() error {
 	}
 
 	caps := terminal.Detect()
-
-	var cmuxClient cmux.Caller
-	if caps.CmuxSocket {
-		if cc, err := cmux.Dial(cmux.SocketPath()); err == nil {
-			cmuxClient = cc
-			defer cc.Close()
-		}
-	}
+	cmuxClient, closeCmux := dialCmux(caps)
+	defer closeCmux()
 
 	if maxTurnsFlag > 0 {
 		cfg.Agent.MaxTurns = maxTurnsFlag
@@ -2314,19 +2315,12 @@ func runHeadless() error {
 
 	// Terminal notifications for headless completion.
 	if cmuxClient != nil {
-		cmuxClient.Call("notification.create", map[string]string{
-			"title": "Rubichan",
-			"subtitle": "Code Review",
-			"body": "Code review complete",
-		})
+		cmux.CallerNotify(cmuxClient, "Rubichan", "Code Review", "Code review complete")
 		if secReport != nil {
 			summary := secReport.Summary()
 			highSeverityCount := summary.Critical + summary.High
 			if highSeverityCount > 0 {
-				cmuxClient.Call("notification.create", map[string]string{
-					"title": "Rubichan",
-					"body": fmt.Sprintf("%d high-severity security findings detected", highSeverityCount),
-				})
+				cmux.CallerNotify(cmuxClient, "Rubichan", "", fmt.Sprintf("%d high-severity security findings detected", highSeverityCount))
 			}
 		}
 	} else if caps.Notifications {
@@ -3163,14 +3157,8 @@ func postResultsToPR(ctx context.Context, result *output.RunResult, secReport *s
 // progress updates to stderr.
 func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency int) error {
 	caps := terminal.Detect()
-
-	var cmuxClient cmux.Caller
-	if caps.CmuxSocket {
-		if cc, err := cmux.Dial(cmux.SocketPath()); err == nil {
-			cmuxClient = cc
-			defer cc.Close()
-		}
-	}
+	cmuxClient, closeCmux := dialCmux(caps)
+	defer closeCmux()
 
 	p, err := provider.NewProviderWithDebug(cfg, debugMode)
 	if err != nil {
@@ -3190,20 +3178,14 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 				fmt.Fprintf(os.Stderr, "[%s] %d/%d\n", stage, current, total)
 				percent := current * 100 / total
 				if cmuxClient != nil {
-					cmuxClient.Call("set-progress", map[string]any{
-						"value": float64(percent) / 100.0,
-						"label": stage,
-					})
+					cmux.CallerSetProgress(cmuxClient, float64(percent)/100.0, stage)
 				} else if caps.ProgressBar {
 					terminal.SetProgress(os.Stderr, terminal.ProgressNormal, percent)
 				}
 			} else {
 				fmt.Fprintf(os.Stderr, "[%s]\n", stage)
 				if cmuxClient != nil {
-					cmuxClient.Call("set-progress", map[string]any{
-						"value": 0.0,
-						"label": stage,
-					})
+					cmux.CallerSetProgress(cmuxClient, 0.0, stage)
 				} else if caps.ProgressBar {
 					terminal.SetProgress(os.Stderr, terminal.ProgressIndeterminate, 0)
 				}
@@ -3214,16 +3196,14 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 	result, err := wiki.Run(context.Background(), wikiCfg, llm, par)
 
 	if cmuxClient != nil {
-		cmuxClient.Call("clear-progress", map[string]any{})
+		cmux.CallerClearProgress(cmuxClient)
 	} else if caps.ProgressBar {
 		terminal.ClearProgress(os.Stderr)
 	}
 
 	if err != nil {
 		if cmuxClient != nil {
-			cmuxClient.Call("notification.create", map[string]string{
-				"title": "Rubichan", "body": "Wiki generation failed",
-			})
+			cmux.CallerNotify(cmuxClient, "Rubichan", "", "Wiki generation failed")
 		} else if caps.Notifications {
 			terminal.Notify(os.Stderr, "Wiki generation failed")
 		}
@@ -3231,11 +3211,7 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 	}
 
 	if cmuxClient != nil {
-		cmuxClient.Call("notification.create", map[string]string{
-			"title":    "Rubichan",
-			"subtitle": "Wiki Generation",
-			"body":     fmt.Sprintf("Wiki complete — %d documents rendered", result.Documents),
-		})
+		cmux.CallerNotify(cmuxClient, "Rubichan", "Wiki Generation", fmt.Sprintf("Wiki complete — %d documents rendered", result.Documents))
 	} else if caps.Notifications {
 		terminal.Notify(os.Stderr, fmt.Sprintf("Wiki complete — %d documents rendered", result.Documents))
 	}

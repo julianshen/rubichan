@@ -69,13 +69,11 @@ func Dial(socketPath string) (*Client, error) {
 		dec:  json.NewDecoder(conn),
 	}
 
-	// Verify connectivity.
 	if _, err := c.Call("system.ping", map[string]any{}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("cmux: ping failed: %w", err)
 	}
 
-	// Cache identity.
 	resp, err := c.Call("system.identify", map[string]any{})
 	if err != nil {
 		conn.Close()
@@ -86,7 +84,7 @@ func Dial(socketPath string) (*Client, error) {
 		return nil, fmt.Errorf("cmux: identify failed: %s", resp.Error)
 	}
 	var id Identity
-	if err := unmarshalResult(resp, &id); err != nil {
+	if err := json.Unmarshal(resp.Result, &id); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("cmux: decode identity: %w", err)
 	}
@@ -138,7 +136,26 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// unmarshalResult decodes resp.Result into dst.
-func unmarshalResult(resp *Response, dst any) error {
+// callVoid sends a JSON-RPC call and returns an error if the call fails or resp.OK is false.
+func (c *Client) callVoid(method string, params any) error {
+	resp, err := c.Call(method, params)
+	if err != nil {
+		return fmt.Errorf("cmux: %s: %w", method, err)
+	}
+	if !resp.OK {
+		return fmt.Errorf("cmux: %s: %s", method, resp.Error)
+	}
+	return nil
+}
+
+// callResult sends a JSON-RPC call, checks errors, and unmarshals the result into dst.
+func (c *Client) callResult(method string, params any, dst any) error {
+	resp, err := c.Call(method, params)
+	if err != nil {
+		return fmt.Errorf("cmux: %s: %w", method, err)
+	}
+	if !resp.OK {
+		return fmt.Errorf("cmux: %s: %s", method, resp.Error)
+	}
 	return json.Unmarshal(resp.Result, dst)
 }

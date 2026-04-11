@@ -18,9 +18,10 @@ type Task struct {
 
 // Orchestrator coordinates sub-agents across split panes using log-based signaling.
 type Orchestrator struct {
-	client   Caller
-	tasks    map[string]*Task // surface ID → task
-	pollRate time.Duration    // default 2s
+	client    Caller
+	tasks     map[string]*Task // surface ID → task
+	pollRate  time.Duration    // default 2s
+	logOffset int              // tracks processed log entries to avoid duplicates
 }
 
 // NewOrchestrator creates a new Orchestrator backed by the given Caller.
@@ -149,7 +150,16 @@ func (o *Orchestrator) poll() error {
 		return fmt.Errorf("cmux: orchestrator: decode sidebar state: %w", err)
 	}
 
-	for _, entry := range state.Logs {
+	// Only process new log entries since the last poll to avoid duplicates.
+	newEntries := state.Logs
+	if o.logOffset < len(newEntries) {
+		newEntries = newEntries[o.logOffset:]
+	} else {
+		newEntries = nil
+	}
+	o.logOffset = len(state.Logs)
+
+	for _, entry := range newEntries {
 		task, ok := o.tasks[entry.Source]
 		if !ok {
 			continue

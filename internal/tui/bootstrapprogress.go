@@ -55,7 +55,7 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			b.messages = append(b.messages, fmt.Sprintf("❌ Error: %s", msg.Error))
 			b.done = true
 			if b.cmuxClient != nil {
-				b.cmuxClient.Call("clear-progress", map[string]any{})
+				cmux.CallerClearProgress(b.cmuxClient)
 			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.ClearProgress(os.Stderr)
 			}
@@ -63,7 +63,7 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			b.messages = append(b.messages, "✅ Bootstrap complete!")
 			b.done = true
 			if b.cmuxClient != nil {
-				b.cmuxClient.Call("clear-progress", map[string]any{})
+				cmux.CallerClearProgress(b.cmuxClient)
 			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.ClearProgress(os.Stderr)
 			}
@@ -78,10 +78,7 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 				percent = 95
 			}
 			if b.cmuxClient != nil {
-				b.cmuxClient.Call("set-progress", map[string]any{
-					"value": float64(percent) / 100.0,
-					"label": msg.Message,
-				})
+				cmux.CallerSetProgress(b.cmuxClient, float64(percent)/100.0, msg.Message)
 			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.SetProgress(os.Stderr, terminal.ProgressNormal, percent)
 			}

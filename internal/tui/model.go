@@ -420,10 +420,7 @@ func (m *Model) SetCmuxClient(client cmux.Caller) {
 // notifyIfSupported sends a desktop notification if the terminal supports it.
 func (m *Model) notifyIfSupported(message string) {
 	if m.cmuxClient != nil {
-		m.cmuxClient.Call("notification.create", map[string]string{
-			"title": "Rubichan",
-			"body":  message,
-		})
+		cmux.CallerNotify(m.cmuxClient, "Rubichan", "", message)
 		return
 	}
 	if m.termCaps != nil && m.termCaps.Notifications {
