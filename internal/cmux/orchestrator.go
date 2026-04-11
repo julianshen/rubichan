@@ -166,7 +166,12 @@ func (o *Orchestrator) poll() error {
 	}
 
 	// Only process new log entries since the last poll to avoid duplicates.
+	// If the log was truncated externally (e.g. clear-log), reset offset to
+	// avoid silently dropping all future signals.
 	newEntries := state.Logs
+	if o.logOffset > len(newEntries) {
+		o.logOffset = 0
+	}
 	if o.logOffset < len(newEntries) {
 		newEntries = newEntries[o.logOffset:]
 	} else {

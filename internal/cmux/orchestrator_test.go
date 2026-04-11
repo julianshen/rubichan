@@ -226,6 +226,46 @@ func TestOrchestrator_WaitContextCancelled(t *testing.T) {
 	assert.Contains(t, err.Error(), "canceled")
 }
 
+// TestOrchestrator_LogTruncation verifies that the orchestrator recovers when
+// sidebar logs are truncated (e.g. by an external clear-log call).
+func TestOrchestrator_LogTruncation(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetResult("surface.split", cmux.Surface{ID: "surf-1", Type: "terminal"})
+	mc.SetResult("surface.send_text", true)
+	mc.SetResult("surface.send_key", true)
+
+	// First poll: 3 log entries (none matching our task).
+	mc.SetResult("sidebar-state", cmux.SidebarState{
+		Logs: []cmux.LogEntry{
+			{Message: "noise1", Level: "info", Source: "other"},
+			{Message: "noise2", Level: "info", Source: "other"},
+			{Message: "noise3", Level: "info", Source: "other"},
+		},
+	})
+
+	orch := cmux.NewOrchestrator(mc)
+	orch.SetPollRate(10 * time.Millisecond)
+
+	_, err := orch.Dispatch("right", "echo task1")
+	require.NoError(t, err)
+
+	// Trigger first poll to advance logOffset to 3.
+	// Then simulate log truncation: only 1 entry now, with [DONE].
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		mc.SetResult("sidebar-state", cmux.SidebarState{
+			Logs: []cmux.LogEntry{
+				{Message: "[DONE] completed after truncation", Level: "info", Source: "surf-1"},
+			},
+		})
+	}()
+
+	results, err := orch.Wait(context.Background(), 2*time.Second)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "done", results[0].Status)
+}
+
 // TestOrchestrator_PollOKFalse verifies Wait returns an error when poll gets OK:false.
 func TestOrchestrator_PollOKFalse(t *testing.T) {
 	mc := cmuxtest.NewMockClient()

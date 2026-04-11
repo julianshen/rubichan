@@ -222,7 +222,7 @@ Registered conditionally — only when `CmuxSocket` is true.
 |------|-----------|-------|
 | `cmux_orchestrate` | `tasks` (array of `{direction, command}`), `timeout` | Run commands in parallel, collect results |
 
-All cmux tools require `cmux:control` permission — user must approve.
+Cmux tools are gated by the standard `ToolsConfig.ShouldEnable` mechanism (same as all other tools). No separate `cmux:control` permission is needed — tool-level approval through the existing approval flow is sufficient.
 
 ## Mode Integration
 

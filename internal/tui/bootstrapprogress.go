@@ -21,10 +21,10 @@ type BootstrapProgressMsg struct {
 
 // BootstrapProgressOverlay displays progress during knowledge graph bootstrap.
 type BootstrapProgressOverlay struct {
-	messages []string
-	phase    string
-	done     bool
-	error    string
+	messages   []string
+	phase      string
+	done       bool
+	error      string
 	width      int
 	height     int
 	caps       *terminal.Caps
