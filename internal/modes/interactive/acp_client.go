@@ -45,6 +45,7 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 	// Wait for dispatcher to signal startup (success or error)
 	// Use non-blocking select with timeout to detect startup failures
 	// In test environments or when stdin is not available, allow graceful degradation
+	needDrain := false
 	select {
 	case err := <-startedCh:
 		// Dispatcher exited (either started successfully or failed)
@@ -53,8 +54,12 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 			return nil, fmt.Errorf("dispatcher startup failed: %w", err)
 		}
 		// If EOF, it means stdin closed (common in tests) - continue anyway
+		// Channel already consumed — no drain goroutine needed.
 	case <-time.After(500 * time.Millisecond):
-		// Dispatcher is running, continue initialization
+		// Dispatcher is running, continue initialization.
+		// The dispatcher goroutine will send to startedCh when it exits —
+		// drain it in background so the goroutine can complete.
+		needDrain = true
 	}
 
 	client := &ACPClient{
@@ -77,10 +82,11 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 		}
 	}
 
-	// Ensure startedCh is drained on error to avoid goroutine leak
-	go func() {
-		<-startedCh // Wait for dispatcher to eventually exit
-	}()
+	if needDrain {
+		go func() {
+			<-startedCh
+		}()
+	}
 
 	return client, nil
 }
@@ -124,8 +130,9 @@ func NewACPClientWithApprovalFunc(approvalFunc agentsdk.ApprovalFunc) *ACPClient
 }
 
 // SetApprovalFunc sets the approval callback for interactive tool approval.
-// Must be called during initialization, before concurrent use of the client.
 func (c *ACPClient) SetApprovalFunc(fn agentsdk.ApprovalFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.approvalFunc = fn
 }
 
@@ -272,8 +279,11 @@ func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvo
 // typically bridges to the TUI approval overlay). When no callback is set,
 // it falls back to auto-approve for backward compatibility.
 func (c *ACPClient) ApprovalRequest(ctx context.Context, tool string, input json.RawMessage) (bool, error) {
-	if c.approvalFunc != nil {
-		approved, err := c.approvalFunc(ctx, tool, input)
+	c.mu.Lock()
+	fn := c.approvalFunc
+	c.mu.Unlock()
+	if fn != nil {
+		approved, err := fn(ctx, tool, input)
 		if err != nil {
 			return false, fmt.Errorf("approval request for %q: %w", tool, err)
 		}

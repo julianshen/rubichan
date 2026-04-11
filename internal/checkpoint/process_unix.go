@@ -10,6 +10,9 @@ import (
 // isProcessAlive returns true if the given PID corresponds to a running process.
 // On Unix, signal(0) checks process existence without sending a real signal.
 func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return false

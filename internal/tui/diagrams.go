@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -93,9 +92,9 @@ func replaceMermaidBlocks(content string, caps *terminal.Caps) string {
 	for _, b := range blocks {
 		result.WriteString(content[prev:b.start])
 
-		// Attempt to render the diagram inline
-		if renderMermaidInline(caps, b.source) {
-			result.WriteString("[Mermaid diagram rendered inline]\n")
+		rendered := renderMermaidInline(caps, b.source)
+		if rendered != "" {
+			result.WriteString(rendered)
 		} else {
 			// Rendering failed — keep the original code block
 			result.WriteString(content[b.start:b.end])
@@ -106,28 +105,19 @@ func replaceMermaidBlocks(content string, caps *terminal.Caps) string {
 	return result.String()
 }
 
-// renderMermaidInline attempts to render a Mermaid diagram as an inline image.
-// Returns true and writes the image to stderr if successful.
-// Returns false if rendering is not available (no mmdc, no Kitty graphics).
-func renderMermaidInline(caps *terminal.Caps, mermaidSrc string) bool {
-	if caps == nil || !caps.KittyGraphics || !terminal.MmdcAvailable() {
-		return false
-	}
-
+// renderMermaidInline renders a Mermaid diagram as a Kitty graphics string.
+// Returns the rendered content string, or "" if rendering is not possible.
+func renderMermaidInline(caps *terminal.Caps, mermaidSrc string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	pngData, err := terminal.RenderMermaid(ctx, mermaidSrc, caps.DarkBackground)
 	if err != nil {
 		log.Printf("mermaid inline render failed: %v", err)
-		return false
+		return ""
 	}
 
 	var buf bytes.Buffer
 	terminal.KittyImage(&buf, pngData)
-	if _, err := buf.WriteTo(os.Stderr); err != nil {
-		log.Printf("failed to write kitty graphics to stderr: %v", err)
-		return false
-	}
-	return true
+	return buf.String()
 }

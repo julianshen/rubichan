@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -796,6 +797,9 @@ func (a *Agent) loadSessionHistory(conv *Conversation, sessionID string) error {
 	if snapErr == nil && snapMsgs != nil {
 		conv.LoadFromMessages(snapMsgs)
 		return nil
+	}
+	if snapErr != nil {
+		log.Printf("warning: snapshot load failed for session %s, falling back to full history: %v", sessionID, snapErr)
 	}
 
 	msgs, err := a.store.GetMessages(sessionID)
