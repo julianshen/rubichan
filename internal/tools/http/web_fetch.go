@@ -81,7 +81,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, input json.RawMessage) (tool
 	if err != nil {
 		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
-	client := t.buildClient(u, addrs, timeout)
+	client := newPinnedClient(u, addrs, timeout, t.resolver, t.dialContext)
 	defer client.CloseIdleConnections()
 
 	// Try sources in order: llms.txt → {url}.md → raw URL.
@@ -118,10 +118,6 @@ func (t *WebFetchTool) Execute(ctx context.Context, input json.RawMessage) (tool
 	content := fmt.Sprintf("[Source: original URL — %s]\n\n%s", in.URL, body)
 	content, display := truncate(content)
 	return tools.ToolResult{Content: content, DisplayContent: display}, nil
-}
-
-func (t *WebFetchTool) buildClient(u *url.URL, addrs []net.IPAddr, timeout time.Duration) *http.Client {
-	return newPinnedClient(u, addrs, timeout, t.resolver, t.dialContext)
 }
 
 // tryFetch GETs a URL and returns the body text if the response is 200 with
