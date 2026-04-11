@@ -2325,7 +2325,13 @@ func runHeadless() error {
 			MaxLLMChunks:    cfg.Security.MaxLLMCalls,
 			ExcludePatterns: cfg.Security.ExcludePatterns,
 		}
-		engine := newDefaultSecurityEngine(engineCfg, p)
+		// Only pass the provider when LLM analysis is explicitly enabled;
+		// the config defaults to false so users opt-in to the cost.
+		var llmForSec provider.LLMProvider
+		if cfg.Security.EnableLLMAnalysis {
+			llmForSec = p
+		}
+		engine := newDefaultSecurityEngine(engineCfg, llmForSec)
 
 		// Load .security.yaml for custom rules.
 		projectCfg, projectCfgErr := security.LoadProjectConfig(cwd)
