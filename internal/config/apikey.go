@@ -77,6 +77,13 @@ func HasUsableCredentialsForProvider(cfg *Config, providerName string) bool {
 			"ANTHROPIC_API_KEY",
 		)
 		return err == nil
+	case "zai":
+		_, err := ResolveAPIKey(
+			cfg.Provider.Zai.APIKeySource,
+			cfg.Provider.Zai.APIKey,
+			"Z_AI_API_KEY",
+		)
+		return err == nil
 	default:
 		for _, oc := range cfg.Provider.OpenAI {
 			if oc.Name != providerName {

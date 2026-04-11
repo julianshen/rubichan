@@ -154,6 +154,37 @@ func TestBootstrapFormSaveOpenAIKey(t *testing.T) {
 	assert.Empty(t, loaded.Provider.Anthropic.APIKey)
 }
 
+func TestBootstrapFormSaveZai(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	form := NewBootstrapForm(path)
+	form.Config().Provider.Default = "zai"
+	form.Config().Provider.Zai.APIKey = "zai-test-key"
+
+	err := form.Save()
+	require.NoError(t, err)
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "zai", loaded.Provider.Default)
+	assert.Equal(t, "zai-test-key", loaded.Provider.Zai.APIKey)
+	assert.Equal(t, "config", loaded.Provider.Zai.APIKeySource)
+}
+
+func TestNeedsBootstrapWithZaiKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "zai"
+	cfg.Provider.Zai.APIKeySource = "config"
+	cfg.Provider.Zai.APIKey = "zai-test"
+	require.NoError(t, config.Save(path, cfg))
+
+	assert.False(t, NeedsBootstrap(path))
+}
+
 func TestBootstrapFormSaveOllamaNoKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

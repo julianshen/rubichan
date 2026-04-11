@@ -1361,6 +1361,10 @@ func applyAPIKeyFlag(cfg *config.Config) {
 	case "ollama":
 		// Ollama doesn't use API keys; ignore silently.
 		return
+	case "zai":
+		cfg.Provider.Zai.APIKeySource = "config"
+		cfg.Provider.Zai.APIKey = apiKeyFlag
+		return
 	}
 	for i, oc := range cfg.Provider.OpenAI {
 		if oc.Name == name {
