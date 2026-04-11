@@ -32,16 +32,19 @@ func TestConfigFormIsCompletedAborted(t *testing.T) {
 }
 
 func TestConfigFormSave(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	cfg := config.DefaultConfig()
-	cfg.Provider.Default = "ollama"
+	for _, provider := range []string{"ollama", "zai"} {
+		t.Run(provider, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			cfg := config.DefaultConfig()
+			cfg.Provider.Default = provider
 
-	form := NewConfigForm(cfg, path)
-	err := form.Save()
-	require.NoError(t, err)
+			form := NewConfigForm(cfg, path)
+			require.NoError(t, form.Save())
 
-	loaded, err := config.Load(path)
-	require.NoError(t, err)
-	assert.Equal(t, "ollama", loaded.Provider.Default)
+			loaded, err := config.Load(path)
+			require.NoError(t, err)
+			assert.Equal(t, provider, loaded.Provider.Default)
+		})
+	}
 }

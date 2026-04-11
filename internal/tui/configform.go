@@ -33,6 +33,7 @@ func NewConfigForm(cfg *config.Config, savePath string) *ConfigForm {
 				huh.NewOption("Anthropic", "anthropic"),
 				huh.NewOption("OpenAI Compatible", "openai"),
 				huh.NewOption("Ollama", "ollama"),
+				huh.NewOption("Z.ai (Zhipu)", "zai"),
 			).
 			Value(&cfg.Provider.Default),
 		huh.NewInput().
