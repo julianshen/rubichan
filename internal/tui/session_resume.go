@@ -51,7 +51,7 @@ func (o *SessionResumeOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			o.index++
 		}
 	case tea.KeyEnter:
-		if len(o.sessions) > 0 {
+		if o.index >= 0 && o.index < len(o.sessions) {
 			o.result = &SessionResumeResult{SessionID: o.sessions[o.index].ID}
 		}
 		o.done = true

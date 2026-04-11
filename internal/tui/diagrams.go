@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/terminal"
@@ -54,17 +55,18 @@ func detectMermaidBlocks(content string) []mermaidBlock {
 	return blocks
 }
 
-// mmdcAvailableCache caches the result of exec.LookPath("mmdc") so it
+// mmdcOnce guards the one-time exec.LookPath("mmdc") check so it
 // isn't called on every viewport render (which can be 60+ times/second).
-var mmdcAvailableCache *bool
+var (
+	mmdcOnce      sync.Once
+	mmdcAvailable bool
+)
 
 func mmdcAvailableCached() bool {
-	if mmdcAvailableCache != nil {
-		return *mmdcAvailableCache
-	}
-	v := terminal.MmdcAvailable()
-	mmdcAvailableCache = &v
-	return v
+	mmdcOnce.Do(func() {
+		mmdcAvailable = terminal.MmdcAvailable()
+	})
+	return mmdcAvailable
 }
 
 // replaceMermaidBlocks replaces Mermaid code blocks with rendered inline images
