@@ -99,11 +99,6 @@ func (t *TaskTool) SetBackgroundManager(mgr BackgroundTaskManager) {
 	t.bgManager = mgr
 }
 
-// SetHookDispatcher attaches a TaskHookDispatcher for task lifecycle events.
-func (t *TaskTool) SetHookDispatcher(hd TaskHookDispatcher) {
-	t.hookDispatcher = hd
-}
-
 // WithDepth returns a copy of the TaskTool with the given depth. This is used
 // when creating child registries to ensure nested task calls enforce correct
 // depth limits rather than reusing the parent's depth.

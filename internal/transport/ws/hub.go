@@ -195,39 +195,6 @@ func (h *Hub) GetSession(id string) (*SessionState, bool) {
 	return ss, ok
 }
 
-// RemoveSession removes a session and disconnects all its clients.
-func (h *Hub) RemoveSession(id string) {
-	h.mu.Lock()
-	ss, ok := h.sessions[id]
-	if !ok {
-		h.mu.Unlock()
-		return
-	}
-	delete(h.sessions, id)
-
-	// Collect clients to close and remove mappings, but don't close
-	// connections while holding h.mu — readPump's deferred unregisterClient
-	// needs h.mu and would block, creating a fragile lock interaction.
-	ss.mu.Lock()
-	clientsToClose := make([]*Client, 0, len(ss.Clients))
-	for c := range ss.Clients {
-		delete(h.clients, c)
-		clientsToClose = append(clientsToClose, c)
-	}
-	// Cancel any in-progress turn while still holding ss.mu to avoid TOCTOU.
-	if ss.cancel != nil {
-		ss.cancel()
-		ss.cancel = nil
-	}
-	ss.mu.Unlock()
-	h.mu.Unlock()
-
-	// Close client connections outside all locks.
-	for _, c := range clientsToClose {
-		c.close()
-	}
-}
-
 // ListSessions returns all session IDs and their statuses.
 func (h *Hub) ListSessions() []SessionInfoPayload {
 	h.mu.RLock()

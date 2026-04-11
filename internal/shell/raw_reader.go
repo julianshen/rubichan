@@ -76,11 +76,6 @@ type RawLineReader struct {
 	stderr io.Writer
 }
 
-// NewRawLineReader creates a new line reader with tab completion and raw mode editing.
-func NewRawLineReader(completer *Completer) *RawLineReader {
-	return NewRawLineReaderWithIO(completer, os.Stdin, os.Stdout, os.Stderr)
-}
-
 // NewRawLineReaderWithIO creates a new line reader with custom I/O.
 func NewRawLineReaderWithIO(completer *Completer, stdin io.Reader, stdout, stderr io.Writer) *RawLineReader {
 	// Try to get the file descriptor if stdin is a terminal

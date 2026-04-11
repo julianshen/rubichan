@@ -67,11 +67,6 @@ type SecurityVerdict struct {
 	Confidence float64 `json:"confidence,omitempty"` // Confidence score (0.0-1.0)
 }
 
-// SecurityCapability represents a security capability in the capability registry.
-type SecurityCapability struct {
-	Verdicts []SecurityVerdict `json:"verdicts,omitempty"`
-}
-
 // ClientInfo describes the client connecting to the agent.
 type ClientInfo struct {
 	Name    string `json:"name"`              // Client name
@@ -82,14 +77,6 @@ type ClientInfo struct {
 type ServerInfo struct {
 	Name    string `json:"name"`              // Server name (e.g., "rubichan")
 	Version string `json:"version,omitempty"` // Server version
-}
-
-// InitializeRequest represents the initialize handshake request from client.
-type InitializeRequest struct {
-	JSONRPC string           `json:"jsonrpc"` // Always "2.0"
-	ID      interface{}      `json:"id"`      // Request ID
-	Method  string           `json:"method"`  // Always "initialize"
-	Params  InitializeParams `json:"params"`
 }
 
 // InitializeParams are parameters for the initialize request.
@@ -137,18 +124,18 @@ const (
 
 	// Notification methods (server → client, no response expected)
 	MethodNotificationProgress = "notifications/progress"
-	MethodNotificationLog = "notifications/log"
+	MethodNotificationLog      = "notifications/log"
 
 	// Built-in server methods
 	MethodInitialize = "initialize"
 	MethodShutdown   = "shutdown"
 
 	// Rubichan-specific extensions
-	MethodSkillInvoke      = "skill/invoke"
-	MethodSkillList        = "skill/list"
-	MethodSkillManifest    = "skill/manifest"
-	MethodSecurityScan     = "security/scan"
-	MethodSecurityApprove  = "security/approve"
+	MethodSkillInvoke     = "skill/invoke"
+	MethodSkillList       = "skill/list"
+	MethodSkillManifest   = "skill/manifest"
+	MethodSecurityScan    = "security/scan"
+	MethodSecurityApprove = "security/approve"
 )
 
 // Error Codes (JSON-RPC standard + custom)

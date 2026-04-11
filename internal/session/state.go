@@ -69,9 +69,6 @@ func (s *State) ResetForPrompt(prompt string) {
 	}
 }
 
-// LastPrompt returns the most recent prompt associated with this state.
-func (s *State) LastPrompt() string { return s.lastPrompt }
-
 // ToolCalls returns a copy of the accumulated tool calls for the current turn.
 func (s *State) ToolCalls() []ToolCall {
 	out := make([]ToolCall, len(s.toolCalls))

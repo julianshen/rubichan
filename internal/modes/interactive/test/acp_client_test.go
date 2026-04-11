@@ -121,35 +121,6 @@ func TestPromptWithTransport(t *testing.T) {
 	t.Skip("waiting for full transport loop and server handler integration")
 }
 
-func TestACPClientExecuteTool(t *testing.T) {
-	// This test requires the full transport loop to work.
-	// For now, just verify the client structure is correct.
-	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
-
-	client, err := interactive.NewACPClient(nil, "", server)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-	defer client.Close()
-
-	t.Skip("waiting for full dispatcher listener integration")
-}
-
-func TestExecuteToolWithTransport(t *testing.T) {
-	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
-	client, err := interactive.NewACPClient(nil, "", server)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-	defer client.Close()
-
-	// This test requires a full transport loop with server handlers.
-	// Full end-to-end test will be added in multi-mode integration tests.
-	t.Skip("waiting for full transport loop and server handler integration")
-}
-
 func TestACPClientInvokeSkill(t *testing.T) {
 	// This test requires the full transport loop to work.
 	// For now, just verify the client structure is correct.
@@ -166,35 +137,6 @@ func TestACPClientInvokeSkill(t *testing.T) {
 }
 
 func TestInvokeSkillWithTransport(t *testing.T) {
-	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
-	client, err := interactive.NewACPClient(nil, "", server)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-	defer client.Close()
-
-	// This test requires a full transport loop with server handlers.
-	// Full end-to-end test will be added in multi-mode integration tests.
-	t.Skip("waiting for full transport loop and server handler integration")
-}
-
-func TestACPClientApprovalRequest(t *testing.T) {
-	// This test requires the full transport loop to work.
-	// For now, just verify the client structure is correct.
-	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
-
-	client, err := interactive.NewACPClient(nil, "", server)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-	defer client.Close()
-
-	t.Skip("waiting for full dispatcher listener integration")
-}
-
-func TestApprovalRequestWithTransport(t *testing.T) {
 	registry := acp.NewCapabilityRegistry()
 	server := acp.NewServer(registry)
 	client, err := interactive.NewACPClient(nil, "", server)
