@@ -1317,6 +1317,15 @@ func loadConfig() (*config.Config, error) {
 // BaseURL is overwritten; otherwise a new entry is appended.
 func applyAPIBaseFlag(cfg *config.Config) {
 	name := cfg.Provider.Default
+	// Z.ai has its own config struct — apply directly.
+	if name == "zai" {
+		cfg.Provider.Zai.BaseURL = apiBaseFlag
+		if apiKeyFlag != "" {
+			cfg.Provider.Zai.APIKeySource = "config"
+			cfg.Provider.Zai.APIKey = apiKeyFlag
+		}
+		return
+	}
 	// For built-in providers that don't use the openai_compatible list,
 	// synthesise a provider name so the entry can be looked up later.
 	if name == "anthropic" || name == "ollama" || name == "" {
