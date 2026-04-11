@@ -686,11 +686,26 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.waitForEvent()
 
 	case "ui_update":
-		// TODO: consume ui_update payloads for long-running interactive flows
-		// once the runtime starts emitting incremental UI progress updates.
-		if msg.UIUpdate != nil && m.debug {
-			m.content.WriteString(fmt.Sprintf("[ui_update] id=%s status=%s\n", msg.UIUpdate.RequestID, msg.UIUpdate.Status))
-			m.setContentAndAutoScroll()
+		if msg.UIUpdate != nil {
+			status := msg.UIUpdate.Status
+			switch status {
+			case "complete", "done":
+				m.statusBar.ClearTaskProgress()
+			default:
+				if msg.UIUpdate.Message != "" {
+					m.statusBar.SetTaskProgress(msg.UIUpdate.Message)
+				} else if status != "" {
+					m.statusBar.SetTaskProgress(status)
+				}
+			}
+			if msg.UIUpdate.Message != "" {
+				m.content.WriteString(msg.UIUpdate.Message + "\n")
+				m.setContentAndAutoScroll()
+			}
+			if m.debug {
+				m.content.WriteString(fmt.Sprintf("[ui_update] id=%s status=%s\n", msg.UIUpdate.RequestID, msg.UIUpdate.Status))
+				m.setContentAndAutoScroll()
+			}
 		}
 		return m, m.waitForEvent()
 

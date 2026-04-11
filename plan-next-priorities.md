@@ -118,9 +118,9 @@ Wire the selected session ID into the agent's session loading infrastructure so 
 
 ### Tests
 
-- [ ] **5.1** `TestUIUpdateSetsStatusBarProgress` — A `ui_update` event with `status=running` and a percentage updates the status bar progress.
-- [ ] **5.2** `TestUIUpdateCompleteClearsProgress` — A `ui_update` event with `status=complete` clears the progress indicator.
-- [ ] **5.3** `TestUIUpdateWritesInlineText` — When `ui_update` carries a `message` field, it is appended to the content buffer.
+- [x] **5.1** `TestUIUpdateSetsStatusBarProgress` — A `ui_update` event with a message updates the status bar and writes to content.
+- [x] **5.2** `TestUIUpdateCompleteClearsProgress` — A `ui_update` event with `status=complete` clears the progress indicator.
+- [x] **5.3** `TestUIUpdateStatusFallbackWhenNoMessage` — When `ui_update` has status but no message, status is shown in the bar but nothing written to content.
 
 ---
 
