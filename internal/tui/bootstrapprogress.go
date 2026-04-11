@@ -55,7 +55,7 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			b.messages = append(b.messages, fmt.Sprintf("❌ Error: %s", msg.Error))
 			b.done = true
 			if b.cmuxClient != nil {
-				b.cmuxClient.Call("clear-progress", nil)
+				b.cmuxClient.Call("clear-progress", map[string]any{})
 			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.ClearProgress(os.Stderr)
 			}
@@ -63,7 +63,7 @@ func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 			b.messages = append(b.messages, "✅ Bootstrap complete!")
 			b.done = true
 			if b.cmuxClient != nil {
-				b.cmuxClient.Call("clear-progress", nil)
+				b.cmuxClient.Call("clear-progress", map[string]any{})
 			} else if b.caps != nil && b.caps.ProgressBar {
 				terminal.ClearProgress(os.Stderr)
 			}

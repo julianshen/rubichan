@@ -1,6 +1,7 @@
 package cmux
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -17,13 +18,13 @@ type Task struct {
 
 // Orchestrator coordinates sub-agents across split panes using log-based signaling.
 type Orchestrator struct {
-	client   *Client
+	client   Caller
 	tasks    map[string]*Task // surface ID → task
 	pollRate time.Duration    // default 2s
 }
 
-// NewOrchestrator creates a new Orchestrator backed by the given Client.
-func NewOrchestrator(client *Client) *Orchestrator {
+// NewOrchestrator creates a new Orchestrator backed by the given Caller.
+func NewOrchestrator(client Caller) *Orchestrator {
 	return &Orchestrator{
 		client:   client,
 		tasks:    make(map[string]*Task),
@@ -40,16 +41,27 @@ func (o *Orchestrator) SetPollRate(d time.Duration) {
 // and registers a Task with Status "running". The task is stored keyed by
 // the new surface's ID.
 func (o *Orchestrator) Dispatch(direction, command string) (*Task, error) {
-	surf, err := o.client.Split(direction)
+	resp, err := o.client.Call("surface.split", map[string]string{"direction": direction})
 	if err != nil {
 		return nil, fmt.Errorf("cmux: orchestrator: split: %w", err)
 	}
+	if !resp.OK {
+		return nil, fmt.Errorf("cmux: orchestrator: split: %s", resp.Error)
+	}
+	var surf Surface
+	if err := json.Unmarshal(resp.Result, &surf); err != nil {
+		return nil, fmt.Errorf("cmux: orchestrator: decode surface: %w", err)
+	}
 
-	if err := o.client.SendText(surf.ID, command); err != nil {
+	if _, err := o.client.Call("surface.send_text", map[string]string{
+		"surface_id": surf.ID, "text": command,
+	}); err != nil {
 		return nil, fmt.Errorf("cmux: orchestrator: send_text: %w", err)
 	}
 
-	if err := o.client.SendKey(surf.ID, "enter"); err != nil {
+	if _, err := o.client.Call("surface.send_key", map[string]string{
+		"surface_id": surf.ID, "key": "enter",
+	}); err != nil {
 		return nil, fmt.Errorf("cmux: orchestrator: send_key: %w", err)
 	}
 
@@ -125,9 +137,16 @@ func (o *Orchestrator) WaitAny(timeout time.Duration) (*Task, error) {
 
 // poll fetches sidebar state and updates all running tasks from log entries.
 func (o *Orchestrator) poll() error {
-	state, err := o.client.SidebarState()
+	resp, err := o.client.Call("sidebar-state", map[string]any{})
 	if err != nil {
 		return fmt.Errorf("cmux: orchestrator: poll: %w", err)
+	}
+	if !resp.OK {
+		return fmt.Errorf("cmux: orchestrator: poll: %s", resp.Error)
+	}
+	var state SidebarState
+	if err := json.Unmarshal(resp.Result, &state); err != nil {
+		return fmt.Errorf("cmux: orchestrator: decode sidebar state: %w", err)
 	}
 
 	for _, entry := range state.Logs {

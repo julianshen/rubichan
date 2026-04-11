@@ -11,7 +11,7 @@ import (
 )
 
 // CmuxOrchestrateTool runs multiple commands in parallel pane splits and
-// polls the sidebar for completion signals.
+// polls the sidebar for completion signals. Delegates to cmux.Orchestrator.
 type CmuxOrchestrateTool struct {
 	client cmux.Caller
 }
@@ -70,14 +70,6 @@ type orchestrateInput struct {
 	Timeout string            `json:"timeout"`
 }
 
-// taskState tracks one running task.
-type taskState struct {
-	surfaceID string
-	command   string
-	done      bool
-	status    string // "done", "error", "timeout"
-}
-
 func (t *CmuxOrchestrateTool) Execute(ctx context.Context, input json.RawMessage) (ToolResult, error) {
 	var in orchestrateInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -96,117 +88,26 @@ func (t *CmuxOrchestrateTool) Execute(ctx context.Context, input json.RawMessage
 		timeout = d
 	}
 
-	// Launch each task: split pane, send command + enter.
-	states := make([]*taskState, 0, len(in.Tasks))
+	orch := cmux.NewOrchestrator(t.client)
+	orch.SetPollRate(2 * time.Second)
+
+	// Dispatch all tasks.
 	for _, task := range in.Tasks {
-		resp, err := t.client.Call("surface.split", map[string]string{"direction": task.Direction})
-		if err != nil {
-			return ToolResult{Content: fmt.Sprintf("surface.split failed: %s", err), IsError: true}, nil
+		if _, err := orch.Dispatch(task.Direction, task.Command); err != nil {
+			return ToolResult{Content: fmt.Sprintf("dispatch failed: %s", err), IsError: true}, nil
 		}
-		if !resp.OK {
-			return ToolResult{Content: fmt.Sprintf("surface.split error: %s", resp.Error), IsError: true}, nil
-		}
-		var surf cmux.Surface
-		if err := json.Unmarshal(resp.Result, &surf); err != nil {
-			return ToolResult{Content: fmt.Sprintf("decode surface: %s", err), IsError: true}, nil
-		}
-
-		// Send command text.
-		if resp, err := t.client.Call("surface.send_text", map[string]string{
-			"surface_id": surf.ID,
-			"text":       task.Command,
-		}); err != nil || !resp.OK {
-			msg := fmt.Sprintf("send_text failed for surface %s", surf.ID)
-			if err != nil {
-				msg = fmt.Sprintf("%s: %s", msg, err)
-			} else {
-				msg = fmt.Sprintf("%s: %s", msg, resp.Error)
-			}
-			return ToolResult{Content: msg, IsError: true}, nil
-		}
-
-		// Send Enter.
-		if resp, err := t.client.Call("surface.send_key", map[string]string{
-			"surface_id": surf.ID,
-			"key":        "Enter",
-		}); err != nil || !resp.OK {
-			msg := fmt.Sprintf("send_key failed for surface %s", surf.ID)
-			if err != nil {
-				msg = fmt.Sprintf("%s: %s", msg, err)
-			} else {
-				msg = fmt.Sprintf("%s: %s", msg, resp.Error)
-			}
-			return ToolResult{Content: msg, IsError: true}, nil
-		}
-
-		states = append(states, &taskState{surfaceID: surf.ID, command: task.Command})
 	}
 
-	// Poll sidebar-state every 2 s until all done or timeout.
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		allDone := true
-		for _, s := range states {
-			if !s.done {
-				allDone = false
-				break
-			}
-		}
-		if allDone {
-			break
-		}
-		if time.Now().After(deadline) {
-			for _, s := range states {
-				if !s.done {
-					s.status = "timeout"
-					s.done = true
-				}
-			}
-			break
-		}
-
-		select {
-		case <-ctx.Done():
-			return ToolResult{Content: "context cancelled", IsError: true}, nil
-		case <-ticker.C:
-			resp, err := t.client.Call("sidebar-state", map[string]any{})
-			if err != nil {
-				continue
-			}
-			if !resp.OK {
-				continue
-			}
-			var state cmux.SidebarState
-			if err := json.Unmarshal(resp.Result, &state); err != nil {
-				continue
-			}
-			for _, entry := range state.Logs {
-				for _, s := range states {
-					if s.done {
-						continue
-					}
-					if !strings.Contains(entry.Message, s.surfaceID) {
-						continue
-					}
-					if strings.Contains(entry.Message, "[DONE]") {
-						s.done = true
-						s.status = "done"
-					} else if strings.Contains(entry.Message, "[ERROR]") {
-						s.done = true
-						s.status = "error"
-					}
-				}
-			}
-		}
+	// Wait for all tasks to complete.
+	results, err := orch.Wait(timeout)
+	if err != nil {
+		return ToolResult{Content: fmt.Sprintf("orchestration failed: %s", err), IsError: true}, nil
 	}
 
 	// Build summary.
 	var sb strings.Builder
-	for _, s := range states {
-		sb.WriteString(fmt.Sprintf("surface %s (%s): %s\n", s.surfaceID, s.command, s.status))
+	for _, r := range results {
+		sb.WriteString(fmt.Sprintf("surface %s (%s): %s\n", r.SurfaceID, r.Command, r.Status))
 	}
 	return ToolResult{Content: strings.TrimRight(sb.String(), "\n")}, nil
 }

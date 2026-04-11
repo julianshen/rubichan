@@ -20,12 +20,11 @@ func TestCmuxOrchestrateTool_Name(t *testing.T) {
 func TestCmuxOrchestrateTool_Execute_SingleTask(t *testing.T) {
 	mc := cmuxtest.NewMockClient()
 	mc.SetResult("surface.split", cmux.Surface{ID: "orch-surf-1", Type: "terminal"})
-	mc.SetResult("surface.send_text", map[string]any{})
-	mc.SetResult("surface.send_key", map[string]any{})
-	// Return a [DONE] log on first poll.
+	mc.SetResult("surface.send_text", true)
+	mc.SetResult("surface.send_key", true)
 	mc.SetResult("sidebar-state", cmux.SidebarState{
 		Logs: []cmux.LogEntry{
-			{Message: "[DONE] orch-surf-1 finished", Level: "info"},
+			{Message: "[DONE] finished", Level: "info", Source: "orch-surf-1"},
 		},
 	})
 
@@ -72,11 +71,11 @@ func TestCmuxOrchestrateTool_Execute_InvalidTimeout(t *testing.T) {
 func TestCmuxOrchestrateTool_Execute_ErrorLog(t *testing.T) {
 	mc := cmuxtest.NewMockClient()
 	mc.SetResult("surface.split", cmux.Surface{ID: "orch-surf-2", Type: "terminal"})
-	mc.SetResult("surface.send_text", map[string]any{})
-	mc.SetResult("surface.send_key", map[string]any{})
+	mc.SetResult("surface.send_text", true)
+	mc.SetResult("surface.send_key", true)
 	mc.SetResult("sidebar-state", cmux.SidebarState{
 		Logs: []cmux.LogEntry{
-			{Message: "[ERROR] orch-surf-2 crashed", Level: "error"},
+			{Message: "[ERROR] crashed", Level: "error", Source: "orch-surf-2"},
 		},
 	})
 

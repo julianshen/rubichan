@@ -3214,7 +3214,7 @@ func runWikiHeadless(cfg *config.Config, cwd, outDir, format string, concurrency
 	result, err := wiki.Run(context.Background(), wikiCfg, llm, par)
 
 	if cmuxClient != nil {
-		cmuxClient.Call("clear-progress", nil)
+		cmuxClient.Call("clear-progress", map[string]any{})
 	} else if caps.ProgressBar {
 		terminal.ClearProgress(os.Stderr)
 	}
