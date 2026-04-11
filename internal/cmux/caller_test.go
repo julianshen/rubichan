@@ -34,6 +34,20 @@ func TestCallerNotifyFailure(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestCallerSetSidebarColor(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetResult("set-sidebar-color", true)
+
+	cmux.CallerSetSidebarColor(mc, "#FF6B9D")
+
+	calls := mc.Calls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "set-sidebar-color", calls[0].Method)
+	params, ok := calls[0].Params.(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "#FF6B9D", params["color"])
+}
+
 func TestCallerSetProgress(t *testing.T) {
 	mc := cmuxtest.NewMockClient()
 	mc.SetResult("set-progress", true)

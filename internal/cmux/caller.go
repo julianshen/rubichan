@@ -20,6 +20,11 @@ func CallerNotify(c Caller, title, subtitle, body string) bool {
 	return err == nil && resp.OK
 }
 
+// CallerSetSidebarColor sets the sidebar accent color via any Caller. Best-effort.
+func CallerSetSidebarColor(c Caller, color string) {
+	c.Call("set-sidebar-color", map[string]string{"color": color}) //nolint:errcheck
+}
+
 // CallerSetProgress sets the sidebar progress via any Caller. Best-effort.
 func CallerSetProgress(c Caller, fraction float64, label string) {
 	c.Call("set-progress", map[string]any{"value": fraction, "label": label}) //nolint:errcheck

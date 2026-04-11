@@ -1382,6 +1382,9 @@ func dialCmux(caps *terminal.Caps) (cmux.Caller, func()) {
 		log.Printf("warning: cmux socket detected but dial failed: %v — cmux features disabled", err)
 		return nil, func() {}
 	}
+	// Set sidebar accent color to rubichan's pink theme.
+	cmux.CallerSetSidebarColor(cc, "#FF6B9D")
+
 	return cc, func() { cc.Close() }
 }
 
