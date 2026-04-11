@@ -54,16 +54,35 @@ func detectMermaidBlocks(content string) []mermaidBlock {
 	return blocks
 }
 
+// mmdcAvailableCache caches the result of exec.LookPath("mmdc") so it
+// isn't called on every viewport render (which can be 60+ times/second).
+var mmdcAvailableCache *bool
+
+func mmdcAvailableCached() bool {
+	if mmdcAvailableCache != nil {
+		return *mmdcAvailableCache
+	}
+	v := terminal.MmdcAvailable()
+	mmdcAvailableCache = &v
+	return v
+}
+
 // replaceMermaidBlocks replaces Mermaid code blocks with rendered inline images
 // when Kitty graphics and mmdc are available. Returns content unchanged when
 // rendering is not possible.
 func replaceMermaidBlocks(content string, caps *terminal.Caps) string {
-	if caps == nil || !caps.KittyGraphics || !terminal.MmdcAvailable() {
+	if caps == nil || !caps.KittyGraphics {
 		return content
 	}
 
+	// Detect blocks before the (cached) mmdc check to avoid even
+	// that work when there are no Mermaid blocks.
 	blocks := detectMermaidBlocks(content)
 	if len(blocks) == 0 {
+		return content
+	}
+
+	if !mmdcAvailableCached() {
 		return content
 	}
 
