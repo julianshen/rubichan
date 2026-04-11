@@ -43,6 +43,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
+	"github.com/julianshen/rubichan/internal/security/analyzer"
 	secoutput "github.com/julianshen/rubichan/internal/security/output"
 	"github.com/julianshen/rubichan/internal/security/scanner"
 	"github.com/julianshen/rubichan/internal/session"
@@ -1114,9 +1115,10 @@ func saveMemoriesBestEffort(parentCtx context.Context, a *agent.Agent, out io.Wr
 }
 
 // newDefaultSecurityEngine creates a security engine pre-configured with all
-// built-in static scanners. This lives in main.go to avoid an import cycle
-// between security/ and security/scanner/.
-func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
+// built-in static scanners and, when an LLM provider is given, the phase-2
+// LLM analyzers. This lives in main.go to avoid an import cycle between
+// security/ and security/scanner/ (and security/analyzer/).
+func newDefaultSecurityEngine(cfg security.EngineConfig, llm provider.LLMProvider) *security.Engine {
 	e := security.NewEngine(cfg)
 	e.AddScanner(scanner.NewSecretScanner())
 	e.AddScanner(scanner.NewSASTScanner())
@@ -1124,6 +1126,15 @@ func newDefaultSecurityEngine(cfg security.EngineConfig) *security.Engine {
 	e.AddScanner(scanner.NewDepScanner(nil))
 	e.AddScanner(scanner.NewLicenseScanner())
 	e.AddScanner(scanner.NewAppleScanner())
+
+	// Phase 2: LLM-powered deep analyzers (only when a provider is available).
+	if llm != nil {
+		e.AddAnalyzer(analyzer.NewAuthAnalyzer(llm))
+		e.AddAnalyzer(analyzer.NewConcurrencyAnalyzer(llm))
+		e.AddAnalyzer(analyzer.NewCryptoAnalyzer(llm))
+		e.AddAnalyzer(analyzer.NewDataFlowAnalyzer(llm))
+		e.AddAnalyzer(analyzer.NewBusinessLogicAnalyzer(llm))
+	}
 	return e
 }
 
@@ -2314,7 +2325,13 @@ func runHeadless() error {
 			MaxLLMChunks:    cfg.Security.MaxLLMCalls,
 			ExcludePatterns: cfg.Security.ExcludePatterns,
 		}
-		engine := newDefaultSecurityEngine(engineCfg)
+		// Only pass the provider when LLM analysis is explicitly enabled;
+		// the config defaults to false so users opt-in to the cost.
+		var llmForSec provider.LLMProvider
+		if cfg.Security.EnableLLMAnalysis {
+			llmForSec = p
+		}
+		engine := newDefaultSecurityEngine(engineCfg, llmForSec)
 
 		// Load .security.yaml for custom rules.
 		projectCfg, projectCfgErr := security.LoadProjectConfig(cwd)

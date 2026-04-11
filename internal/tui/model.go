@@ -406,11 +406,6 @@ func (m *Model) SetTermCaps(caps *terminal.Caps) {
 	m.refreshRenderers()
 }
 
-// TermCaps returns the terminal capabilities, or nil if not detected.
-func (m *Model) TermCaps() *terminal.Caps {
-	return m.termCaps
-}
-
 // SetCheckpointManager sets the checkpoint manager for undo/rewind support.
 func (m *Model) SetCheckpointManager(mgr *checkpoint.Manager) {
 	m.checkpointMgr = mgr

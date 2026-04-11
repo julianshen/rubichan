@@ -67,23 +67,29 @@ func (e *Engine) Run(ctx context.Context, target ScanTarget) (*Report, error) {
 		return nil, fmt.Errorf("engine cancelled after phase 1: %w", err)
 	}
 
-	// Prioritize code segments for LLM analysis.
-	prioritizer := NewPrioritizer(PrioritizerConfig{
-		MinRiskScore: e.config.MinRiskScore,
-		MaxChunks:    e.config.MaxLLMChunks,
-	})
-
-	chunks, err := prioritizer.Prioritize(ctx, mergedTarget, staticFindings)
-	if err != nil {
-		return nil, fmt.Errorf("prioritization failed: %w", err)
-	}
-
 	// Phase 2: LLM analyzers on prioritized chunks.
+	// Skip prioritization entirely when no analyzers are registered — it
+	// walks the filesystem, runs regex scoring, and parses with tree-sitter,
+	// all of which is wasted when there are no consumers for the chunks.
 	var analyzerFindings []Finding
 	var analyzerErrors []ScanError
+	var chunksAnalyzed int
 
-	if len(chunks) > 0 && len(e.analyzers) > 0 {
-		analyzerFindings, analyzerErrors = e.runAnalyzers(ctx, chunks)
+	if len(e.analyzers) > 0 {
+		prioritizer := NewPrioritizer(PrioritizerConfig{
+			MinRiskScore: e.config.MinRiskScore,
+			MaxChunks:    e.config.MaxLLMChunks,
+		})
+
+		chunks, err := prioritizer.Prioritize(ctx, mergedTarget, staticFindings)
+		if err != nil {
+			return nil, fmt.Errorf("prioritization failed: %w", err)
+		}
+
+		chunksAnalyzed = len(chunks)
+		if len(chunks) > 0 {
+			analyzerFindings, analyzerErrors = e.runAnalyzers(ctx, chunks)
+		}
 	}
 
 	// Combine all findings and errors.
@@ -100,7 +106,7 @@ func (e *Engine) Run(ctx context.Context, target ScanTarget) (*Report, error) {
 		Stats: ScanStats{
 			Duration:       time.Since(start),
 			FilesScanned:   countFiles(mergedTarget),
-			ChunksAnalyzed: len(chunks),
+			ChunksAnalyzed: chunksAnalyzed,
 			FindingsCount:  len(deduped),
 			ChainCount:     len(chains),
 		},

@@ -326,7 +326,7 @@ func TestNoColorFlagDefined(t *testing.T) {
 }
 
 func TestNewDefaultSecurityEngine(t *testing.T) {
-	engine := newDefaultSecurityEngine(security.EngineConfig{Concurrency: 4})
+	engine := newDefaultSecurityEngine(security.EngineConfig{Concurrency: 4}, nil)
 	require.NotNil(t, engine)
 }
 

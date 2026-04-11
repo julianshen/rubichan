@@ -65,11 +65,6 @@ func (s *Server) Hub() *Hub {
 	return s.hub
 }
 
-// ListenAndServe starts the server.
-func (s *Server) ListenAndServe() error {
-	return s.httpServer.ListenAndServe()
-}
-
 // Serve starts the server on the given listener.
 func (s *Server) Serve(ln net.Listener) error {
 	return s.httpServer.Serve(ln)

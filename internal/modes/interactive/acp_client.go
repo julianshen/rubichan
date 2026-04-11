@@ -142,11 +142,6 @@ func (c *ACPClient) Close() error {
 	return nil
 }
 
-// SetDispatcher sets the dispatcher for testing purposes.
-func (c *ACPClient) SetDispatcher(d *acp.ResponseDispatcher) {
-	c.dispatcher = d
-}
-
 // Initialize sends an initialize request to the ACP server.
 func (c *ACPClient) Initialize(clientName string) (*acp.InitializeResponse, error) {
 	// Build the initialize request using the provided clientName
@@ -222,37 +217,6 @@ func (c *ACPClient) Prompt(turn string) (*acp.Response, error) {
 	return resp, nil
 }
 
-// ExecuteTool executes a tool via ACP.
-func (c *ACPClient) ExecuteTool(name string, input json.RawMessage) (*acp.Response, error) {
-	toolReq := map[string]interface{}{
-		"tool":  name,
-		"input": input,
-	}
-
-	paramsData, err := json.Marshal(toolReq)
-	if err != nil {
-		return nil, fmt.Errorf("marshal execute tool params: %w", err)
-	}
-
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      c.getNextID(),
-		Method:  "tool/execute",
-		Params:  paramsData,
-	}
-
-	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("execute tool request failed: %w", err)
-	}
-
-	if resp.Error != nil {
-		return nil, fmt.Errorf("execute tool error: %s", resp.Error.Message)
-	}
-
-	return resp, nil
-}
-
 // InvokeSkill invokes a skill via ACP.
 func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvokeResponse, error) {
 	paramsData, err := json.Marshal(skillReq)
@@ -282,42 +246,4 @@ func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvo
 	}
 
 	return &skillResp, nil
-}
-
-// ApprovalRequest is a stub that auto-approves tool execution.
-// SECURITY ISSUE: This is not properly implemented and always returns true (approve).
-// In a production implementation, this should present an approval overlay to the user
-// asking them to manually review and approve/reject the operation.
-// TODO: Wire this to the actual TUI approval overlay.
-func (c *ACPClient) ApprovalRequest(tool string, input json.RawMessage) (bool, error) {
-	// STUB: Auto-approves all operations without user input.
-	// This is a placeholder and should NOT be used in production.
-	// Proper implementation should show a TUI dialog asking for user approval.
-	approvalResp := acp.SecurityApprovalResponse{
-		Decision: "approve", // STUB: Always approve without asking
-	}
-
-	paramsData, err := json.Marshal(approvalResp)
-	if err != nil {
-		return false, fmt.Errorf("marshal approval request params: %w", err)
-	}
-
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      c.getNextID(),
-		Method:  acp.MethodSecurityApprove,
-		Params:  paramsData,
-	}
-
-	resp, err := c.dispatcher.SendRequest(context.Background(), req, 5*time.Second)
-	if err != nil {
-		return false, fmt.Errorf("approval request failed: %w", err)
-	}
-
-	if resp.Error != nil {
-		return false, fmt.Errorf("approval error: %s", resp.Error.Message)
-	}
-
-	// STUB: Always returns true (approved) without user interaction
-	return true, nil
 }

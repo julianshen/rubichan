@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 )
 
@@ -210,63 +209,63 @@ func extractCommandName(fullCommand string) string {
 // Format: command → { pkgManager → packageName }
 // If a command has the same package name across all managers, use "*" as key.
 var knownPackages = map[string]map[string]string{
-	"jq":      {"*": "jq"},
-	"rg":      {"*": "ripgrep"},
-	"fd":      {"brew": "fd", "apt": "fd-find", "dnf": "fd-find", "*": "fd"},
-	"bat":     {"apt": "batcat", "*": "bat"},
-	"htop":    {"*": "htop"},
-	"tree":    {"*": "tree"},
-	"wget":    {"*": "wget"},
-	"curl":    {"*": "curl"},
-	"tmux":    {"*": "tmux"},
-	"make":    {"apt": "build-essential", "*": "make"},
-	"gcc":     {"apt": "build-essential", "*": "gcc"},
-	"g++":     {"apt": "build-essential", "dnf": "gcc-c++", "yum": "gcc-c++", "*": "gcc"},
-	"python3": {"brew": "python3", "apt": "python3", "*": "python3"},
-	"pip":     {"apt": "python3-pip", "*": "pip"},
-	"pip3":    {"apt": "python3-pip", "*": "pip3"},
-	"node":    {"brew": "node", "apt": "nodejs", "*": "nodejs"},
-	"npm":     {"brew": "node", "apt": "npm", "*": "npm"},
-	"fzf":     {"*": "fzf"},
-	"ag":      {"apt": "silversearcher-ag", "brew": "the_silver_searcher", "*": "the_silver_searcher"},
-	"delta":   {"brew": "git-delta", "apt": "git-delta", "*": "git-delta"},
-	"exa":     {"*": "exa"},
-	"eza":     {"*": "eza"},
-	"dust":    {"*": "dust"},
-	"duf":     {"*": "duf"},
-	"procs":   {"*": "procs"},
-	"sd":      {"*": "sd"},
-	"hyperfine": {"*": "hyperfine"},
-	"tokei":   {"*": "tokei"},
-	"xh":     {"*": "xh"},
-	"zoxide":  {"*": "zoxide"},
-	"shellcheck": {"*": "shellcheck"},
-	"shfmt":   {"brew": "shfmt", "apt": "shfmt", "*": "shfmt"},
-	"yq":      {"*": "yq"},
-	"ffmpeg":  {"*": "ffmpeg"},
+	"jq":          {"*": "jq"},
+	"rg":          {"*": "ripgrep"},
+	"fd":          {"brew": "fd", "apt": "fd-find", "dnf": "fd-find", "*": "fd"},
+	"bat":         {"apt": "batcat", "*": "bat"},
+	"htop":        {"*": "htop"},
+	"tree":        {"*": "tree"},
+	"wget":        {"*": "wget"},
+	"curl":        {"*": "curl"},
+	"tmux":        {"*": "tmux"},
+	"make":        {"apt": "build-essential", "*": "make"},
+	"gcc":         {"apt": "build-essential", "*": "gcc"},
+	"g++":         {"apt": "build-essential", "dnf": "gcc-c++", "yum": "gcc-c++", "*": "gcc"},
+	"python3":     {"brew": "python3", "apt": "python3", "*": "python3"},
+	"pip":         {"apt": "python3-pip", "*": "pip"},
+	"pip3":        {"apt": "python3-pip", "*": "pip3"},
+	"node":        {"brew": "node", "apt": "nodejs", "*": "nodejs"},
+	"npm":         {"brew": "node", "apt": "npm", "*": "npm"},
+	"fzf":         {"*": "fzf"},
+	"ag":          {"apt": "silversearcher-ag", "brew": "the_silver_searcher", "*": "the_silver_searcher"},
+	"delta":       {"brew": "git-delta", "apt": "git-delta", "*": "git-delta"},
+	"exa":         {"*": "exa"},
+	"eza":         {"*": "eza"},
+	"dust":        {"*": "dust"},
+	"duf":         {"*": "duf"},
+	"procs":       {"*": "procs"},
+	"sd":          {"*": "sd"},
+	"hyperfine":   {"*": "hyperfine"},
+	"tokei":       {"*": "tokei"},
+	"xh":          {"*": "xh"},
+	"zoxide":      {"*": "zoxide"},
+	"shellcheck":  {"*": "shellcheck"},
+	"shfmt":       {"brew": "shfmt", "apt": "shfmt", "*": "shfmt"},
+	"yq":          {"*": "yq"},
+	"ffmpeg":      {"*": "ffmpeg"},
 	"imagemagick": {"brew": "imagemagick", "apt": "imagemagick", "*": "imagemagick"},
-	"convert": {"brew": "imagemagick", "apt": "imagemagick", "*": "imagemagick"},
-	"nmap":    {"*": "nmap"},
-	"nc":      {"apt": "netcat-openbsd", "*": "netcat"},
-	"telnet":  {"apt": "telnet", "*": "telnet"},
-	"dig":     {"apt": "dnsutils", "brew": "bind", "*": "bind-utils"},
-	"nslookup": {"apt": "dnsutils", "brew": "bind", "*": "bind-utils"},
-	"watch":   {"brew": "watch", "*": "procps"},
-	"pv":      {"*": "pv"},
-	"socat":   {"*": "socat"},
-	"strace":  {"*": "strace"},
-	"lsof":    {"*": "lsof"},
-	"rsync":   {"*": "rsync"},
-	"zip":     {"*": "zip"},
-	"unzip":   {"*": "unzip"},
-	"pigz":    {"*": "pigz"},
-	"xclip":   {"*": "xclip"},
-	"xsel":    {"*": "xsel"},
-	"go":      {"brew": "go", "apt": "golang", "*": "golang"},
-	"rustc":   {"brew": "rust", "apt": "rustc", "*": "rust"},
-	"cargo":   {"brew": "rust", "apt": "cargo", "*": "rust"},
-	"cmake":   {"*": "cmake"},
-	"clang":   {"apt": "clang", "brew": "llvm", "*": "clang"},
+	"convert":     {"brew": "imagemagick", "apt": "imagemagick", "*": "imagemagick"},
+	"nmap":        {"*": "nmap"},
+	"nc":          {"apt": "netcat-openbsd", "*": "netcat"},
+	"telnet":      {"apt": "telnet", "*": "telnet"},
+	"dig":         {"apt": "dnsutils", "brew": "bind", "*": "bind-utils"},
+	"nslookup":    {"apt": "dnsutils", "brew": "bind", "*": "bind-utils"},
+	"watch":       {"brew": "watch", "*": "procps"},
+	"pv":          {"*": "pv"},
+	"socat":       {"*": "socat"},
+	"strace":      {"*": "strace"},
+	"lsof":        {"*": "lsof"},
+	"rsync":       {"*": "rsync"},
+	"zip":         {"*": "zip"},
+	"unzip":       {"*": "unzip"},
+	"pigz":        {"*": "pigz"},
+	"xclip":       {"*": "xclip"},
+	"xsel":        {"*": "xsel"},
+	"go":          {"brew": "go", "apt": "golang", "*": "golang"},
+	"rustc":       {"brew": "rust", "apt": "rustc", "*": "rust"},
+	"cargo":       {"brew": "rust", "apt": "cargo", "*": "rust"},
+	"cmake":       {"*": "cmake"},
+	"clang":       {"apt": "clang", "brew": "llvm", "*": "clang"},
 }
 
 // LookupPackage looks up a command in the built-in table for the given package manager.
@@ -285,14 +284,6 @@ func LookupPackage(cmdName string, pkgManager string) string {
 		return pkg
 	}
 	return ""
-}
-
-// DetectPackageManager identifies the available package manager on the system.
-func DetectPackageManager() *PackageManager {
-	return detectPackageManagerWith(func(name string) bool {
-		_, err := exec.LookPath(name)
-		return err == nil
-	})
 }
 
 // detectPackageManagerWith uses a custom lookup function (for testability).

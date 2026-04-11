@@ -89,15 +89,9 @@ type Prober interface {
 
 // Detect returns terminal capabilities using the TERM_PROGRAM fast path only.
 // Runtime probing (StdioProber) is not wired here because it requires raw
-// terminal I/O that conflicts with Bubble Tea's terminal management. Use
-// DetectWithProber for environments where stdin/stdout are available for probing.
+// terminal I/O that conflicts with Bubble Tea's terminal management.
 func Detect() *Caps {
 	return DetectWithEnv(os.Getenv("TERM_PROGRAM"), nil)
-}
-
-// DetectWithProber probes the current terminal with a custom prober for the slow path.
-func DetectWithProber(prober Prober) *Caps {
-	return DetectWithEnv(os.Getenv("TERM_PROGRAM"), prober)
 }
 
 // DetectWithEnv detects terminal capabilities using a two-phase strategy: first
