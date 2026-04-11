@@ -277,5 +277,7 @@ func (c *ACPClient) ApprovalRequest(ctx context.Context, tool string, input json
 	}
 
 	// Fallback: auto-approve when no callback is configured.
+	// This path is only expected in tests. Production code should always
+	// wire an approvalFunc via SetApprovalFunc before the first call.
 	return true, nil
 }

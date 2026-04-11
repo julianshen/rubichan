@@ -43,6 +43,26 @@ Post-milestone polish and gap closure. Ordered by impact and risk.
 - [x] **2.5** `TestProcessOverlayResultSessionResume` — `processOverlayResult` for a `SessionResumeResult` transitions back to input state.
 - [x] **2.6** `TestResumeCommandSetsOverlay` — The `/resume` command sets `activeOverlay` to a `SessionResumeOverlay` and transitions to overlay state.
 
+### Status: Overlay UI complete, session restore NOT YET IMPLEMENTED
+
+The overlay correctly collects the user's session selection and returns a `SessionResumeResult` with the session ID. However, `processOverlayResult` currently only prints "Resuming session..." — it does not load turns or restore conversation state.
+
+### Follow-up: Complete session restore (Priority 2b)
+
+Wire the selected session ID into the agent's session loading infrastructure so the conversation is actually restored.
+
+#### Tests
+
+- [ ] **2b.1** `TestProcessOverlayResultSessionResumeLoadsSession` — Selecting a session loads its turns from the store and restores them into the agent's conversation history.
+- [ ] **2b.2** `TestProcessOverlayResultSessionResumeRendersTurns` — After resume, the previously stored turns are visible in the TUI content buffer.
+- [ ] **2b.3** `TestProcessOverlayResultSessionResumeError` — When the session ID is not found in the store, an error message is shown and state returns to input.
+
+#### Implementation
+
+- In `processOverlayResult`, call `m.sessionStore.GetSession(r.SessionID)` + `m.sessionStore.GetMessages(r.SessionID)` to load the session data.
+- Feed loaded messages into the agent via `agent.WithResumeSession` or equivalent.
+- Render restored turns in the content buffer so the user sees conversation history.
+
 ---
 
 ## Priority 3: Test Coverage for Headless and Wiki Mode ACP Clients
