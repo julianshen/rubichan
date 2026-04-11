@@ -42,6 +42,7 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 				huh.NewOption("Anthropic (Claude)", "anthropic"),
 				huh.NewOption("OpenAI Compatible", "openai"),
 				huh.NewOption("Ollama (Local)", "ollama"),
+				huh.NewOption("Z.ai (Zhipu)", "zai"),
 			).
 			Value(&cfg.Provider.Default),
 	).Title("Welcome to Rubichan")
@@ -69,6 +70,14 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 	).Title("OpenAI Compatible Provider").
 		WithHideFunc(func() bool { return cfg.Provider.Default != "openai" })
 
+	zaiKeyGroup := huh.NewGroup(
+		huh.NewInput().
+			Title("Z.ai API Key").
+			Value(&cfg.Provider.Zai.APIKey).
+			EchoMode(huh.EchoModePassword),
+	).Title("Authentication").
+		WithHideFunc(func() bool { return cfg.Provider.Default != "zai" })
+
 	modelGroup := huh.NewGroup(
 		huh.NewInput().
 			Title("Model").
@@ -77,7 +86,7 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 	).Title("Model").
 		WithHideFunc(func() bool { return cfg.Provider.Default == "ollama" })
 
-	bf.form = huh.NewForm(providerGroup, anthropicKeyGroup, openaiGroup, modelGroup)
+	bf.form = huh.NewForm(providerGroup, anthropicKeyGroup, openaiGroup, zaiKeyGroup, modelGroup)
 	return bf
 }
 
@@ -95,6 +104,9 @@ func (b *BootstrapForm) Config() *config.Config { return b.cfg }
 func (b *BootstrapForm) Save() error {
 	if b.cfg.Provider.Default == "anthropic" && b.cfg.Provider.Anthropic.APIKey != "" {
 		b.cfg.Provider.Anthropic.APIKeySource = "config"
+	}
+	if b.cfg.Provider.Default == "zai" && b.cfg.Provider.Zai.APIKey != "" {
+		b.cfg.Provider.Zai.APIKeySource = "config"
 	}
 	if b.cfg.Provider.Default == "openai" && b.openaiKey != "" {
 		baseURL := b.openaiBaseURL

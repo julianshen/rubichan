@@ -86,3 +86,23 @@ func TestHasUsableCredentialsForProviderAnthropicConfig(t *testing.T) {
 
 	assert.True(t, HasUsableCredentialsForProvider(cfg, "anthropic"))
 }
+
+func TestHasUsableCredentialsForProviderZaiConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.Provider.Zai.APIKeySource = "config"
+	cfg.Provider.Zai.APIKey = "zai-test-key"
+
+	assert.True(t, HasUsableCredentialsForProvider(cfg, "zai"))
+}
+
+func TestHasUsableCredentialsForProviderZaiEnv(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.Zai.APIKeySource = "env"
+
+	assert.False(t, HasUsableCredentialsForProvider(cfg, "zai"))
+
+	t.Setenv("Z_AI_API_KEY", "zai-env-key")
+	assert.True(t, HasUsableCredentialsForProvider(cfg, "zai"))
+}
