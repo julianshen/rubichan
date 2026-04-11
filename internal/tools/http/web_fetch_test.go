@@ -20,7 +20,21 @@ func newTestWebFetchTool(srv *httptest.Server) *WebFetchTool {
 	return wf
 }
 
+func TestWebFetchRejectsPrivateAddress(t *testing.T) {
+
+	t.Parallel()
+	tool := NewWebFetchTool()
+	// Default resolver will resolve "localhost" to a private address.
+	input, _ := json.Marshal(webFetchInput{URL: "http://localhost/llms.txt"})
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "private")
+}
+
 func TestWebFetchPreferLlmsTxt(t *testing.T) {
+
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/llms.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -43,6 +57,8 @@ func TestWebFetchPreferLlmsTxt(t *testing.T) {
 }
 
 func TestWebFetchFallsBackToMarkdownVariant(t *testing.T) {
+
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/docs/guide.md", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/markdown")
@@ -65,6 +81,8 @@ func TestWebFetchFallsBackToMarkdownVariant(t *testing.T) {
 }
 
 func TestWebFetchFallsBackToRawURL(t *testing.T) {
+
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -83,6 +101,8 @@ func TestWebFetchFallsBackToRawURL(t *testing.T) {
 }
 
 func TestWebFetchStripsHTML(t *testing.T) {
+
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -104,6 +124,8 @@ func TestWebFetchStripsHTML(t *testing.T) {
 }
 
 func TestWebFetchEmptyURL(t *testing.T) {
+
+	t.Parallel()
 	tool := NewWebFetchTool()
 	input, _ := json.Marshal(webFetchInput{URL: ""})
 	result, err := tool.Execute(context.Background(), input)
@@ -113,6 +135,8 @@ func TestWebFetchEmptyURL(t *testing.T) {
 }
 
 func TestWebFetchInvalidScheme(t *testing.T) {
+
+	t.Parallel()
 	tool := NewWebFetchTool()
 	input, _ := json.Marshal(webFetchInput{URL: "ftp://example.com/file"})
 	result, err := tool.Execute(context.Background(), input)
@@ -122,6 +146,8 @@ func TestWebFetchInvalidScheme(t *testing.T) {
 }
 
 func TestWebFetchSkipsBinaryContent(t *testing.T) {
+
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/llms.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -143,6 +169,8 @@ func TestWebFetchSkipsBinaryContent(t *testing.T) {
 }
 
 func TestStripHTML(t *testing.T) {
+
+	t.Parallel()
 	tests := []struct {
 		name string
 		html string
@@ -183,6 +211,8 @@ func TestStripHTML(t *testing.T) {
 }
 
 func TestIsTextContent(t *testing.T) {
+
+	t.Parallel()
 	assert.True(t, isTextContent("text/html; charset=utf-8"))
 	assert.True(t, isTextContent("text/plain"))
 	assert.True(t, isTextContent("text/markdown"))
@@ -193,6 +223,8 @@ func TestIsTextContent(t *testing.T) {
 }
 
 func TestWebFetchToolInterface(t *testing.T) {
+
+	t.Parallel()
 	tool := NewWebFetchTool()
 	assert.Equal(t, "web_fetch", tool.Name())
 	assert.NotEmpty(t, tool.Description())
@@ -207,6 +239,8 @@ func TestWebFetchToolInterface(t *testing.T) {
 }
 
 func TestWebFetchPriorityOrder(t *testing.T) {
+
+	t.Parallel()
 	// When both llms.txt and .md exist, llms.txt wins.
 	var fetchOrder []string
 	mux := http.NewServeMux()
@@ -241,6 +275,8 @@ func TestWebFetchPriorityOrder(t *testing.T) {
 }
 
 func TestStripHTMLPreservesContent(t *testing.T) {
+
+	t.Parallel()
 	// Ensure entities-like content survives (we don't decode HTML entities,
 	// but we shouldn't eat the ampersand either)
 	got := stripHTML("A &amp; B")
@@ -250,6 +286,8 @@ func TestStripHTMLPreservesContent(t *testing.T) {
 }
 
 func TestWebFetchHandlesNon200LlmsTxt(t *testing.T) {
+
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/llms.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -274,6 +312,8 @@ func TestWebFetchHandlesNon200LlmsTxt(t *testing.T) {
 }
 
 func TestWebFetchSetsAcceptHeader(t *testing.T) {
+
+	t.Parallel()
 	var gotAccept string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
