@@ -77,6 +77,8 @@ const (
 	StateInitKnowledgeGraphOverlay
 	// StateBootstrapProgressOverlay indicates the TUI is showing the bootstrap progress overlay.
 	StateBootstrapProgressOverlay
+	// StateResumeOverlay indicates the TUI is showing the session resume selector.
+	StateResumeOverlay
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -105,6 +107,7 @@ type Model struct {
 	selection         MouseSelection // current text selection state
 	clickTracker      clickTracker   // click counting for double/triple-click detection
 	checkpointMgr     *checkpoint.Manager
+	sessionStore      *store.Store
 	alwaysApproved    sync.Map
 	alwaysDenied      sync.Map
 	approvalCh        chan approvalRequest
@@ -409,6 +412,11 @@ func (m *Model) SetTermCaps(caps *terminal.Caps) {
 // SetCheckpointManager sets the checkpoint manager for undo/rewind support.
 func (m *Model) SetCheckpointManager(mgr *checkpoint.Manager) {
 	m.checkpointMgr = mgr
+}
+
+// SetSessionStore sets the session store for the /resume overlay.
+func (m *Model) SetSessionStore(s *store.Store) {
+	m.sessionStore = s
 }
 
 // SetCmuxClient sets the cmux client for rich sidebar/notification dispatch.
@@ -894,6 +902,26 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 	case commands.ActionInitKnowledgeGraph:
 		m.activeOverlay = NewInitKnowledgeGraphOverlay(m.width, m.height)
 		m.state = StateInitKnowledgeGraphOverlay
+		return nil
+	case commands.ActionResume:
+		if m.sessionStore == nil {
+			m.content.WriteString("Session store not available.\n")
+			m.setContentAndAutoScroll()
+			return nil
+		}
+		sessions, err := m.sessionStore.ListSessions(20)
+		if err != nil {
+			m.content.WriteString(fmt.Sprintf("Failed to list sessions: %s\n", err))
+			m.setContentAndAutoScroll()
+			return nil
+		}
+		if len(sessions) == 0 {
+			m.content.WriteString("No previous sessions found.\n")
+			m.setContentAndAutoScroll()
+			return nil
+		}
+		m.activeOverlay = NewSessionResumeOverlay(sessions)
+		m.state = StateResumeOverlay
 		return nil
 	}
 

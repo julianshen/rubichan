@@ -26,6 +26,8 @@ const (
 	ActionOpenAbout
 	// ActionInitKnowledgeGraph requests the host to start knowledge graph bootstrap.
 	ActionInitKnowledgeGraph
+	// ActionResume requests the host to open the session resume selector.
+	ActionResume
 )
 
 // Candidate represents a completion suggestion.

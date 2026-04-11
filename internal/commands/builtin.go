@@ -274,8 +274,10 @@ func NewInitKnowledgeGraphCommand() SlashCommand {
 	return &initKnowledgeGraphCommand{}
 }
 
-func (c *initKnowledgeGraphCommand) Name() string        { return "initknowledgegraph" }
-func (c *initKnowledgeGraphCommand) Description() string { return "Bootstrap knowledge graph for project" }
+func (c *initKnowledgeGraphCommand) Name() string { return "initknowledgegraph" }
+func (c *initKnowledgeGraphCommand) Description() string {
+	return "Bootstrap knowledge graph for project"
+}
 func (c *initKnowledgeGraphCommand) Arguments() []ArgumentDef {
 	return nil
 }
@@ -286,4 +288,28 @@ func (c *initKnowledgeGraphCommand) Complete(_ context.Context, _ []string) []Ca
 
 func (c *initKnowledgeGraphCommand) Execute(_ context.Context, _ []string) (Result, error) {
 	return Result{Action: ActionInitKnowledgeGraph}, nil
+}
+
+// --- resume ---
+
+type resumeCommand struct{}
+
+// NewResumeCommand creates a command that requests the host to open
+// the session resume selector overlay.
+func NewResumeCommand() SlashCommand {
+	return &resumeCommand{}
+}
+
+func (c *resumeCommand) Name() string        { return "resume" }
+func (c *resumeCommand) Description() string { return "Resume a previous session" }
+func (c *resumeCommand) Arguments() []ArgumentDef {
+	return nil
+}
+
+func (c *resumeCommand) Complete(_ context.Context, _ []string) []Candidate {
+	return nil
+}
+
+func (c *resumeCommand) Execute(_ context.Context, _ []string) (Result, error) {
+	return Result{Action: ActionResume}, nil
 }

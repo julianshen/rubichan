@@ -88,6 +88,11 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 		return func() tea.Msg {
 			return m.runBootstrap(ctx, r.Profile)
 		}
+	case SessionResumeResult:
+		m.content.WriteString(fmt.Sprintf("Resuming session %s...\n", r.SessionID))
+		m.setContentAndAutoScroll()
+		m.state = StateInput
+		return nil
 	case nil:
 		// Overlay was cancelled (e.g., Escape pressed).
 		// Defensive: unblock agent if approval was somehow cancelled.

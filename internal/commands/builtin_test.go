@@ -239,6 +239,21 @@ func TestBuiltinCommandsImplementSlashCommand(t *testing.T) {
 	var _ SlashCommand = NewDebugVerificationSnapshotCommand(nil)
 	var _ SlashCommand = NewRalphLoopCommand(nil)
 	var _ SlashCommand = NewCancelRalphCommand(nil)
+	var _ SlashCommand = NewResumeCommand()
+}
+
+// --- Resume Command ---
+
+func TestResumeCommandName(t *testing.T) {
+	cmd := NewResumeCommand()
+	assert.Equal(t, "resume", cmd.Name())
+}
+
+func TestResumeCommandExecute(t *testing.T) {
+	cmd := NewResumeCommand()
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, ActionResume, result.Action)
 }
 
 func TestRalphLoopCommandExecute(t *testing.T) {

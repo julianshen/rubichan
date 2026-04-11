@@ -36,12 +36,12 @@ Post-milestone polish and gap closure. Ordered by impact and risk.
 
 ### Tests
 
-- [ ] **2.1** `TestSessionSelectorOverlayImplementsOverlay` — `SessionSelectorOverlay` satisfies the `tui.Overlay` interface.
-- [ ] **2.2** `TestSessionSelectorOverlayViewShowsSessions` — `View()` renders all session names/dates.
-- [ ] **2.3** `TestSessionSelectorOverlaySelectSession` — Arrow keys + Enter selects a session; `Done()` returns true and `Result()` carries the selected `SessionMetadata`.
-- [ ] **2.4** `TestSessionSelectorOverlayEscape` — Pressing Escape cancels; `Done()` returns true and `Result()` returns nil.
-- [ ] **2.5** `TestModelHandlesSessionSelectorResult` — `processOverlayResult` for a `SessionSelectorResult` loads the session and restores turns.
-- [ ] **2.6** `TestResumeCommandShowsOverlay` — The `/resume` command sets `activeOverlay` to a `SessionSelectorOverlay` and transitions to overlay state.
+- [x] **2.1** `TestSessionResumeOverlayImplementsOverlay` — `SessionResumeOverlay` satisfies the `tui.Overlay` interface.
+- [x] **2.2** `TestSessionResumeOverlayViewShowsSessions` — `View()` renders all session titles/dates.
+- [x] **2.3** `TestSessionResumeOverlaySelectSession` — Arrow keys + Enter selects a session; `Done()` returns true and `Result()` carries the selected `SessionResumeResult`.
+- [x] **2.4** `TestSessionResumeOverlayEscape` — Pressing Escape cancels; `Done()` returns true and `Result()` returns nil.
+- [x] **2.5** `TestProcessOverlayResultSessionResume` — `processOverlayResult` for a `SessionResumeResult` transitions back to input state.
+- [x] **2.6** `TestResumeCommandSetsOverlay` — The `/resume` command sets `activeOverlay` to a `SessionResumeOverlay` and transitions to overlay state.
 
 ---
 
