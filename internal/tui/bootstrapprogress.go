@@ -43,9 +43,9 @@ func NewBootstrapProgressOverlay(width, height int, caps *terminal.Caps, cmuxCli
 }
 
 // Update handles progress messages during bootstrap.
-// Progress bar escape sequences (OSC 9;4) are written directly to stderr because
-// they target the terminal's titlebar/tab, which exists outside Bubble Tea's
-// alternate screen and does not interfere with TUI rendering.
+// When running inside cmux, progress is sent via the socket API. Otherwise,
+// OSC 9;4 escape sequences are written directly to stderr — these target the
+// terminal titlebar/tab outside Bubble Tea's alternate screen.
 func (b *BootstrapProgressOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 	switch msg := msg.(type) {
 	case BootstrapProgressMsg:

@@ -143,3 +143,82 @@ func TestOrchestrator_DispatchError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "orchestrator")
 }
+
+// TestOrchestrator_DispatchSplitOKFalse verifies Dispatch handles split returning OK:false.
+func TestOrchestrator_DispatchSplitOKFalse(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetError("surface.split", "no space left")
+
+	orch := cmux.NewOrchestrator(mc)
+	_, err := orch.Dispatch("right", "echo hello")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "split")
+	assert.Contains(t, err.Error(), "no space left")
+}
+
+// TestOrchestrator_DispatchSendTextOKFalse verifies Dispatch handles send_text OK:false.
+func TestOrchestrator_DispatchSendTextOKFalse(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetResult("surface.split", cmux.Surface{ID: "surf-1", Type: "terminal"})
+	mc.SetError("surface.send_text", "surface not found")
+	mc.SetResult("surface.send_key", true)
+
+	orch := cmux.NewOrchestrator(mc)
+	_, err := orch.Dispatch("right", "echo hello")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "send_text")
+	assert.Contains(t, err.Error(), "surface not found")
+}
+
+// TestOrchestrator_DispatchSendKeyOKFalse verifies Dispatch handles send_key OK:false.
+func TestOrchestrator_DispatchSendKeyOKFalse(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetResult("surface.split", cmux.Surface{ID: "surf-1", Type: "terminal"})
+	mc.SetResult("surface.send_text", true)
+	mc.SetError("surface.send_key", "key rejected")
+
+	orch := cmux.NewOrchestrator(mc)
+	_, err := orch.Dispatch("right", "echo hello")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "send_key")
+	assert.Contains(t, err.Error(), "key rejected")
+}
+
+// TestOrchestrator_WaitAnyTimeout verifies WaitAny returns a timeout error.
+func TestOrchestrator_WaitAnyTimeout(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetResult("surface.split", cmux.Surface{ID: "surf-1", Type: "terminal"})
+	mc.SetResult("surface.send_text", true)
+	mc.SetResult("surface.send_key", true)
+	mc.SetResult("sidebar-state", cmux.SidebarState{})
+
+	orch := cmux.NewOrchestrator(mc)
+	orch.SetPollRate(10 * time.Millisecond)
+
+	_, err := orch.Dispatch("right", "sleep 999")
+	require.NoError(t, err)
+
+	_, err = orch.WaitAny(100 * time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout")
+}
+
+// TestOrchestrator_PollOKFalse verifies Wait returns an error when poll gets OK:false.
+func TestOrchestrator_PollOKFalse(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetResult("surface.split", cmux.Surface{ID: "surf-1", Type: "terminal"})
+	mc.SetResult("surface.send_text", true)
+	mc.SetResult("surface.send_key", true)
+	mc.SetError("sidebar-state", "sidebar unavailable")
+
+	orch := cmux.NewOrchestrator(mc)
+	orch.SetPollRate(10 * time.Millisecond)
+
+	_, err := orch.Dispatch("right", "echo task1")
+	require.NoError(t, err)
+
+	_, err = orch.Wait(5 * time.Second)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "poll")
+	assert.Contains(t, err.Error(), "sidebar unavailable")
+}

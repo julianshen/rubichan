@@ -21,7 +21,7 @@ type Orchestrator struct {
 	client    Caller
 	tasks     map[string]*Task // surface ID → task
 	pollRate  time.Duration    // default 2s
-	logOffset int              // tracks processed log entries to avoid duplicates
+	logOffset int              // server log entries already processed; assumes append-only log
 }
 
 // NewOrchestrator creates a new Orchestrator backed by the given Caller.
@@ -54,16 +54,24 @@ func (o *Orchestrator) Dispatch(direction, command string) (*Task, error) {
 		return nil, fmt.Errorf("cmux: orchestrator: decode surface: %w", err)
 	}
 
-	if _, err := o.client.Call("surface.send_text", map[string]string{
+	resp, err = o.client.Call("surface.send_text", map[string]string{
 		"surface_id": surf.ID, "text": command,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, fmt.Errorf("cmux: orchestrator: send_text: %w", err)
 	}
+	if !resp.OK {
+		return nil, fmt.Errorf("cmux: orchestrator: send_text: %s", resp.Error)
+	}
 
-	if _, err := o.client.Call("surface.send_key", map[string]string{
+	resp, err = o.client.Call("surface.send_key", map[string]string{
 		"surface_id": surf.ID, "key": "enter",
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, fmt.Errorf("cmux: orchestrator: send_key: %w", err)
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("cmux: orchestrator: send_key: %s", resp.Error)
 	}
 
 	task := &Task{

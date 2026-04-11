@@ -139,6 +139,30 @@ func TestClearLog(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestSetStatusError verifies SetStatus returns an error when the server responds with OK:false.
+func TestSetStatusError(t *testing.T) {
+	socketPath := newErrorServer(t, "set-status")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	err = c.SetStatus("build", "fail", "✗", "red")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set-status")
+}
+
+// TestSidebarStateError verifies SidebarState returns an error when the server responds with OK:false.
+func TestSidebarStateError(t *testing.T) {
+	socketPath := newErrorServer(t, "sidebar-state")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.SidebarState()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sidebar-state")
+}
+
 func TestSidebarState(t *testing.T) {
 	handlers := defaultHandlers()
 	handlers["sidebar-state"] = func(req jsonrpcRequest) interface{} {

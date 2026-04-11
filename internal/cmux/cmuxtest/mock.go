@@ -20,6 +20,7 @@ type Call struct {
 type MockClient struct {
 	mu       sync.Mutex
 	results  map[string]any
+	errors   map[string]string // method → error message (returns OK:false)
 	calls    []Call
 	identity *cmux.Identity
 }
@@ -28,6 +29,7 @@ type MockClient struct {
 func NewMockClient() *MockClient {
 	return &MockClient{
 		results: make(map[string]any),
+		errors:  make(map[string]string),
 		identity: &cmux.Identity{
 			WindowID:    "mock-window",
 			WorkspaceID: "mock-workspace",
@@ -42,15 +44,32 @@ func (m *MockClient) SetResult(method string, result any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.results[method] = result
+	delete(m.errors, method)
 }
 
-// Call records the call and returns the canned result.
-// It returns an error if no result has been set for method.
+// SetError configures the method to return an OK:false response with the given error message.
+func (m *MockClient) SetError(method, errMsg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.errors[method] = errMsg
+	delete(m.results, method)
+}
+
+// Call records the call and returns the canned result or error.
+// It returns a transport error if neither result nor error has been set for method.
 func (m *MockClient) Call(method string, params any) (*cmux.Response, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.calls = append(m.calls, Call{Method: method, Params: params})
+
+	if errMsg, ok := m.errors[method]; ok {
+		return &cmux.Response{
+			ID:    "mock-id",
+			OK:    false,
+			Error: errMsg,
+		}, nil
+	}
 
 	result, ok := m.results[method]
 	if !ok {
@@ -89,4 +108,5 @@ func (m *MockClient) Reset() {
 	defer m.mu.Unlock()
 	m.calls = nil
 	m.results = make(map[string]any)
+	m.errors = make(map[string]string)
 }

@@ -184,6 +184,39 @@ func TestDial_BadSocket(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestDial_PingRejected verifies Dial returns an error when system.ping returns OK:false.
+func TestDial_PingRejected(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "cmux_ping_rej.sock")
+	ln, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+
+	go func() {
+		for {
+			conn, err2 := ln.Accept()
+			if err2 != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				dec := json.NewDecoder(c)
+				enc := json.NewEncoder(c)
+				for {
+					var req jsonrpcRequest
+					if err3 := dec.Decode(&req); err3 != nil {
+						return
+					}
+					_ = enc.Encode(map[string]interface{}{"id": req.ID, "ok": false, "error": "ping rejected"})
+				}
+			}(conn)
+		}
+	}()
+
+	_, err = cmux.Dial(socketPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ping rejected")
+}
+
 // TestDial_PingFails verifies Dial returns an error when system.ping fails.
 func TestDial_PingFails(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "cmux_ping_fail.sock")

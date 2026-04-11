@@ -34,7 +34,8 @@ type Identity struct {
 }
 
 // Client communicates with cmux over a Unix domain socket.
-// It is thread-safe via a mutex on socket writes.
+// It is safe for concurrent use: a mutex serializes each full request/response
+// round-trip so responses are always matched to their request.
 // Request IDs are auto-incremented. Default timeout is 5 s per call.
 type Client struct {
 	conn     net.Conn
@@ -69,9 +70,14 @@ func Dial(socketPath string) (*Client, error) {
 		dec:  json.NewDecoder(conn),
 	}
 
-	if _, err := c.Call("system.ping", map[string]any{}); err != nil {
+	pingResp, err := c.Call("system.ping", map[string]any{})
+	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("cmux: ping failed: %w", err)
+	}
+	if !pingResp.OK {
+		conn.Close()
+		return nil, fmt.Errorf("cmux: ping rejected: %s", pingResp.Error)
 	}
 
 	resp, err := c.Call("system.identify", map[string]any{})
@@ -94,7 +100,7 @@ func Dial(socketPath string) (*Client, error) {
 }
 
 // Call sends a JSON-RPC request and returns the response.
-// The connection is protected by a mutex so concurrent callers are safe.
+// Concurrent calls are safe but serialize behind a mutex — no pipelining.
 func (c *Client) Call(method string, params any) (*Response, error) {
 	id := fmt.Sprintf("req-%d", c.counter.Add(1))
 

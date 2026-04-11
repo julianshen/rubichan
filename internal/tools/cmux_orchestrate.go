@@ -91,20 +91,17 @@ func (t *CmuxOrchestrateTool) Execute(ctx context.Context, input json.RawMessage
 	orch := cmux.NewOrchestrator(t.client)
 	orch.SetPollRate(2 * time.Second)
 
-	// Dispatch all tasks.
 	for _, task := range in.Tasks {
 		if _, err := orch.Dispatch(task.Direction, task.Command); err != nil {
 			return ToolResult{Content: fmt.Sprintf("dispatch failed: %s", err), IsError: true}, nil
 		}
 	}
 
-	// Wait for all tasks to complete.
 	results, err := orch.Wait(timeout)
 	if err != nil {
 		return ToolResult{Content: fmt.Sprintf("orchestration failed: %s", err), IsError: true}, nil
 	}
 
-	// Build summary.
 	var sb strings.Builder
 	for _, r := range results {
 		sb.WriteString(fmt.Sprintf("surface %s (%s): %s\n", r.SurfaceID, r.Command, r.Status))

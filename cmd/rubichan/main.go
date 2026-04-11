@@ -1377,6 +1377,7 @@ func dialCmux(caps *terminal.Caps) (cmux.Caller, func()) {
 	}
 	cc, err := cmux.Dial(cmux.SocketPath())
 	if err != nil {
+		log.Printf("warning: cmux socket detected but dial failed: %v — cmux features disabled", err)
 		return nil, func() {}
 	}
 	return cc, func() { cc.Close() }

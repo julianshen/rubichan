@@ -58,6 +58,17 @@ func TestListNotifications(t *testing.T) {
 	assert.Equal(t, "n2", notifications[1].ID)
 }
 
+func TestListNotificationsError(t *testing.T) {
+	socketPath := newErrorServer(t, "notification.list")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.ListNotifications()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "notification.list")
+}
+
 func TestClearNotifications(t *testing.T) {
 	handlers := defaultHandlers()
 	cleared := false

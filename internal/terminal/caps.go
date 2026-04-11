@@ -154,7 +154,9 @@ func pingCmuxSocket(socketPath string) bool {
 		return false
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(500 * time.Millisecond)) //nolint:errcheck
+	if err := conn.SetDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		return false
+	}
 	enc := json.NewEncoder(conn)
 	dec := json.NewDecoder(conn)
 	if err := enc.Encode(map[string]any{

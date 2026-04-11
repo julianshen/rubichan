@@ -87,6 +87,39 @@ func TestCurrentWorkspace(t *testing.T) {
 	assert.Equal(t, "current", ws.Name)
 }
 
+func TestListWorkspacesError(t *testing.T) {
+	socketPath := newErrorServer(t, "workspace.list")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.ListWorkspaces()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace.list")
+}
+
+func TestCreateWorkspaceError(t *testing.T) {
+	socketPath := newErrorServer(t, "workspace.create")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.CreateWorkspace()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace.create")
+}
+
+func TestCurrentWorkspaceError(t *testing.T) {
+	socketPath := newErrorServer(t, "workspace.current")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.CurrentWorkspace()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace.current")
+}
+
 func TestCloseWorkspace(t *testing.T) {
 	handlers := defaultHandlers()
 	var capturedID string

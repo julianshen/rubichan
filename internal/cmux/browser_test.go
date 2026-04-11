@@ -54,6 +54,17 @@ func TestBrowserSnapshot(t *testing.T) {
 	assert.Equal(t, "surf-1", capturedSurfaceID)
 }
 
+func TestBrowserSnapshotError(t *testing.T) {
+	socketPath := newErrorServer(t, "browser.snapshot")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.BrowserSnapshot("surf-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "browser.snapshot")
+}
+
 func TestBrowserClick(t *testing.T) {
 	handlers := defaultHandlers()
 	var capturedSurfaceID, capturedRef string

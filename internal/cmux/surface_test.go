@@ -56,6 +56,28 @@ func TestListSurfaces(t *testing.T) {
 	assert.Equal(t, "browser", surfaces[1].Type)
 }
 
+func TestSplitError(t *testing.T) {
+	socketPath := newErrorServer(t, "surface.split")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.Split("right")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "surface.split")
+}
+
+func TestListSurfacesError(t *testing.T) {
+	socketPath := newErrorServer(t, "surface.list")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.ListSurfaces()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "surface.list")
+}
+
 func TestFocusSurface(t *testing.T) {
 	handlers := defaultHandlers()
 	var capturedID string
