@@ -273,7 +273,11 @@ func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvo
 // it falls back to auto-approve for backward compatibility.
 func (c *ACPClient) ApprovalRequest(ctx context.Context, tool string, input json.RawMessage) (bool, error) {
 	if c.approvalFunc != nil {
-		return c.approvalFunc(ctx, tool, input)
+		approved, err := c.approvalFunc(ctx, tool, input)
+		if err != nil {
+			return false, fmt.Errorf("approval request for %q: %w", tool, err)
+		}
+		return approved, nil
 	}
 
 	// Fallback: auto-approve when no callback is configured.

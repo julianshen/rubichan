@@ -173,7 +173,10 @@ func TestACPClientApprovalRequestCallbackError(t *testing.T) {
 		t.Fatal("expected error from callback, got nil")
 	}
 	if !errors.Is(err, expectedErr) {
-		t.Errorf("expected error %v, got %v", expectedErr, err)
+		t.Errorf("expected wrapped error %v, got %v", expectedErr, err)
+	}
+	if !strings.Contains(err.Error(), "shell") {
+		t.Errorf("expected error to contain tool name 'shell', got: %s", err.Error())
 	}
 }
 
