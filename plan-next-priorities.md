@@ -145,13 +145,15 @@ Wire the selected session ID into the agent's session loading infrastructure so 
 
 ### Tests
 
-- [ ] **7.1** `TestProcessAliveCurrentProcess` — `processAlive(os.Getpid())` returns true.
-- [ ] **7.2** `TestProcessAliveDeadProcess` — `processAlive(999999999)` returns false.
-- [ ] **7.3** `TestProcessAliveNegativePID` — `processAlive(-1)` returns false.
+- [x] **7.1** `TestProcessAliveCurrentProcess` — `isProcessAlive(os.Getpid())` returns true.
+- [x] **7.2** `TestProcessAliveDeadProcess` — `isProcessAlive(999999999)` returns false.
+- [x] **7.3** `TestProcessAliveNegativePID` — `isProcessAlive(-1)` returns false.
 
 ### Implementation
 
-- Extract `processAlive(pid int) bool` into `recovery_unix.go` (build tag `//go:build !windows`) and `recovery_windows.go` (using `os.FindProcess` + `process.Signal(nil)`).
+- Extracted `isProcessAlive` into `process_unix.go` (`//go:build !windows`) using `syscall.Signal(0)`
+- Created `process_windows.go` (`//go:build windows`) using `windows.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+- Removed `syscall` import and inline function from `recovery.go`
 
 ---
 
