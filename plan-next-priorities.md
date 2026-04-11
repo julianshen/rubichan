@@ -71,21 +71,21 @@ Wire the selected session ID into the agent's session loading infrastructure so 
 
 ### Tests — Headless
 
-- [ ] **3.1** `TestHeadlessACPClientRunCodeReview` — Constructs correct JSON-RPC request with method `agent/codeReview` and code input.
-- [ ] **3.2** `TestHeadlessACPClientRunCodeReviewError` — Returns wrapped error when response contains error field.
-- [ ] **3.3** `TestHeadlessACPClientRunSecurityScan` — Constructs correct request with method `security/scan` and unmarshals response.
-- [ ] **3.4** `TestHeadlessACPClientSetTimeout` — `SetTimeout`/`Timeout` round-trips correctly; default is 30s.
-- [ ] **3.5** `TestHeadlessACPClientGetNextID` — IDs increment monotonically; concurrent calls produce unique IDs.
-- [ ] **3.6** `TestHeadlessACPClientClose` — `Close` stops dispatcher without panic on nil.
+- [ ] **3.1** `TestHeadlessACPClientRunCodeReview` — Constructs correct JSON-RPC request with method `agent/codeReview` and code input. (requires transport mock)
+- [ ] **3.2** `TestHeadlessACPClientRunCodeReviewError` — Returns wrapped error when response contains error field. (requires transport mock)
+- [ ] **3.3** `TestHeadlessACPClientRunSecurityScan` — Constructs correct request with method `security/scan` and unmarshals response. (requires transport mock)
+- [x] **3.4** `TestHeadlessACPClientSetTimeout` — `SetTimeout`/`Timeout` round-trips correctly; default is 30s.
+- [x] **3.5** `TestHeadlessACPClientGetNextID` — IDs increment monotonically; concurrent calls produce unique IDs.
+- [x] **3.6** `TestHeadlessACPClientClose` — `Close` stops dispatcher without panic on nil.
 
 ### Tests — Wiki
 
-- [ ] **3.7** `TestWikiACPClientGenerateDocs` — Constructs request with all `GenerateOptions` fields and method `wiki/generate`.
-- [ ] **3.8** `TestWikiACPClientGenerateDocsError` — Returns wrapped error with code and message from response.
-- [ ] **3.9** `TestWikiACPClientProgress` — `SetProgress`/`Progress` round-trips; clamped to 0-100 range.
-- [ ] **3.10** `TestWikiACPClientProgressClamping` — Values > 100 clamp to 100; values < 0 clamp to 0.
-- [ ] **3.11** `TestWikiACPClientGenerateDocsSetsProgress` — Progress is 0 before call, 100 after successful response.
-- [ ] **3.12** `TestWikiACPClientClose` — `Close` stops dispatcher without panic on nil.
+- [ ] **3.7** `TestWikiACPClientGenerateDocs` — Constructs request with all `GenerateOptions` fields and method `wiki/generate`. (requires transport mock)
+- [ ] **3.8** `TestWikiACPClientGenerateDocsError` — Returns wrapped error with code and message from response. (requires transport mock)
+- [x] **3.9** `TestWikiACPClientProgress` — `SetProgress`/`Progress` round-trips; clamped to 0-100 range.
+- [x] **3.10** `TestWikiACPClientProgressClamping` — Values > 100 clamp to 100; values < 0 clamp to 0.
+- [ ] **3.11** `TestWikiACPClientGenerateDocsSetsProgress` — Progress is 0 before call, 100 after successful response. (requires transport mock)
+- [x] **3.12** `TestWikiACPClientClose` — `Close` stops dispatcher without panic on nil.
 
 ---
 
