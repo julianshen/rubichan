@@ -414,26 +414,8 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 					Content:   sess.SystemPrompt,
 					Cacheable: true,
 				}}
-				// Prefer compacted snapshot for resume (avoids re-exceeding
-				// context limits). Fall back to full message history for
-				// sessions that were never compacted.
-				snapMsgs, snapErr := a.store.GetSnapshot(sess.ID)
-				if snapErr == nil && snapMsgs != nil {
-					a.conversation.LoadFromMessages(snapMsgs)
-				} else {
-					msgs, err := a.store.GetMessages(sess.ID)
-					if err != nil {
-						a.logger.Warn("failed to load messages: %v", err)
-					} else {
-						providerMsgs := make([]provider.Message, len(msgs))
-						for i, m := range msgs {
-							providerMsgs[i] = provider.Message{
-								Role:    m.Role,
-								Content: m.Content,
-							}
-						}
-						a.conversation.LoadFromMessages(providerMsgs)
-					}
+				if err := a.loadSessionHistory(a.conversation, sess.ID); err != nil {
+					a.logger.Warn("failed to load session history: %v", err)
 				}
 			}
 		}
@@ -795,28 +777,39 @@ func (a *Agent) ResumeSession(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("resume session: session %s not found", sessionID)
 	}
 
-	a.sessionID = sess.ID
-	a.conversation = NewConversation(sess.SystemPrompt)
-
-	// Prefer compacted snapshot to avoid exceeding context limits.
-	snapMsgs, snapErr := a.store.GetSnapshot(sess.ID)
-	if snapErr == nil && snapMsgs != nil {
-		a.conversation.LoadFromMessages(snapMsgs)
-	} else {
-		msgs, err := a.store.GetMessages(sess.ID)
-		if err != nil {
-			return fmt.Errorf("resume session: load messages: %w", err)
-		}
-		providerMsgs := make([]provider.Message, len(msgs))
-		for i, m := range msgs {
-			providerMsgs[i] = provider.Message{
-				Role:    m.Role,
-				Content: m.Content,
-			}
-		}
-		a.conversation.LoadFromMessages(providerMsgs)
+	// Build new conversation before mutating agent state so a load
+	// failure leaves the agent unchanged.
+	conv := NewConversation(sess.SystemPrompt)
+	if err := a.loadSessionHistory(conv, sess.ID); err != nil {
+		return fmt.Errorf("resume session: %w", err)
 	}
 
+	a.sessionID = sess.ID
+	a.conversation = conv
+	return nil
+}
+
+// loadSessionHistory populates conv with messages from the store.
+// Prefers a compacted snapshot; falls back to full message history.
+func (a *Agent) loadSessionHistory(conv *Conversation, sessionID string) error {
+	snapMsgs, snapErr := a.store.GetSnapshot(sessionID)
+	if snapErr == nil && snapMsgs != nil {
+		conv.LoadFromMessages(snapMsgs)
+		return nil
+	}
+
+	msgs, err := a.store.GetMessages(sessionID)
+	if err != nil {
+		return fmt.Errorf("load messages: %w", err)
+	}
+	providerMsgs := make([]provider.Message, len(msgs))
+	for i, m := range msgs {
+		providerMsgs[i] = provider.Message{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+	conv.LoadFromMessages(providerMsgs)
 	return nil
 }
 
