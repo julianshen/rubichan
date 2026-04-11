@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -8,8 +10,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/commands"
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 func testSessions() []store.Session {
@@ -128,7 +134,7 @@ func TestSessionTimeAgo(t *testing.T) {
 
 // --- Model integration tests ---
 
-func TestProcessOverlayResultSessionResume(t *testing.T) {
+func TestProcessOverlayResultSessionResumeNoAgent(t *testing.T) {
 	m := NewModel(nil, "test", "model", 10, "", nil, nil)
 	m.state = StateResumeOverlay
 
@@ -136,7 +142,46 @@ func TestProcessOverlayResultSessionResume(t *testing.T) {
 
 	assert.Nil(t, cmd)
 	assert.Equal(t, StateInput, m.state)
-	assert.Contains(t, m.content.String(), "sess-123")
+	assert.Contains(t, m.content.String(), "No agent")
+}
+
+func TestProcessOverlayResultSessionResumeLoadsSession(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	require.NoError(t, s.CreateSession(store.Session{
+		ID:           "sess-resume",
+		Model:        "gpt-4",
+		SystemPrompt: "You are helpful.",
+	}))
+
+	a := createTestAgentWithStore(t, s)
+	m := NewModel(a, "test", "model", 10, "", nil, nil)
+	m.state = StateResumeOverlay
+
+	cmd := m.processOverlayResult(SessionResumeResult{SessionID: "sess-resume"})
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, StateInput, m.state)
+	assert.Contains(t, m.content.String(), "Resumed session sess-resume")
+	assert.Equal(t, "sess-resume", a.SessionID())
+}
+
+func TestProcessOverlayResultSessionResumeError(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	a := createTestAgentWithStore(t, s)
+	m := NewModel(a, "test", "model", 10, "", nil, nil)
+	m.state = StateResumeOverlay
+
+	cmd := m.processOverlayResult(SessionResumeResult{SessionID: "nonexistent"})
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, StateInput, m.state)
+	assert.Contains(t, m.content.String(), "Failed to resume")
 }
 
 func TestProcessOverlayResultSessionResumeCancelled(t *testing.T) {
@@ -183,4 +228,26 @@ func TestResumeCommandNoStore(t *testing.T) {
 	assert.Nil(t, cmd)
 	assert.Equal(t, StateInput, m.state)
 	assert.Contains(t, m.content.String(), "not available")
+}
+
+// --- Test helpers ---
+
+type stubLLMProvider struct{}
+
+func (p *stubLLMProvider) Stream(_ context.Context, _ agentsdk.CompletionRequest) (<-chan agentsdk.StreamEvent, error) {
+	ch := make(chan agentsdk.StreamEvent)
+	close(ch)
+	return ch, nil
+}
+
+func createTestAgentWithStore(t *testing.T, s *store.Store) *agent.Agent {
+	t.Helper()
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "gpt-4"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	approveAll := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
+		return true, nil
+	}
+	return agent.New(&stubLLMProvider{}, tools.NewRegistry(), approveAll, cfg, agent.WithStore(s))
 }

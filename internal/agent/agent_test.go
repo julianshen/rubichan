@@ -1468,6 +1468,86 @@ func TestWithResumeSessionNotFound(t *testing.T) {
 	require.NotNil(t, sess)
 }
 
+func TestResumeSessionRuntime(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Create a session with history.
+	require.NoError(t, s.CreateSession(store.Session{
+		ID:           "runtime-resume",
+		Model:        "gpt-4",
+		SystemPrompt: "You are helpful.",
+	}))
+	require.NoError(t, s.AppendMessage("runtime-resume", "user", []provider.ContentBlock{
+		{Type: "text", Text: "What is Go?"},
+	}))
+	require.NoError(t, s.AppendMessage("runtime-resume", "assistant", []provider.ContentBlock{
+		{Type: "text", Text: "Go is a programming language."},
+	}))
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "gpt-4"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "stop"},
+	}}
+
+	// Start with a fresh session.
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	originalID := a.SessionID()
+	assert.NotEqual(t, "runtime-resume", originalID)
+
+	// Resume at runtime.
+	err = a.ResumeSession(context.Background(), "runtime-resume")
+	require.NoError(t, err)
+
+	assert.Equal(t, "runtime-resume", a.SessionID())
+	msgs := a.conversation.Messages()
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "What is Go?", msgs[0].Content[0].Text)
+	assert.Equal(t, "Go is a programming language.", msgs[1].Content[0].Text)
+	assert.Equal(t, "You are helpful.", a.conversation.SystemPrompt())
+}
+
+func TestResumeSessionRuntimeNotFound(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "gpt-4"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+	originalID := a.SessionID()
+
+	err = a.ResumeSession(context.Background(), "nonexistent")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+
+	// Session should remain unchanged.
+	assert.Equal(t, originalID, a.SessionID())
+}
+
+func TestResumeSessionNoStore(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mp := &mockProvider{events: []provider.StreamEvent{
+		{Type: "stop"},
+	}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+
+	err := a.ResumeSession(context.Background(), "any-id")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "store not configured")
+}
+
 func TestAgentWithoutStoreStillWorks(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mp := &mockProvider{events: []provider.StreamEvent{
@@ -3327,8 +3407,8 @@ func TestBuildBootstrapSystemPromptPrefix(t *testing.T) {
 		},
 		CreatedEntities: []string{"entity1", "entity2", "entity3"},
 		AnalysisMetadata: knowledgegraph.AnalysisMetadata{
-			ModulesFound:       5,
-			GitCommitsAnalyzed: 30,
+			ModulesFound:         5,
+			GitCommitsAnalyzed:   30,
 			IntegrationsDetected: 12,
 		},
 	}

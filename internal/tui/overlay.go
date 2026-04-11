@@ -89,11 +89,19 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 			return m.runBootstrap(ctx, r.Profile)
 		}
 	case SessionResumeResult:
-		// TODO: Actually resume the session by loading turns from the store
-		// and restoring conversation state. This requires wiring to the agent's
-		// session loading infrastructure (agent.WithResumeSession or equivalent).
-		// Currently only prints a placeholder message.
-		m.content.WriteString(fmt.Sprintf("Resuming session %s...\n", r.SessionID))
+		if m.agent == nil {
+			m.content.WriteString("No agent available to resume session.\n")
+			m.setContentAndAutoScroll()
+			m.state = StateInput
+			return nil
+		}
+		if err := m.agent.ResumeSession(context.Background(), r.SessionID); err != nil {
+			m.content.WriteString(fmt.Sprintf("Failed to resume session: %s\n", err))
+			m.setContentAndAutoScroll()
+			m.state = StateInput
+			return nil
+		}
+		m.content.WriteString(fmt.Sprintf("Resumed session %s. Conversation history restored.\n", r.SessionID))
 		m.setContentAndAutoScroll()
 		m.state = StateInput
 		return nil

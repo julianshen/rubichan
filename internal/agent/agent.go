@@ -342,9 +342,9 @@ type Agent struct {
 	rateLimiter       *SharedRateLimiter
 	capabilities      provider.ModelCapabilities
 	progress          *ProgressTracker
-	acpServer         *acp.Server        // ACP server instance (if enabled)
+	acpServer         *acp.Server             // ACP server instance (if enabled)
 	acpRegistry       *acp.CapabilityRegistry // Capability registry for ACP
-	useACP            bool                // Enable ACP server
+	useACP            bool                    // Enable ACP server
 }
 
 const maxUIRequestInputBytes = 2048
@@ -775,6 +775,49 @@ func (a *Agent) ListSessions(limit int) ([]store.Session, error) {
 		}
 	}
 	return filtered, nil
+}
+
+// ResumeSession switches the agent to a previously saved session, loading
+// its conversation history. Serialized with Turn() via turnMu.
+func (a *Agent) ResumeSession(ctx context.Context, sessionID string) error {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+
+	if a.store == nil {
+		return fmt.Errorf("resume session: store not configured")
+	}
+
+	sess, err := a.store.GetSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("resume session: %w", err)
+	}
+	if sess == nil {
+		return fmt.Errorf("resume session: session %s not found", sessionID)
+	}
+
+	a.sessionID = sess.ID
+	a.conversation = NewConversation(sess.SystemPrompt)
+
+	// Prefer compacted snapshot to avoid exceeding context limits.
+	snapMsgs, snapErr := a.store.GetSnapshot(sess.ID)
+	if snapErr == nil && snapMsgs != nil {
+		a.conversation.LoadFromMessages(snapMsgs)
+	} else {
+		msgs, err := a.store.GetMessages(sess.ID)
+		if err != nil {
+			return fmt.Errorf("resume session: load messages: %w", err)
+		}
+		providerMsgs := make([]provider.Message, len(msgs))
+		for i, m := range msgs {
+			providerMsgs[i] = provider.Message{
+				Role:    m.Role,
+				Content: m.Content,
+			}
+		}
+		a.conversation.LoadFromMessages(providerMsgs)
+	}
+
+	return nil
 }
 
 // persistToolResult saves a tool result message to the store.

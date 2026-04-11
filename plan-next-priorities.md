@@ -53,9 +53,9 @@ Wire the selected session ID into the agent's session loading infrastructure so 
 
 #### Tests
 
-- [ ] **2b.1** `TestProcessOverlayResultSessionResumeLoadsSession` — Selecting a session loads its turns from the store and restores them into the agent's conversation history.
-- [ ] **2b.2** `TestProcessOverlayResultSessionResumeRendersTurns` — After resume, the previously stored turns are visible in the TUI content buffer.
-- [ ] **2b.3** `TestProcessOverlayResultSessionResumeError` — When the session ID is not found in the store, an error message is shown and state returns to input.
+- [x] **2b.1** `TestProcessOverlayResultSessionResumeLoadsSession` — Selecting a session calls agent.ResumeSession, which loads turns from the store into conversation history.
+- [x] **2b.2** `TestResumeSessionRuntime` — Agent.ResumeSession loads messages and switches session ID at runtime.
+- [x] **2b.3** `TestProcessOverlayResultSessionResumeError` — When the session ID is not found in the store, an error message is shown and state returns to input.
 
 #### Implementation
 
