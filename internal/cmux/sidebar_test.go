@@ -8,6 +8,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSetSidebarColor(t *testing.T) {
+	handlers := defaultHandlers()
+	var capturedColor string
+	handlers["set-sidebar-color"] = func(req jsonrpcRequest) interface{} {
+		var p struct {
+			Color string `json:"color"`
+		}
+		_ = unmarshalParams(req, &p)
+		capturedColor = p.Color
+		return map[string]string{}
+	}
+	socketPath := newTestServer(t, handlers)
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	err = c.SetSidebarColor("#FF6B9D")
+	require.NoError(t, err)
+	assert.Equal(t, "#FF6B9D", capturedColor)
+}
+
+func TestSetSidebarColorError(t *testing.T) {
+	socketPath := newErrorServer(t, "set-sidebar-color")
+	c, err := cmux.Dial(socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	err = c.SetSidebarColor("#FF6B9D")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "set-sidebar-color")
+}
+
 func TestSetStatus(t *testing.T) {
 	handlers := defaultHandlers()
 	var capturedKey, capturedValue, capturedIcon, capturedColor string

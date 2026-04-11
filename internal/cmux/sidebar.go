@@ -31,6 +31,12 @@ type LogEntry struct {
 	Source  string `json:"source"`
 }
 
+// SetSidebarColor sets the accent color of the cmux sidebar panel.
+// The color should be a hex color string (e.g. "#FF6B9D").
+func (c *Client) SetSidebarColor(color string) error {
+	return c.callVoid("set-sidebar-color", map[string]string{"color": color})
+}
+
 // SetStatus sets a named status entry in the sidebar.
 func (c *Client) SetStatus(key, value, icon, color string) error {
 	return c.callVoid("set-status", map[string]string{
