@@ -80,6 +80,7 @@ import (
 	_ "github.com/julianshen/rubichan/internal/provider/anthropic"
 	"github.com/julianshen/rubichan/internal/provider/ollama"
 	_ "github.com/julianshen/rubichan/internal/provider/openai"
+	_ "github.com/julianshen/rubichan/internal/provider/zai"
 )
 
 var (
