@@ -70,6 +70,7 @@ import (
 	"github.com/julianshen/rubichan/internal/tui"
 	"github.com/julianshen/rubichan/internal/wiki"
 	"github.com/julianshen/rubichan/internal/worktree"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/julianshen/rubichan/pkg/skillsdk"
 
 	"golang.org/x/term"
@@ -1670,6 +1671,8 @@ func runInteractive() error {
 		commands.NewQuitCommand(),
 		commands.NewExitCommand(),
 		commands.NewConfigCommand(),
+		commands.NewAboutCommand(),
+		commands.NewInitKnowledgeGraphCommand(),
 		commands.NewHelpCommand(cmdRegistry),
 		commands.NewInitCommand(cwd),
 	} {
@@ -1762,6 +1765,40 @@ func runInteractive() error {
 		}
 		if err := cmdRegistry.Register(commands.NewSkillLogCommand(&skillListerAdapter{rt: rt})); err != nil {
 			return fmt.Errorf("register built-in command %q: %w", "skill-log", err)
+		}
+	}
+
+	// Register remaining commands that were previously only in the defaultReg
+	// fallback inside NewModel.
+	for _, cmd := range []commands.SlashCommand{
+		commands.NewUndoOverlayCommand(),
+		commands.NewContextCommand(func() agentsdk.ContextBudget {
+			if model.GetAgent() != nil {
+				return model.GetAgent().ContextBudget()
+			}
+			return agentsdk.ContextBudget{}
+		}),
+		commands.NewCompactCommand(func(ctx context.Context) (agentsdk.CompactResult, error) {
+			if model.GetAgent() != nil {
+				return model.GetAgent().ForceCompact(ctx)
+			}
+			return agentsdk.CompactResult{}, nil
+		}),
+		commands.NewSessionsCommand(func() ([]store.Session, error) {
+			if model.GetAgent() != nil {
+				return model.GetAgent().ListSessions(20)
+			}
+			return nil, nil
+		}),
+		commands.NewForkCommand(func(ctx context.Context) (string, error) {
+			if model.GetAgent() != nil {
+				return model.GetAgent().ForkSession(ctx)
+			}
+			return "", fmt.Errorf("no agent")
+		}),
+	} {
+		if err := cmdRegistry.Register(cmd); err != nil {
+			return fmt.Errorf("register built-in command %q: %w", cmd.Name(), err)
 		}
 	}
 
