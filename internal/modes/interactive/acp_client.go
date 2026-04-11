@@ -12,16 +12,21 @@ import (
 	"github.com/julianshen/rubichan/internal/acp"
 )
 
+// ApprovalFunc is a callback that asks the user whether to approve a tool call.
+// Returns (true, nil) to approve, (false, nil) to deny, or an error.
+type ApprovalFunc func(ctx context.Context, tool string, input json.RawMessage) (bool, error)
+
 // ACPClient is a client for communicating with the ACP server in interactive mode.
 type ACPClient struct {
-	sessionMgr  *SessionManager // NEW - for session loading
-	resumeID    string          // NEW - optional session ID to resume
-	loadedTurns []Turn          // NEW - turns loaded from resume session
-	loadError   error           // NEW - tracks session load errors
-	nextID      int64
-	mu          sync.Mutex
-	dispatcher  *acp.ResponseDispatcher
-	server      *acp.Server
+	sessionMgr   *SessionManager // NEW - for session loading
+	resumeID     string          // NEW - optional session ID to resume
+	loadedTurns  []Turn          // NEW - turns loaded from resume session
+	loadError    error           // NEW - tracks session load errors
+	approvalFunc ApprovalFunc    // callback for interactive tool approval; nil = auto-approve
+	nextID       int64
+	mu           sync.Mutex
+	dispatcher   *acp.ResponseDispatcher
+	server       *acp.Server
 }
 
 // NewACPClient creates an interactive ACP client given a server instance and optional session manager.
@@ -108,6 +113,22 @@ func NewACPClientWithResume(sessionMgr *SessionManager, resumeID string) *ACPCli
 	}
 
 	return client
+}
+
+// NewACPClientWithApprovalFunc creates an ACPClient with an approval callback.
+// This is a lightweight constructor for testing that doesn't require a server.
+// When approvalFunc is nil, ApprovalRequest auto-approves all calls.
+func NewACPClientWithApprovalFunc(approvalFunc ApprovalFunc) *ACPClient {
+	return &ACPClient{
+		loadedTurns:  []Turn{},
+		nextID:       1,
+		approvalFunc: approvalFunc,
+	}
+}
+
+// SetApprovalFunc sets the approval callback for interactive tool approval.
+func (c *ACPClient) SetApprovalFunc(fn ApprovalFunc) {
+	c.approvalFunc = fn
 }
 
 // getNextID returns the next request ID and increments the counter.
@@ -246,4 +267,17 @@ func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvo
 	}
 
 	return &skillResp, nil
+}
+
+// ApprovalRequest asks the user whether to approve a tool call.
+// When an approvalFunc is configured, it delegates to that callback (which
+// typically bridges to the TUI approval overlay). When no callback is set,
+// it falls back to auto-approve for backward compatibility.
+func (c *ACPClient) ApprovalRequest(tool string, input json.RawMessage) (bool, error) {
+	if c.approvalFunc != nil {
+		return c.approvalFunc(context.Background(), tool, input)
+	}
+
+	// Fallback: auto-approve when no callback is configured.
+	return true, nil
 }

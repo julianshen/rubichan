@@ -12,12 +12,12 @@ Post-milestone polish and gap closure. Ordered by impact and risk.
 
 ### Tests
 
-- [ ] **1.1** `TestACPClientApprovalRequestDelegates` — `ACPClient.ApprovalRequest` sends a request to the provided approval callback instead of auto-approving. When callback returns `true`, the method returns `(true, nil)`.
-- [ ] **1.2** `TestACPClientApprovalRequestDenied` — When the approval callback returns `false`, `ApprovalRequest` returns `(false, nil)` and the ACP response carries `decision: "deny"`.
-- [ ] **1.3** `TestACPClientApprovalRequestCallbackError` — When the callback returns an error, `ApprovalRequest` propagates the error.
-- [ ] **1.4** `TestACPClientApprovalRequestPassesToolAndInput` — The callback receives the correct `tool` name and `input` JSON from the ACP request.
-- [ ] **1.5** `TestACPClientDefaultApprovalAutoApproves` — When no callback is configured (nil), the client falls back to auto-approve for backward compatibility.
-- [ ] **1.6** `TestNewACPClientWithApprovalFunc` — `NewACPClient` accepts an optional `ApprovalFunc` parameter and stores it for use by `ApprovalRequest`.
+- [x] **1.1** `TestACPClientApprovalRequestDelegates` — `ACPClient.ApprovalRequest` sends a request to the provided approval callback instead of auto-approving. When callback returns `true`, the method returns `(true, nil)`.
+- [x] **1.2** `TestACPClientApprovalRequestDenied` — When the approval callback returns `false`, `ApprovalRequest` returns `(false, nil)` and the ACP response carries `decision: "deny"`.
+- [x] **1.3** `TestACPClientApprovalRequestCallbackError` — When the callback returns an error, `ApprovalRequest` propagates the error.
+- [x] **1.4** `TestACPClientApprovalRequestPassesToolAndInput` — The callback receives the correct `tool` name and `input` JSON from the ACP request.
+- [x] **1.5** `TestACPClientDefaultApprovalAutoApproves` — When no callback is configured (nil), the client falls back to auto-approve for backward compatibility.
+- [x] **1.6** `TestNewACPClientWithApprovalFunc` — `NewACPClient` accepts an optional `ApprovalFunc` parameter and stores it for use by `ApprovalRequest`.
 
 ### Implementation
 
