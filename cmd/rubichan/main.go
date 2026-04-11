@@ -27,6 +27,7 @@ import (
 	"github.com/sourcegraph/conc"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
@@ -1697,11 +1698,20 @@ func runInteractive() error {
 		}
 	}
 
+	// Create checkpoint manager for undo/rewind support.
+	cpSessionID := uuid.New().String()
+	cpMgr, err := checkpoint.New(cwd, cpSessionID, 0)
+	if err != nil {
+		return fmt.Errorf("create checkpoint manager: %w", err)
+	}
+	defer cpMgr.Cleanup()
+
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
 	model.SetTermCaps(caps)
 	model.SetCmuxClient(cmuxClient)
+	model.SetCheckpointManager(cpMgr)
 	model.SetDebug(debugMode)
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
@@ -1768,10 +1778,11 @@ func runInteractive() error {
 		}
 	}
 
-	// Register remaining commands that were previously only in the defaultReg
-	// fallback inside NewModel.
+	// Register remaining commands that need post-model dependencies.
 	for _, cmd := range []commands.SlashCommand{
 		commands.NewUndoOverlayCommand(),
+		commands.NewUndoCommand(cpMgr),
+		commands.NewRewindCommand(cpMgr),
 		commands.NewContextCommand(func() agentsdk.ContextBudget {
 			if model.GetAgent() != nil {
 				return model.GetAgent().ContextBudget()
@@ -1873,6 +1884,7 @@ func runInteractive() error {
 
 	// Enable ACP server for interactive mode
 	opts = append(opts, agent.WithACP())
+	opts = append(opts, agent.WithCheckpointManager(cpMgr))
 
 	// Create agent with the approval function.
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
