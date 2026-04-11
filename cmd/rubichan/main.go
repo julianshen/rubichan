@@ -1779,9 +1779,11 @@ func runInteractive() error {
 	}
 
 	// Register remaining commands that need post-model dependencies.
+	// NewUndoOverlayCommand handles /undo via the TUI overlay (shows checkpoint
+	// list). NewUndoCommand is not registered here to avoid a name collision —
+	// the overlay supersedes the direct command in interactive mode.
 	for _, cmd := range []commands.SlashCommand{
 		commands.NewUndoOverlayCommand(),
-		commands.NewUndoCommand(cpMgr),
 		commands.NewRewindCommand(cpMgr),
 		commands.NewContextCommand(func() agentsdk.ContextBudget {
 			if model.GetAgent() != nil {
