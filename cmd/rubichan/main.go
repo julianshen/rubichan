@@ -1704,14 +1704,18 @@ func runInteractive() error {
 	if err != nil {
 		return fmt.Errorf("create checkpoint manager: %w", err)
 	}
-	defer cpMgr.Cleanup()
+	defer func() {
+		if err := cpMgr.Cleanup(); err != nil {
+			log.Printf("checkpoint cleanup: %v", err)
+		}
+	}()
 
 	// Create TUI model first (with nil agent) so we can extract the
 	// interactive approval function before constructing the agent.
 	model := tui.NewModel(nil, "rubichan", cfg.Provider.Model, cfg.Agent.MaxTurns, cfgPath, cfg, cmdRegistry)
 	model.SetTermCaps(caps)
 	model.SetCmuxClient(cmuxClient)
-	model.SetCheckpointManager(cpMgr)
+	model.SetCheckpointManager(cpMgr) // TUI-only: enables /undo overlay; plainHost uses /rewind directly
 	model.SetDebug(debugMode)
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
