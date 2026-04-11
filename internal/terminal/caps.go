@@ -1,6 +1,11 @@
 package terminal
 
-import "os"
+import (
+	"encoding/json"
+	"net"
+	"os"
+	"time"
+)
 
 // Caps represents what the host terminal supports.
 type Caps struct {
@@ -14,6 +19,7 @@ type Caps struct {
 	ClipboardAccess bool // OSC 52
 	FocusEvents     bool // Mode 1004
 	DarkBackground  bool // detected via OSC 11 query (defaults true)
+	CmuxSocket      bool // cmux Unix socket API available
 }
 
 var knownTerminals = map[string]Caps{
@@ -111,10 +117,12 @@ func DetectWithEnv(termProgram string, prober Prober) *Caps {
 				caps.DarkBackground = isDark
 			}
 		}
+		caps.CmuxSocket = detectCmuxSocket()
 		return caps
 	}
 
 	if prober == nil {
+		caps.CmuxSocket = detectCmuxSocket()
 		return caps
 	}
 
@@ -124,6 +132,43 @@ func DetectWithEnv(termProgram string, prober Prober) *Caps {
 	}
 	caps.SyncRendering = prober.ProbeSyncRendering()
 	caps.KittyKeyboard = prober.ProbeKittyKeyboard()
+	caps.CmuxSocket = detectCmuxSocket()
 
 	return caps
+}
+
+func detectCmuxSocket() bool {
+	if os.Getenv("CMUX_WORKSPACE_ID") == "" {
+		return false
+	}
+	socketPath := os.Getenv("CMUX_SOCKET_PATH")
+	if socketPath == "" {
+		socketPath = "/tmp/cmux.sock"
+	}
+	return pingCmuxSocket(socketPath)
+}
+
+func pingCmuxSocket(socketPath string) bool {
+	conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		return false
+	}
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(conn)
+	if err := enc.Encode(map[string]any{
+		"id": "detect-1", "method": "system.ping", "params": struct{}{},
+	}); err != nil {
+		return false
+	}
+	var resp struct {
+		OK bool `json:"ok"`
+	}
+	if err := dec.Decode(&resp); err != nil {
+		return false
+	}
+	return resp.OK
 }

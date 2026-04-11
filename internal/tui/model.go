@@ -18,6 +18,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/checkpoint"
+	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
@@ -36,7 +37,7 @@ const (
 	TurnStatusError     = "error"
 
 	// Archival configuration constants
-	archiveCheckInterval = 10  // archive every 10 turns
+	archiveCheckInterval  = 10 // archive every 10 turns
 	minTurnsBeforeArchive = 50 // don't archive until we have this many
 )
 
@@ -143,9 +144,10 @@ type Model struct {
 	debug             bool
 	lastPrompt        string
 	termCaps          *terminal.Caps
+	cmuxClient        cmux.Caller // nil when not running in cmux
 	sessionState      *session.State
 	eventSink         session.EventSink
-	toolApprovalCount map[string]int // per-turn count of times each tool was approved
+	toolApprovalCount map[string]int     // per-turn count of times each tool was approved
 	bootstrapCancel   context.CancelFunc // cancels bootstrap process if set
 }
 
@@ -409,8 +411,20 @@ func (m *Model) TermCaps() *terminal.Caps {
 	return m.termCaps
 }
 
+// SetCmuxClient sets the cmux client for rich sidebar/notification dispatch.
+// Pass nil when not running inside cmux.
+func (m *Model) SetCmuxClient(client cmux.Caller) {
+	m.cmuxClient = client
+}
+
 // notifyIfSupported sends a desktop notification if the terminal supports it.
+// Tries cmux first; falls back to OSC terminal notifications on failure.
 func (m *Model) notifyIfSupported(message string) {
+	if m.cmuxClient != nil {
+		if cmux.CallerNotify(m.cmuxClient, "Rubichan", "", message) {
+			return
+		}
+	}
 	if m.termCaps != nil && m.termCaps.Notifications {
 		terminal.Notify(os.Stderr, message)
 	}
