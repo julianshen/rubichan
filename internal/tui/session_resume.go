@@ -10,6 +10,9 @@ import (
 	"github.com/julianshen/rubichan/internal/store"
 )
 
+// maxResumeSessionCount is the maximum number of sessions shown in the resume overlay.
+const maxResumeSessionCount = 20
+
 // SessionResumeResult carries the selected session ID from the overlay.
 type SessionResumeResult struct {
 	SessionID string
@@ -87,7 +90,11 @@ func (o *SessionResumeOverlay) View() string {
 
 		title := s.Title
 		if title == "" {
-			title = s.ID[:8]
+			if len(s.ID) >= 8 {
+				title = s.ID[:8]
+			} else {
+				title = s.ID
+			}
 		}
 
 		b.WriteString(fmt.Sprintf("%s%s  %s\n", marker, title, sessionTimeAgo(s.UpdatedAt)))

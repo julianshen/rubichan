@@ -909,7 +909,7 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 			m.setContentAndAutoScroll()
 			return nil
 		}
-		sessions, err := m.sessionStore.ListSessions(20)
+		sessions, err := m.sessionStore.ListSessions(maxResumeSessionCount)
 		if err != nil {
 			m.content.WriteString(fmt.Sprintf("Failed to list sessions: %s\n", err))
 			m.setContentAndAutoScroll()
