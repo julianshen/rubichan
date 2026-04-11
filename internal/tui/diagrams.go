@@ -5,17 +5,89 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/terminal"
 )
 
+// mermaidBlock represents a detected fenced Mermaid code block in content.
+type mermaidBlock struct {
+	start  int    // byte offset of opening ```mermaid
+	end    int    // byte offset past the closing ```\n (or end of closing ```)
+	source string // the Mermaid source between the fences
+}
+
+// detectMermaidBlocks finds all fenced ```mermaid...``` blocks in content.
+func detectMermaidBlocks(content string) []mermaidBlock {
+	var blocks []mermaidBlock
+	search := 0
+	for search < len(content) {
+		// Find opening fence
+		idx := strings.Index(content[search:], "```mermaid\n")
+		if idx == -1 {
+			break
+		}
+		fenceStart := search + idx
+		srcStart := fenceStart + len("```mermaid\n")
+
+		// Find closing fence
+		closeIdx := strings.Index(content[srcStart:], "\n```")
+		if closeIdx == -1 {
+			break // unclosed block
+		}
+		srcEnd := srcStart + closeIdx
+		fenceEnd := srcEnd + len("\n```")
+
+		// Advance past closing fence (include trailing newline if present)
+		if fenceEnd < len(content) && content[fenceEnd] == '\n' {
+			fenceEnd++
+		}
+
+		blocks = append(blocks, mermaidBlock{
+			start:  fenceStart,
+			end:    fenceEnd,
+			source: content[srcStart:srcEnd],
+		})
+		search = fenceEnd
+	}
+	return blocks
+}
+
+// replaceMermaidBlocks replaces Mermaid code blocks with rendered inline images
+// when Kitty graphics and mmdc are available. Returns content unchanged when
+// rendering is not possible.
+func replaceMermaidBlocks(content string, caps *terminal.Caps) string {
+	if caps == nil || !caps.KittyGraphics || !terminal.MmdcAvailable() {
+		return content
+	}
+
+	blocks := detectMermaidBlocks(content)
+	if len(blocks) == 0 {
+		return content
+	}
+
+	var result strings.Builder
+	prev := 0
+	for _, b := range blocks {
+		result.WriteString(content[prev:b.start])
+
+		// Attempt to render the diagram inline
+		if renderMermaidInline(caps, b.source) {
+			result.WriteString("[Mermaid diagram rendered inline]\n")
+		} else {
+			// Rendering failed — keep the original code block
+			result.WriteString(content[b.start:b.end])
+		}
+		prev = b.end
+	}
+	result.WriteString(content[prev:])
+	return result.String()
+}
+
 // renderMermaidInline attempts to render a Mermaid diagram as an inline image.
 // Returns true and writes the image to stderr if successful.
 // Returns false if rendering is not available (no mmdc, no Kitty graphics).
-//
-// TODO: Wire into the viewport rendering path to replace Mermaid code blocks
-// with inline images when viewing wiki output or architecture diagrams.
 func renderMermaidInline(caps *terminal.Caps, mermaidSrc string) bool {
 	if caps == nil || !caps.KittyGraphics || !terminal.MmdcAvailable() {
 		return false

@@ -97,18 +97,18 @@ Wire the selected session ID into the agent's session loading infrastructure so 
 
 ### Tests
 
-- [ ] **4.1** `TestRenderMermaidInlineReturnsFalseWhenNoCaps` — Returns false when caps is nil.
-- [ ] **4.2** `TestRenderMermaidInlineReturnsFalseWhenNoKitty` — Returns false when `KittyGraphics` is false.
-- [ ] **4.3** `TestDetectMermaidCodeBlock` — Helper function correctly identifies fenced Mermaid blocks in markdown output.
-- [ ] **4.4** `TestReplaceMermaidBlocksNoOp` — When Kitty is unavailable, markdown passes through unchanged.
-- [ ] **4.5** `TestReplaceMermaidBlocksInsertsPlaceholder` — When Kitty is available and mmdc is present, Mermaid blocks are replaced with rendered image output.
-- [ ] **4.6** `TestTurnRendererCallsMermaidReplace` — `TurnRenderer` invokes Mermaid replacement during assistant content rendering.
+- [x] **4.1** `TestRenderMermaidInlineReturnsFalseWhenNoCaps` — Returns false when caps is nil. (pre-existing)
+- [x] **4.2** `TestRenderMermaidInlineReturnsFalseWhenNoKitty` — Returns false when `KittyGraphics` is false. (pre-existing)
+- [x] **4.3** `TestDetectMermaidCodeBlock` — Helper function correctly identifies fenced Mermaid blocks (single, multiple, none, empty, unclosed).
+- [x] **4.4** `TestReplaceMermaidBlocksNoOp` — When Kitty is unavailable or caps is nil, content passes through unchanged.
+- [ ] **4.5** `TestReplaceMermaidBlocksInsertsPlaceholder` — When Kitty is available and mmdc is present, Mermaid blocks are replaced. (requires mmdc installed)
+- [x] **4.6** Wired `replaceMermaidBlocks` into `viewportContent()` in `diffsummary.go`.
 
 ### Implementation
 
-- Add `detectMermaidBlocks(content string) []mermaidBlock` helper
-- Add `replaceMermaidBlocks(content string, caps *terminal.Caps) string` that calls `renderMermaidInline` per block
-- Call from `TurnRenderer` or `MarkdownRenderer` when rendering assistant content
+- Added `detectMermaidBlocks(content string) []mermaidBlock` helper
+- Added `replaceMermaidBlocks(content string, caps *terminal.Caps) string` that calls `renderMermaidInline` per block
+- Called from `viewportContent()` (the single rendering path for all viewport content)
 
 ---
 
