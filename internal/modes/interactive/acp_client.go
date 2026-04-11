@@ -10,19 +10,16 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/acp"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
-
-// ApprovalFunc is a callback that asks the user whether to approve a tool call.
-// Returns (true, nil) to approve, (false, nil) to deny, or an error.
-type ApprovalFunc func(ctx context.Context, tool string, input json.RawMessage) (bool, error)
 
 // ACPClient is a client for communicating with the ACP server in interactive mode.
 type ACPClient struct {
-	sessionMgr   *SessionManager // NEW - for session loading
-	resumeID     string          // NEW - optional session ID to resume
-	loadedTurns  []Turn          // NEW - turns loaded from resume session
-	loadError    error           // NEW - tracks session load errors
-	approvalFunc ApprovalFunc    // callback for interactive tool approval; nil = auto-approve
+	sessionMgr   *SessionManager       // for session loading
+	resumeID     string                // optional session ID to resume
+	loadedTurns  []Turn                // turns loaded from resume session
+	loadError    error                 // tracks session load errors
+	approvalFunc agentsdk.ApprovalFunc // callback for interactive tool approval; nil = auto-approve
 	nextID       int64
 	mu           sync.Mutex
 	dispatcher   *acp.ResponseDispatcher
@@ -118,7 +115,7 @@ func NewACPClientWithResume(sessionMgr *SessionManager, resumeID string) *ACPCli
 // NewACPClientWithApprovalFunc creates an ACPClient with an approval callback.
 // This is a lightweight constructor for testing that doesn't require a server.
 // When approvalFunc is nil, ApprovalRequest auto-approves all calls.
-func NewACPClientWithApprovalFunc(approvalFunc ApprovalFunc) *ACPClient {
+func NewACPClientWithApprovalFunc(approvalFunc agentsdk.ApprovalFunc) *ACPClient {
 	return &ACPClient{
 		loadedTurns:  []Turn{},
 		nextID:       1,
@@ -127,7 +124,8 @@ func NewACPClientWithApprovalFunc(approvalFunc ApprovalFunc) *ACPClient {
 }
 
 // SetApprovalFunc sets the approval callback for interactive tool approval.
-func (c *ACPClient) SetApprovalFunc(fn ApprovalFunc) {
+// Must be called during initialization, before concurrent use of the client.
+func (c *ACPClient) SetApprovalFunc(fn agentsdk.ApprovalFunc) {
 	c.approvalFunc = fn
 }
 
@@ -273,9 +271,9 @@ func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvo
 // When an approvalFunc is configured, it delegates to that callback (which
 // typically bridges to the TUI approval overlay). When no callback is set,
 // it falls back to auto-approve for backward compatibility.
-func (c *ACPClient) ApprovalRequest(tool string, input json.RawMessage) (bool, error) {
+func (c *ACPClient) ApprovalRequest(ctx context.Context, tool string, input json.RawMessage) (bool, error) {
 	if c.approvalFunc != nil {
-		return c.approvalFunc(context.Background(), tool, input)
+		return c.approvalFunc(ctx, tool, input)
 	}
 
 	// Fallback: auto-approve when no callback is configured.

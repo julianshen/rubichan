@@ -134,7 +134,7 @@ func TestACPClientApprovalRequestDelegates(t *testing.T) {
 	}
 
 	client := NewACPClientWithApprovalFunc(approvalFunc)
-	approved, err := client.ApprovalRequest("shell", json.RawMessage(`{"command":"ls"}`))
+	approved, err := client.ApprovalRequest(context.Background(), "shell", json.RawMessage(`{"command":"ls"}`))
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -150,7 +150,7 @@ func TestACPClientApprovalRequestDenied(t *testing.T) {
 	}
 
 	client := NewACPClientWithApprovalFunc(approvalFunc)
-	approved, err := client.ApprovalRequest("shell", json.RawMessage(`{"command":"rm -rf /"}`))
+	approved, err := client.ApprovalRequest(context.Background(), "shell", json.RawMessage(`{"command":"rm -rf /"}`))
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -167,7 +167,7 @@ func TestACPClientApprovalRequestCallbackError(t *testing.T) {
 	}
 
 	client := NewACPClientWithApprovalFunc(approvalFunc)
-	_, err := client.ApprovalRequest("shell", json.RawMessage(`{"command":"ls"}`))
+	_, err := client.ApprovalRequest(context.Background(), "shell", json.RawMessage(`{"command":"ls"}`))
 
 	if err == nil {
 		t.Fatal("expected error from callback, got nil")
@@ -188,7 +188,7 @@ func TestACPClientApprovalRequestPassesToolAndInput(t *testing.T) {
 
 	client := NewACPClientWithApprovalFunc(approvalFunc)
 	inputJSON := json.RawMessage(`{"command":"git status"}`)
-	_, err := client.ApprovalRequest("shell", inputJSON)
+	_, err := client.ApprovalRequest(context.Background(), "shell", inputJSON)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -204,7 +204,7 @@ func TestACPClientApprovalRequestPassesToolAndInput(t *testing.T) {
 func TestACPClientDefaultApprovalAutoApproves(t *testing.T) {
 	// When no approval func is set, ApprovalRequest should auto-approve
 	client := NewACPClientWithApprovalFunc(nil)
-	approved, err := client.ApprovalRequest("shell", json.RawMessage(`{"command":"ls"}`))
+	approved, err := client.ApprovalRequest(context.Background(), "shell", json.RawMessage(`{"command":"ls"}`))
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -227,7 +227,7 @@ func TestNewACPClientWithApprovalFunc(t *testing.T) {
 	}
 
 	// Verify the func is wired by calling ApprovalRequest
-	_, _ = client.ApprovalRequest("read", json.RawMessage(`{}`))
+	_, _ = client.ApprovalRequest(context.Background(), "read", json.RawMessage(`{}`))
 	if !called {
 		t.Error("expected approval func to be called")
 	}
