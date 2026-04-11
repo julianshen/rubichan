@@ -77,6 +77,10 @@ const (
 	StateInitKnowledgeGraphOverlay
 	// StateBootstrapProgressOverlay indicates the TUI is showing the bootstrap progress overlay.
 	StateBootstrapProgressOverlay
+	// StateResumeOverlay indicates the TUI is showing the session resume selector.
+	StateResumeOverlay
+	// StateModelPickerOverlay indicates the TUI is showing the model picker.
+	StateModelPickerOverlay
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -105,6 +109,7 @@ type Model struct {
 	selection         MouseSelection // current text selection state
 	clickTracker      clickTracker   // click counting for double/triple-click detection
 	checkpointMgr     *checkpoint.Manager
+	sessionStore      *store.Store
 	alwaysApproved    sync.Map
 	alwaysDenied      sync.Map
 	approvalCh        chan approvalRequest
@@ -409,6 +414,11 @@ func (m *Model) SetTermCaps(caps *terminal.Caps) {
 // SetCheckpointManager sets the checkpoint manager for undo/rewind support.
 func (m *Model) SetCheckpointManager(mgr *checkpoint.Manager) {
 	m.checkpointMgr = mgr
+}
+
+// SetSessionStore sets the session store for the /resume overlay.
+func (m *Model) SetSessionStore(s *store.Store) {
+	m.sessionStore = s
 }
 
 // SetCmuxClient sets the cmux client for rich sidebar/notification dispatch.
@@ -895,9 +905,53 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 		m.activeOverlay = NewInitKnowledgeGraphOverlay(m.width, m.height)
 		m.state = StateInitKnowledgeGraphOverlay
 		return nil
+	case commands.ActionResume:
+		if m.sessionStore == nil {
+			m.content.WriteString("Session store not available.\n")
+			m.setContentAndAutoScroll()
+			return nil
+		}
+		sessions, err := m.sessionStore.ListSessions(maxResumeSessionCount)
+		if err != nil {
+			m.content.WriteString(fmt.Sprintf("Failed to list sessions: %s\n", err))
+			m.setContentAndAutoScroll()
+			return nil
+		}
+		if len(sessions) == 0 {
+			m.content.WriteString("No previous sessions found.\n")
+			m.setContentAndAutoScroll()
+			return nil
+		}
+		m.activeOverlay = NewSessionResumeOverlay(sessions)
+		m.state = StateResumeOverlay
+		return nil
+	case commands.ActionOpenModelPicker:
+		models := m.availableModels()
+		if len(models) == 0 {
+			m.content.WriteString("No models available.\n")
+			m.setContentAndAutoScroll()
+			return nil
+		}
+		overlay, initCmd := NewModelPickerOverlay(models)
+		m.activeOverlay = overlay
+		m.state = StateModelPickerOverlay
+		return initCmd
 	}
 
 	return nil
+}
+
+// availableModels returns the model choices for the picker overlay.
+func (m *Model) availableModels() []ModelChoice {
+	// Provide a basic set of well-known models. In the future this
+	// could query the provider for available models.
+	return []ModelChoice{
+		{Name: "claude-opus-4-6", Size: "large"},
+		{Name: "claude-sonnet-4-6", Size: "medium"},
+		{Name: "claude-haiku-4-5-20251001", Size: "small"},
+		{Name: "gpt-4o", Size: "large"},
+		{Name: "gpt-4o-mini", Size: "small"},
+	}
 }
 
 func summarizeActiveSkills(active []string) string {

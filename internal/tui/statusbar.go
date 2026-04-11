@@ -46,6 +46,7 @@ type StatusBar struct {
 	elapsed       time.Duration
 	skillSummary  string
 	subagentName  string
+	taskProgress  string
 	runningAgents []AgentStatus
 }
 
@@ -94,6 +95,12 @@ func (s *StatusBar) ClearErrorCount() { s.errorCount = 0 }
 
 // ErrorCount returns the current error count.
 func (s *StatusBar) ErrorCount() int { return s.errorCount }
+
+// SetTaskProgress sets a general-purpose task progress message for display.
+func (s *StatusBar) SetTaskProgress(msg string) { s.taskProgress = msg }
+
+// ClearTaskProgress clears the task progress display.
+func (s *StatusBar) ClearTaskProgress() { s.taskProgress = "" }
 
 // SetSubagent sets the currently running subagent name for display.
 // Pass empty string to clear.
@@ -144,6 +151,11 @@ func (s *StatusBar) View() string {
 	if s.wikiStage != "" {
 		segments = append(segments, statusSegment{
 			styleStatusLabel.Render("Wiki: ") + styleStatusValue.Render(s.wikiStage), priorityLow,
+		})
+	}
+	if s.taskProgress != "" {
+		segments = append(segments, statusSegment{
+			styleStatusLabel.Render("⏳ ") + styleStatusValue.Render(s.taskProgress), priorityLow,
 		})
 	}
 	if s.subagentName != "" {

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 type manifest struct {
@@ -152,14 +151,4 @@ func CleanupOrphaned(baseDir string) error {
 	return nil
 }
 
-// isProcessAlive returns true if the given PID corresponds to a running process.
-// TODO: This uses Unix signal(0) which doesn't work on Windows.
-// For Windows support, use os.FindProcess + tasklist or process snapshot API.
-func isProcessAlive(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
-}
+// isProcessAlive is defined in process_unix.go and process_windows.go.

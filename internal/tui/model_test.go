@@ -123,13 +123,15 @@ func TestModelHandleSlashModel(t *testing.T) {
 	assert.True(t, strings.Contains(m.content.String(), "Model switched"))
 }
 
-func TestModelHandleSlashModelNoArg(t *testing.T) {
+func TestModelHandleSlashModelNoArgOpensPicker(t *testing.T) {
 	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
 	cmd := m.handleCommand("/model")
 
-	assert.Nil(t, cmd)
-	assert.Equal(t, "claude-3", m.modelName, "model should not change without argument")
-	assert.Contains(t, m.content.String(), "Pigi")
+	// Should open model picker overlay (huh form Init returns a command).
+	assert.NotNil(t, cmd)
+	assert.Equal(t, StateModelPickerOverlay, m.state)
+	assert.NotNil(t, m.activeOverlay)
+	assert.Equal(t, "claude-3", m.modelName, "model should not change until selection")
 }
 
 func TestModelHandleSlashRalphLoopParsesQuotedArgs(t *testing.T) {

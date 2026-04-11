@@ -88,6 +88,35 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 		return func() tea.Msg {
 			return m.runBootstrap(ctx, r.Profile)
 		}
+	case ModelPickerResult:
+		if r.ModelName != "" {
+			if m.agent != nil {
+				m.agent.SetModel(r.ModelName)
+			}
+			m.modelName = r.ModelName
+			m.statusBar.SetModel(r.ModelName)
+			m.content.WriteString(fmt.Sprintf("Model switched to %s\n", r.ModelName))
+			m.setContentAndAutoScroll()
+		}
+		m.state = StateInput
+		return nil
+	case SessionResumeResult:
+		if m.agent == nil {
+			m.content.WriteString("No agent available to resume session.\n")
+			m.setContentAndAutoScroll()
+			m.state = StateInput
+			return nil
+		}
+		if err := m.agent.ResumeSession(context.Background(), r.SessionID); err != nil {
+			m.content.WriteString(fmt.Sprintf("Failed to resume session: %s\n", err))
+			m.setContentAndAutoScroll()
+			m.state = StateInput
+			return nil
+		}
+		m.content.WriteString(fmt.Sprintf("Resumed session %s. Conversation history restored.\n", r.SessionID))
+		m.setContentAndAutoScroll()
+		m.state = StateInput
+		return nil
 	case nil:
 		// Overlay was cancelled (e.g., Escape pressed).
 		// Defensive: unblock agent if approval was somehow cancelled.

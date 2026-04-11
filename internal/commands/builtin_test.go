@@ -85,7 +85,7 @@ func TestModelCommandArguments(t *testing.T) {
 	args := cmd.Arguments()
 	require.Len(t, args, 1)
 	assert.Equal(t, "name", args[0].Name)
-	assert.True(t, args[0].Required)
+	assert.False(t, args[0].Required)
 }
 
 func TestModelCommandExecute(t *testing.T) {
@@ -99,19 +99,20 @@ func TestModelCommandExecute(t *testing.T) {
 	assert.Equal(t, ActionNone, result.Action)
 }
 
-func TestModelCommandExecuteNoArgs(t *testing.T) {
+func TestModelCommandExecuteNoArgsOpensPicker(t *testing.T) {
 	cmd := NewModelCommand(func(string) {})
 
-	_, err := cmd.Execute(context.Background(), nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "model name")
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, ActionOpenModelPicker, result.Action)
 }
 
-func TestModelCommandExecuteEmptyArgs(t *testing.T) {
+func TestModelCommandExecuteEmptyArgsOpensPicker(t *testing.T) {
 	cmd := NewModelCommand(func(string) {})
 
-	_, err := cmd.Execute(context.Background(), []string{})
-	assert.Error(t, err)
+	result, err := cmd.Execute(context.Background(), []string{})
+	require.NoError(t, err)
+	assert.Equal(t, ActionOpenModelPicker, result.Action)
 }
 
 // --- Config Command ---
@@ -239,6 +240,21 @@ func TestBuiltinCommandsImplementSlashCommand(t *testing.T) {
 	var _ SlashCommand = NewDebugVerificationSnapshotCommand(nil)
 	var _ SlashCommand = NewRalphLoopCommand(nil)
 	var _ SlashCommand = NewCancelRalphCommand(nil)
+	var _ SlashCommand = NewResumeCommand()
+}
+
+// --- Resume Command ---
+
+func TestResumeCommandName(t *testing.T) {
+	cmd := NewResumeCommand()
+	assert.Equal(t, "resume", cmd.Name())
+}
+
+func TestResumeCommandExecute(t *testing.T) {
+	cmd := NewResumeCommand()
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, ActionResume, result.Action)
 }
 
 func TestRalphLoopCommandExecute(t *testing.T) {

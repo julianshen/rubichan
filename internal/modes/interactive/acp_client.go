@@ -10,18 +10,20 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/acp"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // ACPClient is a client for communicating with the ACP server in interactive mode.
 type ACPClient struct {
-	sessionMgr  *SessionManager // NEW - for session loading
-	resumeID    string          // NEW - optional session ID to resume
-	loadedTurns []Turn          // NEW - turns loaded from resume session
-	loadError   error           // NEW - tracks session load errors
-	nextID      int64
-	mu          sync.Mutex
-	dispatcher  *acp.ResponseDispatcher
-	server      *acp.Server
+	sessionMgr   *SessionManager       // for session loading
+	resumeID     string                // optional session ID to resume
+	loadedTurns  []Turn                // turns loaded from resume session
+	loadError    error                 // tracks session load errors
+	approvalFunc agentsdk.ApprovalFunc // callback for interactive tool approval; nil = auto-approve
+	nextID       int64
+	mu           sync.Mutex
+	dispatcher   *acp.ResponseDispatcher
+	server       *acp.Server
 }
 
 // NewACPClient creates an interactive ACP client given a server instance and optional session manager.
@@ -43,6 +45,7 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 	// Wait for dispatcher to signal startup (success or error)
 	// Use non-blocking select with timeout to detect startup failures
 	// In test environments or when stdin is not available, allow graceful degradation
+	needDrain := false
 	select {
 	case err := <-startedCh:
 		// Dispatcher exited (either started successfully or failed)
@@ -51,8 +54,12 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 			return nil, fmt.Errorf("dispatcher startup failed: %w", err)
 		}
 		// If EOF, it means stdin closed (common in tests) - continue anyway
+		// Channel already consumed — no drain goroutine needed.
 	case <-time.After(500 * time.Millisecond):
-		// Dispatcher is running, continue initialization
+		// Dispatcher is running, continue initialization.
+		// The dispatcher goroutine will send to startedCh when it exits —
+		// drain it in background so the goroutine can complete.
+		needDrain = true
 	}
 
 	client := &ACPClient{
@@ -75,10 +82,11 @@ func NewACPClient(sessionMgr *SessionManager, resumeID string, server *acp.Serve
 		}
 	}
 
-	// Ensure startedCh is drained on error to avoid goroutine leak
-	go func() {
-		<-startedCh // Wait for dispatcher to eventually exit
-	}()
+	if needDrain {
+		go func() {
+			<-startedCh
+		}()
+	}
 
 	return client, nil
 }
@@ -108,6 +116,24 @@ func NewACPClientWithResume(sessionMgr *SessionManager, resumeID string) *ACPCli
 	}
 
 	return client
+}
+
+// NewACPClientWithApprovalFunc creates an ACPClient with an approval callback.
+// This is a lightweight constructor for testing that doesn't require a server.
+// When approvalFunc is nil, ApprovalRequest auto-approves all calls.
+func NewACPClientWithApprovalFunc(approvalFunc agentsdk.ApprovalFunc) *ACPClient {
+	return &ACPClient{
+		loadedTurns:  []Turn{},
+		nextID:       1,
+		approvalFunc: approvalFunc,
+	}
+}
+
+// SetApprovalFunc sets the approval callback for interactive tool approval.
+func (c *ACPClient) SetApprovalFunc(fn agentsdk.ApprovalFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.approvalFunc = fn
 }
 
 // getNextID returns the next request ID and increments the counter.
@@ -246,4 +272,26 @@ func (c *ACPClient) InvokeSkill(skillReq acp.SkillInvokeRequest) (*acp.SkillInvo
 	}
 
 	return &skillResp, nil
+}
+
+// ApprovalRequest asks the user whether to approve a tool call.
+// When an approvalFunc is configured, it delegates to that callback (which
+// typically bridges to the TUI approval overlay). When no callback is set,
+// it falls back to auto-approve for backward compatibility.
+func (c *ACPClient) ApprovalRequest(ctx context.Context, tool string, input json.RawMessage) (bool, error) {
+	c.mu.Lock()
+	fn := c.approvalFunc
+	c.mu.Unlock()
+	if fn != nil {
+		approved, err := fn(ctx, tool, input)
+		if err != nil {
+			return false, fmt.Errorf("approval request for %q: %w", tool, err)
+		}
+		return approved, nil
+	}
+
+	// Fallback: auto-approve when no callback is configured.
+	// This path is only expected in tests. Production code should always
+	// wire an approvalFunc via SetApprovalFunc before the first call.
+	return true, nil
 }

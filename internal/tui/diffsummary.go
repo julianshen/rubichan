@@ -12,6 +12,9 @@ var diffSummaryCountPattern = regexp.MustCompile(`(\d+)\s+file(?:\(s\)|s)?\s+cha
 func (m *Model) viewportContent() string {
 	content := m.content.Render(m.width)
 
+	// Replace Mermaid code blocks with inline rendered images when possible.
+	content = replaceMermaidBlocks(content, m.termCaps)
+
 	// Append diff summary panel if available.
 	panel := m.renderDiffSummaryPanel()
 	if panel != "" {

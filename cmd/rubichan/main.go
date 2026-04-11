@@ -1744,6 +1744,7 @@ func runInteractive() error {
 	model.SetTermCaps(caps)
 	model.SetCmuxClient(cmuxClient)
 	model.SetCheckpointManager(cpMgr) // TUI-only: enables /undo overlay; plainHost uses /rewind directly
+	model.SetSessionStore(s)
 	model.SetDebug(debugMode)
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
@@ -1815,6 +1816,7 @@ func runInteractive() error {
 	// list). NewUndoCommand is not registered here to avoid a name collision —
 	// the overlay supersedes the direct command in interactive mode.
 	for _, cmd := range []commands.SlashCommand{
+		commands.NewResumeCommand(),
 		commands.NewUndoOverlayCommand(),
 		commands.NewRewindCommand(cpMgr),
 		commands.NewContextCommand(func() agentsdk.ContextBudget {
