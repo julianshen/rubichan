@@ -45,3 +45,18 @@ func TestConfigFormSave(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ollama", loaded.Provider.Default)
 }
+
+func TestConfigFormSaveZai(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "zai"
+
+	form := NewConfigForm(cfg, path)
+	err := form.Save()
+	require.NoError(t, err)
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "zai", loaded.Provider.Default)
+}
