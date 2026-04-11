@@ -120,7 +120,7 @@ func newZaiProvider(cfg *config.Config) (LLMProvider, error) {
 
 	baseURL := cfg.Provider.Zai.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.z.ai/api/paas/v4"
+		baseURL = "https://api.z.ai/api/coding/paas/v4"
 	}
 
 	model := cfg.Provider.Zai.Model

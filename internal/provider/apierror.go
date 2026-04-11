@@ -130,9 +130,11 @@ var contentFilterPatterns = []string{
 // quotaExceededPatterns detect quota exhaustion that some providers surface as 429.
 var quotaExceededPatterns = []string{
 	"insufficient_quota",
+	"insufficient balance",
 	"quota exceeded",
 	"billing hard limit",
 	"check your plan and billing details",
+	"no resource package",
 }
 
 // classifyByMessage inspects the error message text to refine classification

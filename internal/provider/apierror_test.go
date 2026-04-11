@@ -208,6 +208,14 @@ func TestClassifyAPIError_QuotaExceeded_As429(t *testing.T) {
 	assert.False(t, pe.IsRetryable(), "quota exhaustion should not be retryable")
 }
 
+func TestClassifyAPIError_QuotaExceeded_ZaiInsufficientBalance(t *testing.T) {
+	// Z.ai surfaces quota exhaustion as 429 with "Insufficient balance" message.
+	pe := ClassifyAPIError(http.StatusTooManyRequests, []byte(`{"error":{"message":"Insufficient balance or no resource package. Please recharge."}}`), nil, "zai")
+	require.NotNil(t, pe)
+	assert.Equal(t, ErrQuotaExceeded, pe.Kind)
+	assert.False(t, pe.IsRetryable(), "quota exhaustion should not be retryable")
+}
+
 func TestClassifyAPIError_InvalidRequest(t *testing.T) {
 	body := []byte(`{"error":{"message":"invalid parameter: temperature must be between 0 and 2"}}`)
 	pe := ClassifyAPIError(http.StatusBadRequest, body, nil, "openai")
