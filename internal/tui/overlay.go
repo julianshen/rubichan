@@ -88,6 +88,18 @@ func (m *Model) processOverlayResult(result any) tea.Cmd {
 		return func() tea.Msg {
 			return m.runBootstrap(ctx, r.Profile)
 		}
+	case ModelPickerResult:
+		if r.ModelName != "" {
+			if m.agent != nil {
+				m.agent.SetModel(r.ModelName)
+			}
+			m.modelName = r.ModelName
+			m.statusBar.SetModel(r.ModelName)
+			m.content.WriteString(fmt.Sprintf("Model switched to %s\n", r.ModelName))
+			m.setContentAndAutoScroll()
+		}
+		m.state = StateInput
+		return nil
 	case SessionResumeResult:
 		if m.agent == nil {
 			m.content.WriteString("No agent available to resume session.\n")

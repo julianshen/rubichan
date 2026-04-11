@@ -130,11 +130,12 @@ Wire the selected session ID into the agent's session loading infrastructure so 
 
 ### Tests
 
-- [ ] **6.1** `TestModelPickerOverlayImplementsOverlay` — Satisfies the `Overlay` interface.
-- [ ] **6.2** `TestModelPickerSelectModel` — Selecting a model returns it as `Result()`.
-- [ ] **6.3** `TestModelPickerEscape` — Escape cancels without changing model.
-- [ ] **6.4** `TestProcessOverlayResultModelPicker` — `processOverlayResult` for a `ModelPickerResult` updates the agent's provider.
-- [ ] **6.5** `TestSlashModelCommand` — The `/model` command triggers the model picker overlay.
+- [x] **6.1** `TestModelPickerOverlayImplementsOverlay` — Satisfies the `Overlay` interface.
+- [x] **6.2** `TestModelPickerOverlayAutoSelectSingleModel` — Single model auto-selects and returns as `Result()`.
+- [x] **6.3** `TestProcessOverlayResultModelPickerCancelled` — Escape cancels without changing model.
+- [x] **6.4** `TestProcessOverlayResultModelPicker` — `processOverlayResult` for a `ModelPickerResult` updates model name and status bar.
+- [x] **6.5** `TestModelCommandNoArgsOpensPickerOverlay` — `/model` without args triggers the model picker overlay.
+- [x] **6.6** `TestModelCommandWithArgSwitchesDirectly` — `/model gpt-4o` still switches directly without overlay.
 
 ---
 

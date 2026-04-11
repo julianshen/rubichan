@@ -95,3 +95,40 @@ func (p *ModelPicker) View() string {
 	}
 	return p.form.View()
 }
+
+// ModelPickerResult carries the selected model name from the overlay.
+type ModelPickerResult struct {
+	ModelName string
+}
+
+// ModelPickerOverlay adapts ModelPicker to the Overlay interface.
+type ModelPickerOverlay struct {
+	picker *ModelPicker
+}
+
+// NewModelPickerOverlay creates a model picker overlay and returns its init command.
+func NewModelPickerOverlay(models []ModelChoice) (*ModelPickerOverlay, tea.Cmd) {
+	p := NewModelPicker(models)
+	o := &ModelPickerOverlay{picker: p}
+	return o, p.Init()
+}
+
+func (o *ModelPickerOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
+	_, cmd := o.picker.Update(msg)
+	return o, cmd
+}
+
+func (o *ModelPickerOverlay) View() string {
+	return o.picker.View()
+}
+
+func (o *ModelPickerOverlay) Done() bool {
+	return o.picker.Done() || o.picker.Cancelled()
+}
+
+func (o *ModelPickerOverlay) Result() any {
+	if o.picker.Done() && !o.picker.Cancelled() && o.picker.Selected() != "" {
+		return ModelPickerResult{ModelName: o.picker.Selected()}
+	}
+	return nil
+}

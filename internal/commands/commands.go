@@ -28,6 +28,8 @@ const (
 	ActionInitKnowledgeGraph
 	// ActionResume requests the host to open the session resume selector.
 	ActionResume
+	// ActionOpenModelPicker requests the host to open the model picker overlay.
+	ActionOpenModelPicker
 )
 
 // Candidate represents a completion suggestion.

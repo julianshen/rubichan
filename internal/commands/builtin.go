@@ -100,8 +100,8 @@ func (c *modelCommand) Arguments() []ArgumentDef {
 	return []ArgumentDef{
 		{
 			Name:        "name",
-			Description: "Model name to switch to",
-			Required:    true,
+			Description: "Model name to switch to (opens picker if omitted)",
+			Required:    false,
 		},
 	}
 }
@@ -112,7 +112,7 @@ func (c *modelCommand) Complete(_ context.Context, _ []string) []Candidate {
 
 func (c *modelCommand) Execute(_ context.Context, args []string) (Result, error) {
 	if len(args) == 0 {
-		return Result{}, fmt.Errorf("model name is required")
+		return Result{Action: ActionOpenModelPicker}, nil
 	}
 	name := args[0]
 	if c.onSwitch != nil {
