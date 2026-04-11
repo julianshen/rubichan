@@ -51,12 +51,6 @@ type webFetchInput struct {
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
 }
 
-// fetchResult captures a successful fetch with its source label.
-type fetchResult struct {
-	body   string
-	source string
-}
-
 func (t *WebFetchTool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolResult, error) {
 	var in webFetchInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -82,6 +76,14 @@ func (t *WebFetchTool) Execute(ctx context.Context, input json.RawMessage) (tool
 		}
 	}
 
+	// Resolve DNS once for the origin host and build a shared transport.
+	addrs, err := validateTarget(ctx, u, t.resolver)
+	if err != nil {
+		return tools.ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+	client := t.buildClient(u, addrs, timeout)
+	defer client.CloseIdleConnections()
+
 	// Try sources in order: llms.txt → {url}.md → raw URL.
 	origin := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
 	candidates := []struct {
@@ -93,83 +95,72 @@ func (t *WebFetchTool) Execute(ctx context.Context, input json.RawMessage) (tool
 	}
 
 	for _, c := range candidates {
-		result, fetchErr := t.tryFetch(ctx, c.url, timeout)
-		if fetchErr == nil && result != nil {
-			content := fmt.Sprintf("[Source: %s — %s]\n\n%s", c.label, c.url, result.body)
+		body, err := t.tryFetch(ctx, client, c.url)
+		if err != nil {
+			return tools.ToolResult{Content: fmt.Sprintf("fetch failed: %s", err), IsError: true}, nil
+		}
+		if body != "" {
+			content := fmt.Sprintf("[Source: %s — %s]\n\n%s", c.label, c.url, body)
 			content, display := truncate(content)
 			return tools.ToolResult{Content: content, DisplayContent: display}, nil
 		}
 	}
 
 	// Fallback: fetch the raw URL.
-	result, fetchErr := t.tryFetch(ctx, in.URL, timeout)
-	if fetchErr != nil {
-		return tools.ToolResult{Content: fmt.Sprintf("fetch failed: %s", fetchErr), IsError: true}, nil
+	body, err := t.tryFetch(ctx, client, in.URL)
+	if err != nil {
+		return tools.ToolResult{Content: fmt.Sprintf("fetch failed: %s", err), IsError: true}, nil
 	}
-	if result == nil {
+	if body == "" {
 		return tools.ToolResult{Content: "fetch returned empty response", IsError: true}, nil
 	}
 
-	content := fmt.Sprintf("[Source: original URL — %s]\n\n%s", in.URL, result.body)
+	content := fmt.Sprintf("[Source: original URL — %s]\n\n%s", in.URL, body)
 	content, display := truncate(content)
 	return tools.ToolResult{Content: content, DisplayContent: display}, nil
 }
 
-// tryFetch attempts to GET a URL and returns the body if the response is 200
-// with a text-like content type. Returns nil (no error) if the URL returns
-// a non-200 status or non-text content, so the caller can try the next candidate.
-func (t *WebFetchTool) tryFetch(ctx context.Context, rawURL string, timeout time.Duration) (*fetchResult, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, nil // skip bad URLs silently
-	}
+func (t *WebFetchTool) buildClient(u *url.URL, addrs []net.IPAddr, timeout time.Duration) *http.Client {
+	return newPinnedClient(u, addrs, timeout, t.resolver, t.dialContext)
+}
 
-	addrs, err := validateTarget(ctx, u, t.resolver)
-	if err != nil {
-		return nil, err
-	}
-
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	transportDialContext := pinnedDialer(dialer, u.Hostname(), addrs, t.resolver)
-	if t.dialContext != nil {
-		transportDialContext = t.dialContext
-	}
-	transport := &http.Transport{DialContext: transportDialContext}
-	client := &http.Client{Timeout: timeout, Transport: transport}
-
+// tryFetch GETs a URL and returns the body text if the response is 200 with
+// text content. Returns ("", nil) for non-200 or non-text responses so the
+// caller can try the next candidate. Returns a non-nil error for transport
+// or security failures that should halt the cascade.
+func (t *WebFetchTool) tryFetch(ctx context.Context, client *http.Client, rawURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, nil
+		return "", fmt.Errorf("build request for %s: %w", rawURL, err)
 	}
 	req.Header.Set("User-Agent", "rubichan/web_fetch")
 	req.Header.Set("Accept", "text/markdown, text/plain, text/html;q=0.9, */*;q=0.5")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil // non-200 → skip to next candidate
+		return "", nil
 	}
 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if !isTextContent(ct) {
-		return nil, nil // binary content → skip
+		return "", nil
 	}
 
 	body, _, err := readBody(resp.Body)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	text := string(body)
 	if strings.Contains(ct, "html") {
 		text = stripHTML(text)
 	}
-
-	return &fetchResult{body: text, source: rawURL}, nil
+	return text, nil
 }
 
 // isTextContent returns true for content types likely to contain useful text.
@@ -181,9 +172,11 @@ func isTextContent(ct string) bool {
 }
 
 // stripHTML removes HTML tags to produce readable plain text.
-// This is a simple regex-free approach — not a full parser, but good enough
-// for extracting readable content from documentation pages.
+// Not a full parser — good enough for extracting content from docs pages.
 func stripHTML(s string) string {
+	// Lowercase once upfront so closing-tag searches are O(n) total.
+	lower := strings.ToLower(s)
+
 	var b strings.Builder
 	inTag := false
 	lastWasSpace := false
@@ -192,16 +185,16 @@ func stripHTML(s string) string {
 		c := s[i]
 		switch {
 		case c == '<':
-			// Check for <script> and <style> blocks — skip their content entirely.
-			if i+7 < len(s) && strings.EqualFold(s[i:i+7], "<script") {
-				end := strings.Index(strings.ToLower(s[i:]), "</script>")
+			// Skip <script>...</script> and <style>...</style> entirely.
+			if i+7 < len(s) && lower[i:i+7] == "<script" {
+				end := strings.Index(lower[i:], "</script>")
 				if end != -1 {
 					i += end + len("</script>") - 1
 					continue
 				}
 			}
-			if i+6 < len(s) && strings.EqualFold(s[i:i+6], "<style") {
-				end := strings.Index(strings.ToLower(s[i:]), "</style>")
+			if i+6 < len(s) && lower[i:i+6] == "<style" {
+				end := strings.Index(lower[i:], "</style>")
 				if end != -1 {
 					i += end + len("</style>") - 1
 					continue

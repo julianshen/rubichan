@@ -158,18 +158,7 @@ func (t *Tool) Execute(ctx context.Context, input json.RawMessage) (tools.ToolRe
 			timeout = maxTimeout
 		}
 	}
-	// Pin the dialer to the already-validated IP addresses to prevent
-	// DNS rebinding attacks (where a second DNS lookup resolves to a
-	// different, potentially private address).
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	transportDialContext := pinnedDialer(dialer, u.Hostname(), addrs, t.resolver)
-	if t.dialContext != nil {
-		transportDialContext = t.dialContext
-	}
-	transport := &http.Transport{
-		DialContext: transportDialContext,
-	}
-	client := &http.Client{Timeout: timeout, Transport: transport}
+	client := newPinnedClient(u, addrs, timeout, t.resolver, t.dialContext)
 	if in.FollowRedirects != nil && !*in.FollowRedirects {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -272,6 +261,20 @@ func truncate(s string) (string, string) {
 		display = display[:maxDisplay] + "\n... output truncated"
 	}
 	return s[:maxContent] + "\n... output truncated", display
+}
+
+// newPinnedClient creates an HTTP client with DNS-pinned dialing to prevent
+// SSRF via DNS rebinding. The dialOverride parameter is a test seam.
+func newPinnedClient(u *url.URL, addrs []net.IPAddr, timeout time.Duration, resolver ResolveFunc, dialOverride func(context.Context, string, string) (net.Conn, error)) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	dc := pinnedDialer(dialer, u.Hostname(), addrs, resolver)
+	if dialOverride != nil {
+		dc = dialOverride
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{DialContext: dc},
+	}
 }
 
 func validateTarget(ctx context.Context, u *url.URL, resolve ResolveFunc) ([]net.IPAddr, error) {
