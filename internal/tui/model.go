@@ -411,6 +411,11 @@ func (m *Model) TermCaps() *terminal.Caps {
 	return m.termCaps
 }
 
+// SetCheckpointManager sets the checkpoint manager for undo/rewind support.
+func (m *Model) SetCheckpointManager(mgr *checkpoint.Manager) {
+	m.checkpointMgr = mgr
+}
+
 // SetCmuxClient sets the cmux client for rich sidebar/notification dispatch.
 // Pass nil when not running inside cmux.
 func (m *Model) SetCmuxClient(client cmux.Caller) {
