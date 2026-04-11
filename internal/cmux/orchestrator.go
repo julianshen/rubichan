@@ -1,6 +1,7 @@
 package cmux
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -90,11 +91,14 @@ func (o *Orchestrator) Dispatch(direction, command string) (*Task, error) {
 // are appended to the matching task's Logs.
 //
 // Wait returns when all tasks have finished (status != "running"), or returns
-// an error if timeout elapses first.
-func (o *Orchestrator) Wait(timeout time.Duration) ([]Task, error) {
+// an error if the context is cancelled or timeout elapses first.
+func (o *Orchestrator) Wait(ctx context.Context, timeout time.Duration) ([]Task, error) {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("cmux: orchestrator: %w", err)
+		}
 		if err := o.poll(); err != nil {
 			return nil, err
 		}
@@ -117,12 +121,15 @@ func (o *Orchestrator) Wait(timeout time.Duration) ([]Task, error) {
 }
 
 // WaitAny polls SidebarState every pollRate and returns as soon as any task
-// completes (status != "running"). Returns an error if timeout elapses before
-// any task completes.
-func (o *Orchestrator) WaitAny(timeout time.Duration) (*Task, error) {
+// completes (status != "running"). Returns an error if the context is cancelled
+// or timeout elapses before any task completes.
+func (o *Orchestrator) WaitAny(ctx context.Context, timeout time.Duration) (*Task, error) {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("cmux: orchestrator: %w", err)
+		}
 		if err := o.poll(); err != nil {
 			return nil, err
 		}

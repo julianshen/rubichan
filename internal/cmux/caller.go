@@ -10,12 +10,14 @@ type Caller interface {
 	Identity() *Identity
 }
 
-// CallerNotify sends a notification via any Caller. Errors are intentionally
-// suppressed — notifications are best-effort.
-func CallerNotify(c Caller, title, subtitle, body string) {
-	c.Call("notification.create", map[string]string{ //nolint:errcheck
+// CallerNotify sends a notification via any Caller.
+// Returns true if the notification was accepted (resp.OK), false on any failure.
+// Callers can use the return value to fall back to terminal notifications.
+func CallerNotify(c Caller, title, subtitle, body string) bool {
+	resp, err := c.Call("notification.create", map[string]string{
 		"title": title, "subtitle": subtitle, "body": body,
 	})
+	return err == nil && resp.OK
 }
 
 // CallerSetProgress sets the sidebar progress via any Caller. Best-effort.

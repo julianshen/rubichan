@@ -1,6 +1,7 @@
 package cmux_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOrchestrator_DispatchAndWait dispatches two tasks and verifies that Wait
-// correctly resolves both tasks when the log sequence delivers their signals.
+// TestOrchestrator_DispatchAndWait dispatches one task and verifies that Wait
+// correctly resolves it when the log sequence delivers the completion signal.
 func TestOrchestrator_DispatchAndWait(t *testing.T) {
 	mc := cmuxtest.NewMockClient()
 	mc.SetResult("surface.split", cmux.Surface{ID: "surf-1", Type: "terminal"})
@@ -38,7 +39,7 @@ func TestOrchestrator_DispatchAndWait(t *testing.T) {
 	assert.Equal(t, "surface.send_text", calls[1].Method)
 	assert.Equal(t, "surface.send_key", calls[2].Method)
 
-	results, err := orch.Wait(5 * time.Second)
+	results, err := orch.Wait(context.Background(), 5*time.Second)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "done", results[0].Status)
@@ -76,7 +77,7 @@ func TestOrchestrator_DispatchMultiple(t *testing.T) {
 		},
 	})
 
-	results, err := orch.Wait(5 * time.Second)
+	results, err := orch.Wait(context.Background(), 5*time.Second)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
@@ -104,7 +105,7 @@ func TestOrchestrator_Timeout(t *testing.T) {
 	_, err := orch.Dispatch("right", "sleep 999")
 	require.NoError(t, err)
 
-	_, err = orch.Wait(100 * time.Millisecond)
+	_, err = orch.Wait(context.Background(), 100*time.Millisecond)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timeout")
 }
@@ -127,7 +128,7 @@ func TestOrchestrator_WaitAny(t *testing.T) {
 	_, err := orch.Dispatch("right", "echo task1")
 	require.NoError(t, err)
 
-	task, err := orch.WaitAny(5 * time.Second)
+	task, err := orch.WaitAny(context.Background(), 5*time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, "done", task.Status)
 }
@@ -198,9 +199,31 @@ func TestOrchestrator_WaitAnyTimeout(t *testing.T) {
 	_, err := orch.Dispatch("right", "sleep 999")
 	require.NoError(t, err)
 
-	_, err = orch.WaitAny(100 * time.Millisecond)
+	_, err = orch.WaitAny(context.Background(), 100*time.Millisecond)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timeout")
+}
+
+// TestOrchestrator_WaitContextCancelled verifies Wait returns on context cancellation.
+func TestOrchestrator_WaitContextCancelled(t *testing.T) {
+	mc := cmuxtest.NewMockClient()
+	mc.SetResult("surface.split", cmux.Surface{ID: "surf-1", Type: "terminal"})
+	mc.SetResult("surface.send_text", true)
+	mc.SetResult("surface.send_key", true)
+	mc.SetResult("sidebar-state", cmux.SidebarState{})
+
+	orch := cmux.NewOrchestrator(mc)
+	orch.SetPollRate(10 * time.Millisecond)
+
+	_, err := orch.Dispatch("right", "sleep 999")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err = orch.Wait(ctx, 5*time.Second)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canceled")
 }
 
 // TestOrchestrator_PollOKFalse verifies Wait returns an error when poll gets OK:false.
@@ -217,7 +240,7 @@ func TestOrchestrator_PollOKFalse(t *testing.T) {
 	_, err := orch.Dispatch("right", "echo task1")
 	require.NoError(t, err)
 
-	_, err = orch.Wait(5 * time.Second)
+	_, err = orch.Wait(context.Background(), 5*time.Second)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "poll")
 	assert.Contains(t, err.Error(), "sidebar unavailable")

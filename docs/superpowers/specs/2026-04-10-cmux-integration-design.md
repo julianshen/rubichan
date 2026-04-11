@@ -230,10 +230,9 @@ All cmux tools require `cmux:control` permission — user must approve.
 
 ```go
 caps := terminal.Detect()
-var cmuxClient *cmux.Client
-if caps.CmuxSocket {
-    cmuxClient, _ = cmux.Dial(cmux.SocketPath())
-    defer cmuxClient.Close()
+cmuxClient, closeCmux := dialCmux(caps) // returns (Caller, func())
+defer closeCmux()
+if cmuxClient != nil {
     registry.Register(tools.NewCmuxBrowserNavigate(cmuxClient))
     // ... register all cmux tools
 }

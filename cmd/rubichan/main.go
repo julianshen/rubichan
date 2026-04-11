@@ -27,6 +27,7 @@ import (
 	"github.com/sourcegraph/conc"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/hooks"
@@ -58,7 +59,6 @@ import (
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
-	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/browser"
 	dbtools "github.com/julianshen/rubichan/internal/tools/db"
@@ -1873,8 +1873,10 @@ func runInteractive() error {
 			tools.NewCmuxOrchestrate(cmuxClient),
 		}
 		for _, t := range cmuxTools {
-			if err := registry.Register(t); err != nil {
-				log.Printf("warning: registering cmux tool %q: %v", t.Name(), err)
+			if toolsCfg.ShouldEnable(t.Name()) {
+				if err := registry.Register(t); err != nil {
+					log.Printf("warning: registering cmux tool %q: %v", t.Name(), err)
+				}
 			}
 		}
 	}
@@ -2315,16 +2317,16 @@ func runHeadless() error {
 	}
 
 	// Terminal notifications for headless completion.
-	if cmuxClient != nil {
-		cmux.CallerNotify(cmuxClient, "Rubichan", "Code Review", "Code review complete")
-		if secReport != nil {
-			summary := secReport.Summary()
-			highSeverityCount := summary.Critical + summary.High
-			if highSeverityCount > 0 {
-				cmux.CallerNotify(cmuxClient, "Rubichan", "", fmt.Sprintf("%d high-severity security findings detected", highSeverityCount))
-			}
+	// Try cmux first; fall back to OSC terminal notifications on failure.
+	notified := cmuxClient != nil && cmux.CallerNotify(cmuxClient, "Rubichan", "Code Review", "Code review complete")
+	if cmuxClient != nil && secReport != nil {
+		summary := secReport.Summary()
+		highSeverityCount := summary.Critical + summary.High
+		if highSeverityCount > 0 {
+			cmux.CallerNotify(cmuxClient, "Rubichan", "", fmt.Sprintf("%d high-severity security findings detected", highSeverityCount))
 		}
-	} else if caps.Notifications {
+	}
+	if !notified && caps.Notifications {
 		terminal.Notify(os.Stderr, "Code review complete")
 		if secReport != nil {
 			summary := secReport.Summary()

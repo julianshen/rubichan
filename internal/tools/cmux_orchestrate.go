@@ -97,7 +97,7 @@ func (t *CmuxOrchestrateTool) Execute(ctx context.Context, input json.RawMessage
 		}
 	}
 
-	results, err := orch.Wait(timeout)
+	results, err := orch.Wait(ctx, timeout)
 	if err != nil {
 		return ToolResult{Content: fmt.Sprintf("orchestration failed: %s", err), IsError: true}, nil
 	}
