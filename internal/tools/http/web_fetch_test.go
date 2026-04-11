@@ -151,7 +151,7 @@ func TestWebFetchSkipsBinaryContent(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/llms.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Write([]byte{0x00, 0x01, 0x02})
+		_, _ = w.Write([]byte{0x00, 0x01, 0x02})
 	})
 	mux.HandleFunc("/file", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -326,7 +326,7 @@ func TestWebFetchSetsAcceptHeader(t *testing.T) {
 
 	tool := newTestWebFetchTool(srv)
 	input, _ := json.Marshal(webFetchInput{URL: srv.URL + "/"})
-	tool.Execute(context.Background(), input)
+	_, _ = tool.Execute(context.Background(), input)
 
 	assert.True(t, strings.Contains(gotAccept, "text/markdown"))
 }
