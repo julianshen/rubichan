@@ -95,3 +95,50 @@ func TestCompactCommandError(t *testing.T) {
 	_, err := cmd.Execute(context.Background(), nil)
 	assert.Error(t, err)
 }
+
+func TestContextCommandDescription(t *testing.T) {
+	cmd := commands.NewContextCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestContextCommandArguments(t *testing.T) {
+	cmd := commands.NewContextCommand(nil)
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestContextCommandComplete(t *testing.T) {
+	cmd := commands.NewContextCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+func TestCompactCommandDescription(t *testing.T) {
+	cmd := commands.NewCompactCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestCompactCommandArguments(t *testing.T) {
+	cmd := commands.NewCompactCommand(nil)
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestCompactCommandComplete(t *testing.T) {
+	cmd := commands.NewCompactCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+func TestFormatNumNegativeExternal(t *testing.T) {
+	// Use a budget where conversation exceeds total, forcing remaining negative.
+	budget := agentsdk.ContextBudget{
+		Total:            1000,
+		MaxOutputTokens:  0,
+		SystemPrompt:     200,
+		SkillPrompts:     200,
+		ToolDescriptions: 200,
+		Conversation:     800,
+	}
+	cmd := commands.NewContextCommand(func() agentsdk.ContextBudget { return budget })
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	// Remaining is clamped to 0 but all usage rows should render with commas when >= 1000.
+	assert.Contains(t, result.Output, "1,000")
+}

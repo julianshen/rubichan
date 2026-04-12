@@ -85,3 +85,66 @@ func TestForkCommandError(t *testing.T) {
 	_, err := cmd.Execute(context.Background(), nil)
 	assert.Error(t, err)
 }
+
+func TestSessionsCommandDescription(t *testing.T) {
+	cmd := commands.NewSessionsCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestSessionsCommandArguments(t *testing.T) {
+	cmd := commands.NewSessionsCommand(nil)
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestSessionsCommandComplete(t *testing.T) {
+	cmd := commands.NewSessionsCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+func TestSessionsCommandError(t *testing.T) {
+	cmd := commands.NewSessionsCommand(func() ([]store.Session, error) {
+		return nil, fmt.Errorf("db error")
+	})
+	_, err := cmd.Execute(context.Background(), nil)
+	assert.Error(t, err)
+}
+
+func TestSessionsCommandUntitledSession(t *testing.T) {
+	sessions := []store.Session{
+		{ID: "abc-12345", Title: "", Model: "claude", UpdatedAt: time.Now()},
+	}
+	cmd := commands.NewSessionsCommand(func() ([]store.Session, error) {
+		return sessions, nil
+	})
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "(untitled)")
+}
+
+func TestSessionsCommandShortForkedFromID(t *testing.T) {
+	// ForkedFrom ID <= 8 chars should be shown in full.
+	sessions := []store.Session{
+		{ID: "abc-12345", Title: "Test", Model: "claude", UpdatedAt: time.Now(), ForkedFrom: "short"},
+	}
+	cmd := commands.NewSessionsCommand(func() ([]store.Session, error) {
+		return sessions, nil
+	})
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "forked from short")
+}
+
+func TestForkCommandDescription(t *testing.T) {
+	cmd := commands.NewForkCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestForkCommandArguments(t *testing.T) {
+	cmd := commands.NewForkCommand(nil)
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestForkCommandComplete(t *testing.T) {
+	cmd := commands.NewForkCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}

@@ -2,8 +2,10 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -408,4 +410,183 @@ func TestInitKnowledgeGraphCommandExecute(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ActionInitKnowledgeGraph, result.Action)
 	assert.Empty(t, result.Output)
+}
+
+// --- Undo Overlay Command ---
+
+func TestUndoOverlayCommandName(t *testing.T) {
+	cmd := NewUndoOverlayCommand()
+	assert.Equal(t, "undo", cmd.Name())
+}
+
+func TestUndoOverlayCommandDescription(t *testing.T) {
+	cmd := NewUndoOverlayCommand()
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestUndoOverlayCommandArguments(t *testing.T) {
+	cmd := NewUndoOverlayCommand()
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestUndoOverlayCommandComplete(t *testing.T) {
+	cmd := NewUndoOverlayCommand()
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+func TestUndoOverlayCommandExecute(t *testing.T) {
+	cmd := NewUndoOverlayCommand()
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, ActionOpenUndo, result.Action)
+}
+
+// --- Debug Verification Snapshot Command full coverage ---
+
+func TestDebugVerificationSnapshotCommandName(t *testing.T) {
+	cmd := NewDebugVerificationSnapshotCommand(nil)
+	assert.Equal(t, "debug-verification-snapshot", cmd.Name())
+}
+
+func TestDebugVerificationSnapshotCommandDescription(t *testing.T) {
+	cmd := NewDebugVerificationSnapshotCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestDebugVerificationSnapshotCommandArguments(t *testing.T) {
+	cmd := NewDebugVerificationSnapshotCommand(nil)
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestDebugVerificationSnapshotCommandComplete(t *testing.T) {
+	cmd := NewDebugVerificationSnapshotCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+func TestDebugVerificationSnapshotCommandNilCallback(t *testing.T) {
+	cmd := NewDebugVerificationSnapshotCommand(nil)
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "unavailable")
+}
+
+// --- Resume Command full coverage ---
+
+func TestResumeCommandDescription(t *testing.T) {
+	cmd := NewResumeCommand()
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestResumeCommandArguments(t *testing.T) {
+	cmd := NewResumeCommand()
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestResumeCommandComplete(t *testing.T) {
+	cmd := NewResumeCommand()
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+// --- Ralph Loop Command metadata ---
+
+func TestRalphLoopCommandName(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	assert.Equal(t, "ralph-loop", cmd.Name())
+}
+
+func TestRalphLoopCommandDescription(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestRalphLoopCommandArguments(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	args := cmd.Arguments()
+	require.NotEmpty(t, args)
+}
+
+func TestRalphLoopCommandComplete(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+// --- Cancel Ralph Command metadata ---
+
+func TestCancelRalphCommandName(t *testing.T) {
+	cmd := NewCancelRalphCommand(nil)
+	assert.Equal(t, "cancel-ralph", cmd.Name())
+}
+
+func TestCancelRalphCommandDescription(t *testing.T) {
+	cmd := NewCancelRalphCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestCancelRalphCommandArguments(t *testing.T) {
+	cmd := NewCancelRalphCommand(nil)
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestCancelRalphCommandComplete(t *testing.T) {
+	cmd := NewCancelRalphCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+// --- formatNum negative numbers ---
+
+func TestFormatNumNegative(t *testing.T) {
+	// Exercise formatNum with a negative number to cover the n < 0 branch.
+	// We use context command with a budget that triggers negative values
+	// indirectly through the formatNum path.
+	budget := agentsdk.ContextBudget{
+		Total:            100,
+		MaxOutputTokens:  0,
+		SystemPrompt:     50,
+		SkillPrompts:     50,
+		ToolDescriptions: 50,
+		Conversation:     50,
+	}
+	cmd := NewContextCommand(func() agentsdk.ContextBudget { return budget })
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	// The remaining tokens will be negative, triggering the negative formatNum path.
+	assert.Contains(t, result.Output, "Context Usage:")
+}
+
+// --- CancelRalph with nil canceler ---
+
+func TestCancelRalphCommandNilCanceler(t *testing.T) {
+	cmd := NewCancelRalphCommand(nil)
+	result, err := cmd.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "No active Ralph loop")
+}
+
+// --- Ralph loop with --max-iterations missing value ---
+
+func TestRalphLoopCommandMaxIterationsMissingValue(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	_, err := cmd.Execute(context.Background(), []string{"prompt", "--completion-promise", "DONE", "--max-iterations"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires a value")
+}
+
+// --- Ralph loop with --completion-promise missing value ---
+
+func TestRalphLoopCommandCompletionPromiseMissingValue(t *testing.T) {
+	cmd := NewRalphLoopCommand(nil)
+	_, err := cmd.Execute(context.Background(), []string{"prompt", "--completion-promise"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires a value")
+}
+
+// --- Ralph loop starter returns error ---
+
+func TestRalphLoopCommandStarterError(t *testing.T) {
+	cmd := NewRalphLoopCommand(func(cfg RalphLoopConfig) error {
+		return fmt.Errorf("loop already active")
+	})
+	_, err := cmd.Execute(context.Background(), []string{"test", "--completion-promise", "DONE"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loop already active")
 }

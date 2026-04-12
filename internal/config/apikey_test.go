@@ -106,3 +106,72 @@ func TestHasUsableCredentialsForProviderZaiEnv(t *testing.T) {
 	t.Setenv("Z_AI_API_KEY", "zai-env-key")
 	assert.True(t, HasUsableCredentialsForProvider(cfg, "zai"))
 }
+
+func TestHasUsableCredentialsNilConfig(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, HasUsableCredentialsForProvider(nil, "anthropic"))
+}
+
+func TestHasUsableCredentialsForDefaultProviderNilConfig(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, HasUsableCredentialsForDefaultProvider(nil))
+}
+
+func TestHasUsableCredentialsForProviderOllama(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	// Ollama always returns true (no API key needed).
+	assert.True(t, HasUsableCredentialsForProvider(cfg, "ollama"))
+}
+
+func TestHasUsableCredentialsForProviderUnknown(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	assert.False(t, HasUsableCredentialsForProvider(cfg, "nonexistent-provider"))
+}
+
+func TestHasUsableCredentialsForProviderOpenAINoMatch(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	cfg.Provider.OpenAI = []OpenAICompatibleConfig{
+		{Name: "openai", APIKeySource: "config", APIKey: "sk-test"},
+	}
+	// Looking for "openrouter" should not match "openai".
+	assert.False(t, HasUsableCredentialsForProvider(cfg, "openrouter"))
+}
+
+func TestResolveAPIKeyKeyringFallback(t *testing.T) {
+	// "keyring" source falls back to env lookup.
+	t.Setenv("TEST_KEYRING_KEY", "sk-keyring")
+	key, err := ResolveAPIKey("keyring", "", "TEST_KEYRING_KEY")
+	require.NoError(t, err)
+	assert.Equal(t, "sk-keyring", key)
+}
+
+func TestResolveFromEnvEmptyVarName(t *testing.T) {
+	t.Parallel()
+
+	_, err := ResolveAPIKey("env", "", "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no environment variable name specified")
+}
+
+func TestOpenAICompatibleEnvVarSpecialCharsOnly(t *testing.T) {
+	t.Parallel()
+
+	// A name with only special characters normalizes to empty.
+	assert.Equal(t, "", OpenAICompatibleEnvVar("---"))
+}
+
+func TestOpenAICompatibleEnvVarConsecutiveSpecialChars(t *testing.T) {
+	t.Parallel()
+
+	// Consecutive special chars should not produce consecutive underscores.
+	result := OpenAICompatibleEnvVar("my..provider")
+	assert.Equal(t, "MY_PROVIDER_API_KEY", result)
+}

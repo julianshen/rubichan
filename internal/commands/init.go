@@ -12,7 +12,7 @@ import (
 
 // ProjectInfo holds detected information about a project.
 type ProjectInfo struct {
-	Description string   // user-provided project description
+	Description string // user-provided project description
 	Languages   []string
 	BuildCmds   []string
 	TestCmds    []string
