@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	changelogMarker        = "## Change History"
-	maxChangelogEntries    = 50
-	maxLinesForDiff        = 500
-	defaultChangelogConc   = 5
+	changelogMarker      = "## Change History"
+	maxChangelogEntries  = 50
+	maxLinesForDiff      = 500
+	defaultChangelogConc = 5
 )
 
 // ApplyChangelog compares each new document against existing content and

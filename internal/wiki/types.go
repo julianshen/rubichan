@@ -56,16 +56,16 @@ type Document struct {
 
 // WikiResult summarises the outcome of a successful wiki generation run.
 type WikiResult struct {
-	OutputDir     string   `json:"output_dir"`
-	Format        string   `json:"format"`
-	Documents     int      `json:"documents"`
+	OutputDir          string   `json:"output_dir"`
+	Format             string   `json:"format"`
+	Documents          int      `json:"documents"`
 	NewDocuments       int      `json:"new_documents"`
 	UpdatedDocuments   int      `json:"updated_documents"`
 	UnchangedDocuments int      `json:"unchanged_documents"`
-	Diagrams      int      `json:"diagrams"`
-	DurationMs    int64    `json:"duration_ms"`
-	APISurfaces   []string `json:"api_surfaces,omitempty"`
-	SecurityDepth []string `json:"security_depth,omitempty"`
+	Diagrams           int      `json:"diagrams"`
+	DurationMs         int64    `json:"duration_ms"`
+	APISurfaces        []string `json:"api_surfaces,omitempty"`
+	SecurityDepth      []string `json:"security_depth,omitempty"`
 }
 
 // SkillWikiSection holds a wiki contribution from a skill.

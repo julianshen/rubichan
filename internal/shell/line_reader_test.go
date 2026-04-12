@@ -46,7 +46,7 @@ func TestShellHostUsesLineReader(t *testing.T) {
 
 	var readLines []string
 	mockReader := &mockLineReader{
-		lines: []string{"echo hello", "exit"},
+		lines:     []string{"echo hello", "exit"},
 		readLines: &readLines,
 	}
 
