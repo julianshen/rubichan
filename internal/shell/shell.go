@@ -55,17 +55,17 @@ type ShellHost struct {
 
 // ShellHostConfig configures the shell host.
 type ShellHostConfig struct {
-	WorkDir        string
-	HomeDir        string
-	AgentTurn      AgentTurnFunc
-	ShellExec      ShellExecFunc
-	SlashCommandFn SlashCommandFunc
-	Executables    map[string]bool
-	MaxHistory     int
-	Stdin          io.Reader
-	Stdout         io.Writer
-	Stderr         io.Writer
-	GitBranchFn    func(string) string
+	WorkDir           string
+	HomeDir           string
+	AgentTurn         AgentTurnFunc
+	ShellExec         ShellExecFunc
+	SlashCommandFn    SlashCommandFunc
+	Executables       map[string]bool
+	MaxHistory        int
+	Stdin             io.Reader
+	Stdout            io.Writer
+	Stderr            io.Writer
+	GitBranchFn       func(string) string
 	ErrorAnalysis     bool
 	ScriptApprovalFn  func(ctx context.Context, script string) (bool, string, error)
 	PackageManager    *PackageManager

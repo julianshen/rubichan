@@ -418,3 +418,227 @@ func TestTaskCompletedEventMaps(t *testing.T) {
 		assert.False(t, result.Cancel)
 	}
 }
+
+// --- ParseHookTimeout edge cases ---
+
+func TestParseHookTimeoutUnparseable(t *testing.T) {
+	// An unparseable string should return the default timeout (30s).
+	d := hooks.ParseHookTimeout("not-a-duration")
+	assert.Equal(t, 30*time.Second, d)
+}
+
+// --- extractPrimaryInput fallback paths ---
+
+func TestIfPattern_FallbackToParsedCommandField(t *testing.T) {
+	// When tool_name is an unrecognized tool (not shell/bash/file),
+	// extractPrimaryInput should fall through to the fallback "command" field.
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_tool", If: "git *", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// Use an unknown tool name, but provide a "command" field in the input JSON.
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "custom_tool", "input": `{"command":"git status"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "fallback command extraction should match 'git *'")
+}
+
+func TestIfPattern_FallbackToPathField(t *testing.T) {
+	// When tool_name is unrecognized, and no "command" field exists,
+	// extractPrimaryInput should try "path" as a fallback.
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_tool", If: "*.go", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "custom_tool", "input": `{"path":"main.go"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "fallback path extraction should match '*.go'")
+}
+
+func TestIfPattern_NilParsedData(t *testing.T) {
+	// When input JSON is not valid, extractPrimaryInput returns "".
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_tool", If: "Bash(git *)", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "shell", "input": "not-json"},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel, "unparseable input should not match")
+	}
+}
+
+// --- globMatch edge cases ---
+
+func TestGlobMatchBasePathFallback(t *testing.T) {
+	// globMatch should try matching against the basename when the full
+	// path doesn't match. E.g., "*.go" should match "src/internal/main.go"
+	// because filepath.Base("src/internal/main.go") = "main.go".
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_tool", If: "*.go", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"path":"src/internal/main.go"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "*.go should match basename of src/internal/main.go")
+}
+
+// --- filterFileWritePatch edge cases ---
+
+func TestPreEditInvalidJSON(t *testing.T) {
+	// filterFileWritePatch should return false for invalid JSON input.
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_edit", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": "not-json"},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel, "invalid JSON should not trigger pre_edit")
+	}
+}
+
+func TestPreEditPatchOperation(t *testing.T) {
+	// filterFileWritePatch should accept "patch" operations, not just "write".
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_edit", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"patch","path":"main.go"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "patch operation should trigger pre_edit")
+}
+
+func TestPostEditFiltersByPattern(t *testing.T) {
+	// post_edit with a pattern should match write operations and the glob.
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "post_edit", Pattern: "*.py", Command: "echo formatted", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// Should NOT fire for a .go file.
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnAfterToolResult,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"operation":"write","path":"main.go"}`},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.Nil(t, result.Modified, "pattern *.py should not match main.go")
+	}
+}
+
+// --- Hook with nil context ---
+
+func TestRunnerNilContextUsesBackground(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "session_start", Command: "echo hello", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	// Dispatch with nil Ctx should not panic — runner falls back to context.Background().
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnConversationStart,
+		Ctx:   nil,
+	})
+	require.NoError(t, err)
+	_ = result
+}
+
+// --- Empty event data should still pass (no stdin piped) ---
+
+func TestRunnerEmptyEventData(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "session_start", Command: "echo ok", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnConversationStart,
+		Ctx:   context.Background(),
+		Data:  map[string]any{},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel)
+	}
+}
+
+// --- matchesIfPattern bare glob (no parentheses) ---
+
+func TestIfPattern_BareGlobMatchesAnyTool(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	// Bare glob "*.go" without ToolName() wrapper — should match any tool.
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_tool", If: "*.go", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforeToolCall,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"tool_name": "file", "input": `{"path":"main.go"}`},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Cancel, "bare glob *.go should match file tool with path main.go")
+}
+
+// --- LoadHooksTOML read error (permissions) ---
+
+func TestLoadHooksTOMLReadError(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, ".agent")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+
+	hookFile := filepath.Join(agentDir, "hooks.toml")
+	require.NoError(t, os.WriteFile(hookFile, []byte("[[hooks]]\nevent = \"setup\"\ncommand = \"echo ok\"\n"), 0o644))
+	require.NoError(t, os.Chmod(hookFile, 0o000))
+	defer os.Chmod(hookFile, 0o644)
+
+	_, err := hooks.LoadHooksTOML(dir)
+	assert.Error(t, err, "should fail when file is unreadable")
+	assert.Contains(t, err.Error(), "reading")
+}

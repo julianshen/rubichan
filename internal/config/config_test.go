@@ -701,6 +701,41 @@ deny_read = ["/etc/shadow", "/root"]
 	assert.Equal(t, []string{"/etc/shadow", "/root"}, cfg.Sandbox.Filesystem.DenyRead)
 }
 
+func TestLoadUnreadableFile(t *testing.T) {
+	// Create a file that exists but cannot be read (not "not found").
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[provider]\ndefault = \"anthropic\"\n"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o000))
+	defer os.Chmod(path, 0o644)
+
+	_, err := Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reading config file")
+}
+
+func TestSaveToUnwritablePath(t *testing.T) {
+	// Try to save to a path where the parent directory cannot be created.
+	// On macOS/Linux, /dev/null/impossible will fail for MkdirAll.
+	err := Save("/dev/null/impossible/config.toml", DefaultConfig())
+	require.Error(t, err)
+}
+
+func TestLoadWithInvalidSandboxConfig(t *testing.T) {
+	t.Parallel()
+
+	tomlContent := `
+[sandbox]
+excluded_commands = ["/usr/bin/git"]
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	_, err := Load(tmpFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sandbox config")
+}
+
 func TestSandboxConfigValidate(t *testing.T) {
 	t.Parallel()
 

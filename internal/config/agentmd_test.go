@@ -155,3 +155,74 @@ func TestLoadAgentMDStripsHookFrontmatter(t *testing.T) {
 	assert.Contains(t, body, "# Instructions")
 	assert.NotContains(t, body, "hooks:")
 }
+
+func TestSplitFrontmatterEndOfFile(t *testing.T) {
+	t.Parallel()
+
+	// When frontmatter ends at EOF (no trailing content after closing ---).
+	content := "---\nkey: value\n---"
+	body, fm := splitFrontmatter(content)
+	assert.Equal(t, "key: value", fm)
+	assert.Empty(t, body)
+}
+
+func TestSplitFrontmatterNoClosing(t *testing.T) {
+	t.Parallel()
+
+	// Opening --- but no closing --- means no frontmatter.
+	content := "---\nkey: value\nno closing marker"
+	body, fm := splitFrontmatter(content)
+	assert.Equal(t, content, body)
+	assert.Empty(t, fm)
+}
+
+func TestLoadAgentMDWithHooksInvalidYAML(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Valid frontmatter delimiters but invalid YAML inside.
+	os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("---\nhooks: [invalid yaml: {{{\n---\n\n# Body\n"), 0644)
+
+	_, _, err := LoadAgentMDWithHooks(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing AGENT.md frontmatter")
+}
+
+func TestLoadOptionalMarkdownRejectsSymlink(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior requires elevated privileges on Windows")
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	require.NoError(t, os.WriteFile(target, []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "AGENT.md")))
+
+	result, err := LoadAgentMD(dir)
+	require.Error(t, err)
+	assert.Empty(t, result)
+}
+
+func TestLoadOptionalMarkdownUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "AGENT.md")
+	require.NoError(t, os.WriteFile(path, []byte("content"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o000))
+	defer os.Chmod(path, 0o644)
+
+	_, err := LoadAgentMD(dir)
+	require.Error(t, err)
+}
+
+func TestLoadAgentMDWhitespaceOnlyFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("   \n  \t  \n"), 0o644))
+
+	result, err := LoadAgentMD(dir)
+	require.NoError(t, err)
+	assert.Empty(t, result, "whitespace-only file should return empty")
+}

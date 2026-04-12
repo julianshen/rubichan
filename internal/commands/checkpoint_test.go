@@ -84,3 +84,66 @@ func TestUndoCommandNilManager(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, result.Output, "not available")
 }
+
+func TestUndoCommandDescription(t *testing.T) {
+	cmd := commands.NewUndoCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestUndoCommandArguments(t *testing.T) {
+	cmd := commands.NewUndoCommand(nil)
+	assert.Nil(t, cmd.Arguments())
+}
+
+func TestUndoCommandComplete(t *testing.T) {
+	cmd := commands.NewUndoCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+func TestRewindCommandDescription(t *testing.T) {
+	cmd := commands.NewRewindCommand(nil)
+	assert.NotEmpty(t, cmd.Description())
+}
+
+func TestRewindCommandArguments(t *testing.T) {
+	cmd := commands.NewRewindCommand(nil)
+	args := cmd.Arguments()
+	require.Len(t, args, 1)
+	assert.Equal(t, "turn", args[0].Name)
+	assert.True(t, args[0].Required)
+}
+
+func TestRewindCommandComplete(t *testing.T) {
+	cmd := commands.NewRewindCommand(nil)
+	assert.Nil(t, cmd.Complete(context.Background(), nil))
+}
+
+func TestRewindCommandInvalidTurnNumber(t *testing.T) {
+	rootDir := t.TempDir()
+	mgr, _ := checkpoint.New(rootDir, "cmd-rewind-invalid", 0)
+	defer func() { _ = mgr.Cleanup() }()
+
+	cmd := commands.NewRewindCommand(mgr)
+	_, err := cmd.Execute(context.Background(), []string{"abc"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid turn number")
+}
+
+func TestRewindCommandNilManager(t *testing.T) {
+	cmd := commands.NewRewindCommand(nil)
+	result, err := cmd.Execute(context.Background(), []string{"0"})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "not available")
+}
+
+func TestRewindCommandNothingToRewind(t *testing.T) {
+	rootDir := t.TempDir()
+	mgr, _ := checkpoint.New(rootDir, "cmd-rewind-nothing", 0)
+	defer func() { _ = mgr.Cleanup() }()
+
+	cmd := commands.NewRewindCommand(mgr)
+	// No checkpoints captured, so rewind should return empty.
+	result, err := cmd.Execute(context.Background(), []string{"0"})
+	require.NoError(t, err)
+	assert.Contains(t, result.Output, "No checkpoints")
+}

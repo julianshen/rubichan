@@ -10,11 +10,11 @@ import (
 
 // Rendering constants for tool display
 const (
-	toolCollapsedMarker  = "▶"
-	toolExpandedMarker   = "▼"
-	toolBoxTopBorder     = "╭──────────────────────────╮"
-	toolBoxBottomBorder  = "╰──────────────────────────╯"
-	thinkingBlockHeader  = "🧠 Thinking..."
+	toolCollapsedMarker = "▶"
+	toolExpandedMarker  = "▼"
+	toolBoxTopBorder    = "╭──────────────────────────╮"
+	toolBoxBottomBorder = "╰──────────────────────────╯"
+	thinkingBlockHeader = "🧠 Thinking..."
 )
 
 // TurnRenderer encapsulates all turn rendering logic.

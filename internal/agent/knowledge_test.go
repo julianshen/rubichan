@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/tools"
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
-	"github.com/julianshen/rubichan/internal/tools"
 )
 
 type mockSelector struct {
@@ -231,12 +231,12 @@ func TestBuildSystemPromptBudgetPassedToSelector(t *testing.T) {
 
 // recordingSelector tracks RecordUsage calls for testing
 type recordingSelector struct {
-	selectCalled    bool
-	recordedOnce    bool
-	lastRecorded    []kg.ScoredEntity
-	results         []kg.ScoredEntity
-	selectErr       error
-	recordUsageErr  error
+	selectCalled   bool
+	recordedOnce   bool
+	lastRecorded   []kg.ScoredEntity
+	results        []kg.ScoredEntity
+	selectErr      error
+	recordUsageErr error
 }
 
 func (r *recordingSelector) Select(ctx context.Context, query string, budget int) ([]kg.ScoredEntity, error) {

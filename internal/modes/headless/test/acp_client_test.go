@@ -108,23 +108,23 @@ func TestACPClientConcurrentIDGeneration(t *testing.T) {
 func TestRunCodeReviewWithTransport(t *testing.T) {
 	t.Skip("full transport loop requires server integration - tested in e2e")
 	/*
-	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
-	client, err := headless.NewACPClient(server)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-	defer client.Close()
+		registry := acp.NewCapabilityRegistry()
+		server := acp.NewServer(registry)
+		client, err := headless.NewACPClient(server)
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer client.Close()
 
-	resp, err := client.RunCodeReview("func test() { return 1; }")
-	if err != nil {
-		// Expected to timeout since there's no real server - this is normal
-		t.Logf("RunCodeReview timed out as expected (no server running): %v", err)
-		return
-	}
-	if resp == nil {
-		t.Error("response is nil")
-	}
+		resp, err := client.RunCodeReview("func test() { return 1; }")
+		if err != nil {
+			// Expected to timeout since there's no real server - this is normal
+			t.Logf("RunCodeReview timed out as expected (no server running): %v", err)
+			return
+		}
+		if resp == nil {
+			t.Error("response is nil")
+		}
 	*/
 }
 
@@ -133,22 +133,22 @@ func TestRunCodeReviewWithTransport(t *testing.T) {
 func TestRunSecurityScanWithTransport(t *testing.T) {
 	t.Skip("full transport loop requires server integration - tested in e2e")
 	/*
-	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
-	client, err := headless.NewACPClient(server)
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
-	defer client.Close()
+		registry := acp.NewCapabilityRegistry()
+		server := acp.NewServer(registry)
+		client, err := headless.NewACPClient(server)
+		if err != nil {
+			t.Fatalf("failed to create client: %v", err)
+		}
+		defer client.Close()
 
-	resp, err := client.RunSecurityScan(false)
-	if err != nil {
-		// Expected to timeout since there's no real server - this is normal
-		t.Logf("RunSecurityScan timed out as expected (no server running): %v", err)
-		return
-	}
-	if resp == nil {
-		t.Error("response is nil")
-	}
+		resp, err := client.RunSecurityScan(false)
+		if err != nil {
+			// Expected to timeout since there's no real server - this is normal
+			t.Logf("RunSecurityScan timed out as expected (no server running): %v", err)
+			return
+		}
+		if resp == nil {
+			t.Error("response is nil")
+		}
 	*/
 }

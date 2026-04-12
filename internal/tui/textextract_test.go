@@ -66,8 +66,8 @@ func TestExtractSelectedText_MultiLine(t *testing.T) {
 		"baz qux",
 	}
 	sel := MouseSelection{
-		Start:  Position{Line: 0, Col: 6},  // "world"
-		End:    Position{Line: 2, Col: 3},  // "baz"
+		Start:  Position{Line: 0, Col: 6}, // "world"
+		End:    Position{Line: 2, Col: 3}, // "baz"
 		Active: true,
 	}
 	text := extractSelectedText(lines, sel)
