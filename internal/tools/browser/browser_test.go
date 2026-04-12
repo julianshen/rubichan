@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -1610,6 +1611,10 @@ func chromeAvailable() bool {
 		if _, err := exec.LookPath(name); err == nil {
 			return true
 		}
+	}
+	// macOS default install path — chromedp discovers this automatically.
+	if _, err := os.Stat("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"); err == nil {
+		return true
 	}
 	return false
 }
