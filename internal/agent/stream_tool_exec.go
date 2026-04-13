@@ -119,17 +119,17 @@ func (e *streamingToolExecutor) Drain() []toolExecResult {
 	return out
 }
 
-// surfaceStreamedResults emits synthetic tool_call + cached tool_result
-// events for tools that finished via streaming dispatch but whose
-// normal emission path (executeTools) won't run — notably the
-// stream-error branch, which discards partial blocks without reaching
-// executeTools.
+// surfaceStreamedResults is a terminal-only event flush for the
+// stream-error exit path. Without it, executeSingleTool's tool_progress
+// events from a dispatched tool have no matching tool_call or
+// tool_result and the UI sees an incomplete event loop.
 //
-// Without this, the UI sees tool_progress events (emitted by
-// executeSingleTool as the tool runs) with no matching tool_call or
-// tool_result to close them out. Each drained result is matched to
-// its pendingTools entry by ID so the tool_call event carries the
-// original Name and Input.
+// Events only — the conversation state is intentionally NOT updated
+// (no AddToolResult / persistToolResult / recordToolProgress). The
+// only caller is the streamErr branch, which discards all partial-turn
+// mutations because the assistant message was never committed. A
+// future caller that wants conversation-side persistence must not
+// reuse this helper.
 func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, drained []toolExecResult) {
 	if len(drained) == 0 {
 		return
@@ -140,14 +140,7 @@ func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUse
 	}
 	for _, r := range drained {
 		if tc, ok := byID[r.toolUseID]; ok {
-			ch <- TurnEvent{
-				Type: "tool_call",
-				ToolCall: &ToolCallEvent{
-					ID:    tc.ID,
-					Name:  tc.Name,
-					Input: tc.Input,
-				},
-			}
+			ch <- makeToolCallEvent(tc)
 		}
 		ch <- r.event
 	}

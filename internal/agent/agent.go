@@ -1653,11 +1653,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	for i, tc := range pendingTools {
 		if r, ok := streamedResults[tc.ID]; ok {
 			results[i] = r
-			// Emit the tool_call event so UIs still see it.
-			ch <- TurnEvent{
-				Type:     "tool_call",
-				ToolCall: &ToolCallEvent{ID: tc.ID, Name: tc.Name, Input: tc.Input},
-			}
+			ch <- makeToolCallEvent(tc)
 			continue
 		}
 		plannedTools = append(plannedTools, plannedToolCall{
@@ -1702,27 +1698,13 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	// Needs-approval tool_call events are emitted just before approval,
 	// matching the sequential path behavior.
 	for _, it := range autoApproved {
-		ch <- TurnEvent{
-			Type: "tool_call",
-			ToolCall: &ToolCallEvent{
-				ID:    it.tc.ID,
-				Name:  it.tc.Name,
-				Input: it.tc.Input,
-			},
-		}
+		ch <- makeToolCallEvent(it.tc)
 	}
 
 	// Emit tool_call events for auto-denied tools so headless runners can
 	// match results by call ID, then fill in denied results immediately.
 	for _, it := range autoDenied {
-		ch <- TurnEvent{
-			Type: "tool_call",
-			ToolCall: &ToolCallEvent{
-				ID:    it.tc.ID,
-				Name:  it.tc.Name,
-				Input: it.tc.Input,
-			},
-		}
+		ch <- makeToolCallEvent(it.tc)
 		results[it.index] = a.approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
 	}
 
@@ -1758,14 +1740,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		if ctx.Err() != nil {
 			return true
 		}
-		ch <- TurnEvent{
-			Type: "tool_call",
-			ToolCall: &ToolCallEvent{
-				ID:    it.tc.ID,
-				Name:  it.tc.Name,
-				Input: it.tc.Input,
-			},
-		}
+		ch <- makeToolCallEvent(it.tc)
 		results[it.index] = a.executeSingleTool(ctx, ch, it.tc)
 	}
 
@@ -1774,16 +1749,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		if ctx.Err() != nil {
 			return true
 		}
-
-		ch <- TurnEvent{
-			Type: "tool_call",
-			ToolCall: &ToolCallEvent{
-				ID:    it.tc.ID,
-				Name:  it.tc.Name,
-				Input: it.tc.Input,
-			},
-		}
-
+		ch <- makeToolCallEvent(it.tc)
 		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc, it.approvalResult)
 	}
 
@@ -1813,14 +1779,7 @@ func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- Tur
 		// Streaming dispatch already ran this tool — emit the tool_call
 		// and cached result directly without re-executing.
 		if r, ok := streamedResults[planned.tc.ID]; ok {
-			ch <- TurnEvent{
-				Type: "tool_call",
-				ToolCall: &ToolCallEvent{
-					ID:    planned.tc.ID,
-					Name:  planned.tc.Name,
-					Input: planned.tc.Input,
-				},
-			}
+			ch <- makeToolCallEvent(planned.tc)
 			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 			a.persistToolResult(r.toolUseID, r.content, r.isError)
 			ch <- r.event
@@ -1828,15 +1787,7 @@ func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- Tur
 			continue
 		}
 
-		ch <- TurnEvent{
-			Type: "tool_call",
-			ToolCall: &ToolCallEvent{
-				ID:    planned.tc.ID,
-				Name:  planned.tc.Name,
-				Input: planned.tc.Input,
-			},
-		}
-
+		ch <- makeToolCallEvent(planned.tc)
 		r := a.executeSingleToolWithApproval(ctx, ch, planned.tc, planned.approvalResult)
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
@@ -2022,6 +1973,20 @@ func makeToolResultEvent(id, name, content, displayContent string, isError bool)
 			Content:        content,
 			DisplayContent: displayContent,
 			IsError:        isError,
+		},
+	}
+}
+
+// makeToolCallEvent builds a tool_call TurnEvent from a ToolUseBlock.
+// All "about to run this tool" emission sites go through here so the
+// wire shape stays uniform.
+func makeToolCallEvent(tc provider.ToolUseBlock) TurnEvent {
+	return TurnEvent{
+		Type: "tool_call",
+		ToolCall: &ToolCallEvent{
+			ID:    tc.ID,
+			Name:  tc.Name,
+			Input: tc.Input,
 		},
 	}
 }
