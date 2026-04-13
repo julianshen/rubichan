@@ -204,18 +204,12 @@ func TestProcessSSE_ScannerError(t *testing.T) {
 		events = append(events, e)
 	}
 
-	require.GreaterOrEqual(t, len(events), 1)
-	// Find the error event.
-	var errEvt *provider.StreamEvent
-	for i := range events {
-		if events[i].Type == agentsdk.EventError {
-			errEvt = &events[i]
-			break
-		}
-	}
-	require.NotNil(t, errEvt)
+	require.Len(t, events, 1)
+	errEvt := &events[0]
+	require.Equal(t, agentsdk.EventError, errEvt.Type)
 	var pe *provider.ProviderError
 	require.ErrorAs(t, errEvt.Error, &pe)
 	assert.Equal(t, provider.ErrStreamError, pe.Kind)
 	assert.Equal(t, "openai-compat", pe.Provider)
+	assert.True(t, pe.IsRetryable())
 }
