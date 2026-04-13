@@ -1270,6 +1270,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var toolInputBuf string
 		var thinkingBuf string
 
+		// Streaming dispatch: concurrency-safe tools run in the
+		// background as their tool_use blocks finalize during the stream,
+		// overlapping with any remaining model text.
+		execStream := newStreamingToolExecutor(maxParallelTools, func(sctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+			return a.executeSingleTool(sctx, ch, tc)
+		})
+
 		finalizeTool := func() {
 			if currentTool != nil {
 				if toolInputBuf != "" {
@@ -1282,6 +1289,22 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					Name:  currentTool.Name,
 					Input: currentTool.Input,
 				})
+
+				// Streaming dispatch: if the tool is concurrency-safe
+				// and auto-approved, start executing it now so it runs
+				// in parallel with the remaining model stream.
+				if a.approvalChecker != nil {
+					if tool, ok := a.tools.Get(currentTool.Name); ok {
+						approval := a.approvalChecker.CheckApproval(currentTool.Name, currentTool.Input)
+						if isStreamingEligible(tool, approval) {
+							// Dispatch in background; executeTools
+							// will emit the tool_call event when it
+							// sees the cached result.
+							execStream.Dispatch(ctx, *currentTool)
+						}
+					}
+				}
+
 				currentTool = nil
 				toolInputBuf = ""
 			}
@@ -1378,6 +1401,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// On stream error, discard partial blocks to prevent conversation corruption
 		if streamErr {
+			// Drain background streaming dispatches before discarding
+			// their results — prevents goroutine leaks and honours the
+			// executor's semantics (Drain unconditionally waits).
+			_ = execStream.Drain()
 			// Defensive: currently a no-op because AddAssistant has not been called
 			// yet on this path, but protects against future reorderings.
 			synthesizeMissingToolResults(a.conversation, "stream error")
@@ -1429,14 +1456,27 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			a.persistMessage("assistant", blocks)
 		}
 
-		// If no pending tool calls, we're done
+		// If no pending tool calls, we're done. Drain any background
+		// dispatches so goroutines don't outlive the turn (should be
+		// empty in this branch, but Drain is cheap and safe).
 		if len(pendingTools) == 0 {
+			_ = execStream.Drain()
 			reason := agentsdk.ExitCompleted
 			if emptyResponseExit {
 				reason = agentsdk.ExitEmptyResponse
 			}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, reason)
 			return
+		}
+
+		// Drain any tools dispatched during streaming; executeTools
+		// will merge these results into its output by tool_use ID.
+		var streamedResults map[string]toolExecResult
+		if drained := execStream.Drain(); len(drained) > 0 {
+			streamedResults = make(map[string]toolExecResult, len(drained))
+			for _, r := range drained {
+				streamedResults[r.toolUseID] = r
+			}
 		}
 
 		signature := pendingToolSignature(pendingTools)
@@ -1457,14 +1497,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// the model often pairs task_complete with a final write or commit.
 		for _, tc := range pendingTools {
 			if tc.Name == tools.TaskCompleteName {
-				a.executeTools(ctx, ch, pendingTools)
+				a.executeTools(ctx, ch, pendingTools, streamedResults)
 				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete)
 				return
 			}
 		}
 
 		// Execute tool calls — parallelize auto-approved tools when possible.
-		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
+		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
 			synthesizeMissingToolResults(a.conversation, "cancelled during tool execution")
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
@@ -1591,13 +1631,53 @@ func (a *Agent) approvalToolErrorResult(tc provider.ToolUseBlock, msg string, er
 
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
 // Returns true if the context was cancelled during execution.
-func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
+//
+// streamedResults holds outcomes for tools that were already dispatched
+// during streaming (via streamingToolExecutor). Entries keyed by
+// tool_use ID are placed directly into the results slice at their
+// original position and skipped during planning/partitioning. Pass nil
+// if no streaming dispatch occurred.
+func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, streamedResults map[string]toolExecResult) bool {
 	if a.approvalChecker == nil {
 		// No checker — fall back to sequential execution.
-		return a.executePlannedToolsSequential(ctx, ch, a.planToolCalls(pendingTools))
+		return a.executePlannedToolsSequential(ctx, ch, a.planToolCalls(pendingTools), streamedResults)
 	}
 
-	plannedTools := a.planToolCalls(pendingTools)
+	// Pre-populate results for tools already executed during streaming;
+	// the remaining (planned) subset goes through the normal partition
+	// and execution path.
+	results := make([]toolExecResult, len(pendingTools))
+	plannedTools := make([]plannedToolCall, 0, len(pendingTools))
+	for i, tc := range pendingTools {
+		if r, ok := streamedResults[tc.ID]; ok {
+			results[i] = r
+			// Emit the tool_call event so UIs still see it.
+			ch <- TurnEvent{
+				Type:     "tool_call",
+				ToolCall: &ToolCallEvent{ID: tc.ID, Name: tc.Name, Input: tc.Input},
+			}
+			continue
+		}
+		plannedTools = append(plannedTools, plannedToolCall{
+			index:          i,
+			tc:             tc,
+			approvalResult: a.approvalResultForTool(tc),
+		})
+	}
+
+	// If every tool was already streamed, skip partition/execute and
+	// jump straight to result emission.
+	if len(plannedTools) == 0 {
+		for i := range pendingTools {
+			r := results[i]
+			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
+			a.persistToolResult(r.toolUseID, r.content, r.isError)
+			ch <- r.event
+			a.recordToolProgress(pendingTools[i], r)
+		}
+		a.saveSnapshotIfNeeded()
+		return false
+	}
 
 	// Partition into auto-approved and needs-approval using input-sensitive check.
 	var autoApproved, autoDenied, needsApproval []plannedToolCall
@@ -1640,9 +1720,6 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			},
 		}
 	}
-
-	// Results array indexed by original position.
-	results := make([]toolExecResult, len(pendingTools))
 
 	// Emit tool_call events for auto-denied tools so headless runners can
 	// match results by call ID, then fill in denied results immediately.
@@ -1736,10 +1813,28 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	return false
 }
 
-func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- TurnEvent, plannedTools []plannedToolCall) bool {
+func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- TurnEvent, plannedTools []plannedToolCall, streamedResults map[string]toolExecResult) bool {
 	for _, planned := range plannedTools {
 		if ctx.Err() != nil {
 			return true
+		}
+
+		// Streaming dispatch already ran this tool — emit the tool_call
+		// and cached result directly without re-executing.
+		if r, ok := streamedResults[planned.tc.ID]; ok {
+			ch <- TurnEvent{
+				Type: "tool_call",
+				ToolCall: &ToolCallEvent{
+					ID:    planned.tc.ID,
+					Name:  planned.tc.Name,
+					Input: planned.tc.Input,
+				},
+			}
+			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
+			a.persistToolResult(r.toolUseID, r.content, r.isError)
+			ch <- r.event
+			a.recordToolProgress(planned.tc, r)
+			continue
 		}
 
 		ch <- TurnEvent{

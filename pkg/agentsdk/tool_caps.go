@@ -26,3 +26,34 @@ type ResultCapped interface {
 	// Return a non-positive value to opt out (treated as exempt).
 	MaxResultBytes() int
 }
+
+// ConcurrencySafeTool is an optional extension interface. Tools that
+// implement it declare themselves safe to execute as soon as their
+// tool_use block finalizes during streaming — the agent dispatches
+// them without waiting for the full model response.
+//
+// A tool is concurrency-safe if and only if:
+//  1. It has no observable side effects on the filesystem, network,
+//     or process state (pure reads).
+//  2. Its result depends only on the input and on external state that
+//     won't be mutated by another concurrently-dispatched tool.
+//  3. Re-ordering it with respect to sibling tool calls in the same
+//     response is a no-op as far as the user is concerned.
+//
+// Tools that return false (or don't implement the interface) are
+// queued and executed after the stream completes, in declaration
+// order, via the normal executeTools pipeline.
+//
+// Examples of safe tools: read_file, grep, glob, list_dir, code_search,
+// http_get.
+//
+// Examples of unsafe tools: write_file, patch_file, shell, edit, git,
+// database writes, anything with network side effects.
+//
+// This matches Claude Code's StreamingToolExecutor in query.ts: "A tool
+// is dispatched as soon as its tool_use block is finalized during the
+// stream; by the time the model finishes post-tool text, the file
+// contents are already in memory."
+type ConcurrencySafeTool interface {
+	IsConcurrencySafe() bool
+}

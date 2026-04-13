@@ -26,6 +26,11 @@ func NewToolSearchTool(s ToolSearcher) *ToolSearchTool {
 
 func (t *ToolSearchTool) Name() string { return "tool_search" }
 
+// IsConcurrencySafe declares this tool eligible for streaming dispatch.
+// tool_search only queries the in-memory deferral registry — pure read
+// with no side effects.
+func (*ToolSearchTool) IsConcurrencySafe() bool { return true }
+
 func (t *ToolSearchTool) Description() string {
 	return "Search for tools that have been deferred to save context. Returns tool names, descriptions, and schemas."
 }

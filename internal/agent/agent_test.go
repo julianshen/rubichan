@@ -2319,7 +2319,7 @@ func TestExecutePlannedToolsSequentialUsesPrecomputedApprovalResults(t *testing.
 	}}
 
 	ch := make(chan TurnEvent, 4)
-	cancelled := a.executePlannedToolsSequential(context.Background(), ch, planned)
+	cancelled := a.executePlannedToolsSequential(context.Background(), ch, planned, nil)
 	require.False(t, cancelled)
 	assert.Equal(t, 0, checker.Calls(), "sequential execution should use the precomputed approval result")
 }
@@ -2345,7 +2345,7 @@ func TestExecuteToolsWithoutApprovalCheckerUsesSequentialPlan(t *testing.T) {
 		ID:    "t1",
 		Name:  "tool_a",
 		Input: json.RawMessage(`{}`),
-	}})
+	}}, nil)
 	require.False(t, cancelled)
 
 	var events []TurnEvent
