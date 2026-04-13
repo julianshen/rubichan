@@ -1,5 +1,12 @@
 package agentsdk
 
+import "fmt"
+
+// Compile-time assertion that TurnExitReason satisfies fmt.Stringer.
+// If someone accidentally changes the receiver signature of String(),
+// this line will fail the build.
+var _ fmt.Stringer = TurnExitReason(0)
+
 // TurnExitReason enumerates why a turn stopped. Every "done" TurnEvent
 // carries exactly one of these. New reasons must be added here and nowhere
 // else; callers switch on this value.

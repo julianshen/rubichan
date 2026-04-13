@@ -1395,14 +1395,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// emit an error and add a placeholder assistant message to keep the
 		// conversation valid (every user message must be followed by an
 		// assistant message).
-		if len(blocks) == 0 && len(pendingTools) == 0 {
-			placeholder := "[empty response from model]"
-			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: placeholder})
-			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
-		}
-
 		emptyResponseExit := false
-		if len(blocks) == 1 && blocks[0].Type == "text" && blocks[0].Text == "[empty response from model]" {
+		if len(blocks) == 0 && len(pendingTools) == 0 {
+			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: "[empty response from model]"})
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
 			emptyResponseExit = true
 		}
 
