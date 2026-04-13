@@ -2,6 +2,21 @@ package agent
 
 import "fmt"
 
+// Reason strings passed to synthesizeMissingToolResults. Embedded in
+// the synthesized tool_result content so the model (and anyone
+// reading a captured conversation) can distinguish why each orphan
+// was sealed.
+const (
+	orphanReasonStreamError = "stream error"
+	orphanReasonToolCancel  = "cancelled during tool execution"
+	orphanReasonPanic       = "agent panic"
+)
+
+// emptyModelResponseText is the placeholder inserted when the model
+// returns no blocks and no tool calls. Keeping it as a single source
+// of truth makes the ExitEmptyResponse classification unambiguous.
+const emptyModelResponseText = "[empty response from model]"
+
 // synthesizeMissingToolResults walks the conversation and, for every
 // tool_use block in the most recent assistant message that does not have
 // a matching tool_result in a subsequent message, appends an error

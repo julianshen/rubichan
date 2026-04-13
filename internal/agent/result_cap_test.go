@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -8,16 +10,28 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
-// fakeCappedTool implements agentsdk.ResultCapped with a configurable byte cap.
-// It only has the methods the applyResultCap helper needs — not the full Tool interface.
+// stubTool is the minimal agentsdk.Tool implementation shared by
+// applyResultCap's test fixtures. Tests layer additional methods on
+// embedded stubTool to opt into extension interfaces like ResultCapped.
+type stubTool struct{ name string }
+
+func (s stubTool) Name() string                 { return s.name }
+func (s stubTool) Description() string          { return "" }
+func (s stubTool) InputSchema() json.RawMessage { return nil }
+func (s stubTool) Execute(context.Context, json.RawMessage) (agentsdk.ToolResult, error) {
+	return agentsdk.ToolResult{}, nil
+}
+
+// fakeCappedTool implements agentsdk.ResultCapped on top of stubTool.
 type fakeCappedTool struct {
+	stubTool
 	capBytes int
 }
 
 func (t *fakeCappedTool) MaxResultBytes() int { return t.capBytes }
 
-// plainTool does not implement ResultCapped — it is exempt.
-type plainTool struct{}
+// plainTool satisfies agentsdk.Tool but does not implement ResultCapped — it is exempt.
+type plainTool struct{ stubTool }
 
 func TestApplyResultCapBelowCap(t *testing.T) {
 	t.Parallel()
@@ -59,7 +73,8 @@ func TestApplyResultCapNilToolIsNoOp(t *testing.T) {
 	t.Parallel()
 	big := strings.Repeat("a", 10000)
 	res := agentsdk.ToolResult{Content: big}
-	capped := applyResultCap(nil, res)
+	var tool agentsdk.Tool // typed nil interface
+	capped := applyResultCap(tool, res)
 	if capped.Content != big {
 		t.Fatalf("nil tool should be no-op")
 	}

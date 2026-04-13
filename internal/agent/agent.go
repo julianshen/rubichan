@@ -877,7 +877,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 			if r := recover(); r != nil {
 				stack := debug.Stack()
 				a.logger.Error("agent panic recovered: %v\n%s", r, stack)
-				synthesizeMissingToolResults(a.conversation, "agent panic")
+				synthesizeMissingToolResults(a.conversation, orphanReasonPanic)
 				// Non-blocking send to avoid deadlocking turnMu if channel
 				// buffer is full (e.g., reader stopped consuming events).
 				select {
@@ -1292,14 +1292,17 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 				// Streaming dispatch: if the tool is concurrency-safe
 				// and auto-approved, start executing it now so it runs
-				// in parallel with the remaining model stream.
-				if a.approvalChecker != nil {
-					if tool, ok := a.tools.Get(currentTool.Name); ok {
-						approval := a.approvalChecker.CheckApproval(currentTool.Name, currentTool.Input)
-						if isStreamingEligible(tool, approval) {
+				// in parallel with the remaining model stream. The
+				// marker check comes first so non-eligible tools skip
+				// the approval scan entirely — approval can be expensive
+				// when a security scanner is wired in.
+				if tool, ok := a.tools.Get(currentTool.Name); ok {
+					if cs, csok := tool.(agentsdk.ConcurrencySafeTool); csok && cs.IsConcurrencySafe() {
+						approval := a.approvalResultForTool(*currentTool)
+						if approval == AutoApproved || approval == TrustRuleApproved {
 							// Dispatch in background; executeTools
-							// will emit the tool_call event when it
-							// sees the cached result.
+							// emits the tool_call event when it sees
+							// the cached result.
 							execStream.Dispatch(ctx, *currentTool)
 						}
 					}
@@ -1407,7 +1410,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			_ = execStream.Drain()
 			// Defensive: currently a no-op because AddAssistant has not been called
 			// yet on this path, but protects against future reorderings.
-			synthesizeMissingToolResults(a.conversation, "stream error")
+			synthesizeMissingToolResults(a.conversation, orphanReasonStreamError)
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
 			return
 		}
@@ -1442,12 +1445,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// If the LLM returned no content at all (no text, no tool calls),
 		// emit an error and add a placeholder assistant message to keep the
 		// conversation valid (every user message must be followed by an
-		// assistant message).
-		emptyResponseExit := false
+		// assistant message). The placeholder downgrades the exit reason
+		// from ExitCompleted to ExitEmptyResponse so observability can
+		// distinguish "model said nothing" from "model finished normally".
+		exitReason := agentsdk.ExitCompleted
 		if len(blocks) == 0 && len(pendingTools) == 0 {
-			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: "[empty response from model]"})
+			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: emptyModelResponseText})
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
-			emptyResponseExit = true
+			exitReason = agentsdk.ExitEmptyResponse
 		}
 
 		// Add assistant message with accumulated blocks
@@ -1461,11 +1466,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// empty in this branch, but Drain is cheap and safe).
 		if len(pendingTools) == 0 {
 			_ = execStream.Drain()
-			reason := agentsdk.ExitCompleted
-			if emptyResponseExit {
-				reason = agentsdk.ExitEmptyResponse
-			}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, reason)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason)
 			return
 		}
 
@@ -1505,7 +1506,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
-			synthesizeMissingToolResults(a.conversation, "cancelled during tool execution")
+			synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
 			return
@@ -1665,21 +1666,10 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		})
 	}
 
-	// If every tool was already streamed, skip partition/execute and
-	// jump straight to result emission.
-	if len(plannedTools) == 0 {
-		for i := range pendingTools {
-			r := results[i]
-			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
-			a.persistToolResult(r.toolUseID, r.content, r.isError)
-			ch <- r.event
-			a.recordToolProgress(pendingTools[i], r)
-		}
-		a.saveSnapshotIfNeeded()
-		return false
-	}
-
 	// Partition into auto-approved and needs-approval using input-sensitive check.
+	// When every pending tool was already streamed, plannedTools is empty and
+	// the partition/execute stages below are all no-ops — control falls through
+	// to the final emission loop without a dedicated fast path.
 	var autoApproved, autoDenied, needsApproval []plannedToolCall
 	for _, planned := range plannedTools {
 		switch planned.approvalResult {

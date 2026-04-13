@@ -17,7 +17,7 @@ import (
 // context at the head. When the cap is too small to hold the marker
 // plus meaningful head+tail slices, the helper falls back to a
 // head-only trim.
-func applyResultCap(tool any, res agentsdk.ToolResult) agentsdk.ToolResult {
+func applyResultCap(tool agentsdk.Tool, res agentsdk.ToolResult) agentsdk.ToolResult {
 	capped, ok := tool.(agentsdk.ResultCapped)
 	if !ok {
 		return res

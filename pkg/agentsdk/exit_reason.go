@@ -44,12 +44,14 @@ const (
 	// ExitEmptyResponse: model returned no text and no tool calls.
 	ExitEmptyResponse
 
-	// ExitCompactionFailed: compaction circuit breaker tripped (reserved
-	// for Task 3).
+	// ExitCompactionFailed: compaction circuit breaker tripped after
+	// repeated no-shrink attempts.
 	ExitCompactionFailed
 
-	// ExitProtocolViolation: orphaned tool_use blocks detected and not
-	// recoverable (reserved for Task 2).
+	// ExitProtocolViolation: orphaned tool_use blocks were detected
+	// and could not be recovered. Reserved for future use — not emitted
+	// today because the orphan sweeper always produces a valid
+	// conversation state from non-fatal exit paths.
 	ExitProtocolViolation
 
 	// ExitPanic: a panic was recovered in Turn's deferred handler.
