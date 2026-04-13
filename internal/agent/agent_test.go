@@ -3425,3 +3425,31 @@ func TestBuildBootstrapSystemPromptPrefixNil(t *testing.T) {
 	prefix := BuildBootstrapSystemPromptPrefix(nil)
 	assert.Empty(t, prefix)
 }
+
+func TestTurnEmitsExitReasonCompleted(t *testing.T) {
+	t.Parallel()
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "done."},
+			{Type: "stop"},
+		},
+	}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	ag := New(mp, reg, autoApprove, cfg)
+
+	ch, err := ag.Turn(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	var last TurnEvent
+	for ev := range ch {
+		last = ev
+	}
+	if last.Type != "done" {
+		t.Fatalf("want last event type=done, got %q", last.Type)
+	}
+	if last.ExitReason != agentsdk.ExitCompleted {
+		t.Fatalf("want ExitCompleted, got %v", last.ExitReason)
+	}
+}

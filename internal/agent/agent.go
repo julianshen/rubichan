@@ -881,7 +881,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 				}
 				// Maintain contract: every turn ends with a "done" event.
 				select {
-				case ch <- TurnEvent{Type: "done"}:
+				case ch <- TurnEvent{Type: "done", ExitReason: agentsdk.ExitPanic}:
 				default:
 				}
 			}
@@ -1137,13 +1137,14 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 
 // makeDoneEvent constructs a "done" TurnEvent, attaching the cumulative diff
 // summary from the DiffTracker if one is attached, and the context budget.
-func (a *Agent) makeDoneEvent(inputTokens, outputTokens int) TurnEvent {
+func (a *Agent) makeDoneEvent(inputTokens, outputTokens int, reason agentsdk.TurnExitReason) TurnEvent {
 	budget := a.context.Budget()
 	event := TurnEvent{
 		Type:          "done",
 		InputTokens:   inputTokens,
 		OutputTokens:  outputTokens,
 		ContextBudget: &budget,
+		ExitReason:    reason,
 	}
 	if a.diffTracker != nil {
 		event.DiffSummary = a.diffTracker.Summarize()
@@ -1160,7 +1161,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("activate skills for turn: %w", err)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitSkillActivationFailed)
 			return
 		}
 	}
@@ -1170,7 +1171,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
 			return
 		}
 
@@ -1230,7 +1231,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 			if err := a.rateLimiter.Wait(ctx); err != nil {
 				ch <- TurnEvent{Type: "error", Error: fmt.Errorf("rate limiter: %w", err)}
-				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitRateLimited)
 				return
 			}
 		}
@@ -1238,7 +1239,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
 			return
 		}
 
@@ -1359,7 +1360,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// On stream error, discard partial blocks to prevent conversation corruption
 		if streamErr {
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
 			return
 		}
 
@@ -1400,6 +1401,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
 		}
 
+		emptyResponseExit := false
+		if len(blocks) == 1 && blocks[0].Type == "text" && blocks[0].Text == "[empty response from model]" {
+			emptyResponseExit = true
+		}
+
 		// Add assistant message with accumulated blocks
 		if len(blocks) > 0 {
 			a.conversation.AddAssistant(blocks)
@@ -1408,7 +1414,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// If no pending tool calls, we're done
 		if len(pendingTools) == 0 {
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			reason := agentsdk.ExitCompleted
+			if emptyResponseExit {
+				reason = agentsdk.ExitEmptyResponse
+			}
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, reason)
 			return
 		}
 
@@ -1421,7 +1431,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 		if repeatedPendingToolRounds >= maxRepeatedPendingToolRounds {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitNoProgress)
 			return
 		}
 
@@ -1431,7 +1441,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		for _, tc := range pendingTools {
 			if tc.Name == tools.TaskCompleteName {
 				a.executeTools(ctx, ch, pendingTools)
-				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete)
 				return
 			}
 		}
@@ -1439,7 +1449,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
 			return
 		}
 
@@ -1451,7 +1461,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
-	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitMaxTurns)
 }
 
 const maxRepeatedPendingToolRounds = 3
