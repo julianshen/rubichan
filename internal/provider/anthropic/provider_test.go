@@ -178,19 +178,30 @@ data: {"type":"message_stop"}
 	// Text part should only contain visible text, not tool JSON.
 	assert.Equal(t, []string{"Let me read that file."}, textParts)
 
-	// Tool JSON fragments arrive as input_json_delta events.
-	assert.Equal(t, []string{`{"path":`, `"/tmp/test.txt"}`}, jsonDeltaParts)
+	// Tool JSON fragments are now accumulated internally by the provider
+	// and joined into the tool_use event's Input at content_block_stop
+	// time — they must NOT be emitted as separate input_json_delta events
+	// because the agent loop doesn't track them and would lose the input.
+	assert.Empty(t, jsonDeltaParts, "input_json_delta fragments must be absorbed into the tool_use event")
 
 	// message_start should have been emitted with model and ID.
 	require.NotNil(t, messageStartEvt, "should have received message_start event")
 	assert.Equal(t, "claude-sonnet-4-5", messageStartEvt.Model)
 	assert.Equal(t, "msg_2", messageStartEvt.MessageID)
 
-	// Should have tool_use event with correct ID and name
+	// Should have tool_use event with correct ID, name, and fully-accumulated Input.
+	// The Anthropic wire format emits input_json_delta fragments BETWEEN the
+	// content_block_start and content_block_stop for a tool_use block; the
+	// provider must accumulate those fragments and emit the tool_use event
+	// with complete Input at content_block_stop time. jsonDeltaParts is also
+	// asserted above as the raw delta sequence — this check proves the
+	// provider-side accumulation joined them correctly.
 	require.Len(t, toolUseEvents, 1)
 	require.NotNil(t, toolUseEvents[0].ToolUse)
 	assert.Equal(t, "toolu_abc123", toolUseEvents[0].ToolUse.ID)
 	assert.Equal(t, "read_file", toolUseEvents[0].ToolUse.Name)
+	assert.JSONEq(t, `{"path":"/tmp/test.txt"}`, string(toolUseEvents[0].ToolUse.Input),
+		"tool_use Input must be the accumulated input_json_delta fragments as valid JSON")
 
 	assert.True(t, hasStop, "should have received stop event")
 }
