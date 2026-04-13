@@ -686,6 +686,8 @@ func (h *Hub) sendEnvelope(c *Client, msgType, sessionID string, payload any) {
 
 // marshalTurnEvent serializes a TurnEvent for wire transmission.
 // The error field is converted to a string since errors aren't JSON-serializable.
+// ExitReason uses the stable lowercase String() form so cross-language
+// consumers don't have to pin the Go enum's integer value.
 type wireTurnEvent struct {
 	Type         string                    `json:"type"`
 	Text         string                    `json:"text,omitempty"`
@@ -699,6 +701,7 @@ type wireTurnEvent struct {
 	InputTokens  int                       `json:"input_tokens,omitempty"`
 	OutputTokens int                       `json:"output_tokens,omitempty"`
 	DiffSummary  string                    `json:"diff_summary,omitempty"`
+	ExitReason   string                    `json:"exit_reason,omitempty"`
 }
 
 type wireToolProgress struct {
@@ -721,6 +724,11 @@ func marshalTurnEvent(evt agentsdk.TurnEvent) (json.RawMessage, error) {
 		InputTokens:  evt.InputTokens,
 		OutputTokens: evt.OutputTokens,
 		DiffSummary:  evt.DiffSummary,
+	}
+	// Only forward ExitReason on done events. Zero value (ExitUnknown)
+	// is a bug signal on a done event but noise on any other event.
+	if evt.Type == "done" && evt.ExitReason != agentsdk.ExitUnknown {
+		w.ExitReason = evt.ExitReason.String()
 	}
 	if evt.Error != nil {
 		w.Error = evt.Error.Error()

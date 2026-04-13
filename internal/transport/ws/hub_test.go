@@ -249,6 +249,35 @@ func TestHub_MarshalTurnEvent_WithError(t *testing.T) {
 	assert.Contains(t, wire.Error, "assert.AnError")
 }
 
+func TestHub_MarshalTurnEvent_DoneCarriesExitReason(t *testing.T) {
+	// A done TurnEvent must serialize its ExitReason as a stable
+	// lowercase string ("cancelled", "provider_error", ...) so
+	// cross-language wire consumers can switch on it without pinning
+	// the Go enum's integer value.
+	raw, err := marshalTurnEvent(agentsdk.TurnEvent{
+		Type:       "done",
+		ExitReason: agentsdk.ExitProviderError,
+	})
+	require.NoError(t, err)
+
+	var wire wireTurnEvent
+	require.NoError(t, json.Unmarshal(raw, &wire))
+	assert.Equal(t, "done", wire.Type)
+	assert.Equal(t, "provider_error", wire.ExitReason)
+}
+
+func TestHub_MarshalTurnEvent_NonDoneOmitsExitReason(t *testing.T) {
+	// Non-done events should omit ExitReason from the wire entirely
+	// (omitempty) so consumers don't see a spurious "unknown" string
+	// on every text_delta.
+	raw, err := marshalTurnEvent(agentsdk.TurnEvent{
+		Type: "text_delta",
+		Text: "hello",
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "exit_reason")
+}
+
 func TestHub_MarshalTurnEvent_WithToolProgress(t *testing.T) {
 	raw, err := marshalTurnEvent(agentsdk.TurnEvent{
 		Type: "tool_progress",
