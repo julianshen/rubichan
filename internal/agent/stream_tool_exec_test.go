@@ -216,6 +216,163 @@ func (u *unmarkedTool) Execute(context.Context, json.RawMessage) (agentsdk.ToolR
 	return agentsdk.ToolResult{}, nil
 }
 
+// TestExecuteToolsAllStreamedFastPath drives executeTools directly with
+// a pendingTools slice where every entry has a pre-populated
+// streamedResults entry. It covers:
+//   - the merge branch at agent.go:1651-1659 (streamed result moved into
+//     results[i] + tool_call emitted)
+//   - the all-streamed fast path at agent.go:1670-1679 (len(planned)==0,
+//     jump straight to result emission without partition/execute dance)
+//
+// Verified: Execute is never called on the registered tool, and both
+// tool_call + tool_result events are emitted per pending tool.
+func TestExecuteToolsAllStreamedFastPath(t *testing.T) {
+	t.Parallel()
+	// Tool registered with executeFn that panics if called — any streamed
+	// result must NOT re-run this tool.
+	neverRun := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			t.Errorf("tool should not be executed when streamedResults already contains its result")
+			return tools.ToolResult{Content: "unexpected"}, nil
+		},
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(neverRun))
+
+	cfg := config.DefaultConfig()
+	// Approval checker required so executeTools takes the main path
+	// (not the executePlannedToolsSequential fallback).
+	a := New(&mockProvider{}, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	pendingTools := []provider.ToolUseBlock{
+		{ID: "a", Name: "tool_a", Input: json.RawMessage(`{}`)},
+		{ID: "b", Name: "tool_a", Input: json.RawMessage(`{}`)},
+	}
+	streamed := map[string]toolExecResult{
+		"a": {
+			toolUseID: "a",
+			content:   "result_a",
+			event:     makeToolResultEvent("a", "tool_a", "result_a", "", false),
+		},
+		"b": {
+			toolUseID: "b",
+			content:   "result_b",
+			event:     makeToolResultEvent("b", "tool_a", "result_b", "", false),
+		},
+	}
+
+	ch := make(chan TurnEvent, 16)
+	cancelled := a.executeTools(context.Background(), ch, pendingTools, streamed)
+	require.False(t, cancelled)
+
+	var toolCalls, toolResults []TurnEvent
+	for len(ch) > 0 {
+		ev := <-ch
+		switch ev.Type {
+		case "tool_call":
+			toolCalls = append(toolCalls, ev)
+		case "tool_result":
+			toolResults = append(toolResults, ev)
+		}
+	}
+	require.Len(t, toolCalls, 2, "expected 2 tool_call events")
+	require.Len(t, toolResults, 2, "expected 2 tool_result events")
+
+	// Results must be emitted in original pendingTools order.
+	require.Equal(t, "a", toolResults[0].ToolResult.ID)
+	require.Equal(t, "result_a", toolResults[0].ToolResult.Content)
+	require.Equal(t, "b", toolResults[1].ToolResult.ID)
+	require.Equal(t, "result_b", toolResults[1].ToolResult.Content)
+
+	// Conversation must contain the tool_result blocks.
+	msgs := a.conversation.Messages()
+	var toolResultBlocks int
+	for _, m := range msgs {
+		for _, c := range m.Content {
+			if c.Type == "tool_result" {
+				toolResultBlocks++
+			}
+		}
+	}
+	require.Equal(t, 2, toolResultBlocks, "conversation should contain 2 tool_result blocks")
+}
+
+// TestExecutePlannedToolsSequentialWithStreamedResults covers the
+// streamedResults merge branch in executePlannedToolsSequential (the
+// path taken when approvalChecker == nil and streaming dispatch already
+// produced a result for the tool). Verifies the cached result is
+// emitted without re-invoking the tool's Execute.
+func TestExecutePlannedToolsSequentialWithStreamedResults(t *testing.T) {
+	t.Parallel()
+	neverRun := &mockTool{
+		name:        "tool_a",
+		description: "tool A",
+		inputSchema: json.RawMessage(`{"type":"object"}`),
+		executeFn: func(_ context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			t.Errorf("tool should not be executed when streamedResults already contains its result")
+			return tools.ToolResult{Content: "unexpected"}, nil
+		},
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(neverRun))
+
+	cfg := config.DefaultConfig()
+	// approvalChecker == nil => executeTools falls through to
+	// executePlannedToolsSequential.
+	a := New(&mockProvider{}, reg, autoApprove, cfg)
+
+	pendingTools := []provider.ToolUseBlock{
+		{ID: "t1", Name: "tool_a", Input: json.RawMessage(`{}`)},
+	}
+	streamed := map[string]toolExecResult{
+		"t1": {
+			toolUseID: "t1",
+			content:   "streamed_result",
+			event:     makeToolResultEvent("t1", "tool_a", "streamed_result", "", false),
+		},
+	}
+
+	ch := make(chan TurnEvent, 8)
+	cancelled := a.executeTools(context.Background(), ch, pendingTools, streamed)
+	require.False(t, cancelled)
+
+	var toolCall, toolResult *TurnEvent
+	for len(ch) > 0 {
+		ev := <-ch
+		switch ev.Type {
+		case "tool_call":
+			e := ev
+			toolCall = &e
+		case "tool_result":
+			e := ev
+			toolResult = &e
+		}
+	}
+	require.NotNil(t, toolCall, "expected a tool_call event")
+	require.NotNil(t, toolResult, "expected a tool_result event")
+	require.Equal(t, "t1", toolCall.ToolCall.ID)
+	require.Equal(t, "t1", toolResult.ToolResult.ID)
+	require.Equal(t, "streamed_result", toolResult.ToolResult.Content)
+	require.False(t, toolResult.ToolResult.IsError)
+
+	// Conversation contains the tool_result block.
+	msgs := a.conversation.Messages()
+	var toolResultBlocks int
+	for _, m := range msgs {
+		for _, c := range m.Content {
+			if c.Type == "tool_result" {
+				toolResultBlocks++
+			}
+		}
+	}
+	require.Equal(t, 1, toolResultBlocks)
+}
+
 // TestRunLoopStreamsConcurrencySafeToolsDuringModelResponse is a
 // liveness test: it registers a fake concurrency-safe tool, drives the
 // agent through a turn that emits a tool_use for it, and confirms via
