@@ -388,6 +388,142 @@ data: {"type":"message_stop"}
 	assert.True(t, hasError, "should have received error event for malformed delta JSON")
 }
 
+// TestStreamInputJsonDeltaWithoutBlockStart covers the defensive
+// fallback in handleContentBlockDelta where an input_json_delta fragment
+// arrives for a block index that was never opened with a tool_use
+// content_block_start. Under a valid Anthropic wire stream this is
+// unreachable; the provider surfaces it as an error event so a
+// protocol regression fails loudly instead of silently dropping tool
+// input.
+func TestStreamInputJsonDeltaWithoutBlockStart(t *testing.T) {
+	sseBody := `event: content_block_delta
+data: {"type":"content_block_delta","index":7,"delta":{"type":"input_json_delta","partial_json":"{\"orphan\":true}"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var sawError bool
+	for evt := range ch {
+		if evt.Type == "error" && evt.Error != nil &&
+			strings.Contains(evt.Error.Error(), "unknown content block index") {
+			sawError = true
+		}
+	}
+	assert.True(t, sawError, "orphan input_json_delta must produce an error StreamEvent")
+}
+
+// TestStreamMalformedContentBlockStop covers the error path in
+// handleContentBlockStop for malformed JSON payloads.
+func TestStreamMalformedContentBlockStop(t *testing.T) {
+	sseBody := `event: content_block_stop
+data: {not valid json}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var hasError bool
+	for evt := range ch {
+		if evt.Type == "error" && evt.Error != nil &&
+			strings.Contains(evt.Error.Error(), "parsing content_block_stop") {
+			hasError = true
+		}
+	}
+	assert.True(t, hasError, "should have received error event for malformed content_block_stop JSON")
+}
+
+// TestStreamToolUseEmptyArgs covers the empty-args fallback where a
+// tool_use content block closes with zero accumulated input_json_delta
+// fragments — the provider must emit a valid empty JSON object so
+// downstream parsers don't fail on an empty payload.
+func TestStreamToolUseEmptyArgs(t *testing.T) {
+	sseBody := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_empty","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_empty","name":"noop","input":{}}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var toolUseEvt *provider.StreamEvent
+	for evt := range ch {
+		if evt.Type == "tool_use" {
+			e := evt
+			toolUseEvt = &e
+		}
+	}
+	require.NotNil(t, toolUseEvt, "should emit a tool_use event")
+	require.NotNil(t, toolUseEvt.ToolUse)
+	assert.JSONEq(t, `{}`, string(toolUseEvt.ToolUse.Input),
+		"empty-args tool_use Input must default to valid JSON {}")
+}
+
 func TestStreamUnknownDeltaType(t *testing.T) {
 	sseBody := `event: content_block_delta
 data: {"type":"content_block_delta","index":0,"delta":{"type":"unknown_delta","text":"test"}}

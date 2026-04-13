@@ -522,15 +522,12 @@ func (p *singleToolBlockingProvider) Stream(_ context.Context, _ provider.Comple
 			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
 				ID: "call-solo", Name: "fake_read", Input: json.RawMessage(`{"path":"/tmp/x"}`),
 			}}
-			// content_block_stop signals the agent to finalize the tool
-			// and dispatch it via the streaming executor NOW, mid-stream.
-			// Without this event, the old behaviour would wait for a
-			// subsequent tool_use or stream end — in this test the
-			// provider blocks on waitForTool, which only closes when the
-			// tool has actually started executing, so the absence of a
-			// finalize signal would deadlock and the test would hit its
-			// context timeout.
-			ch <- provider.StreamEvent{Type: "content_block_stop"}
+			// content_block_stop is the finalize signal. Without it,
+			// the old "finalize on next tool_use or stream end" path
+			// would block on waitForTool forever (stop can't fire
+			// until the tool runs, and the tool can't run until
+			// dispatch happens).
+			ch <- provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
 			<-p.waitForTool
 			ch <- provider.StreamEvent{Type: "stop"}
 			return
@@ -542,13 +539,10 @@ func (p *singleToolBlockingProvider) Stream(_ context.Context, _ provider.Comple
 }
 
 // TestRunLoopDispatchesSingleToolResponseDuringStream proves that a
-// response with ONE tool_use block dispatches the tool during the
-// stream (not after stream end). This was the single known limitation
-// of the PR #231 streaming dispatch work: finalizeTool only ran on
-// "next tool_use" or stream end, so single-tool responses never
-// benefited. The fix adds an immediate finalize call inside the
-// tool_use case so the executor sees the tool as soon as its event
-// arrives with complete Input.
+// response with ONE tool_use block dispatches the tool mid-stream.
+// The provider deadlocks on waitForTool until the tool's Execute has
+// started, so the test only completes if content_block_stop triggers
+// finalizeTool (and thus streaming dispatch) before message_stop.
 func TestRunLoopDispatchesSingleToolResponseDuringStream(t *testing.T) {
 	t.Parallel()
 	toolRan := make(chan struct{})

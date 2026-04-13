@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 func init() {
@@ -88,19 +89,14 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	return ch, nil
 }
 
-// pendingToolBlock tracks an in-flight tool_use content block. Anthropic
-// emits tool_use as a content_block_start with empty Input, followed by
-// input_json_delta fragments inside content_block_delta, then a
-// content_block_stop. The provider accumulates fragments per block index
-// and emits a single tool_use StreamEvent with the fully-joined Input
-// at content_block_stop time — that way the agent loop sees tool_use
-// events with complete Input and can dispatch immediately instead of
-// waiting for a subsequent content block (which may never arrive for
-// single-tool responses).
+// pendingToolBlock accumulates input_json_delta fragments for a single
+// tool_use content block so the final tool_use StreamEvent carries
+// complete Input. bytes.Buffer lets the emission site hand the backing
+// slice directly to json.RawMessage without a string→[]byte copy.
 type pendingToolBlock struct {
 	id   string
 	name string
-	args strings.Builder
+	args bytes.Buffer
 }
 
 // streamState carries per-request state across SSE events. It lives
@@ -131,9 +127,13 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			return
 		}
 
-		for _, streamEvt := range p.convertSSEEvent(state, scanner.Event()) {
+		first, second := p.convertSSEEvent(state, scanner.Event())
+		for _, streamEvt := range [2]*provider.StreamEvent{first, second} {
+			if streamEvt == nil {
+				continue
+			}
 			select {
-			case ch <- streamEvt:
+			case ch <- *streamEvt:
 			case <-ctx.Done():
 				select {
 				case ch <- provider.StreamEvent{Type: "error", Error: ctx.Err()}:
@@ -152,33 +152,26 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 }
 
-// convertSSEEvent converts a raw SSE event into zero or more
-// StreamEvents, using state to accumulate per-block data (notably
-// tool_use Input fragments). Most events return a single result; the
-// content_block_stop path may emit a tool_use followed by a
-// content_block_stop marker so the agent loop can finalize immediately.
-func (p *Provider) convertSSEEvent(state *streamState, evt sseEvent) []provider.StreamEvent {
+// convertSSEEvent converts a raw SSE event into up to two StreamEvents.
+// Most handlers return (primary, nil); only content_block_stop may
+// return (tool_use, content_block_stop) so the agent loop can finalize
+// immediately after seeing the tool. Returning two pointers keeps the
+// hot path allocation-free — no slice header per event.
+func (p *Provider) convertSSEEvent(state *streamState, evt sseEvent) (first, second *provider.StreamEvent) {
 	switch evt.Event {
 	case "message_start":
-		return singleEvent(p.handleMessageStart(evt.Data))
+		return p.handleMessageStart(evt.Data), nil
 	case "content_block_start":
-		return singleEvent(p.handleContentBlockStart(state, evt.Data))
+		return p.handleContentBlockStart(state, evt.Data), nil
 	case "content_block_delta":
-		return singleEvent(p.handleContentBlockDelta(state, evt.Data))
+		return p.handleContentBlockDelta(state, evt.Data), nil
 	case "content_block_stop":
 		return p.handleContentBlockStop(state, evt.Data)
 	case "message_stop":
-		return []provider.StreamEvent{{Type: "stop"}}
+		return &provider.StreamEvent{Type: agentsdk.EventStop}, nil
 	default:
-		return nil
+		return nil, nil
 	}
-}
-
-func singleEvent(e *provider.StreamEvent) []provider.StreamEvent {
-	if e == nil {
-		return nil
-	}
-	return []provider.StreamEvent{*e}
 }
 
 func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
@@ -266,58 +259,64 @@ func (p *Provider) handleContentBlockDelta(state *streamState, data string) *pro
 			Text: parsed.Delta.Thinking,
 		}
 	case "input_json_delta":
-		// Accumulate into the pending tool block rather than emit a
-		// separate event; the agent loop doesn't track input_json_delta.
+		// Accumulate into the pending tool block. The agent loop does
+		// not track input_json_delta directly; the joined result is
+		// emitted as a tool_use StreamEvent at content_block_stop time.
 		if pending, ok := state.pendingTools[parsed.Index]; ok {
 			pending.args.WriteString(parsed.Delta.PartialJSON)
 			return nil
 		}
-		// No pending block — fall back to emitting the fragment so
-		// upstream observers can still see it for debugging.
+		// Unreachable under a valid Anthropic wire stream — every
+		// content_block_delta for input_json_delta must follow a
+		// content_block_start that opened a tool_use block. If we see
+		// this it means the provider missed a start event. Log via the
+		// debug logger and emit an error so the turn fails loudly
+		// instead of silently forwarding an orphan fragment.
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: input_json_delta for unknown block index %d", parsed.Index)
+		}
 		return &provider.StreamEvent{
-			Type: "input_json_delta",
-			Text: parsed.Delta.PartialJSON,
+			Type:  agentsdk.EventError,
+			Error: fmt.Errorf("input_json_delta for unknown content block index %d", parsed.Index),
 		}
 	default:
 		return nil
 	}
 }
 
-func (p *Provider) handleContentBlockStop(state *streamState, data string) []provider.StreamEvent {
+func (p *Provider) handleContentBlockStop(state *streamState, data string) (first, second *provider.StreamEvent) {
 	var parsed struct {
 		Index int `json:"index"`
 	}
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
-		return []provider.StreamEvent{{Type: "error", Error: fmt.Errorf("parsing content_block_stop: %w", err)}}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing content_block_stop: %w", err)}, nil
 	}
 
 	pending, ok := state.pendingTools[parsed.Index]
 	if !ok {
-		// Not a tool_use block — still emit content_block_stop so the
-		// agent loop can finalize any text_delta-accumulated tool that
-		// was started earlier via a legacy pathway.
-		return []provider.StreamEvent{{Type: "content_block_stop"}}
+		// Non-tool content block (text, thinking) — nothing to finalize.
+		return nil, nil
 	}
 	delete(state.pendingTools, parsed.Index)
 
-	args := pending.args.String()
-	if args == "" {
-		// Anthropic emits an empty-args tool_use for no-argument tools;
-		// the JSON must still be valid so downstream handlers can parse it.
-		args = "{}"
+	// bytes.Buffer.Bytes() returns the backing slice; json.RawMessage is
+	// a typed alias for []byte so the conversion is allocation-free.
+	// Empty-args tool calls still need a valid JSON object so downstream
+	// parsers don't fail on an empty payload.
+	args := pending.args.Bytes()
+	if len(args) == 0 {
+		args = []byte("{}")
 	}
-	// Emit the tool_use first (so currentTool is populated with full
-	// Input), then a content_block_stop marker so the agent loop
-	// finalizes (and streaming-dispatches) immediately.
-	return []provider.StreamEvent{
-		{
-			Type: "tool_use",
+	// Emit tool_use first (populates currentTool with full Input), then
+	// a content_block_stop marker so the agent loop finalizes and
+	// streaming-dispatches the tool immediately.
+	return &provider.StreamEvent{
+			Type: agentsdk.EventToolUse,
 			ToolUse: &provider.ToolUseBlock{
 				ID:    pending.id,
 				Name:  pending.name,
 				Input: json.RawMessage(args),
 			},
 		},
-		{Type: "content_block_stop"},
-	}
+		&provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
 }

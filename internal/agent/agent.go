@@ -1373,18 +1373,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 				}
 
-			case "content_block_stop":
-				// Provider signals that the current content block is
-				// complete — if we're mid-tool-use, finalize now so the
-				// streaming executor can dispatch immediately instead
-				// of waiting for the next tool_use event or stream end.
-				// This is the single-tool-response streaming win:
-				// previously, a response with a single tool_use never
-				// hit the streaming dispatch path because finalizeTool
-				// only ran at stream end (too late to parallelize with
-				// anything). Providers that don't emit content_block_stop
-				// fall back to the old timing (finalize on next tool_use
-				// or stream end).
+			case agentsdk.EventContentBlockStop:
+				// Finalize on block-end so single-tool responses
+				// dispatch mid-stream. Providers that don't emit this
+				// fall back to the "finalize on next tool_use or stream
+				// end" timing, which is the legacy multi-tool path.
 				finalizeTool()
 
 			case "error":
