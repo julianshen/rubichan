@@ -162,14 +162,17 @@ func (t ToolUseBlock) MarshalJSON() ([]byte, error) {
 
 // StreamEvent represents a single event in a streaming response.
 type StreamEvent struct {
-	Type         string
-	Text         string
-	ToolUse      *ToolUseBlock
-	Error        error
-	InputTokens  int
-	OutputTokens int
-	Model        string // populated on message_start
-	MessageID    string // populated on message_start
+	Type                string
+	Text                string
+	ToolUse             *ToolUseBlock
+	Error               error
+	InputTokens         int
+	OutputTokens        int
+	CacheCreationTokens int    // tokens written to cache on this request (billed at higher rate)
+	CacheReadTokens     int    // tokens read from cache on this request (billed at lower rate)
+	StopReason          string // populated on stop events: "end_turn", "max_tokens", "tool_use", "stop_sequence"
+	Model               string // populated on message_start
+	MessageID           string // populated on message_start
 }
 
 func marshalSafeRawJSON(raw json.RawMessage) json.RawMessage {

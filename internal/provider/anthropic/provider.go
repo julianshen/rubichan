@@ -186,8 +186,10 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 			ID    string `json:"id"`
 			Model string `json:"model"`
 			Usage struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 			} `json:"usage"`
 		} `json:"message"`
 	}
@@ -197,11 +199,13 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 	}
 
 	return &provider.StreamEvent{
-		Type:         "message_start",
-		Model:        parsed.Message.Model,
-		MessageID:    parsed.Message.ID,
-		InputTokens:  parsed.Message.Usage.InputTokens,
-		OutputTokens: parsed.Message.Usage.OutputTokens,
+		Type:                "message_start",
+		Model:               parsed.Message.Model,
+		MessageID:           parsed.Message.ID,
+		InputTokens:         parsed.Message.Usage.InputTokens,
+		OutputTokens:        parsed.Message.Usage.OutputTokens,
+		CacheCreationTokens: parsed.Message.Usage.CacheCreationInputTokens,
+		CacheReadTokens:     parsed.Message.Usage.CacheReadInputTokens,
 	}
 }
 

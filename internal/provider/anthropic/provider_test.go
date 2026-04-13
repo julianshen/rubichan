@@ -1062,3 +1062,16 @@ func TestProcessStream_ScannerError(t *testing.T) {
 }
 
 func floatPtr(f float64) *float64 { return &f }
+
+func TestHandleMessageStart_CacheTokens(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	data := `{"message":{"id":"msg_01","model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":2000,"cache_read_input_tokens":48000}}}`
+
+	evt := p.handleMessageStart(data)
+	require.NotNil(t, evt)
+	assert.Equal(t, "message_start", evt.Type)
+	assert.Equal(t, 100, evt.InputTokens)
+	assert.Equal(t, 50, evt.OutputTokens)
+	assert.Equal(t, 2000, evt.CacheCreationTokens)
+	assert.Equal(t, 48000, evt.CacheReadTokens)
+}
