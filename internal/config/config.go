@@ -199,12 +199,13 @@ type SecurityConfig struct {
 
 // ProviderConfig holds settings for AI provider selection and configuration.
 type ProviderConfig struct {
-	Default   string                   `toml:"default"`
-	Model     string                   `toml:"model"`
-	Anthropic AnthropicProviderConfig  `toml:"anthropic"`
-	OpenAI    []OpenAICompatibleConfig `toml:"openai_compatible"`
-	Ollama    OllamaProviderConfig     `toml:"ollama"`
-	Zai       ZaiProviderConfig        `toml:"zai"`
+	Default      string                   `toml:"default"`
+	Model        string                   `toml:"model"`
+	SummaryModel string                   `toml:"summary_model"` // model for summarization/compaction; falls back to Model if empty
+	Anthropic    AnthropicProviderConfig  `toml:"anthropic"`
+	OpenAI       []OpenAICompatibleConfig `toml:"openai_compatible"`
+	Ollama       OllamaProviderConfig     `toml:"ollama"`
+	Zai          ZaiProviderConfig        `toml:"zai"`
 }
 
 // AnthropicProviderConfig holds Anthropic-specific provider settings.

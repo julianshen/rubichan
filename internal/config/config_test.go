@@ -825,3 +825,29 @@ func TestSandboxConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderConfig_SummaryModel(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.toml")
+	content := `
+[provider]
+default = "anthropic"
+model = "claude-opus-4-6"
+summary_model = "claude-haiku-4-5-20251001"
+`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "claude-opus-4-6", cfg.Provider.Model)
+	assert.Equal(t, "claude-haiku-4-5-20251001", cfg.Provider.SummaryModel)
+}
+
+func TestProviderConfig_SummaryModel_EmptyByDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	assert.Equal(t, "", cfg.Provider.SummaryModel, "SummaryModel should default to empty (caller falls back to Model)")
+}
