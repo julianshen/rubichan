@@ -1361,6 +1361,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// On stream error, discard partial blocks to prevent conversation corruption
 		if streamErr {
+			// Defensive: currently a no-op because AddAssistant has not been called
+			// yet on this path, but protects against future reorderings.
 			synthesizeMissingToolResults(a.conversation, "stream error")
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
 			return

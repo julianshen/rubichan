@@ -36,14 +36,17 @@ func synthesizeMissingToolResults(conv *Conversation, reason string) int {
 		return 0
 	}
 
-	// Collect tool_use IDs in that assistant message.
-	var pendingIDs []string
+	// Collect tool_use IDs and names in that assistant message.
+	type pendingToolUse struct {
+		id, name string
+	}
+	var pending []pendingToolUse
 	for _, block := range msgs[assistantIdx].Content {
 		if block.Type == "tool_use" && block.ID != "" {
-			pendingIDs = append(pendingIDs, block.ID)
+			pending = append(pending, pendingToolUse{id: block.ID, name: block.Name})
 		}
 	}
-	if len(pendingIDs) == 0 {
+	if len(pending) == 0 {
 		return 0
 	}
 
@@ -58,12 +61,16 @@ func synthesizeMissingToolResults(conv *Conversation, reason string) int {
 	}
 
 	sealed := 0
-	for _, id := range pendingIDs {
-		if answered[id] {
+	for _, p := range pending {
+		if answered[p.id] {
 			continue
 		}
-		conv.AddToolResult(id,
-			fmt.Sprintf("tool execution did not complete: %s", reason),
+		toolName := p.name
+		if toolName == "" {
+			toolName = "<unknown>"
+		}
+		conv.AddToolResult(p.id,
+			fmt.Sprintf("tool %s did not complete: %s", toolName, reason),
 			true,
 		)
 		sealed++

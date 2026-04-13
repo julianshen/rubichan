@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -37,6 +38,44 @@ func TestSynthesizeMissingToolResultsFillsOrphans(t *testing.T) {
 	}
 	if !got["call_1"] || !got["call_2"] {
 		t.Fatalf("missing tool_result for orphans: %v", got)
+	}
+
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type == "tool_result" && b.ToolUseID == "call_1" {
+				if !strings.Contains(b.Text, "read_file") {
+					t.Errorf("synthesized content missing tool name: %q", b.Text)
+				}
+				if !strings.Contains(b.Text, "stream aborted") {
+					t.Errorf("synthesized content missing reason: %q", b.Text)
+				}
+			}
+		}
+	}
+}
+
+func TestSynthesizeMissingToolResultsEmptyToolName(t *testing.T) {
+	t.Parallel()
+	conv := NewConversation("sys")
+	conv.AddUser("hi")
+	conv.AddAssistant([]provider.ContentBlock{
+		{Type: "tool_use", ID: "call_x", Name: "", Input: json.RawMessage(`{}`)},
+	})
+	n := synthesizeMissingToolResults(conv, "boom")
+	if n != 1 {
+		t.Fatalf("want 1 sealed, got %d", n)
+	}
+	msgs := conv.Messages()
+	var content string
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type == "tool_result" && b.ToolUseID == "call_x" {
+				content = b.Text
+			}
+		}
+	}
+	if !strings.Contains(content, "<unknown>") {
+		t.Fatalf("empty tool name should render as <unknown>, got %q", content)
 	}
 }
 
