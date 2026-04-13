@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,14 +19,16 @@ import (
 // fakeConcurrencySafeTool is a minimal tool that implements the
 // agentsdk.Tool interface + ConcurrencySafeTool marker. It sleeps for
 // execDelay before returning returnText to simulate I/O latency. If
-// onStart is non-nil, it is invoked on the very first line of Execute
-// — used by timing-sensitive tests to signal "tool has started".
+// onStart is non-nil, it is invoked on the very first line of Execute;
+// onFinish fires just before Execute returns. Both hooks are used by
+// timing-sensitive tests to synchronize with the tool's lifecycle.
 type fakeConcurrencySafeTool struct {
 	name       string
 	execDelay  time.Duration
 	called     atomic.Int32
 	returnText string
 	onStart    func()
+	onFinish   func()
 }
 
 func (t *fakeConcurrencySafeTool) Name() string                 { return t.name }
@@ -41,6 +44,9 @@ func (t *fakeConcurrencySafeTool) Execute(ctx context.Context, _ json.RawMessage
 	case <-time.After(t.execDelay):
 	case <-ctx.Done():
 		return agentsdk.ToolResult{}, ctx.Err()
+	}
+	if t.onFinish != nil {
+		t.onFinish()
 	}
 	return agentsdk.ToolResult{Content: t.returnText}, nil
 }
@@ -544,5 +550,115 @@ func TestRunLoopDispatchesStreamingToolDuringStream(t *testing.T) {
 	}
 	if got := tool.called.Load(); got < 1 {
 		t.Fatalf("want tool called at least once, got %d", got)
+	}
+}
+
+// streamErrAfterDispatchProvider emits a tool_use, a second tool_use
+// (to trigger finalizeTool on the first and dispatch it via the
+// streaming executor), waits until the dispatched tool has completed,
+// then emits a stream error. Used to verify that runLoop surfaces
+// drained streamed results to the event channel before exiting the
+// streamErr path — otherwise the UI sees orphan tool_progress events
+// with no tool_call or tool_result to close them out.
+type streamErrAfterDispatchProvider struct {
+	toolDone <-chan struct{}
+}
+
+func (p *streamErrAfterDispatchProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+			ID: "call-1", Name: "fake_read", Input: json.RawMessage(`{}`),
+		}}
+		ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+			ID: "call-2", Name: "fake_read", Input: json.RawMessage(`{}`),
+		}}
+		// Wait for call-1 to finish executing before erroring.
+		<-p.toolDone
+		ch <- provider.StreamEvent{Type: "error", Error: fmt.Errorf("simulated stream failure")}
+		ch <- provider.StreamEvent{Type: "stop"}
+	}()
+	return ch, nil
+}
+
+// TestRunLoopStreamErrorSurfacesStreamedToolResults verifies that when
+// the stream errors after a concurrency-safe tool has been dispatched
+// and completed, runLoop surfaces the drained tool_call + tool_result
+// events so the UI doesn't see orphan tool_progress events with no
+// terminal event.
+func TestRunLoopStreamErrorSurfacesStreamedToolResults(t *testing.T) {
+	t.Parallel()
+	toolDone := make(chan struct{})
+	var once sync.Once
+	tool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "streamed result",
+		onFinish:   func() { once.Do(func() { close(toolDone) }) },
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tool))
+
+	prov := &streamErrAfterDispatchProvider{toolDone: toolDone}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, err := a.Turn(ctx, "read the file")
+	require.NoError(t, err)
+
+	var toolCallIDs, toolResultIDs []string
+	var sawError, sawDone bool
+	var doneReason agentsdk.TurnExitReason
+	for ev := range events {
+		switch ev.Type {
+		case "tool_call":
+			if ev.ToolCall != nil {
+				toolCallIDs = append(toolCallIDs, ev.ToolCall.ID)
+			}
+		case "tool_result":
+			if ev.ToolResult != nil {
+				toolResultIDs = append(toolResultIDs, ev.ToolResult.ID)
+			}
+		case "error":
+			sawError = true
+		case "done":
+			sawDone = true
+			doneReason = ev.ExitReason
+		}
+	}
+
+	if !sawError {
+		t.Fatal("expected an error event from the stream failure")
+	}
+	if !sawDone {
+		t.Fatal("expected a done event")
+	}
+	if doneReason != agentsdk.ExitProviderError {
+		t.Fatalf("want ExitProviderError, got %v", doneReason)
+	}
+	// The dispatched call-1 must surface both tool_call and tool_result
+	// events so the UI has a closed event loop for its progress display.
+	var gotCall, gotResult bool
+	for _, id := range toolCallIDs {
+		if id == "call-1" {
+			gotCall = true
+		}
+	}
+	for _, id := range toolResultIDs {
+		if id == "call-1" {
+			gotResult = true
+		}
+	}
+	if !gotCall {
+		t.Fatalf("streamed tool dispatch did not emit a tool_call event; got IDs %v", toolCallIDs)
+	}
+	if !gotResult {
+		t.Fatalf("streamed tool dispatch did not emit a tool_result event; got IDs %v", toolResultIDs)
 	}
 }

@@ -119,6 +119,40 @@ func (e *streamingToolExecutor) Drain() []toolExecResult {
 	return out
 }
 
+// surfaceStreamedResults emits synthetic tool_call + cached tool_result
+// events for tools that finished via streaming dispatch but whose
+// normal emission path (executeTools) won't run — notably the
+// stream-error branch, which discards partial blocks without reaching
+// executeTools.
+//
+// Without this, the UI sees tool_progress events (emitted by
+// executeSingleTool as the tool runs) with no matching tool_call or
+// tool_result to close them out. Each drained result is matched to
+// its pendingTools entry by ID so the tool_call event carries the
+// original Name and Input.
+func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, drained []toolExecResult) {
+	if len(drained) == 0 {
+		return
+	}
+	byID := make(map[string]provider.ToolUseBlock, len(pendingTools))
+	for _, tc := range pendingTools {
+		byID[tc.ID] = tc
+	}
+	for _, r := range drained {
+		if tc, ok := byID[r.toolUseID]; ok {
+			ch <- TurnEvent{
+				Type: "tool_call",
+				ToolCall: &ToolCallEvent{
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: tc.Input,
+				},
+			}
+		}
+		ch <- r.event
+	}
+}
+
 // isStreamingEligible returns true if a tool can be dispatched during
 // streaming. Requires the ConcurrencySafeTool marker returning true AND
 // auto-approval (either AutoApproved or TrustRuleApproved).
