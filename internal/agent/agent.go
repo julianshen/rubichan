@@ -870,6 +870,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 			if r := recover(); r != nil {
 				stack := debug.Stack()
 				a.logger.Error("agent panic recovered: %v\n%s", r, stack)
+				synthesizeMissingToolResults(a.conversation, "agent panic")
 				// Non-blocking send to avoid deadlocking turnMu if channel
 				// buffer is full (e.g., reader stopped consuming events).
 				select {
@@ -1360,6 +1361,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// On stream error, discard partial blocks to prevent conversation corruption
 		if streamErr {
+			synthesizeMissingToolResults(a.conversation, "stream error")
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
 			return
 		}
@@ -1444,6 +1446,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
+			synthesizeMissingToolResults(a.conversation, "cancelled during tool execution")
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
 			return
