@@ -30,19 +30,28 @@ func TestApplyResultCapBelowCap(t *testing.T) {
 
 func TestApplyResultCapAboveCapTruncatesAndMarks(t *testing.T) {
 	t.Parallel()
-	big := strings.Repeat("a", 10000)
+	// Use distinct head/tail sentinels so a head-only regression would
+	// be caught — a plain strings.Repeat("a", ...) payload tautologically
+	// passes HasPrefix/HasSuffix checks even if the tail was dropped.
+	head := "HEAD_SENTINEL_"
+	tail := "_TAIL_SENTINEL"
+	body := strings.Repeat("x", 10000)
+	big := head + body + tail
+
 	res := agentsdk.ToolResult{Content: big}
-	capped := applyResultCap(&fakeCappedTool{capBytes: 500}, res)
-	if len(capped.Content) > 600 {
-		t.Fatalf("content not truncated, got %d bytes", len(capped.Content))
+	capped := applyResultCap(&fakeCappedTool{capBytes: 2000}, res)
+
+	if len(capped.Content) >= len(big) {
+		t.Fatalf("content not truncated, got %d bytes (original %d)", len(capped.Content), len(big))
 	}
 	if !strings.Contains(capped.Content, "truncated") {
 		t.Fatalf("truncation marker missing from: %q", capped.Content)
 	}
-	// Head and tail should both be preserved (both are 'a's, but we
-	// verify via length that we didn't just keep the head.
-	if !strings.HasPrefix(capped.Content, "a") || !strings.HasSuffix(capped.Content, "a") {
-		t.Fatalf("head or tail missing")
+	if !strings.Contains(capped.Content, head) {
+		t.Fatalf("head sentinel missing from truncated content — head slice regression?")
+	}
+	if !strings.Contains(capped.Content, tail) {
+		t.Fatalf("tail sentinel missing from truncated content — tail slice regression (head-only truncation)?")
 	}
 }
 
