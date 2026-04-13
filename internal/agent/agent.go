@@ -347,6 +347,7 @@ type Agent struct {
 	acpServer         *acp.Server             // ACP server instance (if enabled)
 	acpRegistry       *acp.CapabilityRegistry // Capability registry for ACP
 	useACP            bool                    // Enable ACP server
+	latches           *sessionLatches         // one-way ratchets for session-stable capability values
 }
 
 const maxUIRequestInputBytes = 2048
@@ -368,6 +369,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		scratchpad:   NewScratchpad(),
 		progress:     NewProgressTracker(),
 		capabilities: agentsdk.DefaultCapabilities(),
+		latches:      newSessionLatches(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -1220,7 +1222,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		// Append tool discovery hint for models that benefit from explicit guidance.
-		if a.capabilities.NeedsToolDiscoveryHint {
+		// The latch freezes this decision at the first turn so a mid-session
+		// capability change cannot alter the system prompt's dynamic section,
+		// which would invalidate the provider's session prompt cache.
+		needsToolHint := a.latches.latchToolHint(a.capabilities.NeedsToolDiscoveryHint)
+		if needsToolHint {
 			toolHint := a.deferral.ToolSummary(activeTools)
 			systemPrompt = systemPrompt + "\n\n" + toolHint
 		}
@@ -1256,6 +1262,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,
 		}
+		// Latch ReasoningEffort so a mid-session capability change cannot
+		// alter the value passed to the provider. The latch is set on the
+		// first non-empty value; empty means "use provider default."
+		req.Capabilities.ReasoningEffort = a.latches.latchReasoningEffort(a.capabilities.ReasoningEffort)
 
 		if a.rateLimiter != nil {
 			if !a.rateLimiter.AllowNow() {
