@@ -84,6 +84,37 @@ func (s *fakeStrategyWithToggle) Compact(_ context.Context, msgs []provider.Mess
 	return msgs, errors.New("boom")
 }
 
+// silentNoOpStrategy returns msgs unchanged (no error, no shrink).
+// This is the exact failure mode the breaker was designed to catch —
+// a broken summarizer that silently returns success without actually
+// reducing token count.
+type silentNoOpStrategy struct{}
+
+func (s *silentNoOpStrategy) Name() string { return "noop" }
+func (s *silentNoOpStrategy) Compact(_ context.Context, msgs []provider.Message, _ int) ([]provider.Message, error) {
+	return msgs, nil
+}
+
+func TestCompactionCircuitBreakerTripsOnSilentNoOp(t *testing.T) {
+	t.Parallel()
+	cm := NewContextManager(100, 10)
+	cm.SetStrategies([]agentsdk.CompactionStrategy{&silentNoOpStrategy{}})
+
+	conv := NewConversation("system")
+	for i := 0; i < 50; i++ {
+		conv.AddUser("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := cm.Compact(context.Background(), conv); err != nil {
+			t.Fatalf("attempt %d: want nil, got %v", i+1, err)
+		}
+	}
+	if err := cm.Compact(context.Background(), conv); !errors.Is(err, ErrCompactionExhausted) {
+		t.Fatalf("silent no-op strategy should trip breaker on third call, got %v", err)
+	}
+}
+
 // TestRunLoopExitsWithCompactionFailed verifies the agent loop surfaces
 // ErrCompactionExhausted via Turn() (either as a sync error from the
 // pre-turn Compact call, or as ExitCompactionFailed on the done event).

@@ -855,9 +855,12 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
-	if err := a.context.Compact(ctx, a.conversation); err != nil && errors.Is(err, ErrCompactionExhausted) {
+	if err := a.context.Compact(ctx, a.conversation); err != nil {
 		a.turnMu.Unlock()
-		return nil, fmt.Errorf("compaction exhausted before turn start: %w", err)
+		if errors.Is(err, ErrCompactionExhausted) {
+			return nil, fmt.Errorf("compaction exhausted before turn start: %w", err)
+		}
+		return nil, fmt.Errorf("compact before turn: %w", err)
 	}
 	a.saveSnapshotIfNeeded()
 
