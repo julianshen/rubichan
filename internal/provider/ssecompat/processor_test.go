@@ -2,11 +2,13 @@ package ssecompat
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +38,7 @@ func TestProcessSSE_TextDelta(t *testing.T) {
 	)
 
 	ch := make(chan provider.StreamEvent, 16)
-	ProcessSSE(context.Background(), body, ch)
+	ProcessSSE(context.Background(), body, ch, "test")
 	events := collect(ch)
 
 	var texts []string
@@ -55,7 +57,7 @@ func TestProcessSSE_MessageStart(t *testing.T) {
 	)
 
 	ch := make(chan provider.StreamEvent, 16)
-	ProcessSSE(context.Background(), body, ch)
+	ProcessSSE(context.Background(), body, ch, "test")
 	events := collect(ch)
 
 	require.GreaterOrEqual(t, len(events), 1)
@@ -73,7 +75,7 @@ func TestProcessSSE_ToolCallAccumulation(t *testing.T) {
 	)
 
 	ch := make(chan provider.StreamEvent, 16)
-	ProcessSSE(context.Background(), body, ch)
+	ProcessSSE(context.Background(), body, ch, "test")
 	events := collect(ch)
 
 	var toolUses []provider.StreamEvent
@@ -96,7 +98,7 @@ func TestProcessSSE_Done(t *testing.T) {
 	)
 
 	ch := make(chan provider.StreamEvent, 16)
-	ProcessSSE(context.Background(), body, ch)
+	ProcessSSE(context.Background(), body, ch, "test")
 	events := collect(ch)
 
 	require.NotEmpty(t, events, "expected at least one event")
@@ -110,7 +112,7 @@ func TestProcessSSE_ParseError(t *testing.T) {
 	)
 
 	ch := make(chan provider.StreamEvent, 16)
-	ProcessSSE(context.Background(), body, ch)
+	ProcessSSE(context.Background(), body, ch, "test")
 	events := collect(ch)
 
 	var hasError bool
@@ -132,7 +134,7 @@ func TestProcessSSE_ContextCancellation(t *testing.T) {
 	)
 
 	ch := make(chan provider.StreamEvent, 16)
-	ProcessSSE(ctx, body, ch)
+	ProcessSSE(ctx, body, ch, "test")
 	events := collect(ch)
 
 	// Should get an error event from context cancellation, not normal processing.
@@ -155,7 +157,7 @@ func TestProcessSSE_SkipsNonDataLines(t *testing.T) {
 	)
 
 	ch := make(chan provider.StreamEvent, 16)
-	ProcessSSE(context.Background(), body, ch)
+	ProcessSSE(context.Background(), body, ch, "test")
 	events := collect(ch)
 
 	var texts []string
@@ -188,4 +190,32 @@ func TestToolCallAccumulator_MultipleIndexes(t *testing.T) {
 	require.Len(t, toolUses, 2)
 	assert.Equal(t, "c1", toolUses[0].ToolUse.ID)
 	assert.Equal(t, "c2", toolUses[1].ToolUse.ID)
+}
+
+func TestProcessSSE_ScannerError(t *testing.T) {
+	pr, pw := io.Pipe()
+	pw.CloseWithError(errors.New("EOF mid-stream"))
+
+	ch := make(chan provider.StreamEvent, 4)
+	ProcessSSE(context.Background(), io.NopCloser(pr), ch, "openai-compat")
+
+	var events []provider.StreamEvent
+	for e := range ch {
+		events = append(events, e)
+	}
+
+	require.GreaterOrEqual(t, len(events), 1)
+	// Find the error event.
+	var errEvt *provider.StreamEvent
+	for i := range events {
+		if events[i].Type == agentsdk.EventError {
+			errEvt = &events[i]
+			break
+		}
+	}
+	require.NotNil(t, errEvt)
+	var pe *provider.ProviderError
+	require.ErrorAs(t, errEvt.Error, &pe)
+	assert.Equal(t, provider.ErrStreamError, pe.Kind)
+	assert.Equal(t, "openai-compat", pe.Provider)
 }

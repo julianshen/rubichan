@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/testutil"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1034,6 +1036,29 @@ func TestTransformerStripsEmptyTextViaNormalization(t *testing.T) {
 	var blocks []map[string]any
 	require.NoError(t, json.Unmarshal(parsed.Messages[0].Content, &blocks))
 	assert.Len(t, blocks, 2, "empty text block should be removed by normalization")
+}
+
+func TestProcessStream_ScannerError(t *testing.T) {
+	pr, pw := io.Pipe()
+	pw.CloseWithError(errors.New("connection reset by peer"))
+
+	p := New("http://localhost", "test-key")
+	ch := make(chan provider.StreamEvent)
+	go p.processStream(context.Background(), io.NopCloser(pr), ch)
+
+	var events []provider.StreamEvent
+	for e := range ch {
+		events = append(events, e)
+	}
+
+	require.Len(t, events, 1)
+	assert.Equal(t, agentsdk.EventError, events[0].Type)
+
+	var pe *provider.ProviderError
+	require.ErrorAs(t, events[0].Error, &pe)
+	assert.Equal(t, provider.ErrStreamError, pe.Kind)
+	assert.Equal(t, "anthropic", pe.Provider)
+	assert.True(t, pe.IsRetryable())
 }
 
 func floatPtr(f float64) *float64 { return &f }

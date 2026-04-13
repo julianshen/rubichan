@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // chatChunk represents a single SSE chunk from an OpenAI-compatible API.
@@ -115,7 +116,9 @@ func (a *ToolCallAccumulator) Flush(ctx context.Context, ch chan<- provider.Stre
 // ProcessSSE reads OpenAI-compatible SSE lines from a reader and sends
 // StreamEvents to the channel. Handles text deltas, tool call accumulation,
 // and [DONE] detection. Closes both the body and the channel when done.
-func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
+// providerName is included in any ProviderError emitted so callers can
+// distinguish which provider encountered the stream failure.
+func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent, providerName string) {
 	defer close(ch)
 	defer body.Close()
 
@@ -195,8 +198,14 @@ func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.Stre
 	}
 
 	if err := scanner.Err(); err != nil {
+		streamErr := &provider.ProviderError{
+			Kind:      provider.ErrStreamError,
+			Provider:  providerName,
+			Message:   err.Error(),
+			Retryable: true,
+		}
 		select {
-		case ch <- provider.StreamEvent{Type: "error", Error: err}:
+		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: streamErr}:
 		case <-ctx.Done():
 		}
 	}

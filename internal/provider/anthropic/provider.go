@@ -145,8 +145,14 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 
 	if err := scanner.Err(); err != nil {
+		streamErr := &provider.ProviderError{
+			Kind:      provider.ErrStreamError,
+			Provider:  "anthropic",
+			Message:   err.Error(),
+			Retryable: true,
+		}
 		select {
-		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: err}:
+		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: streamErr}:
 		case <-ctx.Done():
 		}
 	}

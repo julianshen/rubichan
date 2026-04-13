@@ -100,7 +100,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	}
 
 	ch := make(chan provider.StreamEvent)
-	go ssecompat.ProcessSSE(ctx, resp.Body, ch)
+	go ssecompat.ProcessSSE(ctx, resp.Body, ch, "zai")
 
 	return ch, nil
 }
