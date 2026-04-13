@@ -33,5 +33,15 @@ type StreamingTool = agentsdk.StreamingTool
 // for tool_search discovery of deferred tools.
 type SearchHinter = agentsdk.SearchHinter
 
+// ResultCapped is an optional interface for tools that declare a
+// per-result byte cap so oversize output is truncated before entering
+// the conversation.
+type ResultCapped = agentsdk.ResultCapped
+
+// ConcurrencySafeTool is an optional marker interface for tools that
+// can be dispatched during streaming because they have no observable
+// side effects.
+type ConcurrencySafeTool = agentsdk.ConcurrencySafeTool
+
 // ToolResult represents the result of executing a tool.
 type ToolResult = agentsdk.ToolResult

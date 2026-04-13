@@ -26,6 +26,9 @@ func NewToolSearchTool(s ToolSearcher) *ToolSearchTool {
 
 func (t *ToolSearchTool) Name() string { return "tool_search" }
 
+// Compile-time assertion that ToolSearchTool implements ConcurrencySafeTool.
+var _ ConcurrencySafeTool = (*ToolSearchTool)(nil)
+
 // IsConcurrencySafe declares this tool eligible for streaming dispatch.
 // tool_search only queries the in-memory deferral registry — pure read
 // with no side effects.

@@ -45,6 +45,9 @@ func (s *SearchTool) Name() string {
 	return "search"
 }
 
+// Compile-time assertion that SearchTool implements ConcurrencySafeTool.
+var _ ConcurrencySafeTool = (*SearchTool)(nil)
+
 // IsConcurrencySafe declares this tool eligible for streaming dispatch.
 // search is a pure read over files — no mutations, safe to reorder and
 // run in parallel with other tool calls.

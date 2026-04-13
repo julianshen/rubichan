@@ -48,12 +48,6 @@ const (
 	// repeated no-shrink attempts.
 	ExitCompactionFailed
 
-	// ExitProtocolViolation: orphaned tool_use blocks were detected
-	// and could not be recovered. Reserved for future use — not emitted
-	// today because the orphan sweeper always produces a valid
-	// conversation state from non-fatal exit paths.
-	ExitProtocolViolation
-
 	// ExitPanic: a panic was recovered in Turn's deferred handler.
 	ExitPanic
 )
@@ -81,8 +75,6 @@ func (r TurnExitReason) String() string {
 		return "empty_response"
 	case ExitCompactionFailed:
 		return "compaction_failed"
-	case ExitProtocolViolation:
-		return "protocol_violation"
 	case ExitPanic:
 		return "panic"
 	default:

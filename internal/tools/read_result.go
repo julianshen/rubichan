@@ -24,6 +24,9 @@ func NewReadResultTool(r ResultRetriever) *ReadResultTool {
 
 func (t *ReadResultTool) Name() string { return "read_result" }
 
+// Compile-time assertion that ReadResultTool implements ConcurrencySafeTool.
+var _ ConcurrencySafeTool = (*ReadResultTool)(nil)
+
 // IsConcurrencySafe declares this tool eligible for streaming dispatch.
 // read_result just retrieves previously-stored tool output by ref ID —
 // a pure read with no side effects.
