@@ -25,6 +25,33 @@ func (pb *PromptBuilder) AddSection(s PromptSection) {
 	pb.sections = append(pb.sections, s)
 }
 
+// AddCacheableSection appends a section whose content is identical across
+// sessions, users, and organizations. Cacheable sections are placed before
+// the cache boundary at Build time so they can be served from the global
+// provider cache.
+//
+// IMPORTANT: do not call this with runtime-conditional content. Each unique
+// value fragments the global cache — three boolean conditionals create eight
+// variants, five create thirty-two. Use AddDynamicSection_UNCACHED for
+// anything that varies per session, user, or feature flag.
+func (pb *PromptBuilder) AddCacheableSection(name, content string) {
+	pb.sections = append(pb.sections, PromptSection{Name: name, Content: content, Cacheable: true})
+}
+
+// AddDynamicSection_UNCACHED appends a section whose content varies per
+// session, user, or runtime condition. Dynamic sections are placed after
+// the cache boundary so they do not fragment the global prompt cache.
+//
+// The reason parameter documents WHY this section cannot be cached. It is
+// not used at runtime — its purpose is mandatory documentation. Reviewers
+// see the reason in code review, and grep across the codebase surfaces
+// every cache-breaking decision. Example reasons: "contains session ID",
+// "runtime feature flag", "user-specific tool inventory".
+func (pb *PromptBuilder) AddDynamicSection_UNCACHED(name, content, reason string) {
+	_ = reason // documentation-only; unused at runtime by design
+	pb.sections = append(pb.sections, PromptSection{Name: name, Content: content, Cacheable: false})
+}
+
 // Build returns the assembled prompt string and cache breakpoint byte offsets.
 // Cacheable sections are placed first. A single breakpoint is inserted after
 // the last cacheable section (only if both cacheable and dynamic sections exist).

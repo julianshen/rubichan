@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPromptBuilderEmptyBuild(t *testing.T) {
@@ -52,4 +53,44 @@ func TestPromptBuilderAllDynamicNoBreakpoint(t *testing.T) {
 
 	_, breakpoints := pb.Build()
 	assert.Empty(t, breakpoints, "no breakpoint when all sections dynamic")
+}
+
+func TestPromptBuilder_TypedAPI_CacheableFirst(t *testing.T) {
+	pb := NewPromptBuilder()
+	pb.AddDynamicSection_UNCACHED("user-ctx", "session: abc123", "contains session-specific data")
+	pb.AddCacheableSection("instructions", "You are a helpful assistant.")
+	pb.AddCacheableSection("tools", "Available tools: ...")
+
+	prompt, breakpoints := pb.Build()
+
+	instrIdx := strings.Index(prompt, "You are a helpful assistant")
+	toolsIdx := strings.Index(prompt, "Available tools")
+	sessionIdx := strings.Index(prompt, "session: abc123")
+
+	require.NotEqual(t, -1, instrIdx)
+	require.NotEqual(t, -1, toolsIdx)
+	require.NotEqual(t, -1, sessionIdx)
+	assert.True(t, instrIdx < sessionIdx, "cacheable content must precede dynamic content")
+	assert.True(t, toolsIdx < sessionIdx, "cacheable content must precede dynamic content")
+
+	require.Len(t, breakpoints, 1, "expect exactly one breakpoint between cacheable and dynamic")
+	assert.True(t, breakpoints[0] < sessionIdx)
+	assert.True(t, breakpoints[0] > toolsIdx)
+}
+
+func TestPromptBuilder_CacheStability(t *testing.T) {
+	// The breakpoint byte offset must be stable across dynamic content changes.
+	makePrompt := func(sessionData string) (string, []int) {
+		pb := NewPromptBuilder()
+		pb.AddCacheableSection("system", "static instructions")
+		pb.AddDynamicSection_UNCACHED("session", sessionData, "per-session data")
+		return pb.Build()
+	}
+
+	_, bp1 := makePrompt("session: aaa")
+	_, bp2 := makePrompt("session: bbb bbb bbb bbb bbb")
+
+	require.Len(t, bp1, 1)
+	require.Len(t, bp2, 1)
+	assert.Equal(t, bp1[0], bp2[0], "breakpoint byte offset must be stable across dynamic content changes")
 }

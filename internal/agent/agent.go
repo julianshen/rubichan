@@ -1080,22 +1080,14 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 			pb.AddSection(section)
 		}
 	} else {
-		pb.AddSection(PromptSection{
-			Name:      "",
-			Content:   baseSystemPrompt,
-			Cacheable: true,
-		})
+		pb.AddCacheableSection("", baseSystemPrompt)
 	}
 
 	// Scratchpad — dynamic, changes as user adds notes.
 	if a.scratchpad != nil {
 		rendered := a.scratchpad.Render()
 		if rendered != "" {
-			pb.AddSection(PromptSection{
-				Name:      "Scratchpad",
-				Content:   rendered,
-				Cacheable: false,
-			})
+			pb.AddDynamicSection_UNCACHED("Scratchpad", rendered, "user-editable notes change across turns")
 		}
 	}
 
@@ -1103,11 +1095,7 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 	if a.progress != nil {
 		rendered := a.progress.Render()
 		if rendered != "" {
-			pb.AddSection(PromptSection{
-				Name:      "Progress",
-				Content:   rendered,
-				Cacheable: false,
-			})
+			pb.AddDynamicSection_UNCACHED("Progress", rendered, "accumulates tool results at runtime and changes each turn")
 		}
 	}
 
@@ -1118,11 +1106,7 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 		if err == nil && len(entities) > 0 {
 			knowledge := renderKnowledgeSection(entities)
 			if knowledge != "" {
-				pb.AddSection(PromptSection{
-					Name:      "Project Knowledge",
-					Content:   knowledge,
-					Cacheable: false,
-				})
+				pb.AddDynamicSection_UNCACHED("Project Knowledge", knowledge, "selected per-query from knowledge graph based on user message content")
 			}
 			// Record that these entities were selected and injected into the prompt.
 			// Errors are silently discarded to ensure metrics recording never blocks prompt building.
@@ -1133,11 +1117,7 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
 		for _, f := range builtFragments {
-			pb.AddSection(PromptSection{
-				Name:      f.SkillName,
-				Content:   f.Prompt,
-				Cacheable: false,
-			})
+			pb.AddDynamicSection_UNCACHED(f.SkillName, f.Prompt, "skill-injected prompt varies by active skill set and runtime context")
 		}
 	}
 
