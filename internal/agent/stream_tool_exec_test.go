@@ -501,6 +501,93 @@ func (p *blockingStreamProvider) Stream(_ context.Context, _ provider.Completion
 	return ch, nil
 }
 
+// singleToolBlockingProvider emits ONE tool_use (with full Input) and
+// blocks on waitForTool before emitting stop. With the old behaviour —
+// finalizeTool runs only on the NEXT tool_use or at stream end — the
+// single tool was never dispatched mid-stream and the provider
+// deadlocked. With the fix (immediate finalize on tool_use arrival)
+// the tool runs as soon as its event is seen.
+type singleToolBlockingProvider struct {
+	waitForTool <-chan struct{}
+	callIdx     int
+}
+
+func (p *singleToolBlockingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	idx := p.callIdx
+	p.callIdx++
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		if idx == 0 {
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "call-solo", Name: "fake_read", Input: json.RawMessage(`{"path":"/tmp/x"}`),
+			}}
+			// content_block_stop signals the agent to finalize the tool
+			// and dispatch it via the streaming executor NOW, mid-stream.
+			// Without this event, the old behaviour would wait for a
+			// subsequent tool_use or stream end — in this test the
+			// provider blocks on waitForTool, which only closes when the
+			// tool has actually started executing, so the absence of a
+			// finalize signal would deadlock and the test would hit its
+			// context timeout.
+			ch <- provider.StreamEvent{Type: "content_block_stop"}
+			<-p.waitForTool
+			ch <- provider.StreamEvent{Type: "stop"}
+			return
+		}
+		ch <- provider.StreamEvent{Type: "text_delta", Text: "done"}
+		ch <- provider.StreamEvent{Type: "stop"}
+	}()
+	return ch, nil
+}
+
+// TestRunLoopDispatchesSingleToolResponseDuringStream proves that a
+// response with ONE tool_use block dispatches the tool during the
+// stream (not after stream end). This was the single known limitation
+// of the PR #231 streaming dispatch work: finalizeTool only ran on
+// "next tool_use" or stream end, so single-tool responses never
+// benefited. The fix adds an immediate finalize call inside the
+// tool_use case so the executor sees the tool as soon as its event
+// arrives with complete Input.
+func TestRunLoopDispatchesSingleToolResponseDuringStream(t *testing.T) {
+	t.Parallel()
+	toolRan := make(chan struct{})
+	var once sync.Once
+	tool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "file contents",
+		onStart:    func() { once.Do(func() { close(toolRan) }) },
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tool))
+
+	prov := &singleToolBlockingProvider{waitForTool: toolRan}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, err := a.Turn(ctx, "read the file")
+	require.NoError(t, err)
+	for ev := range events {
+		_ = ev
+	}
+
+	select {
+	case <-toolRan:
+		// Ok — tool dispatched during stream.
+	default:
+		t.Fatal("tool never ran — single-tool streaming dispatch regression")
+	}
+	if got := tool.called.Load(); got < 1 {
+		t.Fatalf("want tool called at least once, got %d", got)
+	}
+}
+
 // TestRunLoopDispatchesStreamingToolDuringStream genuinely proves
 // that concurrency-safe tools are dispatched during the model stream,
 // not after it. The blocking provider refuses to emit stop until the

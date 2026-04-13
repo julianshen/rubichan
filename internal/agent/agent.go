@@ -1363,12 +1363,29 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				finalizeText()
 				// Finalize any previous tool
 				finalizeTool()
-				// Start new tool accumulation
+				// Start new tool accumulation. Input may be empty here
+				// if the provider will deliver it as subsequent
+				// text_delta events (legacy path) — otherwise the next
+				// content_block_stop or tool_use event triggers finalize.
 				currentTool = &provider.ToolUseBlock{
 					ID:    event.ToolUse.ID,
 					Name:  event.ToolUse.Name,
 					Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 				}
+
+			case "content_block_stop":
+				// Provider signals that the current content block is
+				// complete — if we're mid-tool-use, finalize now so the
+				// streaming executor can dispatch immediately instead
+				// of waiting for the next tool_use event or stream end.
+				// This is the single-tool-response streaming win:
+				// previously, a response with a single tool_use never
+				// hit the streaming dispatch path because finalizeTool
+				// only ran at stream end (too late to parallelize with
+				// anything). Providers that don't emit content_block_stop
+				// fall back to the old timing (finalize on next tool_use
+				// or stream end).
+				finalizeTool()
 
 			case "error":
 				streamErr = true
