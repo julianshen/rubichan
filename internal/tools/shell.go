@@ -147,6 +147,12 @@ func (s *ShellTool) Name() string {
 	return "shell"
 }
 
+// MaxResultBytes implements agentsdk.ResultCapped. Shell output is
+// frequently large (verbose builds, recursive listings); 64 KB keeps
+// head+tail context while preventing a single command from dominating
+// the context window.
+func (*ShellTool) MaxResultBytes() int { return 64 * 1024 }
+
 func (s *ShellTool) SearchHint() string {
 	return "terminal bash run deploy npm pip cargo make compile"
 }

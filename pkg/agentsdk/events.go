@@ -20,6 +20,7 @@ type TurnEvent struct {
 	DiffSummary    string             // populated for done events: markdown-formatted cumulative file change summary
 	SubagentResult *SubagentResult    // populated for subagent_done events
 	ContextBudget  *ContextBudget     // populated for done events: per-component context usage breakdown
+	ExitReason     TurnExitReason     // populated for done events: why the turn stopped
 }
 
 // ToolCallEvent contains details about a tool being called.

@@ -24,6 +24,11 @@ func NewReadResultTool(r ResultRetriever) *ReadResultTool {
 
 func (t *ReadResultTool) Name() string { return "read_result" }
 
+// IsConcurrencySafe declares this tool eligible for streaming dispatch.
+// read_result just retrieves previously-stored tool output by ref ID —
+// a pure read with no side effects.
+func (*ReadResultTool) IsConcurrencySafe() bool { return true }
+
 func (t *ReadResultTool) Description() string {
 	return "Read a previously stored tool result by reference ID. Supports offset and limit for pagination."
 }

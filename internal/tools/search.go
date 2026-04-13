@@ -45,6 +45,11 @@ func (s *SearchTool) Name() string {
 	return "search"
 }
 
+// IsConcurrencySafe declares this tool eligible for streaming dispatch.
+// search is a pure read over files — no mutations, safe to reorder and
+// run in parallel with other tool calls.
+func (*SearchTool) IsConcurrencySafe() bool { return true }
+
 func (s *SearchTool) SearchHint() string {
 	return "codebase explore analyze review directory listing structure symbol"
 }

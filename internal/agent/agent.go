@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -854,7 +855,13 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
-	a.context.Compact(ctx, a.conversation)
+	if err := a.context.Compact(ctx, a.conversation); err != nil {
+		a.turnMu.Unlock()
+		if errors.Is(err, ErrCompactionExhausted) {
+			return nil, fmt.Errorf("compaction exhausted before turn start: %w", err)
+		}
+		return nil, fmt.Errorf("compact before turn: %w", err)
+	}
 	a.saveSnapshotIfNeeded()
 
 	// Reset the diff tracker so each turn starts with a clean slate.
@@ -870,6 +877,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 			if r := recover(); r != nil {
 				stack := debug.Stack()
 				a.logger.Error("agent panic recovered: %v\n%s", r, stack)
+				synthesizeMissingToolResults(a.conversation, orphanReasonPanic)
 				// Non-blocking send to avoid deadlocking turnMu if channel
 				// buffer is full (e.g., reader stopped consuming events).
 				select {
@@ -881,7 +889,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 				}
 				// Maintain contract: every turn ends with a "done" event.
 				select {
-				case ch <- TurnEvent{Type: "done"}:
+				case ch <- TurnEvent{Type: "done", ExitReason: agentsdk.ExitPanic}:
 				default:
 				}
 			}
@@ -1137,13 +1145,14 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 
 // makeDoneEvent constructs a "done" TurnEvent, attaching the cumulative diff
 // summary from the DiffTracker if one is attached, and the context budget.
-func (a *Agent) makeDoneEvent(inputTokens, outputTokens int) TurnEvent {
+func (a *Agent) makeDoneEvent(inputTokens, outputTokens int, reason agentsdk.TurnExitReason) TurnEvent {
 	budget := a.context.Budget()
 	event := TurnEvent{
 		Type:          "done",
 		InputTokens:   inputTokens,
 		OutputTokens:  outputTokens,
 		ContextBudget: &budget,
+		ExitReason:    reason,
 	}
 	if a.diffTracker != nil {
 		event.DiffSummary = a.diffTracker.Summarize()
@@ -1160,7 +1169,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("activate skills for turn: %w", err)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitSkillActivationFailed)
 			return
 		}
 	}
@@ -1170,8 +1179,18 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		if ctx.Err() != nil {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
 			return
+		}
+
+		if err := a.context.Compact(ctx, a.conversation); err != nil {
+			if errors.Is(err, ErrCompactionExhausted) {
+				ch <- TurnEvent{Type: "error", Error: err}
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCompactionFailed)
+				return
+			}
+			// Non-breaker errors are not expected today; log and continue.
+			a.logger.Warn("compaction returned unexpected error: %v", err)
 		}
 
 		// Build the system prompt with cache breakpoints.
@@ -1230,7 +1249,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 			if err := a.rateLimiter.Wait(ctx); err != nil {
 				ch <- TurnEvent{Type: "error", Error: fmt.Errorf("rate limiter: %w", err)}
-				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitRateLimited)
 				return
 			}
 		}
@@ -1238,7 +1257,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
 			return
 		}
 
@@ -1250,6 +1269,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
 		var thinkingBuf string
+
+		// Streaming dispatch: concurrency-safe tools run in the
+		// background as their tool_use blocks finalize during the stream,
+		// overlapping with any remaining model text.
+		execStream := newStreamingToolExecutor(maxParallelTools, func(sctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+			return a.executeSingleTool(sctx, ch, tc)
+		})
 
 		finalizeTool := func() {
 			if currentTool != nil {
@@ -1263,6 +1289,25 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					Name:  currentTool.Name,
 					Input: currentTool.Input,
 				})
+
+				// Streaming dispatch: if the tool is concurrency-safe
+				// and auto-approved, start executing it now so it runs
+				// in parallel with the remaining model stream. The
+				// marker check comes first so non-eligible tools skip
+				// the approval scan entirely — approval can be expensive
+				// when a security scanner is wired in.
+				if tool, ok := a.tools.Get(currentTool.Name); ok {
+					if cs, csok := tool.(agentsdk.ConcurrencySafeTool); csok && cs.IsConcurrencySafe() {
+						approval := a.approvalResultForTool(*currentTool)
+						if approval == AutoApproved || approval == TrustRuleApproved {
+							// Dispatch in background; executeTools
+							// emits the tool_call event when it sees
+							// the cached result.
+							execStream.Dispatch(ctx, *currentTool)
+						}
+					}
+				}
+
 				currentTool = nil
 				toolInputBuf = ""
 			}
@@ -1359,7 +1404,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// On stream error, discard partial blocks to prevent conversation corruption
 		if streamErr {
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			// Drain background streaming dispatches before discarding
+			// their results — prevents goroutine leaks and honours the
+			// executor's semantics (Drain unconditionally waits).
+			_ = execStream.Drain()
+			// Defensive: currently a no-op because AddAssistant has not been called
+			// yet on this path, but protects against future reorderings.
+			synthesizeMissingToolResults(a.conversation, orphanReasonStreamError)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
 			return
 		}
 
@@ -1393,11 +1445,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// If the LLM returned no content at all (no text, no tool calls),
 		// emit an error and add a placeholder assistant message to keep the
 		// conversation valid (every user message must be followed by an
-		// assistant message).
+		// assistant message). The placeholder downgrades the exit reason
+		// from ExitCompleted to ExitEmptyResponse so observability can
+		// distinguish "model said nothing" from "model finished normally".
+		exitReason := agentsdk.ExitCompleted
 		if len(blocks) == 0 && len(pendingTools) == 0 {
-			placeholder := "[empty response from model]"
-			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: placeholder})
+			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: emptyModelResponseText})
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
+			exitReason = agentsdk.ExitEmptyResponse
 		}
 
 		// Add assistant message with accumulated blocks
@@ -1406,10 +1461,23 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			a.persistMessage("assistant", blocks)
 		}
 
-		// If no pending tool calls, we're done
+		// If no pending tool calls, we're done. Drain any background
+		// dispatches so goroutines don't outlive the turn (should be
+		// empty in this branch, but Drain is cheap and safe).
 		if len(pendingTools) == 0 {
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			_ = execStream.Drain()
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason)
 			return
+		}
+
+		// Drain any tools dispatched during streaming; executeTools
+		// will merge these results into its output by tool_use ID.
+		var streamedResults map[string]toolExecResult
+		if drained := execStream.Drain(); len(drained) > 0 {
+			streamedResults = make(map[string]toolExecResult, len(drained))
+			for _, r := range drained {
+				streamedResults[r.toolUseID] = r
+			}
 		}
 
 		signature := pendingToolSignature(pendingTools)
@@ -1421,7 +1489,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 		if repeatedPendingToolRounds >= maxRepeatedPendingToolRounds {
 			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitNoProgress)
 			return
 		}
 
@@ -1430,16 +1498,17 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// the model often pairs task_complete with a final write or commit.
 		for _, tc := range pendingTools {
 			if tc.Name == tools.TaskCompleteName {
-				a.executeTools(ctx, ch, pendingTools)
-				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+				a.executeTools(ctx, ch, pendingTools, streamedResults)
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete)
 				return
 			}
 		}
 
 		// Execute tool calls — parallelize auto-approved tools when possible.
-		if cancelled := a.executeTools(ctx, ch, pendingTools); cancelled {
+		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
+			synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
 			return
 		}
 
@@ -1451,7 +1520,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 	// Reached max turns.
 	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
-	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
+	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitMaxTurns)
 }
 
 const maxRepeatedPendingToolRounds = 3
@@ -1563,15 +1632,44 @@ func (a *Agent) approvalToolErrorResult(tc provider.ToolUseBlock, msg string, er
 
 // executeTools runs the pending tool calls, parallelizing auto-approved ones.
 // Returns true if the context was cancelled during execution.
-func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock) bool {
+//
+// streamedResults holds outcomes for tools that were already dispatched
+// during streaming (via streamingToolExecutor). Entries keyed by
+// tool_use ID are placed directly into the results slice at their
+// original position and skipped during planning/partitioning. Pass nil
+// if no streaming dispatch occurred.
+func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, streamedResults map[string]toolExecResult) bool {
 	if a.approvalChecker == nil {
 		// No checker — fall back to sequential execution.
-		return a.executePlannedToolsSequential(ctx, ch, a.planToolCalls(pendingTools))
+		return a.executePlannedToolsSequential(ctx, ch, a.planToolCalls(pendingTools), streamedResults)
 	}
 
-	plannedTools := a.planToolCalls(pendingTools)
+	// Pre-populate results for tools already executed during streaming;
+	// the remaining (planned) subset goes through the normal partition
+	// and execution path.
+	results := make([]toolExecResult, len(pendingTools))
+	plannedTools := make([]plannedToolCall, 0, len(pendingTools))
+	for i, tc := range pendingTools {
+		if r, ok := streamedResults[tc.ID]; ok {
+			results[i] = r
+			// Emit the tool_call event so UIs still see it.
+			ch <- TurnEvent{
+				Type:     "tool_call",
+				ToolCall: &ToolCallEvent{ID: tc.ID, Name: tc.Name, Input: tc.Input},
+			}
+			continue
+		}
+		plannedTools = append(plannedTools, plannedToolCall{
+			index:          i,
+			tc:             tc,
+			approvalResult: a.approvalResultForTool(tc),
+		})
+	}
 
 	// Partition into auto-approved and needs-approval using input-sensitive check.
+	// When every pending tool was already streamed, plannedTools is empty and
+	// the partition/execute stages below are all no-ops — control falls through
+	// to the final emission loop without a dedicated fast path.
 	var autoApproved, autoDenied, needsApproval []plannedToolCall
 	for _, planned := range plannedTools {
 		switch planned.approvalResult {
@@ -1612,9 +1710,6 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			},
 		}
 	}
-
-	// Results array indexed by original position.
-	results := make([]toolExecResult, len(pendingTools))
 
 	// Emit tool_call events for auto-denied tools so headless runners can
 	// match results by call ID, then fill in denied results immediately.
@@ -1708,10 +1803,28 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	return false
 }
 
-func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- TurnEvent, plannedTools []plannedToolCall) bool {
+func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- TurnEvent, plannedTools []plannedToolCall, streamedResults map[string]toolExecResult) bool {
 	for _, planned := range plannedTools {
 		if ctx.Err() != nil {
 			return true
+		}
+
+		// Streaming dispatch already ran this tool — emit the tool_call
+		// and cached result directly without re-executing.
+		if r, ok := streamedResults[planned.tc.ID]; ok {
+			ch <- TurnEvent{
+				Type: "tool_call",
+				ToolCall: &ToolCallEvent{
+					ID:    planned.tc.ID,
+					Name:  planned.tc.Name,
+					Input: planned.tc.Input,
+				},
+			}
+			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
+			a.persistToolResult(r.toolUseID, r.content, r.isError)
+			ch <- r.event
+			a.recordToolProgress(planned.tc, r)
+			continue
 		}
 
 		ch <- TurnEvent{
@@ -1856,6 +1969,20 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 	result := a.pipeline.Execute(toolexec.WithToolEventEmitter(ctx, emit), toolexec.ToolCall{
 		ID: tc.ID, Name: tc.Name, Input: tc.Input,
 	})
+	// Apply per-tool result cap (Claude Code parity: query.ts Layer 0
+	// applyToolResultBudget). Tools that implement agentsdk.ResultCapped
+	// get their oversize output truncated with a head+tail slice plus a
+	// marker; tools that don't implement the interface pass through
+	// unchanged. Without this, a single chatty command can dump megabytes
+	// into one tool_result and dominate the context window.
+	if tool, ok := a.tools.Get(tc.Name); ok {
+		capped := applyResultCap(tool, agentsdk.ToolResult{
+			Content:        result.Content,
+			DisplayContent: result.DisplayContent,
+			IsError:        result.IsError,
+		})
+		result.Content = capped.Content
+	}
 	return toolExecResult{
 		toolUseID: tc.ID,
 		content:   result.Content,
