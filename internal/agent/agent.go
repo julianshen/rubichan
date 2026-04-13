@@ -1884,6 +1884,20 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 	result := a.pipeline.Execute(toolexec.WithToolEventEmitter(ctx, emit), toolexec.ToolCall{
 		ID: tc.ID, Name: tc.Name, Input: tc.Input,
 	})
+	// Apply per-tool result cap (Claude Code parity: query.ts Layer 0
+	// applyToolResultBudget). Tools that implement agentsdk.ResultCapped
+	// get their oversize output truncated with a head+tail slice plus a
+	// marker; tools that don't implement the interface pass through
+	// unchanged. Without this, a single chatty command can dump megabytes
+	// into one tool_result and dominate the context window.
+	if tool, ok := a.tools.Get(tc.Name); ok {
+		capped := applyResultCap(tool, agentsdk.ToolResult{
+			Content:        result.Content,
+			DisplayContent: result.DisplayContent,
+			IsError:        result.IsError,
+		})
+		result.Content = capped.Content
+	}
 	return toolExecResult{
 		toolUseID: tc.ID,
 		content:   result.Content,
