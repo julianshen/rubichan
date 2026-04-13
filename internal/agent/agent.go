@@ -1408,7 +1408,12 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// the tool runs; if we don't also emit a matching tool_call +
 		// tool_result, the UI sees orphan progress with no terminal event.
 		if streamErr {
-			surfaceStreamedResults(ch, pendingTools, execStream.Drain())
+			if unmatched := surfaceStreamedResults(ch, pendingTools, execStream.Drain()); unmatched > 0 {
+				// Invariant broken: every dispatched tool should have been
+				// appended to pendingTools before Dispatch ran. If this
+				// fires, a future refactor reordered the Dispatch site.
+				a.logger.Warn("streamErr: %d drained tool result(s) had IDs not in pendingTools; tool_call events were skipped", unmatched)
+			}
 			// Defensive: currently a no-op because AddAssistant has not been called
 			// yet on this path, but protects against future reorderings.
 			synthesizeMissingToolResults(a.conversation, orphanReasonStreamError)

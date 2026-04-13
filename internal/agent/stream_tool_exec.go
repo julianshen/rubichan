@@ -130,9 +130,16 @@ func (e *streamingToolExecutor) Drain() []toolExecResult {
 // mutations because the assistant message was never committed. A
 // future caller that wants conversation-side persistence must not
 // reuse this helper.
-func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, drained []toolExecResult) {
+//
+// Returns the count of drained results whose toolUseID was NOT found
+// in pendingTools. This is an invariant check: every dispatched tool
+// is appended to pendingTools in finalizeTool before Dispatch is
+// called, so unmatched should always be 0. A non-zero count means the
+// invariant broke and the caller should log it so future regressions
+// are visible instead of silently emitting orphan tool_result events.
+func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, drained []toolExecResult) (unmatched int) {
 	if len(drained) == 0 {
-		return
+		return 0
 	}
 	byID := make(map[string]provider.ToolUseBlock, len(pendingTools))
 	for _, tc := range pendingTools {
@@ -141,9 +148,12 @@ func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUse
 	for _, r := range drained {
 		if tc, ok := byID[r.toolUseID]; ok {
 			ch <- makeToolCallEvent(tc)
+		} else {
+			unmatched++
 		}
 		ch <- r.event
 	}
+	return unmatched
 }
 
 // isStreamingEligible returns true if a tool can be dispatched during
