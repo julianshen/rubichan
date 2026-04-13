@@ -1143,6 +1143,38 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 	return systemPrompt, cacheBreakpoints, buildSkillPromptText(builtFragments)
 }
 
+// emit sends a TurnEvent to the turn channel but guarantees the
+// agent goroutine cannot deadlock on a stalled consumer. A consumer
+// that stops reading mid-turn (e.g., breaks out of `for ev := range ch`
+// without cancelling the context) would otherwise fill the 64-slot
+// buffer and pin runLoop forever, holding turnMu and blocking every
+// future Turn().
+//
+// The two-phase select is deliberate:
+//  1. Try a non-blocking send first. This keeps events flowing to a
+//     still-reading consumer even after ctx has been cancelled —
+//     cancelled-ctx + reading-consumer is a legitimate state (the
+//     consumer wants to observe the cancellation events) and we
+//     mustn't drop events in that case.
+//  2. If the buffer is full, fall back to a blocking select on the
+//     channel AND ctx.Done(). When ctx is cancelled and the consumer
+//     has stopped, ctx.Done() wins and the event is dropped.
+//
+// Callers don't need to check for success: subsequent emits naturally
+// fall through the same escape, and runLoop's existing ctx.Err()
+// checks exit the loop on the next iteration tick.
+func (a *Agent) emit(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) {
+	select {
+	case ch <- ev:
+		return
+	default:
+	}
+	select {
+	case ch <- ev:
+	case <-ctx.Done():
+	}
+}
+
 // makeDoneEvent constructs a "done" TurnEvent, attaching the cumulative diff
 // summary from the DiffTracker if one is attached, and the context budget.
 func (a *Agent) makeDoneEvent(inputTokens, outputTokens int, reason agentsdk.TurnExitReason) TurnEvent {
@@ -1168,8 +1200,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 	if a.skillRuntime != nil {
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
-			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("activate skills for turn: %w", err)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitSkillActivationFailed)
+			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("activate skills for turn: %w", err)})
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitSkillActivationFailed))
 			return
 		}
 	}
@@ -1178,15 +1210,15 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		a.turnNumber.Store(int32(turnCount))
 
 		if ctx.Err() != nil {
-			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
+			a.emit(ctx, ch, TurnEvent{Type: "error", Error: ctx.Err()})
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled))
 			return
 		}
 
 		if err := a.context.Compact(ctx, a.conversation); err != nil {
 			if errors.Is(err, ErrCompactionExhausted) {
-				ch <- TurnEvent{Type: "error", Error: err}
-				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCompactionFailed)
+				a.emit(ctx, ch, TurnEvent{Type: "error", Error: err})
+				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCompactionFailed))
 				return
 			}
 			// Non-breaker errors are not expected today; log and continue.
@@ -1245,19 +1277,19 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		if a.rateLimiter != nil {
 			if !a.rateLimiter.AllowNow() {
-				ch <- TurnEvent{Type: "rate_limited"}
+				a.emit(ctx, ch, TurnEvent{Type: "rate_limited"})
 			}
 			if err := a.rateLimiter.Wait(ctx); err != nil {
-				ch <- TurnEvent{Type: "error", Error: fmt.Errorf("rate limiter: %w", err)}
-				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitRateLimited)
+				a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("rate limiter: %w", err)})
+				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitRateLimited))
 				return
 			}
 		}
 
 		stream, err := a.provider.Stream(ctx, req)
 		if err != nil {
-			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
+			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
 			return
 		}
 
@@ -1339,7 +1371,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			switch event.Type {
 			case "thinking_delta":
 				thinkingBuf += event.Text
-				ch <- TurnEvent{Type: "thinking_delta", Text: event.Text}
+				a.emit(ctx, ch, TurnEvent{Type: "thinking_delta", Text: event.Text})
 
 			case "text_delta":
 				if currentTool != nil {
@@ -1348,7 +1380,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				} else {
 					// Regular text content
 					currentTextBuf += event.Text
-					ch <- TurnEvent{Type: "text_delta", Text: event.Text}
+					a.emit(ctx, ch, TurnEvent{Type: "text_delta", Text: event.Text})
 				}
 
 			case "tool_use":
@@ -1356,7 +1388,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					// Finalize any in-progress tool to prevent input corruption.
 					finalizeText()
 					finalizeTool()
-					ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")}
+					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")})
 					continue
 				}
 				// Finalize any pending text block
@@ -1382,7 +1414,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 			case "error":
 				streamErr = true
-				ch <- TurnEvent{Type: "error", Error: event.Error}
+				a.emit(ctx, ch, TurnEvent{Type: "error", Error: event.Error})
 
 			case "stop":
 				// Will be handled after the loop
@@ -1395,7 +1427,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Detect truncated tool calls: if the stream ended with a partially
 		// accumulated tool whose input JSON is invalid, discard it and warn.
 		if currentTool != nil && toolInputBuf != "" && !json.Valid([]byte(toolInputBuf)) {
-			ch <- TurnEvent{Type: "text_delta", Text: "\n⚠️ Tool call truncated by output limit.\n"}
+			a.emit(ctx, ch, TurnEvent{Type: "text_delta", Text: "\n⚠️ Tool call truncated by output limit.\n"})
 			currentTool = nil
 			toolInputBuf = ""
 		}
@@ -1418,7 +1450,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// the tool runs; if we don't also emit a matching tool_call +
 		// tool_result, the UI sees orphan progress with no terminal event.
 		if streamErr {
-			if unmatched := surfaceStreamedResults(ch, pendingTools, execStream.Drain()); unmatched > 0 {
+			if unmatched := surfaceStreamedResults(ctx, a, ch, pendingTools, execStream.Drain()); unmatched > 0 {
 				// Invariant broken: every dispatched tool should have been
 				// appended to pendingTools before Dispatch ran. If this
 				// fires, a future refactor reordered the Dispatch site.
@@ -1427,7 +1459,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			// Defensive: currently a no-op because AddAssistant has not been called
 			// yet on this path, but protects against future reorderings.
 			synthesizeMissingToolResults(a.conversation, orphanReasonStreamError)
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError)
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
 			return
 		}
 
@@ -1467,7 +1499,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		exitReason := agentsdk.ExitCompleted
 		if len(blocks) == 0 && len(pendingTools) == 0 {
 			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: emptyModelResponseText})
-			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")}
+			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")})
 			exitReason = agentsdk.ExitEmptyResponse
 		}
 
@@ -1482,7 +1514,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// empty in this branch, but Drain is cheap and safe).
 		if len(pendingTools) == 0 {
 			_ = execStream.Drain()
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason)
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
 			return
 		}
 
@@ -1504,8 +1536,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			repeatedPendingToolRounds = 1
 		}
 		if repeatedPendingToolRounds >= maxRepeatedPendingToolRounds {
-			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitNoProgress)
+			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)})
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitNoProgress))
 			return
 		}
 
@@ -1515,7 +1547,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		for _, tc := range pendingTools {
 			if tc.Name == tools.TaskCompleteName {
 				a.executeTools(ctx, ch, pendingTools, streamedResults)
-				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete)
+				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete))
 				return
 			}
 		}
@@ -1523,20 +1555,20 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
 			synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
-			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
-			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
+			a.emit(ctx, ch, TurnEvent{Type: "error", Error: ctx.Err()})
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled))
 			return
 		}
 
 		// Drain any pending wake events from background subagents.
-		a.drainWakeEvents(ch)
+		a.drainWakeEvents(ctx, ch)
 
 		// Continue to the next turn after tool results.
 	}
 
 	// Reached max turns.
-	ch <- TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)}
-	ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitMaxTurns)
+	a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)})
+	a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitMaxTurns))
 }
 
 const maxRepeatedPendingToolRounds = 3
@@ -1668,7 +1700,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	for i, tc := range pendingTools {
 		if r, ok := streamedResults[tc.ID]; ok {
 			results[i] = r
-			ch <- makeToolCallEvent(tc)
+			a.emit(ctx, ch, makeToolCallEvent(tc))
 			continue
 		}
 		plannedTools = append(plannedTools, plannedToolCall{
@@ -1713,13 +1745,13 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	// Needs-approval tool_call events are emitted just before approval,
 	// matching the sequential path behavior.
 	for _, it := range autoApproved {
-		ch <- makeToolCallEvent(it.tc)
+		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 	}
 
 	// Emit tool_call events for auto-denied tools so headless runners can
 	// match results by call ID, then fill in denied results immediately.
 	for _, it := range autoDenied {
-		ch <- makeToolCallEvent(it.tc)
+		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 		results[it.index] = a.approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
 	}
 
@@ -1755,7 +1787,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		if ctx.Err() != nil {
 			return true
 		}
-		ch <- makeToolCallEvent(it.tc)
+		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 		results[it.index] = a.executeSingleTool(ctx, ch, it.tc)
 	}
 
@@ -1764,7 +1796,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		if ctx.Err() != nil {
 			return true
 		}
-		ch <- makeToolCallEvent(it.tc)
+		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc, it.approvalResult)
 	}
 
@@ -1773,7 +1805,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		r := results[i]
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
-		ch <- r.event
+		a.emit(ctx, ch, r.event)
 
 		// Record progress for compaction-resistant tracking.
 		a.recordToolProgress(pendingTools[i], r)
@@ -1794,19 +1826,19 @@ func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- Tur
 		// Streaming dispatch already ran this tool — emit the tool_call
 		// and cached result directly without re-executing.
 		if r, ok := streamedResults[planned.tc.ID]; ok {
-			ch <- makeToolCallEvent(planned.tc)
+			a.emit(ctx, ch, makeToolCallEvent(planned.tc))
 			a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 			a.persistToolResult(r.toolUseID, r.content, r.isError)
-			ch <- r.event
+			a.emit(ctx, ch, r.event)
 			a.recordToolProgress(planned.tc, r)
 			continue
 		}
 
-		ch <- makeToolCallEvent(planned.tc)
+		a.emit(ctx, ch, makeToolCallEvent(planned.tc))
 		r := a.executeSingleToolWithApproval(ctx, ch, planned.tc, planned.approvalResult)
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
-		ch <- r.event
+		a.emit(ctx, ch, r.event)
 
 		// Record progress for compaction-resistant tracking.
 		a.recordToolProgress(planned.tc, r)
@@ -1862,7 +1894,7 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 				"input": truncateUIInput(tc.Input),
 			},
 		}
-		ch <- TurnEvent{Type: "ui_request", UIRequest: &req}
+		a.emit(ctx, ch, TurnEvent{Type: "ui_request", UIRequest: &req})
 		resp, reqErr := a.uiRequestHandler.Request(ctx, req)
 		if reqErr != nil {
 			return false, false, reqErr
@@ -1870,7 +1902,7 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		if resp.RequestID != req.ID {
 			return false, false, fmt.Errorf("unexpected UI response id %q for request %q", resp.RequestID, req.ID)
 		}
-		ch <- TurnEvent{Type: "ui_response", UIResponse: &resp}
+		a.emit(ctx, ch, TurnEvent{Type: "ui_response", UIResponse: &resp})
 		switch strings.ToLower(resp.ActionID) {
 		case "allow", "allow_always", "yes":
 			// "allow_always" cache persistence is handled by the UI adapter.
@@ -1922,7 +1954,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		}
 	}()
 	emit := func(ev tools.ToolEvent) {
-		ch <- TurnEvent{
+		a.emit(ctx, ch, TurnEvent{
 			Type: "tool_progress",
 			ToolProgress: &ToolProgressEvent{
 				ID:      tc.ID,
@@ -1931,7 +1963,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 				Content: ev.Content,
 				IsError: ev.IsError,
 			},
-		}
+		})
 	}
 	result := a.pipeline.Execute(toolexec.WithToolEventEmitter(ctx, emit), toolexec.ToolCall{
 		ID: tc.ID, Name: tc.Name, Input: tc.Input,
@@ -1961,7 +1993,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 // drainWakeEvents non-blockingly reads all pending wake events from the
 // WakeManager, injects them into the conversation as user messages, and
 // emits subagent_done TurnEvents.
-func (a *Agent) drainWakeEvents(ch chan<- TurnEvent) {
+func (a *Agent) drainWakeEvents(ctx context.Context, ch chan<- TurnEvent) {
 	if a.wakeManager == nil {
 		return
 	}
@@ -1972,7 +2004,7 @@ func (a *Agent) drainWakeEvents(ch chan<- TurnEvent) {
 				wake.TaskID, wake.AgentName, wake.Result.Output)
 			a.conversation.AddUser(wakeMsg)
 			a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: wakeMsg}})
-			ch <- TurnEvent{Type: "subagent_done", Text: wakeMsg, SubagentResult: wake.Result}
+			a.emit(ctx, ch, TurnEvent{Type: "subagent_done", Text: wakeMsg, SubagentResult: wake.Result})
 		default:
 			return
 		}

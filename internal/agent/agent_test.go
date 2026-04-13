@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
@@ -2819,7 +2820,7 @@ func TestAgentDrainWakeEventsNilManager(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg)
 	// drainWakeEvents should be a no-op when wakeManager is nil.
 	ch := make(chan TurnEvent, 16)
-	a.drainWakeEvents(ch)
+	a.drainWakeEvents(context.Background(), ch)
 	assert.Empty(t, ch)
 }
 
@@ -2841,7 +2842,7 @@ func TestAgentDrainWakeEventsWithPending(t *testing.T) {
 	wm.Complete(id2, &SubagentResult{Name: "agent2", Output: "result2"})
 
 	ch := make(chan TurnEvent, 16)
-	a.drainWakeEvents(ch)
+	a.drainWakeEvents(context.Background(), ch)
 
 	// Should have exactly 2 events drained.
 	assert.Len(t, ch, 2)
@@ -2865,7 +2866,7 @@ func TestAgentDrainWakeEventsNoPending(t *testing.T) {
 	a := New(p, reg, autoApprove, cfg, WithWakeManager(wm))
 
 	ch := make(chan TurnEvent, 16)
-	a.drainWakeEvents(ch)
+	a.drainWakeEvents(context.Background(), ch)
 	// No events should be emitted.
 	assert.Empty(t, ch)
 }
@@ -3451,5 +3452,83 @@ func TestTurnEmitsExitReasonCompleted(t *testing.T) {
 	}
 	if last.ExitReason != agentsdk.ExitCompleted {
 		t.Fatalf("want ExitCompleted, got %v", last.ExitReason)
+	}
+}
+
+// TestTurnUnblocksWhenConsumerCancelsCtx verifies that a consumer
+// which stops reading the Turn channel and cancels its context does
+// NOT deadlock the agent goroutine. Previously, every ch<-ev in
+// runLoop and its callees was a synchronous send; once the 64-slot
+// buffer filled, turnMu was held forever. The fix wraps sends in a
+// select that also listens on ctx.Done().
+//
+// Test strategy: emit enough events to overflow the 64-slot turn
+// channel. Consumer does NOT read. Cancel ctx. Then try a SECOND
+// Turn on the same agent — turnMu.Lock() in the second call blocks
+// until the first goroutine releases, so if the first hung, the
+// second Turn never returns. 3s timeout detects the deadlock class.
+func TestTurnUnblocksWhenConsumerCancelsCtx(t *testing.T) {
+	t.Parallel()
+	// 200 text_delta events + stop — guaranteed to overflow the
+	// 64-slot turn channel buffer.
+	events := make([]provider.StreamEvent, 0, 201)
+	for i := 0; i < 200; i++ {
+		events = append(events, provider.StreamEvent{Type: "text_delta", Text: "x"})
+	}
+	events = append(events, provider.StreamEvent{Type: "stop"})
+	mp := &mockProvider{events: events}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	ag := New(mp, reg, autoApprove, cfg)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ch1, err := ag.Turn(ctx1, "hello")
+	require.NoError(t, err)
+	_ = ch1 // intentionally never read — simulates a consumer that disconnected
+
+	// Give the agent goroutine a moment to fill the buffer and block
+	// on the next send. 50ms is comfortable — a non-blocked loop of
+	// 200 trivial events finishes in microseconds.
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel the context. The fix causes every blocked send to unblock
+	// via the ctx.Done() branch; runLoop then exits and the deferred
+	// turnMu.Unlock() fires.
+	cancel1()
+
+	// Start a second turn. If the first goroutine is still holding
+	// turnMu (deadlock), this blocks forever.
+	secondTurn := make(chan error, 1)
+	go func() {
+		mp2 := &mockProvider{events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "ok"},
+			{Type: "stop"},
+		}}
+		// Replace the provider so the second turn doesn't re-read
+		// the exhausted mockProvider (its events slice is stateful).
+		// We can't SetProvider mid-agent, so just drive a fresh turn
+		// through a fresh agent that shares the same turnMu contract —
+		// but what we actually need is to prove the FIRST agent's
+		// goroutine exited. Use the same agent and the same mp
+		// (which no longer has events — fine, a fresh Stream() call
+		// returns an empty closed channel).
+		_ = mp2
+		ch2, err := ag.Turn(context.Background(), "second")
+		if err != nil {
+			secondTurn <- err
+			return
+		}
+		// Drain fully so the second turn's goroutine exits cleanly.
+		for range ch2 {
+		}
+		secondTurn <- nil
+	}()
+	select {
+	case err := <-secondTurn:
+		if err != nil {
+			t.Fatalf("second Turn returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second Turn blocked on turnMu — first goroutine never released the lock (deadlock on blocked ch send)")
 	}
 }
