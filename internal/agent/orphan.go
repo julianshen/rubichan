@@ -10,6 +10,7 @@ const (
 	orphanReasonStreamError = "stream error"
 	orphanReasonToolCancel  = "cancelled during tool execution"
 	orphanReasonPanic       = "agent panic"
+	orphanReasonLoad        = "loaded from persisted session"
 )
 
 // emptyModelResponseText is the placeholder inserted when the model

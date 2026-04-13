@@ -797,6 +797,7 @@ func (a *Agent) loadSessionHistory(conv *Conversation, sessionID string) error {
 	snapMsgs, snapErr := a.store.GetSnapshot(sessionID)
 	if snapErr == nil && snapMsgs != nil {
 		conv.LoadFromMessages(snapMsgs)
+		synthesizeMissingToolResults(conv, orphanReasonLoad)
 		return nil
 	}
 	if snapErr != nil {
@@ -815,6 +816,7 @@ func (a *Agent) loadSessionHistory(conv *Conversation, sessionID string) error {
 		}
 	}
 	conv.LoadFromMessages(providerMsgs)
+	synthesizeMissingToolResults(conv, orphanReasonLoad)
 	return nil
 }
 
