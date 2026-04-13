@@ -1363,12 +1363,22 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				finalizeText()
 				// Finalize any previous tool
 				finalizeTool()
-				// Start new tool accumulation
+				// Start new tool accumulation. Input may be empty here
+				// if the provider will deliver it as subsequent
+				// text_delta events (legacy path) — otherwise the next
+				// content_block_stop or tool_use event triggers finalize.
 				currentTool = &provider.ToolUseBlock{
 					ID:    event.ToolUse.ID,
 					Name:  event.ToolUse.Name,
 					Input: append(json.RawMessage(nil), event.ToolUse.Input...),
 				}
+
+			case agentsdk.EventContentBlockStop:
+				// Finalize on block-end so single-tool responses
+				// dispatch mid-stream. Providers that don't emit this
+				// fall back to the "finalize on next tool_use or stream
+				// end" timing, which is the legacy multi-tool path.
+				finalizeTool()
 
 			case "error":
 				streamErr = true

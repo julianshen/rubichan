@@ -70,13 +70,14 @@ const (
 
 // Stream event type constants.
 const (
-	EventTextDelta      = "text_delta"
-	EventThinkingDelta  = "thinking_delta"
-	EventInputJsonDelta = "input_json_delta"
-	EventToolUse        = "tool_use"
-	EventMessageStart   = "message_start"
-	EventStop           = "stop"
-	EventError          = "error"
+	EventTextDelta        = "text_delta"
+	EventThinkingDelta    = "thinking_delta"
+	EventInputJsonDelta   = "input_json_delta"
+	EventToolUse          = "tool_use"
+	EventMessageStart     = "message_start"
+	EventContentBlockStop = "content_block_stop"
+	EventStop             = "stop"
+	EventError            = "error"
 )
 
 // CompletionRequest represents a request to an LLM for completion.

@@ -501,6 +501,166 @@ func (p *blockingStreamProvider) Stream(_ context.Context, _ provider.Completion
 	return ch, nil
 }
 
+// singleToolBlockingProvider emits ONE tool_use (with full Input) and
+// blocks on waitForTool before emitting stop. With the old behaviour —
+// finalizeTool runs only on the NEXT tool_use or at stream end — the
+// single tool was never dispatched mid-stream and the provider
+// deadlocked. With the fix (immediate finalize on tool_use arrival)
+// the tool runs as soon as its event is seen.
+type singleToolBlockingProvider struct {
+	waitForTool <-chan struct{}
+	callIdx     int
+}
+
+func (p *singleToolBlockingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	idx := p.callIdx
+	p.callIdx++
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		if idx == 0 {
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "call-solo", Name: "fake_read", Input: json.RawMessage(`{"path":"/tmp/x"}`),
+			}}
+			// content_block_stop is the finalize signal. Without it,
+			// the old "finalize on next tool_use or stream end" path
+			// would block on waitForTool forever (stop can't fire
+			// until the tool runs, and the tool can't run until
+			// dispatch happens).
+			ch <- provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
+			<-p.waitForTool
+			ch <- provider.StreamEvent{Type: "stop"}
+			return
+		}
+		ch <- provider.StreamEvent{Type: "text_delta", Text: "done"}
+		ch <- provider.StreamEvent{Type: "stop"}
+	}()
+	return ch, nil
+}
+
+// TestRunLoopDispatchesSingleToolResponseDuringStream proves that a
+// response with ONE tool_use block dispatches the tool mid-stream.
+// The provider deadlocks on waitForTool until the tool's Execute has
+// started, so the test only completes if content_block_stop triggers
+// finalizeTool (and thus streaming dispatch) before message_stop.
+func TestRunLoopDispatchesSingleToolResponseDuringStream(t *testing.T) {
+	t.Parallel()
+	toolRan := make(chan struct{})
+	var once sync.Once
+	tool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "file contents",
+		onStart:    func() { once.Do(func() { close(toolRan) }) },
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tool))
+
+	prov := &singleToolBlockingProvider{waitForTool: toolRan}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, err := a.Turn(ctx, "read the file")
+	require.NoError(t, err)
+	for ev := range events {
+		_ = ev
+	}
+
+	select {
+	case <-toolRan:
+		// Ok — tool dispatched during stream.
+	default:
+		t.Fatal("tool never ran — single-tool streaming dispatch regression")
+	}
+	if got := tool.called.Load(); got < 1 {
+		t.Fatalf("want tool called at least once, got %d", got)
+	}
+}
+
+// multiToolBlockingProvider emits two tool_use blocks each followed
+// by a content_block_stop marker, blocking on waitForSecondTool before
+// emitting stop. The second tool MUST dispatch mid-stream for the
+// provider to unblock, proving the multi-tool content_block_stop
+// path correctly finalizes each tool as its block ends (not just the
+// last one at stream end).
+type multiToolBlockingProvider struct {
+	waitForSecondTool <-chan struct{}
+	callIdx           int
+}
+
+func (p *multiToolBlockingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	idx := p.callIdx
+	p.callIdx++
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		if idx == 0 {
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "m-1", Name: "fake_read", Input: json.RawMessage(`{"p":1}`),
+			}}
+			ch <- provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "m-2", Name: "fake_read", Input: json.RawMessage(`{"p":2}`),
+			}}
+			ch <- provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
+			<-p.waitForSecondTool
+			ch <- provider.StreamEvent{Type: "stop"}
+			return
+		}
+		ch <- provider.StreamEvent{Type: "text_delta", Text: "done"}
+		ch <- provider.StreamEvent{Type: "stop"}
+	}()
+	return ch, nil
+}
+
+// TestRunLoopDispatchesMultiToolWithContentBlockStop verifies that when
+// a response carries multiple tool_use blocks each followed by a
+// content_block_stop marker, every tool is dispatched mid-stream. The
+// provider deadlocks on waitForSecondTool until the SECOND tool's
+// Execute has started, so finalizing only the first tool on
+// content_block_stop would still hit the timeout.
+func TestRunLoopDispatchesMultiToolWithContentBlockStop(t *testing.T) {
+	t.Parallel()
+	var secondToolStartedOnce sync.Once
+	secondToolStarted := make(chan struct{})
+	var startCount atomic.Int32
+	tool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "ok",
+		onStart: func() {
+			if startCount.Add(1) == 2 {
+				secondToolStartedOnce.Do(func() { close(secondToolStarted) })
+			}
+		},
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tool))
+
+	prov := &multiToolBlockingProvider{waitForSecondTool: secondToolStarted}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, err := a.Turn(ctx, "read two files")
+	require.NoError(t, err)
+	for ev := range events {
+		_ = ev
+	}
+	if got := tool.called.Load(); got != 2 {
+		t.Fatalf("want both tools called, got %d invocations", got)
+	}
+}
+
 // TestRunLoopDispatchesStreamingToolDuringStream genuinely proves
 // that concurrency-safe tools are dispatched during the model stream,
 // not after it. The blocking provider refuses to emit stop until the

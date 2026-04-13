@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 func init() {
@@ -88,59 +89,88 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	return ch, nil
 }
 
+// pendingToolBlock accumulates input_json_delta fragments for a single
+// tool_use content block so the final tool_use StreamEvent carries
+// complete Input. bytes.Buffer lets the emission site hand the backing
+// slice directly to json.RawMessage without a string→[]byte copy.
+type pendingToolBlock struct {
+	id   string
+	name string
+	args bytes.Buffer
+}
+
+// streamState carries per-request state across SSE events. It lives
+// inside processStream's goroutine so there is no cross-request sharing.
+type streamState struct {
+	pendingTools map[int]*pendingToolBlock
+}
+
+func newStreamState() *streamState {
+	return &streamState{pendingTools: map[int]*pendingToolBlock{}}
+}
+
 // processStream reads SSE events from the response body and sends StreamEvents
 // to the channel as they arrive. It closes both the body and the channel when done.
 func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
 	defer close(ch)
 	defer body.Close()
 
+	state := newStreamState()
+
 	scanner := newSSEScanner(body)
 	for scanner.Next() {
 		if ctx.Err() != nil {
 			select {
-			case ch <- provider.StreamEvent{Type: "error", Error: ctx.Err()}:
+			case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: ctx.Err()}:
 			default:
 			}
 			return
 		}
 
-		streamEvt := p.convertSSEEvent(scanner.Event())
-		if streamEvt == nil {
-			continue
-		}
-
-		select {
-		case ch <- *streamEvt:
-		case <-ctx.Done():
+		first, second := p.convertSSEEvent(state, scanner.Event())
+		for _, streamEvt := range [2]*provider.StreamEvent{first, second} {
+			if streamEvt == nil {
+				continue
+			}
 			select {
-			case ch <- provider.StreamEvent{Type: "error", Error: ctx.Err()}:
-			default:
+			case ch <- *streamEvt:
+			case <-ctx.Done():
+				select {
+				case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: ctx.Err()}:
+				default:
+				}
+				return
 			}
-			return
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		select {
-		case ch <- provider.StreamEvent{Type: "error", Error: err}:
+		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: err}:
 		case <-ctx.Done():
 		}
 	}
 }
 
-// convertSSEEvent converts a raw SSE event into a StreamEvent.
-func (p *Provider) convertSSEEvent(evt sseEvent) *provider.StreamEvent {
+// convertSSEEvent converts a raw SSE event into up to two StreamEvents.
+// Most handlers return (primary, nil); only content_block_stop may
+// return (tool_use, content_block_stop) so the agent loop can finalize
+// immediately after seeing the tool. Returning two pointers keeps the
+// hot path allocation-free — no slice header per event.
+func (p *Provider) convertSSEEvent(state *streamState, evt sseEvent) (first, second *provider.StreamEvent) {
 	switch evt.Event {
 	case "message_start":
-		return p.handleMessageStart(evt.Data)
+		return p.handleMessageStart(evt.Data), nil
 	case "content_block_start":
-		return p.handleContentBlockStart(evt.Data)
+		return p.handleContentBlockStart(state, evt.Data), nil
 	case "content_block_delta":
-		return p.handleContentBlockDelta(evt.Data)
+		return p.handleContentBlockDelta(state, evt.Data), nil
+	case "content_block_stop":
+		return p.handleContentBlockStop(state, evt.Data)
 	case "message_stop":
-		return &provider.StreamEvent{Type: "stop"}
+		return &provider.StreamEvent{Type: agentsdk.EventStop}, nil
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
@@ -157,7 +187,7 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 	}
 
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
-		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing message_start: %w", err)}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing message_start: %w", err)}
 	}
 
 	return &provider.StreamEvent{
@@ -169,8 +199,9 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 	}
 }
 
-func (p *Provider) handleContentBlockStart(data string) *provider.StreamEvent {
+func (p *Provider) handleContentBlockStart(state *streamState, data string) *provider.StreamEvent {
 	var parsed struct {
+		Index        int `json:"index"`
 		ContentBlock struct {
 			Type string `json:"type"`
 			ID   string `json:"id"`
@@ -179,28 +210,38 @@ func (p *Provider) handleContentBlockStart(data string) *provider.StreamEvent {
 	}
 
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
-		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing content_block_start: %w", err)}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing content_block_start: %w", err)}
 	}
 
 	switch parsed.ContentBlock.Type {
 	case "tool_use":
-		return &provider.StreamEvent{
-			Type: "tool_use",
-			ToolUse: &provider.ToolUseBlock{
-				ID:   parsed.ContentBlock.ID,
-				Name: parsed.ContentBlock.Name,
-			},
+		// Start accumulating fragments for this block; emit nothing yet.
+		// The tool_use StreamEvent is emitted at content_block_stop with
+		// the joined Input so the agent loop can dispatch immediately
+		// with complete arguments.
+		state.pendingTools[parsed.Index] = &pendingToolBlock{
+			id:   parsed.ContentBlock.ID,
+			name: parsed.ContentBlock.Name,
 		}
-	case "thinking":
-		// Thinking content arrives via content_block_delta events; no event needed at start.
+		return nil
+	case "text", "thinking":
+		// Text and thinking content arrive via content_block_delta
+		// events; no event needed at start.
 		return nil
 	default:
+		// Unknown block type — Anthropic may introduce new block types
+		// (image, redacted_thinking, server_tool_use, web_search_tool_result).
+		// Log via debugLogger so an upgrade is visible instead of silent.
+		if p.debugLogger != nil && parsed.ContentBlock.Type != "" {
+			p.debugLogger("[DEBUG] anthropic: ignoring unknown content_block type %q at index %d", parsed.ContentBlock.Type, parsed.Index)
+		}
 		return nil
 	}
 }
 
-func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
+func (p *Provider) handleContentBlockDelta(state *streamState, data string) *provider.StreamEvent {
 	var parsed struct {
+		Index int `json:"index"`
 		Delta struct {
 			Type        string `json:"type"`
 			Text        string `json:"text"`
@@ -210,7 +251,7 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 	}
 
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
-		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing content_block_delta: %w", err)}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing content_block_delta: %w", err)}
 	}
 
 	switch parsed.Delta.Type {
@@ -225,11 +266,67 @@ func (p *Provider) handleContentBlockDelta(data string) *provider.StreamEvent {
 			Text: parsed.Delta.Thinking,
 		}
 	case "input_json_delta":
+		// Accumulate into the pending tool block. The agent loop does
+		// not track input_json_delta directly; the joined result is
+		// emitted as a tool_use StreamEvent at content_block_stop time.
+		if pending, ok := state.pendingTools[parsed.Index]; ok {
+			pending.args.WriteString(parsed.Delta.PartialJSON)
+			return nil
+		}
+		// Unreachable under a valid Anthropic wire stream — every
+		// content_block_delta for input_json_delta must follow a
+		// content_block_start that opened a tool_use block. If we see
+		// this it means the provider missed a start event. Log via the
+		// debug logger and emit an error so the turn fails loudly
+		// instead of silently forwarding an orphan fragment.
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: input_json_delta for unknown block index %d", parsed.Index)
+		}
 		return &provider.StreamEvent{
-			Type: "input_json_delta",
-			Text: parsed.Delta.PartialJSON,
+			Type:  agentsdk.EventError,
+			Error: fmt.Errorf("input_json_delta for unknown content block index %d", parsed.Index),
 		}
 	default:
 		return nil
 	}
+}
+
+func (p *Provider) handleContentBlockStop(state *streamState, data string) (first, second *provider.StreamEvent) {
+	var parsed struct {
+		Index int `json:"index"`
+	}
+	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: parsing content_block_stop: %v", err)
+		}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing content_block_stop: %w", err)}, nil
+	}
+
+	pending, ok := state.pendingTools[parsed.Index]
+	if !ok {
+		// Non-tool content block (text, thinking) — nothing to finalize.
+		return nil, nil
+	}
+	delete(state.pendingTools, parsed.Index)
+
+	// bytes.Buffer.Bytes() returns the backing slice; json.RawMessage is
+	// a typed alias for []byte so the conversion is allocation-free.
+	// Empty-args tool calls still need a valid JSON object so downstream
+	// parsers don't fail on an empty payload.
+	args := pending.args.Bytes()
+	if len(args) == 0 {
+		args = []byte("{}")
+	}
+	// Emit tool_use first (populates currentTool with full Input), then
+	// a content_block_stop marker so the agent loop finalizes and
+	// streaming-dispatches the tool immediately.
+	return &provider.StreamEvent{
+			Type: agentsdk.EventToolUse,
+			ToolUse: &provider.ToolUseBlock{
+				ID:    pending.id,
+				Name:  pending.name,
+				Input: json.RawMessage(args),
+			},
+		},
+		&provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
 }
