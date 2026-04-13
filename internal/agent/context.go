@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,13 +13,26 @@ import (
 // CompactionStrategy, ContextBudget, and CompactResult are defined in
 // pkg/agentsdk/ and re-exported via sdk_aliases.go.
 
+// ErrCompactionExhausted is returned from Compact when the strategy
+// chain has failed MaxConsecutiveCompactionFailures times in a row
+// without reducing token count. The loop must terminate rather than
+// retry — infinite compact-fail-retry burns API budget with no
+// progress. Observed in Claude Code's query.ts as the
+// "250K API calls/day" incident that motivated its circuit breaker.
+var ErrCompactionExhausted = errors.New("compaction failed repeatedly; circuit breaker tripped")
+
+// MaxConsecutiveCompactionFailures is the threshold for the circuit
+// breaker. Matches Claude Code's MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES=3.
+const MaxConsecutiveCompactionFailures = 3
+
 // ContextManager tracks token usage and compacts conversation history
 // to stay within a configured budget using a chain of strategies.
 type ContextManager struct {
-	budget         ContextBudget
-	compactTrigger float64 // fraction of effective window to trigger compaction (default 0.95)
-	hardBlock      float64 // fraction of effective window to block new messages (default 0.98)
-	strategies     []CompactionStrategy
+	budget              ContextBudget
+	compactTrigger      float64 // fraction of effective window to trigger compaction (default 0.95)
+	hardBlock           float64 // fraction of effective window to block new messages (default 0.98)
+	strategies          []CompactionStrategy
+	consecutiveFailures int // circuit breaker counter for repeated no-shrink Compact calls
 }
 
 // NewContextManager creates a new ContextManager with the given total budget
@@ -84,9 +98,9 @@ func (cm *ContextManager) IsBlocked(conv *Conversation) bool {
 // as soon as the conversation is under budget. Triggers proactively at
 // the configured trigger ratio (default 95%) to leave headroom for quality
 // summarization.
-func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
+func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) error {
 	if !cm.ShouldCompact(conv) {
-		return
+		return nil
 	}
 	// Subtract system prompt overhead so strategies only need to fit messages.
 	systemTokens := len(conv.SystemPrompt())/4 + 10
@@ -102,18 +116,38 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) {
 		}
 	}
 
+	beforeTokens := estimateMessageTokens(conv.messages)
+	anyStrategySucceeded := false
+
 	for i, s := range cm.strategies {
 		// First strategy always runs (we passed ShouldCompact).
 		// Subsequent strategies only run if still over 100% budget.
 		if i > 0 && !cm.ExceedsBudget(conv) {
-			return
+			break
 		}
 		result, err := s.Compact(ctx, conv.messages, messageBudget)
 		if err != nil {
 			continue
 		}
 		conv.messages = result
+		anyStrategySucceeded = true
 	}
+
+	afterTokens := estimateMessageTokens(conv.messages)
+	shrank := afterTokens < beforeTokens
+
+	// Real progress requires BOTH a non-erroring strategy AND an actual
+	// token reduction. Silent no-op strategies must not reset the breaker.
+	if anyStrategySucceeded && shrank {
+		cm.consecutiveFailures = 0
+		return nil
+	}
+
+	cm.consecutiveFailures++
+	if cm.consecutiveFailures >= MaxConsecutiveCompactionFailures {
+		return ErrCompactionExhausted
+	}
+	return nil
 }
 
 // EstimateTokens estimates the token count for a conversation using
@@ -220,7 +254,7 @@ func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
 // Truncate removes the oldest messages until the conversation is within budget.
 // Deprecated: use Compact() which runs the full strategy chain.
 func (cm *ContextManager) Truncate(conv *Conversation) {
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 }
 
 // truncateStrategy is the last-resort compaction strategy that removes

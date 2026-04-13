@@ -52,7 +52,7 @@ func TestCompactRunsStrategiesInOrder(t *testing.T) {
 
 	require.True(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 
 	// First strategy should be called
 	assert.True(t, s1.called, "first strategy should be called")
@@ -72,7 +72,7 @@ func TestCompactFallsBackToTruncation(t *testing.T) {
 	require.True(t, cm.ExceedsBudget(conv))
 
 	// Default strategies include truncation as fallback
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 
 	assert.False(t, cm.ExceedsBudget(conv), "should be within budget after compaction")
 	assert.GreaterOrEqual(t, len(conv.Messages()), 2)
@@ -90,7 +90,7 @@ func TestCompactEmptyStrategiesUsesTruncation(t *testing.T) {
 
 	require.True(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 
 	assert.False(t, cm.ExceedsBudget(conv))
 	assert.GreaterOrEqual(t, len(conv.Messages()), 2)
@@ -107,7 +107,7 @@ func TestCompactNoOpWhenWithinBudget(t *testing.T) {
 
 	require.False(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 
 	// Strategy should not be called when already within budget
 	assert.False(t, s.called, "strategy should not be called when within budget")
@@ -132,7 +132,7 @@ func TestCompactStopsWhenUnderBudget(t *testing.T) {
 		t.Skip("test requires conversation to exceed budget")
 	}
 
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 
 	assert.True(t, s1.called, "first strategy should be called")
 	assert.False(t, cm.ExceedsBudget(conv), "conversation should fit within budget after compaction")
@@ -207,7 +207,7 @@ func TestCompactTriggersProactively(t *testing.T) {
 	require.Greater(t, tokens, 693, "test requires >95%% budget used")
 	require.LessOrEqual(t, tokens, 730, "test requires <=100%% budget (not exceeding)")
 
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 	assert.True(t, s.called, "strategy should be called proactively when above 95%% threshold")
 }
 
@@ -221,7 +221,7 @@ func TestCompactCustomTriggerRatio(t *testing.T) {
 	conv := NewConversation("sys")
 	conv.AddUser("hello")
 
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 	assert.True(t, s.called, "strategy should be called with custom low trigger ratio")
 }
 

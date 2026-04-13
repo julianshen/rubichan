@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -854,7 +855,10 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
-	a.context.Compact(ctx, a.conversation)
+	if err := a.context.Compact(ctx, a.conversation); err != nil && errors.Is(err, ErrCompactionExhausted) {
+		a.turnMu.Unlock()
+		return nil, fmt.Errorf("compaction exhausted before turn start: %w", err)
+	}
 	a.saveSnapshotIfNeeded()
 
 	// Reset the diff tracker so each turn starts with a clean slate.
@@ -1174,6 +1178,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled)
 			return
+		}
+
+		if err := a.context.Compact(ctx, a.conversation); err != nil {
+			if errors.Is(err, ErrCompactionExhausted) {
+				ch <- TurnEvent{Type: "error", Error: err}
+				ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCompactionFailed)
+				return
+			}
+			// Non-breaker errors are not expected today; log and continue.
+			a.logger.Warn("compaction returned unexpected error: %v", err)
 		}
 
 		// Build the system prompt with cache breakpoints.

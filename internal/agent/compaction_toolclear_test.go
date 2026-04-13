@@ -275,7 +275,7 @@ func TestToolResultClearingIntegrationWithCompact(t *testing.T) {
 
 	require.True(t, cm.ExceedsBudget(conv))
 
-	cm.Compact(context.Background(), conv)
+	_ = cm.Compact(context.Background(), conv)
 
 	// After compaction, the large tool result should be cleared
 	assert.False(t, cm.ExceedsBudget(conv))
