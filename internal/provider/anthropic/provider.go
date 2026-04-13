@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,14 +116,28 @@ func newStreamState() *streamState {
 }
 
 // processStream reads SSE events from the response body and sends StreamEvents
-// to the channel as they arrive. It closes both the body and the channel when done.
+// to the channel as they arrive. It closes the channel when done; the watchdog
+// pump goroutine owns closing body.
 func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent, requestID string) {
 	defer close(ch)
-	defer body.Close()
+
+	onWarn := func() {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: stream idle for 45s (request %s), still waiting", requestID)
+		}
+	}
+	onKill := func() {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: stream killed after 90s idle (request %s)", requestID)
+		}
+	}
+
+	watched := provider.WatchBody(body, provider.WatchdogConfig{}, onWarn, onKill)
+	defer watched.Close()
 
 	state := newStreamState()
 
-	scanner := newSSEScanner(body)
+	scanner := newSSEScanner(watched)
 	for scanner.Next() {
 		if ctx.Err() != nil {
 			select {
@@ -150,12 +165,22 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 
 	if err := scanner.Err(); err != nil {
-		streamErr := &provider.ProviderError{
-			Kind:      provider.ErrStreamError,
-			Provider:  "anthropic",
-			Message:   err.Error(),
-			Retryable: true,
-			RequestID: requestID,
+		var streamErr *provider.ProviderError
+		if !errors.As(err, &streamErr) {
+			streamErr = &provider.ProviderError{
+				Kind:      provider.ErrStreamError,
+				Provider:  "anthropic",
+				Message:   err.Error(),
+				Retryable: true,
+				RequestID: requestID,
+			}
+		} else {
+			if streamErr.Provider == "" {
+				streamErr.Provider = "anthropic"
+			}
+			if streamErr.RequestID == "" {
+				streamErr.RequestID = requestID
+			}
 		}
 		select {
 		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: streamErr}:

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -115,17 +116,20 @@ func (a *ToolCallAccumulator) Flush(ctx context.Context, ch chan<- provider.Stre
 
 // ProcessSSE reads OpenAI-compatible SSE lines from a reader and sends
 // StreamEvents to the channel. Handles text deltas, tool call accumulation,
-// and [DONE] detection. Closes both the body and the channel when done.
+// and [DONE] detection. Closes the channel when done; the watchdog pump
+// goroutine owns closing body.
 // providerName is included in any ProviderError emitted so callers can
 // distinguish which provider encountered the stream failure.
 func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent, providerName string) {
 	defer close(ch)
-	defer body.Close()
+
+	watched := provider.WatchBody(body, provider.WatchdogConfig{}, nil, nil)
+	defer watched.Close()
 
 	var toolAcc ToolCallAccumulator
 	sentMessageStart := false
 
-	scanner := bufio.NewScanner(body)
+	scanner := bufio.NewScanner(watched)
 	// Increase buffer to 1MB to handle large JSON chunks (reasoning, tool args).
 	const maxScanCapacity = 1024 * 1024
 	scanner.Buffer(make([]byte, 0, maxScanCapacity), maxScanCapacity)
@@ -198,11 +202,18 @@ func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.Stre
 	}
 
 	if err := scanner.Err(); err != nil {
-		streamErr := &provider.ProviderError{
-			Kind:      provider.ErrStreamError,
-			Provider:  providerName,
-			Message:   err.Error(),
-			Retryable: true,
+		var streamErr *provider.ProviderError
+		if !errors.As(err, &streamErr) {
+			streamErr = &provider.ProviderError{
+				Kind:      provider.ErrStreamError,
+				Provider:  providerName,
+				Message:   err.Error(),
+				Retryable: true,
+			}
+		} else {
+			if streamErr.Provider == "" {
+				streamErr.Provider = providerName
+			}
 		}
 		select {
 		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: streamErr}:
