@@ -582,6 +582,85 @@ func TestRunLoopDispatchesSingleToolResponseDuringStream(t *testing.T) {
 	}
 }
 
+// multiToolBlockingProvider emits two tool_use blocks each followed
+// by a content_block_stop marker, blocking on waitForSecondTool before
+// emitting stop. The second tool MUST dispatch mid-stream for the
+// provider to unblock, proving the multi-tool content_block_stop
+// path correctly finalizes each tool as its block ends (not just the
+// last one at stream end).
+type multiToolBlockingProvider struct {
+	waitForSecondTool <-chan struct{}
+	callIdx           int
+}
+
+func (p *multiToolBlockingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	idx := p.callIdx
+	p.callIdx++
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		if idx == 0 {
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "m-1", Name: "fake_read", Input: json.RawMessage(`{"p":1}`),
+			}}
+			ch <- provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "m-2", Name: "fake_read", Input: json.RawMessage(`{"p":2}`),
+			}}
+			ch <- provider.StreamEvent{Type: agentsdk.EventContentBlockStop}
+			<-p.waitForSecondTool
+			ch <- provider.StreamEvent{Type: "stop"}
+			return
+		}
+		ch <- provider.StreamEvent{Type: "text_delta", Text: "done"}
+		ch <- provider.StreamEvent{Type: "stop"}
+	}()
+	return ch, nil
+}
+
+// TestRunLoopDispatchesMultiToolWithContentBlockStop verifies that when
+// a response carries multiple tool_use blocks each followed by a
+// content_block_stop marker, every tool is dispatched mid-stream. The
+// provider deadlocks on waitForSecondTool until the SECOND tool's
+// Execute has started, so finalizing only the first tool on
+// content_block_stop would still hit the timeout.
+func TestRunLoopDispatchesMultiToolWithContentBlockStop(t *testing.T) {
+	t.Parallel()
+	var secondToolStartedOnce sync.Once
+	secondToolStarted := make(chan struct{})
+	var startCount atomic.Int32
+	tool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "ok",
+		onStart: func() {
+			if startCount.Add(1) == 2 {
+				secondToolStartedOnce.Do(func() { close(secondToolStarted) })
+			}
+		},
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tool))
+
+	prov := &multiToolBlockingProvider{waitForSecondTool: secondToolStarted}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, err := a.Turn(ctx, "read two files")
+	require.NoError(t, err)
+	for ev := range events {
+		_ = ev
+	}
+	if got := tool.called.Load(); got != 2 {
+		t.Fatalf("want both tools called, got %d invocations", got)
+	}
+}
+
 // TestRunLoopDispatchesStreamingToolDuringStream genuinely proves
 // that concurrency-safe tools are dispatched during the model stream,
 // not after it. The blocking provider refuses to emit stop until the

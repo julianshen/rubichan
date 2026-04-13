@@ -121,7 +121,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	for scanner.Next() {
 		if ctx.Err() != nil {
 			select {
-			case ch <- provider.StreamEvent{Type: "error", Error: ctx.Err()}:
+			case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: ctx.Err()}:
 			default:
 			}
 			return
@@ -136,7 +136,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			case ch <- *streamEvt:
 			case <-ctx.Done():
 				select {
-				case ch <- provider.StreamEvent{Type: "error", Error: ctx.Err()}:
+				case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: ctx.Err()}:
 				default:
 				}
 				return
@@ -146,7 +146,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 
 	if err := scanner.Err(); err != nil {
 		select {
-		case ch <- provider.StreamEvent{Type: "error", Error: err}:
+		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: err}:
 		case <-ctx.Done():
 		}
 	}
@@ -187,7 +187,7 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 	}
 
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
-		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing message_start: %w", err)}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing message_start: %w", err)}
 	}
 
 	return &provider.StreamEvent{
@@ -210,7 +210,7 @@ func (p *Provider) handleContentBlockStart(state *streamState, data string) *pro
 	}
 
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
-		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing content_block_start: %w", err)}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing content_block_start: %w", err)}
 	}
 
 	switch parsed.ContentBlock.Type {
@@ -224,10 +224,17 @@ func (p *Provider) handleContentBlockStart(state *streamState, data string) *pro
 			name: parsed.ContentBlock.Name,
 		}
 		return nil
-	case "thinking":
-		// Thinking content arrives via content_block_delta events; no event needed at start.
+	case "text", "thinking":
+		// Text and thinking content arrive via content_block_delta
+		// events; no event needed at start.
 		return nil
 	default:
+		// Unknown block type — Anthropic may introduce new block types
+		// (image, redacted_thinking, server_tool_use, web_search_tool_result).
+		// Log via debugLogger so an upgrade is visible instead of silent.
+		if p.debugLogger != nil && parsed.ContentBlock.Type != "" {
+			p.debugLogger("[DEBUG] anthropic: ignoring unknown content_block type %q at index %d", parsed.ContentBlock.Type, parsed.Index)
+		}
 		return nil
 	}
 }
@@ -244,7 +251,7 @@ func (p *Provider) handleContentBlockDelta(state *streamState, data string) *pro
 	}
 
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
-		return &provider.StreamEvent{Type: "error", Error: fmt.Errorf("parsing content_block_delta: %w", err)}
+		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing content_block_delta: %w", err)}
 	}
 
 	switch parsed.Delta.Type {
@@ -289,6 +296,9 @@ func (p *Provider) handleContentBlockStop(state *streamState, data string) (firs
 		Index int `json:"index"`
 	}
 	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: parsing content_block_stop: %v", err)
+		}
 		return &provider.StreamEvent{Type: agentsdk.EventError, Error: fmt.Errorf("parsing content_block_stop: %w", err)}, nil
 	}
 

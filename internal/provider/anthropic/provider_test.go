@@ -388,6 +388,147 @@ data: {"type":"message_stop"}
 	assert.True(t, hasError, "should have received error event for malformed delta JSON")
 }
 
+// TestStreamMultiToolUseResponse verifies per-block isolation in the
+// pendingToolBlock accumulator. Two tool_use blocks at indices 1 and 2
+// each have their own input_json_delta fragments; the provider must
+// join each set independently and emit two tool_use StreamEvents with
+// the correct Input values — not cross-contaminated.
+func TestStreamMultiToolUseResponse(t *testing.T) {
+	sseBody := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_multi","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5","usage":{"input_tokens":12,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll read both."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_a","name":"read_file","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/a\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_b","name":"read_file","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/b\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Read /a and /b")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var toolUseEvents []provider.StreamEvent
+	var blockStopCount int
+	for evt := range ch {
+		switch evt.Type {
+		case "tool_use":
+			toolUseEvents = append(toolUseEvents, evt)
+		case "content_block_stop":
+			blockStopCount++
+		}
+	}
+
+	require.Len(t, toolUseEvents, 2, "both tool_use blocks must be emitted")
+	require.NotNil(t, toolUseEvents[0].ToolUse)
+	require.NotNil(t, toolUseEvents[1].ToolUse)
+	assert.Equal(t, "toolu_a", toolUseEvents[0].ToolUse.ID)
+	assert.JSONEq(t, `{"path":"/a"}`, string(toolUseEvents[0].ToolUse.Input))
+	assert.Equal(t, "toolu_b", toolUseEvents[1].ToolUse.ID)
+	assert.JSONEq(t, `{"path":"/b"}`, string(toolUseEvents[1].ToolUse.Input))
+	// Two content_block_stop markers, one per tool block. The text
+	// block's content_block_stop must NOT emit a marker (non-tool
+	// block path returns nil, nil).
+	assert.Equal(t, 2, blockStopCount, "content_block_stop emits exactly once per tool block")
+}
+
+// TestStreamUnknownContentBlockTypeLogs verifies the debugLogger
+// branch in handleContentBlockStart's default case: Anthropic may
+// introduce new content_block types (image, redacted_thinking, etc.)
+// and the provider must log via debugLogger without emitting an
+// event so the stream continues cleanly.
+func TestStreamUnknownContentBlockTypeLogs(t *testing.T) {
+	sseBody := `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"st_1","name":"web_search"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "test-api-key")
+	p.SetHTTPClient(&http.Client{})
+	var logged []string
+	p.SetDebugLogger(func(format string, args ...any) {
+		logged = append(logged, fmt.Sprintf(format, args...))
+	})
+
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var types []string
+	for evt := range ch {
+		types = append(types, evt.Type)
+	}
+
+	// No tool_use or error event for the unknown block; stop still fires.
+	for _, typ := range types {
+		if typ == "tool_use" || typ == "error" {
+			t.Errorf("unknown block type should not produce %q event", typ)
+		}
+	}
+	var sawLog bool
+	for _, msg := range logged {
+		if strings.Contains(msg, "server_tool_use") && strings.Contains(msg, "unknown content_block type") {
+			sawLog = true
+		}
+	}
+	assert.True(t, sawLog, "debugLogger must record the unknown content_block type; logged=%v", logged)
+}
+
 // TestStreamInputJsonDeltaWithoutBlockStart covers the defensive
 // fallback in handleContentBlockDelta where an input_json_delta fragment
 // arrives for a block index that was never opened with a tool_use
