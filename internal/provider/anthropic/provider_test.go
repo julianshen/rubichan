@@ -1091,6 +1091,30 @@ func TestStream_SetsRequestIDHeader(t *testing.T) {
 
 func floatPtr(f float64) *float64 { return &f }
 
+func TestConvertSSEEvent_MessageDelta_StopReason(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	state := newStreamState()
+	data := `{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":8192}}`
+
+	first, second := p.convertSSEEvent(state, sseEvent{Event: "message_delta", Data: data})
+	require.NotNil(t, first)
+	require.Nil(t, second)
+	assert.Equal(t, agentsdk.EventStop, first.Type)
+	assert.Equal(t, "max_tokens", first.StopReason)
+	assert.Equal(t, 8192, first.OutputTokens)
+}
+
+func TestConvertSSEEvent_MessageDelta_EndTurn(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	state := newStreamState()
+	data := `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":150}}`
+
+	first, _ := p.convertSSEEvent(state, sseEvent{Event: "message_delta", Data: data})
+	require.NotNil(t, first)
+	assert.Equal(t, agentsdk.EventStop, first.Type)
+	assert.Equal(t, "end_turn", first.StopReason)
+}
+
 func TestHandleMessageStart_CacheTokens(t *testing.T) {
 	p := New("http://localhost", "test-key")
 	data := `{"message":{"id":"msg_01","model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":2000,"cache_read_input_tokens":48000}}}`

@@ -1312,6 +1312,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
 		var thinkingBuf string
+		var stopReason string
 
 		// Streaming dispatch: concurrency-safe tools run in the
 		// background as their tool_use blocks finalize during the stream,
@@ -1428,8 +1429,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				a.emit(ctx, ch, TurnEvent{Type: "error", Error: event.Error})
 
 			case "stop":
-				// Will be handled after the loop
+				// Capture stop reason for post-loop detection (e.g. max_tokens truncation).
+				if event.StopReason != "" {
+					stopReason = event.StopReason
+				}
 			}
+		}
+
+		// Warn if the model hit the output token cap so operators know to raise MaxOutputTokens.
+		if stopReason == "max_tokens" {
+			a.logger.Warn("response truncated by output token limit (consider increasing max_output_tokens in config)")
 		}
 
 		// Capture accumulated text before finalizing, for text-based tool extraction.

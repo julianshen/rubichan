@@ -204,6 +204,8 @@ func (p *Provider) convertSSEEvent(state *streamState, evt sseEvent) (first, sec
 		return p.handleContentBlockDelta(state, evt.Data), nil
 	case "content_block_stop":
 		return p.handleContentBlockStop(state, evt.Data)
+	case "message_delta":
+		return p.handleMessageDelta(evt.Data), nil
 	case "message_stop":
 		return &provider.StreamEvent{Type: agentsdk.EventStop}, nil
 	default:
@@ -237,6 +239,31 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 		OutputTokens:        parsed.Message.Usage.OutputTokens,
 		CacheCreationTokens: parsed.Message.Usage.CacheCreationInputTokens,
 		CacheReadTokens:     parsed.Message.Usage.CacheReadInputTokens,
+	}
+}
+
+func (p *Provider) handleMessageDelta(data string) *provider.StreamEvent {
+	var parsed struct {
+		Delta struct {
+			StopReason string `json:"stop_reason"`
+		} `json:"delta"`
+		Usage struct {
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: parsing message_delta: %v", err)
+		}
+		return nil
+	}
+	if parsed.Delta.StopReason == "" {
+		return nil
+	}
+	return &provider.StreamEvent{
+		Type:         agentsdk.EventStop,
+		StopReason:   parsed.Delta.StopReason,
+		OutputTokens: parsed.Usage.OutputTokens,
 	}
 }
 
