@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,14 +19,16 @@ import (
 // fakeConcurrencySafeTool is a minimal tool that implements the
 // agentsdk.Tool interface + ConcurrencySafeTool marker. It sleeps for
 // execDelay before returning returnText to simulate I/O latency. If
-// onStart is non-nil, it is invoked on the very first line of Execute
-// — used by timing-sensitive tests to signal "tool has started".
+// onStart is non-nil, it is invoked on the very first line of Execute;
+// onFinish fires just before Execute returns. Both hooks are used by
+// timing-sensitive tests to synchronize with the tool's lifecycle.
 type fakeConcurrencySafeTool struct {
 	name       string
 	execDelay  time.Duration
 	called     atomic.Int32
 	returnText string
 	onStart    func()
+	onFinish   func()
 }
 
 func (t *fakeConcurrencySafeTool) Name() string                 { return t.name }
@@ -41,6 +44,9 @@ func (t *fakeConcurrencySafeTool) Execute(ctx context.Context, _ json.RawMessage
 	case <-time.After(t.execDelay):
 	case <-ctx.Done():
 		return agentsdk.ToolResult{}, ctx.Err()
+	}
+	if t.onFinish != nil {
+		t.onFinish()
 	}
 	return agentsdk.ToolResult{Content: t.returnText}, nil
 }
@@ -544,5 +550,212 @@ func TestRunLoopDispatchesStreamingToolDuringStream(t *testing.T) {
 	}
 	if got := tool.called.Load(); got < 1 {
 		t.Fatalf("want tool called at least once, got %d", got)
+	}
+}
+
+// TestSurfaceStreamedResultsEmitsCallAndResultInOrder verifies the
+// happy-path: every drained result produces a tool_call followed by
+// its cached tool_result on the channel.
+func TestSurfaceStreamedResultsEmitsCallAndResultInOrder(t *testing.T) {
+	t.Parallel()
+	ch := make(chan TurnEvent, 16)
+	pending := []provider.ToolUseBlock{
+		{ID: "a", Name: "read_file", Input: json.RawMessage(`{"p":"/tmp/a"}`)},
+		{ID: "b", Name: "read_file", Input: json.RawMessage(`{"p":"/tmp/b"}`)},
+	}
+	drained := []toolExecResult{
+		{toolUseID: "a", content: "A", event: makeToolResultEvent("a", "read_file", "A", "", false)},
+		{toolUseID: "b", content: "B", event: makeToolResultEvent("b", "read_file", "B", "", false)},
+	}
+	unmatched := surfaceStreamedResults(ch, pending, drained)
+	close(ch)
+	if unmatched != 0 {
+		t.Fatalf("want 0 unmatched, got %d", unmatched)
+	}
+	var seq []string
+	for ev := range ch {
+		switch ev.Type {
+		case "tool_call":
+			seq = append(seq, "call:"+ev.ToolCall.ID)
+		case "tool_result":
+			seq = append(seq, "result:"+ev.ToolResult.ID)
+		}
+	}
+	want := []string{"call:a", "result:a", "call:b", "result:b"}
+	if len(seq) != len(want) {
+		t.Fatalf("event sequence length mismatch: want %v, got %v", want, seq)
+	}
+	for i := range want {
+		if seq[i] != want[i] {
+			t.Fatalf("event[%d]: want %q, got %q", i, want[i], seq[i])
+		}
+	}
+}
+
+// TestSurfaceStreamedResultsReportsUnmatchedIDs verifies the invariant
+// check: if a drained result's toolUseID is NOT in pendingTools, the
+// helper skips the synthetic tool_call, still emits the tool_result,
+// and returns a non-zero unmatched count so the caller can log it.
+func TestSurfaceStreamedResultsReportsUnmatchedIDs(t *testing.T) {
+	t.Parallel()
+	ch := make(chan TurnEvent, 8)
+	pending := []provider.ToolUseBlock{
+		{ID: "a", Name: "read_file", Input: json.RawMessage(`{}`)},
+	}
+	drained := []toolExecResult{
+		{toolUseID: "ghost", content: "orphan", event: makeToolResultEvent("ghost", "read_file", "orphan", "", false)},
+	}
+	unmatched := surfaceStreamedResults(ch, pending, drained)
+	close(ch)
+	if unmatched != 1 {
+		t.Fatalf("want 1 unmatched, got %d", unmatched)
+	}
+	var sawCall, sawResult bool
+	for ev := range ch {
+		if ev.Type == "tool_call" {
+			sawCall = true
+		}
+		if ev.Type == "tool_result" && ev.ToolResult.ID == "ghost" {
+			sawResult = true
+		}
+	}
+	if sawCall {
+		t.Fatal("ghost ID should not produce a synthetic tool_call event")
+	}
+	if !sawResult {
+		t.Fatal("ghost tool_result event should still be emitted")
+	}
+}
+
+// TestSurfaceStreamedResultsEmptyDrainIsNoOp verifies the early-return
+// path — no drained results means no events emitted.
+func TestSurfaceStreamedResultsEmptyDrainIsNoOp(t *testing.T) {
+	t.Parallel()
+	ch := make(chan TurnEvent, 4)
+	unmatched := surfaceStreamedResults(ch, nil, nil)
+	close(ch)
+	if unmatched != 0 {
+		t.Fatalf("want 0 unmatched, got %d", unmatched)
+	}
+	count := 0
+	for range ch {
+		count++
+	}
+	if count != 0 {
+		t.Fatalf("want 0 events emitted, got %d", count)
+	}
+}
+
+// streamErrAfterDispatchProvider emits a tool_use, a second tool_use
+// (to trigger finalizeTool on the first and dispatch it via the
+// streaming executor), waits until the dispatched tool has completed,
+// then emits a stream error. Used to verify that runLoop surfaces
+// drained streamed results to the event channel before exiting the
+// streamErr path — otherwise the UI sees orphan tool_progress events
+// with no tool_call or tool_result to close them out.
+type streamErrAfterDispatchProvider struct {
+	toolDone <-chan struct{}
+}
+
+func (p *streamErrAfterDispatchProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+			ID: "call-1", Name: "fake_read", Input: json.RawMessage(`{}`),
+		}}
+		ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+			ID: "call-2", Name: "fake_read", Input: json.RawMessage(`{}`),
+		}}
+		// Wait for call-1 to finish executing before erroring.
+		<-p.toolDone
+		ch <- provider.StreamEvent{Type: "error", Error: fmt.Errorf("simulated stream failure")}
+		ch <- provider.StreamEvent{Type: "stop"}
+	}()
+	return ch, nil
+}
+
+// TestRunLoopStreamErrorSurfacesStreamedToolResults verifies that when
+// the stream errors after a concurrency-safe tool has been dispatched
+// and completed, runLoop surfaces the drained tool_call + tool_result
+// events so the UI doesn't see orphan tool_progress events with no
+// terminal event.
+func TestRunLoopStreamErrorSurfacesStreamedToolResults(t *testing.T) {
+	t.Parallel()
+	toolDone := make(chan struct{})
+	var once sync.Once
+	tool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "streamed result",
+		onFinish:   func() { once.Do(func() { close(toolDone) }) },
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tool))
+
+	prov := &streamErrAfterDispatchProvider{toolDone: toolDone}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, err := a.Turn(ctx, "read the file")
+	require.NoError(t, err)
+
+	// Index tracking so we can assert tool_call arrives before tool_result
+	// for the same ID — out-of-order emission would reintroduce the orphan
+	// UX bug this test exists to prevent.
+	callIdx := map[string]int{}
+	resultIdx := map[string]int{}
+	var sawError, sawDone bool
+	var doneReason agentsdk.TurnExitReason
+	evIdx := 0
+	for ev := range events {
+		switch ev.Type {
+		case "tool_call":
+			if ev.ToolCall != nil {
+				if _, ok := callIdx[ev.ToolCall.ID]; !ok {
+					callIdx[ev.ToolCall.ID] = evIdx
+				}
+			}
+		case "tool_result":
+			if ev.ToolResult != nil {
+				if _, ok := resultIdx[ev.ToolResult.ID]; !ok {
+					resultIdx[ev.ToolResult.ID] = evIdx
+				}
+			}
+		case "error":
+			sawError = true
+		case "done":
+			sawDone = true
+			doneReason = ev.ExitReason
+		}
+		evIdx++
+	}
+
+	if !sawError {
+		t.Fatal("expected an error event from the stream failure")
+	}
+	if !sawDone {
+		t.Fatal("expected a done event")
+	}
+	if doneReason != agentsdk.ExitProviderError {
+		t.Fatalf("want ExitProviderError, got %v", doneReason)
+	}
+	// The dispatched call-1 must surface both tool_call and tool_result
+	// events so the UI has a closed event loop for its progress display.
+	ci, gotCall := callIdx["call-1"]
+	ri, gotResult := resultIdx["call-1"]
+	if !gotCall {
+		t.Fatalf("streamed tool dispatch did not emit a tool_call event; got call IDs %v", callIdx)
+	}
+	if !gotResult {
+		t.Fatalf("streamed tool dispatch did not emit a tool_result event; got result IDs %v", resultIdx)
+	}
+	if ci >= ri {
+		t.Fatalf("tool_call for call-1 (evIdx=%d) must arrive before tool_result (evIdx=%d)", ci, ri)
 	}
 }

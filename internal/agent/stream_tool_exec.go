@@ -119,6 +119,43 @@ func (e *streamingToolExecutor) Drain() []toolExecResult {
 	return out
 }
 
+// surfaceStreamedResults is a terminal-only event flush for the
+// stream-error exit path. Without it, executeSingleTool's tool_progress
+// events from a dispatched tool have no matching tool_call or
+// tool_result and the UI sees an incomplete event loop.
+//
+// Events only — the conversation state is intentionally NOT updated
+// (no AddToolResult / persistToolResult / recordToolProgress). The
+// only caller is the streamErr branch, which discards all partial-turn
+// mutations because the assistant message was never committed. A
+// future caller that wants conversation-side persistence must not
+// reuse this helper.
+//
+// Returns the count of drained results whose toolUseID was NOT found
+// in pendingTools. This is an invariant check: every dispatched tool
+// is appended to pendingTools in finalizeTool before Dispatch is
+// called, so unmatched should always be 0. A non-zero count means the
+// invariant broke and the caller should log it so future regressions
+// are visible instead of silently emitting orphan tool_result events.
+func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, drained []toolExecResult) (unmatched int) {
+	if len(drained) == 0 {
+		return 0
+	}
+	byID := make(map[string]provider.ToolUseBlock, len(pendingTools))
+	for _, tc := range pendingTools {
+		byID[tc.ID] = tc
+	}
+	for _, r := range drained {
+		if tc, ok := byID[r.toolUseID]; ok {
+			ch <- makeToolCallEvent(tc)
+		} else {
+			unmatched++
+		}
+		ch <- r.event
+	}
+	return unmatched
+}
+
 // isStreamingEligible returns true if a tool can be dispatched during
 // streaming. Requires the ConcurrencySafeTool marker returning true AND
 // auto-approval (either AutoApproved or TrustRuleApproved).

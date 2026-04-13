@@ -147,11 +147,18 @@ func (s *ShellTool) Name() string {
 	return "shell"
 }
 
+// Compile-time assertion that ShellTool implements ResultCapped.
+// Catches accidental renames or signature drift at build time.
+var _ ResultCapped = (*ShellTool)(nil)
+
+// shellResultCapBytes is the upper bound on shell tool_result content
+// sent to the LLM. 64 KB keeps head+tail context while preventing a
+// single verbose command from dominating the context window.
+const shellResultCapBytes = 64 * 1024
+
 // MaxResultBytes implements agentsdk.ResultCapped. Shell output is
-// frequently large (verbose builds, recursive listings); 64 KB keeps
-// head+tail context while preventing a single command from dominating
-// the context window.
-func (*ShellTool) MaxResultBytes() int { return 64 * 1024 }
+// frequently large (verbose builds, recursive listings).
+func (*ShellTool) MaxResultBytes() int { return shellResultCapBytes }
 
 func (s *ShellTool) SearchHint() string {
 	return "terminal bash run deploy npm pip cargo make compile"
