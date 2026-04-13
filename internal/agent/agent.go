@@ -1288,7 +1288,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
-		stream, err := a.provider.Stream(ctx, req)
+		retryCfg := TurnRetryConfig{} // use defaults: 3 attempts, 2s base delay, 30s max delay
+		onRetry := func(attempt int, delay time.Duration, cause error) {
+			a.emit(ctx, ch, TurnEvent{
+				Type:  "retrying",
+				Error: fmt.Errorf("attempt %d after %s: %w", attempt, delay, cause),
+			})
+		}
+		stream, err := TurnRetry(ctx, retryCfg, func(ctx context.Context) (<-chan provider.StreamEvent, error) {
+			return a.provider.Stream(ctx, req)
+		}, onRetry)
 		if err != nil {
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
