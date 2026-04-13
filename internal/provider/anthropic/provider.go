@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
@@ -61,9 +62,11 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
+	requestID := uuid.New().String()
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("x-client-request-id", requestID)
 
 	provider.LogRequest(p.debugLogger, httpReq, body)
 
@@ -76,7 +79,9 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
 		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
-		return nil, provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "anthropic", resp.Header)
+		classified := provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "anthropic", resp.Header)
+		classified.RequestID = requestID
+		return nil, classified
 	}
 
 	if p.debugLogger != nil {
@@ -84,7 +89,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	}
 
 	ch := make(chan provider.StreamEvent)
-	go p.processStream(ctx, resp.Body, ch)
+	go p.processStream(ctx, resp.Body, ch, requestID)
 
 	return ch, nil
 }
@@ -111,7 +116,7 @@ func newStreamState() *streamState {
 
 // processStream reads SSE events from the response body and sends StreamEvents
 // to the channel as they arrive. It closes both the body and the channel when done.
-func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
+func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent, requestID string) {
 	defer close(ch)
 	defer body.Close()
 
@@ -150,6 +155,7 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 			Provider:  "anthropic",
 			Message:   err.Error(),
 			Retryable: true,
+			RequestID: requestID,
 		}
 		select {
 		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: streamErr}:

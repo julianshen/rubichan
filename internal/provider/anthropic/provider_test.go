@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
@@ -1044,7 +1046,7 @@ func TestProcessStream_ScannerError(t *testing.T) {
 
 	p := New("http://localhost", "test-key")
 	ch := make(chan provider.StreamEvent)
-	go p.processStream(context.Background(), io.NopCloser(pr), ch)
+	go p.processStream(context.Background(), io.NopCloser(pr), ch, "test-request-id")
 
 	var events []provider.StreamEvent
 	for e := range ch {
@@ -1059,6 +1061,32 @@ func TestProcessStream_ScannerError(t *testing.T) {
 	assert.Equal(t, provider.ErrStreamError, pe.Kind)
 	assert.Equal(t, "anthropic", pe.Provider)
 	assert.True(t, pe.IsRetryable())
+	assert.Equal(t, "test-request-id", pe.RequestID)
+}
+
+func TestStream_SetsRequestIDHeader(t *testing.T) {
+	var capturedHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHeader = r.Header.Get("x-client-request-id")
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+
+	p := New(srv.URL, "test-key")
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 100,
+		Messages:  []provider.Message{{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "hi"}}}},
+	}
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+	for range ch { // drain
+	}
+
+	assert.NotEmpty(t, capturedHeader, "x-client-request-id header must be set")
+	_, parseErr := uuid.Parse(capturedHeader)
+	assert.NoError(t, parseErr, "x-client-request-id must be a valid UUID")
 }
 
 func floatPtr(f float64) *float64 { return &f }
