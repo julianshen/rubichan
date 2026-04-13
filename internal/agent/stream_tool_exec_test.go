@@ -713,6 +713,16 @@ func TestRunLoopDispatchesStreamingToolDuringStream(t *testing.T) {
 	}
 }
 
+// plainEmitter is a minimal eventEmitter for unit tests that drive
+// surfaceStreamedResults without a full Agent. It writes to the
+// channel directly — the context.Done branch is exercised by the
+// integration test in TestTurnUnblocksWhenConsumerCancelsCtx.
+type plainEmitter struct{}
+
+func (plainEmitter) emit(_ context.Context, ch chan<- TurnEvent, ev TurnEvent) {
+	ch <- ev
+}
+
 // TestSurfaceStreamedResultsEmitsCallAndResultInOrder verifies the
 // happy-path: every drained result produces a tool_call followed by
 // its cached tool_result on the channel.
@@ -727,7 +737,7 @@ func TestSurfaceStreamedResultsEmitsCallAndResultInOrder(t *testing.T) {
 		{toolUseID: "a", content: "A", event: makeToolResultEvent("a", "read_file", "A", "", false)},
 		{toolUseID: "b", content: "B", event: makeToolResultEvent("b", "read_file", "B", "", false)},
 	}
-	unmatched := surfaceStreamedResults(ch, pending, drained)
+	unmatched := surfaceStreamedResults(context.Background(), plainEmitter{}, ch, pending, drained)
 	close(ch)
 	if unmatched != 0 {
 		t.Fatalf("want 0 unmatched, got %d", unmatched)
@@ -765,7 +775,7 @@ func TestSurfaceStreamedResultsReportsUnmatchedIDs(t *testing.T) {
 	drained := []toolExecResult{
 		{toolUseID: "ghost", content: "orphan", event: makeToolResultEvent("ghost", "read_file", "orphan", "", false)},
 	}
-	unmatched := surfaceStreamedResults(ch, pending, drained)
+	unmatched := surfaceStreamedResults(context.Background(), plainEmitter{}, ch, pending, drained)
 	close(ch)
 	if unmatched != 1 {
 		t.Fatalf("want 1 unmatched, got %d", unmatched)
@@ -792,7 +802,7 @@ func TestSurfaceStreamedResultsReportsUnmatchedIDs(t *testing.T) {
 func TestSurfaceStreamedResultsEmptyDrainIsNoOp(t *testing.T) {
 	t.Parallel()
 	ch := make(chan TurnEvent, 4)
-	unmatched := surfaceStreamedResults(ch, nil, nil)
+	unmatched := surfaceStreamedResults(context.Background(), plainEmitter{}, ch, nil, nil)
 	close(ch)
 	if unmatched != 0 {
 		t.Fatalf("want 0 unmatched, got %d", unmatched)

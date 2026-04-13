@@ -8,6 +8,13 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
+// eventEmitter is the subset of Agent that surfaceStreamedResults
+// needs to flush events without deadlocking on a stalled consumer.
+// Uses an interface so unit tests can pass a plain channel wrapper.
+type eventEmitter interface {
+	emit(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent)
+}
+
 // toolExecFn runs a single tool call and returns its toolExecResult.
 // The executor is agnostic about where the tool actually runs — the
 // agent wires in a closure that dispatches through the pipeline
@@ -137,7 +144,7 @@ func (e *streamingToolExecutor) Drain() []toolExecResult {
 // called, so unmatched should always be 0. A non-zero count means the
 // invariant broke and the caller should log it so future regressions
 // are visible instead of silently emitting orphan tool_result events.
-func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, drained []toolExecResult) (unmatched int) {
+func surfaceStreamedResults(ctx context.Context, em eventEmitter, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, drained []toolExecResult) (unmatched int) {
 	if len(drained) == 0 {
 		return 0
 	}
@@ -147,11 +154,11 @@ func surfaceStreamedResults(ch chan<- TurnEvent, pendingTools []provider.ToolUse
 	}
 	for _, r := range drained {
 		if tc, ok := byID[r.toolUseID]; ok {
-			ch <- makeToolCallEvent(tc)
+			em.emit(ctx, ch, makeToolCallEvent(tc))
 		} else {
 			unmatched++
 		}
-		ch <- r.event
+		em.emit(ctx, ch, r.event)
 	}
 	return unmatched
 }
