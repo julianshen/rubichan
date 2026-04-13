@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,12 +17,15 @@ import (
 
 // fakeConcurrencySafeTool is a minimal tool that implements the
 // agentsdk.Tool interface + ConcurrencySafeTool marker. It sleeps for
-// execDelay before returning returnText to simulate I/O latency.
+// execDelay before returning returnText to simulate I/O latency. If
+// onStart is non-nil, it is invoked on the very first line of Execute
+// — used by timing-sensitive tests to signal "tool has started".
 type fakeConcurrencySafeTool struct {
 	name       string
 	execDelay  time.Duration
 	called     atomic.Int32
 	returnText string
+	onStart    func()
 }
 
 func (t *fakeConcurrencySafeTool) Name() string                 { return t.name }
@@ -30,6 +34,9 @@ func (t *fakeConcurrencySafeTool) InputSchema() json.RawMessage { return nil }
 func (t *fakeConcurrencySafeTool) IsConcurrencySafe() bool      { return true }
 func (t *fakeConcurrencySafeTool) Execute(ctx context.Context, _ json.RawMessage) (agentsdk.ToolResult, error) {
 	t.called.Add(1)
+	if t.onStart != nil {
+		t.onStart()
+	}
 	select {
 	case <-time.After(t.execDelay):
 	case <-ctx.Done():
@@ -61,10 +68,12 @@ func runnerFromTool(tool agentsdk.Tool) toolExecFn {
 func TestStreamingExecutorDispatchesSafeToolsInParallel(t *testing.T) {
 	t.Parallel()
 	// Two slow concurrency-safe tools. Sequential execution would take
-	// ~200ms; parallel dispatch should complete in ~100ms.
+	// ~400ms; parallel dispatch should complete in ~200ms. The 350ms
+	// budget gives 150ms headroom on the parallel path while still
+	// catching a sequential regression (which would take ≥400ms).
 	tool := &fakeConcurrencySafeTool{
 		name:       "read_file",
-		execDelay:  100 * time.Millisecond,
+		execDelay:  200 * time.Millisecond,
 		returnText: "ok",
 	}
 	ex := newStreamingToolExecutor(2, runnerFromTool(tool))
@@ -79,7 +88,7 @@ func TestStreamingExecutorDispatchesSafeToolsInParallel(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("want 2 results, got %d", len(results))
 	}
-	if elapsed > 180*time.Millisecond {
+	if elapsed > 350*time.Millisecond {
 		t.Fatalf("tools ran sequentially (%v) — expected parallel dispatch", elapsed)
 	}
 	if tool.called.Load() != 2 {
@@ -373,12 +382,15 @@ func TestExecutePlannedToolsSequentialWithStreamedResults(t *testing.T) {
 	require.Equal(t, 1, toolResultBlocks)
 }
 
-// TestRunLoopStreamsConcurrencySafeToolsDuringModelResponse is a
-// liveness test: it registers a fake concurrency-safe tool, drives the
-// agent through a turn that emits a tool_use for it, and confirms via
-// atomic counter that the tool was invoked exactly once and the result
-// was emitted to the event channel.
-func TestRunLoopStreamsConcurrencySafeToolsDuringModelResponse(t *testing.T) {
+// TestRunLoopWiresStreamingToolsIntoTurnResults is a wiring test: it
+// registers a fake concurrency-safe tool, drives the agent through a
+// turn that emits a tool_use for it, and confirms via atomic counter
+// that the tool was invoked exactly once and the result was emitted
+// to the event channel. It proves end-to-end wiring (tool called,
+// result emitted), but does NOT prove streaming-during-response
+// timing — see TestRunLoopDispatchesStreamingToolDuringStream for
+// that guarantee.
+func TestRunLoopWiresStreamingToolsIntoTurnResults(t *testing.T) {
 	t.Parallel()
 	tool := &fakeConcurrencySafeTool{
 		name:       "fake_read",
@@ -435,5 +447,102 @@ func TestRunLoopStreamsConcurrencySafeToolsDuringModelResponse(t *testing.T) {
 	}
 	if doneCount != 1 {
 		t.Fatalf("want 1 done event, got %d", doneCount)
+	}
+}
+
+// blockingStreamProvider is a minimal provider whose first Stream()
+// emits two tool_use events back-to-back and then blocks until the
+// first tool has started executing (waitForTool is closed) before
+// emitting the stop event. This creates a hard liveness dependency:
+// the stream only completes if the agent dispatches the first tool
+// concurrently with the stream. If streaming dispatch regresses and
+// tools run only post-stream, the provider goroutine blocks on
+// waitForTool forever — the test detects that via context timeout.
+//
+// Subsequent Stream() calls (the agent's follow-up turn after tool
+// results) simply emit a text_delta + stop.
+type blockingStreamProvider struct {
+	waitForTool <-chan struct{}
+	callIdx     int
+}
+
+func (p *blockingStreamProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	idx := p.callIdx
+	p.callIdx++
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer close(ch)
+		if idx == 0 {
+			// First tool_use — agent stores as currentTool.
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "call-1", Name: "fake_read", Input: json.RawMessage(`{}`),
+			}}
+			// Second tool_use — triggers finalizeTool on the first,
+			// which dispatches it via streamingToolExecutor.
+			ch <- provider.StreamEvent{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+				ID: "call-2", Name: "fake_read", Input: json.RawMessage(`{}`),
+			}}
+			// Block until the first tool has actually started
+			// executing. Without streaming dispatch, this never
+			// happens and the test hits its context timeout.
+			<-p.waitForTool
+			ch <- provider.StreamEvent{Type: "stop"}
+			return
+		}
+		ch <- provider.StreamEvent{Type: "text_delta", Text: "done"}
+		ch <- provider.StreamEvent{Type: "stop"}
+	}()
+	return ch, nil
+}
+
+// TestRunLoopDispatchesStreamingToolDuringStream genuinely proves
+// that concurrency-safe tools are dispatched during the model stream,
+// not after it. The blocking provider refuses to emit stop until the
+// tool's Execute has started; if streaming dispatch is wired correctly
+// the tool runs mid-stream and the turn completes, otherwise the
+// provider deadlocks and the context times out.
+func TestRunLoopDispatchesStreamingToolDuringStream(t *testing.T) {
+	t.Parallel()
+	toolRan := make(chan struct{})
+	var once sync.Once
+	tool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "file contents",
+		onStart:    func() { once.Do(func() { close(toolRan) }) },
+	}
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tool))
+
+	prov := &blockingStreamProvider{waitForTool: toolRan}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	// Streaming dispatch requires a non-nil approvalChecker returning
+	// an auto-approval verdict (see agent.go:1296-1305).
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, err := a.Turn(ctx, "read the file")
+	require.NoError(t, err)
+	for ev := range events {
+		_ = ev
+	}
+
+	// toolRan must be closed. If the stream completed without the
+	// tool ever executing (dispatch regression), the channel would
+	// still be open — but the provider would have deadlocked before
+	// ever emitting stop, so in practice we'd fail via context
+	// timeout above, not here. This select is defence-in-depth.
+	select {
+	case <-toolRan:
+		// Ok — tool was dispatched and started during the stream.
+	default:
+		t.Fatal("tool never ran — streaming dispatch regression")
+	}
+	if got := tool.called.Load(); got < 1 {
+		t.Fatalf("want tool called at least once, got %d", got)
 	}
 }

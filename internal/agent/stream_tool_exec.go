@@ -102,16 +102,25 @@ func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUs
 // Drain waits for every dispatched future to complete and returns
 // their results in dispatch order. Safe to call only once per executor
 // instance; subsequent calls return an empty slice.
+//
+// Lock scope is deliberately narrow: we snapshot the futures slice
+// under e.mu, then release the lock before reading f.done/f.result.
+// wg.Wait() has already guaranteed all dispatch goroutines have
+// finished, so the <-f.done reads are redundant no-ops kept as a
+// safety net. Holding the lock across those reads would create a
+// lock-order hazard for any future dispatch goroutine that acquires
+// e.mu — this shape keeps the no-deadlock invariant obvious.
 func (e *streamingToolExecutor) Drain() []toolExecResult {
 	e.wg.Wait()
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	out := make([]toolExecResult, 0, len(e.futures))
-	for _, f := range e.futures {
-		<-f.done
+	futures := e.futures
+	e.futures = nil
+	e.mu.Unlock()
+	out := make([]toolExecResult, 0, len(futures))
+	for _, f := range futures {
+		<-f.done // redundant after wg.Wait, kept as a safety net
 		out = append(out, f.result)
 	}
-	e.futures = nil
 	return out
 }
 
