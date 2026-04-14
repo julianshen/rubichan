@@ -6,7 +6,16 @@ package platform
 import (
 	"context"
 	"fmt"
+	"os/exec"
 )
+
+// cliAvailable reports whether the given CLI binary is installed and
+// executable on PATH. Overridable by tests that must not depend on the
+// host having `gh` or `glab` present.
+var cliAvailable = func(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
 
 // Platform abstracts git hosting platform operations.
 type Platform interface {
@@ -83,19 +92,49 @@ type DetectedEnv struct {
 }
 
 // New creates a Platform client from the detected environment.
+//
+// Selection order:
+//  1. SDK-backed client when env.Token is set (preferred: type-safe,
+//     pagination, rate-limit handling).
+//  2. CLI-backed fallback when no token is present but the platform's
+//     CLI (`gh` or `glab`) is installed — those binaries authenticate
+//     via their own token caches (e.g. `gh auth login`).
+//  3. Descriptive error pointing at both options.
+//
 // Returns an error if env is nil or the platform is unsupported.
 func New(env *DetectedEnv) (Platform, error) {
 	if env == nil {
 		return nil, fmt.Errorf("no platform environment detected")
 	}
-	if env.Token == "" {
-		return nil, fmt.Errorf("no authentication token for %s; set GITHUB_TOKEN or GITLAB_TOKEN", env.PlatformName)
+
+	if env.Token != "" {
+		switch env.PlatformName {
+		case "github":
+			return NewGitHubClient(env.Token), nil
+		case "gitlab":
+			return NewGitLabClient(env.Token)
+		default:
+			return nil, fmt.Errorf("unsupported platform: %q", env.PlatformName)
+		}
 	}
+
+	// CLI fallback path: no token but the local binary may be able
+	// to authenticate on our behalf via its own token cache.
 	switch env.PlatformName {
 	case "github":
-		return NewGitHubClient(env.Token), nil
+		if cliAvailable("gh") {
+			return NewCLIGitHubClient(), nil
+		}
+		return nil, fmt.Errorf(
+			"GITHUB_TOKEN not set and 'gh' CLI not installed; " +
+				"set GITHUB_TOKEN or install gh (https://cli.github.com)")
 	case "gitlab":
-		return NewGitLabClient(env.Token)
+		if cliAvailable("glab") {
+			return NewCLIGitLabClient(), nil
+		}
+		return nil, fmt.Errorf(
+			"GITLAB_TOKEN not set and 'glab' CLI not installed; " +
+				"set GITLAB_TOKEN or install glab (https://gitlab.com/gitlab-org/cli)")
 	default:
 		return nil, fmt.Errorf("unsupported platform: %q", env.PlatformName)
 	}

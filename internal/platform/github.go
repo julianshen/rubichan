@@ -156,10 +156,10 @@ func gzipBase64(data []byte) (string, error) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	if _, err := gz.Write(data); err != nil {
-		return "", err
+		return "", fmt.Errorf("gzip write: %w", err)
 	}
 	if err := gz.Close(); err != nil {
-		return "", err
+		return "", fmt.Errorf("gzip close: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }

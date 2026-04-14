@@ -128,6 +128,11 @@ func TestNewReturnsErrorForNilEnv(t *testing.T) {
 }
 
 func TestNewReturnsErrorForEmptyToken(t *testing.T) {
+	// Explicitly disable the CLI fallback so this test measures the
+	// "no token AND no CLI" path regardless of whether gh/glab are
+	// installed on the host running the tests.
+	withCLIAvailable(t, map[string]bool{"gh": false, "glab": false})
+
 	env := &DetectedEnv{
 		PlatformName: "github",
 		Token:        "",
