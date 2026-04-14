@@ -3,16 +3,20 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/testutil"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1036,4 +1040,162 @@ func TestTransformerStripsEmptyTextViaNormalization(t *testing.T) {
 	assert.Len(t, blocks, 2, "empty text block should be removed by normalization")
 }
 
+func TestProcessStream_ScannerError(t *testing.T) {
+	pr, pw := io.Pipe()
+	pw.CloseWithError(errors.New("connection reset by peer"))
+
+	p := New("http://localhost", "test-key")
+	ch := make(chan provider.StreamEvent)
+	go p.processStream(context.Background(), io.NopCloser(pr), ch, "test-request-id")
+
+	var events []provider.StreamEvent
+	for e := range ch {
+		events = append(events, e)
+	}
+
+	require.Len(t, events, 1)
+	assert.Equal(t, agentsdk.EventError, events[0].Type)
+
+	var pe *provider.ProviderError
+	require.ErrorAs(t, events[0].Error, &pe)
+	assert.Equal(t, provider.ErrStreamError, pe.Kind)
+	assert.Equal(t, "anthropic", pe.Provider)
+	assert.True(t, pe.IsRetryable())
+	assert.Equal(t, "test-request-id", pe.RequestID)
+}
+
+// When ctx is canceled while the scanner is blocked reading the body, the
+// underlying transport typically returns a network-level error from
+// scanner.Err(). processStream must prefer the context error over reclassifying
+// the read failure as a retryable ErrStreamError — a user cancellation is not
+// retryable.
+func TestProcessStream_ContextCancelledPrefersCtxErr(t *testing.T) {
+	pr, pw := io.Pipe()
+	// Simulate a network-level error from the read side (as if Transport
+	// closed the body after ctx cancellation).
+	pw.CloseWithError(errors.New("connection reset by peer"))
+
+	p := New("http://localhost", "test-key")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before processStream inspects scanner.Err()
+
+	ch := make(chan provider.StreamEvent)
+	go p.processStream(ctx, io.NopCloser(pr), ch, "test-request-id")
+
+	var events []provider.StreamEvent
+	for e := range ch {
+		events = append(events, e)
+	}
+
+	require.Len(t, events, 1)
+	assert.Equal(t, agentsdk.EventError, events[0].Type)
+
+	// The emitted error must be context.Canceled (or a ProviderError that
+	// is NOT retryable), not a retryable ErrStreamError — otherwise
+	// TurnRetry will incorrectly retry a user-cancelled operation.
+	if errors.Is(events[0].Error, context.Canceled) {
+		return
+	}
+	var pe *provider.ProviderError
+	require.ErrorAs(t, events[0].Error, &pe,
+		"expected context.Canceled or a ProviderError, got %T", events[0].Error)
+	assert.False(t, pe.IsRetryable(),
+		"ctx-cancelled scanner error must not be marked retryable")
+}
+
+func TestStream_SetsRequestIDHeader(t *testing.T) {
+	var capturedHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHeader = r.Header.Get("x-client-request-id")
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+
+	p := New(srv.URL, "test-key")
+	req := provider.CompletionRequest{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 100,
+		Messages:  []provider.Message{{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "hi"}}}},
+	}
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+	for range ch { // drain
+	}
+
+	assert.NotEmpty(t, capturedHeader, "x-client-request-id header must be set")
+	_, parseErr := uuid.Parse(capturedHeader)
+	assert.NoError(t, parseErr, "x-client-request-id must be a valid UUID")
+}
+
 func floatPtr(f float64) *float64 { return &f }
+
+func TestConvertSSEEvent_MessageDelta_StopReason(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	state := newStreamState()
+	data := `{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":8192}}`
+
+	first, second := p.convertSSEEvent(state, sseEvent{Event: "message_delta", Data: data})
+	require.NotNil(t, first)
+	require.Nil(t, second)
+	assert.Equal(t, agentsdk.EventStop, first.Type)
+	assert.Equal(t, "max_tokens", first.StopReason)
+	assert.Equal(t, 8192, first.OutputTokens)
+}
+
+func TestConvertSSEEvent_MessageDelta_EndTurn(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	state := newStreamState()
+	data := `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":150}}`
+
+	first, _ := p.convertSSEEvent(state, sseEvent{Event: "message_delta", Data: data})
+	require.NotNil(t, first)
+	assert.Equal(t, agentsdk.EventStop, first.Type)
+	assert.Equal(t, "end_turn", first.StopReason)
+}
+
+// Normal Anthropic streams emit message_delta (with stop_reason) immediately
+// followed by message_stop. Both must not produce terminal EventStop events;
+// otherwise downstream agent-loop finalization runs twice.
+func TestConvertSSEEvent_MessageStop_GatedAfterMessageDelta(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	state := newStreamState()
+
+	// message_delta fires first and emits EventStop with the real stop_reason.
+	deltaData := `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}`
+	first, second := p.convertSSEEvent(state, sseEvent{Event: "message_delta", Data: deltaData})
+	require.NotNil(t, first)
+	require.Nil(t, second)
+	assert.Equal(t, agentsdk.EventStop, first.Type)
+	assert.Equal(t, "end_turn", first.StopReason)
+
+	// message_stop arriving after the delta-stop must be suppressed.
+	stopFirst, stopSecond := p.convertSSEEvent(state, sseEvent{Event: "message_stop", Data: `{"type":"message_stop"}`})
+	assert.Nil(t, stopFirst, "message_stop after message_delta must not emit a second EventStop")
+	assert.Nil(t, stopSecond)
+}
+
+// When message_delta never carries stop_reason (older providers, edge cases),
+// message_stop must still emit the terminal event so the agent loop completes.
+func TestConvertSSEEvent_MessageStop_EmitsWhenNoDeltaStop(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	state := newStreamState()
+
+	first, second := p.convertSSEEvent(state, sseEvent{Event: "message_stop", Data: `{"type":"message_stop"}`})
+	require.NotNil(t, first, "message_stop must emit EventStop when no prior delta-stop")
+	assert.Nil(t, second)
+	assert.Equal(t, agentsdk.EventStop, first.Type)
+}
+
+func TestHandleMessageStart_CacheTokens(t *testing.T) {
+	p := New("http://localhost", "test-key")
+	data := `{"message":{"id":"msg_01","model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":2000,"cache_read_input_tokens":48000}}}`
+
+	evt := p.handleMessageStart(data)
+	require.NotNil(t, evt)
+	assert.Equal(t, "message_start", evt.Type)
+	assert.Equal(t, 100, evt.InputTokens)
+	assert.Equal(t, 50, evt.OutputTokens)
+	assert.Equal(t, 2000, evt.CacheCreationTokens)
+	assert.Equal(t, 48000, evt.CacheReadTokens)
+}

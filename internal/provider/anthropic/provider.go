@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
@@ -61,9 +62,11 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
+	requestID := uuid.New().String()
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("x-client-request-id", requestID)
 
 	provider.LogRequest(p.debugLogger, httpReq, body)
 
@@ -76,7 +79,9 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
 		provider.LogResponse(p.debugLogger, resp.StatusCode, resp.Header, respBody)
-		return nil, provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "anthropic", resp.Header)
+		classified := provider.ClassifyAPIErrorWithResponse(resp.StatusCode, respBody, httpReq, "anthropic", resp.Header)
+		classified.RequestID = requestID
+		return nil, classified
 	}
 
 	if p.debugLogger != nil {
@@ -84,7 +89,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.CompletionRequest) (
 	}
 
 	ch := make(chan provider.StreamEvent)
-	go p.processStream(ctx, resp.Body, ch)
+	go p.processStream(ctx, resp.Body, ch, requestID)
 
 	return ch, nil
 }
@@ -103,6 +108,10 @@ type pendingToolBlock struct {
 // inside processStream's goroutine so there is no cross-request sharing.
 type streamState struct {
 	pendingTools map[int]*pendingToolBlock
+	// stopEmitted gates the terminal EventStop so that the typical
+	// message_delta (carrying stop_reason) + message_stop pair does not
+	// produce two terminal events to the agent loop.
+	stopEmitted bool
 }
 
 func newStreamState() *streamState {
@@ -110,14 +119,28 @@ func newStreamState() *streamState {
 }
 
 // processStream reads SSE events from the response body and sends StreamEvents
-// to the channel as they arrive. It closes both the body and the channel when done.
-func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
+// to the channel as they arrive. It closes the channel when done; the watchdog
+// pump goroutine owns closing body.
+func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent, requestID string) {
 	defer close(ch)
-	defer body.Close()
+
+	onWarn := func() {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: stream idle for 45s (request %s), still waiting", requestID)
+		}
+	}
+	onKill := func() {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: stream killed after 90s idle (request %s)", requestID)
+		}
+	}
+
+	watched := provider.WatchBody(body, provider.WatchdogConfig{}, onWarn, onKill)
+	defer watched.Close()
 
 	state := newStreamState()
 
-	scanner := newSSEScanner(body)
+	scanner := newSSEScanner(watched)
 	for scanner.Next() {
 		if ctx.Err() != nil {
 			select {
@@ -145,8 +168,20 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 
 	if err := scanner.Err(); err != nil {
+		// Prefer context cancellation over reclassifying a network-level
+		// read failure as a retryable ErrStreamError. When the caller
+		// cancels mid-stream the HTTP transport typically tears down
+		// the body with a low-level error; wrapping that as retryable
+		// would make TurnRetry re-run a user-cancelled operation.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			select {
+			case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: ctxErr}:
+			default:
+			}
+			return
+		}
 		select {
-		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: err}:
+		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: provider.WrapScannerError(err, "anthropic", requestID)}:
 		case <-ctx.Done():
 		}
 	}
@@ -167,7 +202,16 @@ func (p *Provider) convertSSEEvent(state *streamState, evt sseEvent) (first, sec
 		return p.handleContentBlockDelta(state, evt.Data), nil
 	case "content_block_stop":
 		return p.handleContentBlockStop(state, evt.Data)
+	case "message_delta":
+		return p.handleMessageDelta(state, evt.Data), nil
 	case "message_stop":
+		// message_stop typically follows a message_delta that already
+		// carried stop_reason. Suppress the duplicate terminal event so
+		// downstream finalization runs exactly once per turn.
+		if state.stopEmitted {
+			return nil, nil
+		}
+		state.stopEmitted = true
 		return &provider.StreamEvent{Type: agentsdk.EventStop}, nil
 	default:
 		return nil, nil
@@ -180,8 +224,10 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 			ID    string `json:"id"`
 			Model string `json:"model"`
 			Usage struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 			} `json:"usage"`
 		} `json:"message"`
 	}
@@ -191,11 +237,39 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 	}
 
 	return &provider.StreamEvent{
-		Type:         "message_start",
-		Model:        parsed.Message.Model,
-		MessageID:    parsed.Message.ID,
-		InputTokens:  parsed.Message.Usage.InputTokens,
-		OutputTokens: parsed.Message.Usage.OutputTokens,
+		Type:                "message_start",
+		Model:               parsed.Message.Model,
+		MessageID:           parsed.Message.ID,
+		InputTokens:         parsed.Message.Usage.InputTokens,
+		OutputTokens:        parsed.Message.Usage.OutputTokens,
+		CacheCreationTokens: parsed.Message.Usage.CacheCreationInputTokens,
+		CacheReadTokens:     parsed.Message.Usage.CacheReadInputTokens,
+	}
+}
+
+func (p *Provider) handleMessageDelta(state *streamState, data string) *provider.StreamEvent {
+	var parsed struct {
+		Delta struct {
+			StopReason string `json:"stop_reason"`
+		} `json:"delta"`
+		Usage struct {
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(strings.NewReader(data)).Decode(&parsed); err != nil {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] anthropic: parsing message_delta: %v", err)
+		}
+		return nil
+	}
+	if parsed.Delta.StopReason == "" || state.stopEmitted {
+		return nil
+	}
+	state.stopEmitted = true
+	return &provider.StreamEvent{
+		Type:         agentsdk.EventStop,
+		StopReason:   parsed.Delta.StopReason,
+		OutputTokens: parsed.Usage.OutputTokens,
 	}
 }
 

@@ -347,6 +347,7 @@ type Agent struct {
 	acpServer         *acp.Server             // ACP server instance (if enabled)
 	acpRegistry       *acp.CapabilityRegistry // Capability registry for ACP
 	useACP            bool                    // Enable ACP server
+	latches           *sessionLatches         // one-way ratchets for session-stable capability values
 }
 
 const maxUIRequestInputBytes = 2048
@@ -368,6 +369,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		scratchpad:   NewScratchpad(),
 		progress:     NewProgressTracker(),
 		capabilities: agentsdk.DefaultCapabilities(),
+		latches:      newSessionLatches(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -797,6 +799,7 @@ func (a *Agent) loadSessionHistory(conv *Conversation, sessionID string) error {
 	snapMsgs, snapErr := a.store.GetSnapshot(sessionID)
 	if snapErr == nil && snapMsgs != nil {
 		conv.LoadFromMessages(snapMsgs)
+		synthesizeMissingToolResults(conv, orphanReasonLoad)
 		return nil
 	}
 	if snapErr != nil {
@@ -815,6 +818,7 @@ func (a *Agent) loadSessionHistory(conv *Conversation, sessionID string) error {
 		}
 	}
 	conv.LoadFromMessages(providerMsgs)
+	synthesizeMissingToolResults(conv, orphanReasonLoad)
 	return nil
 }
 
@@ -1078,22 +1082,14 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 			pb.AddSection(section)
 		}
 	} else {
-		pb.AddSection(PromptSection{
-			Name:      "",
-			Content:   baseSystemPrompt,
-			Cacheable: true,
-		})
+		pb.AddCacheableSection("", baseSystemPrompt)
 	}
 
 	// Scratchpad — dynamic, changes as user adds notes.
 	if a.scratchpad != nil {
 		rendered := a.scratchpad.Render()
 		if rendered != "" {
-			pb.AddSection(PromptSection{
-				Name:      "Scratchpad",
-				Content:   rendered,
-				Cacheable: false,
-			})
+			pb.AddDynamicSection_UNCACHED("Scratchpad", rendered, "user-editable notes change across turns")
 		}
 	}
 
@@ -1101,11 +1097,7 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 	if a.progress != nil {
 		rendered := a.progress.Render()
 		if rendered != "" {
-			pb.AddSection(PromptSection{
-				Name:      "Progress",
-				Content:   rendered,
-				Cacheable: false,
-			})
+			pb.AddDynamicSection_UNCACHED("Progress", rendered, "accumulates tool results at runtime and changes each turn")
 		}
 	}
 
@@ -1116,11 +1108,7 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 		if err == nil && len(entities) > 0 {
 			knowledge := renderKnowledgeSection(entities)
 			if knowledge != "" {
-				pb.AddSection(PromptSection{
-					Name:      "Project Knowledge",
-					Content:   knowledge,
-					Cacheable: false,
-				})
+				pb.AddDynamicSection_UNCACHED("Project Knowledge", knowledge, "selected per-query from knowledge graph based on user message content")
 			}
 			// Record that these entities were selected and injected into the prompt.
 			// Errors are silently discarded to ensure metrics recording never blocks prompt building.
@@ -1131,11 +1119,7 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
 		for _, f := range builtFragments {
-			pb.AddSection(PromptSection{
-				Name:      f.SkillName,
-				Content:   f.Prompt,
-				Cacheable: false,
-			})
+			pb.AddDynamicSection_UNCACHED(f.SkillName, f.Prompt, "skill-injected prompt varies by active skill set and runtime context")
 		}
 	}
 
@@ -1238,7 +1222,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		// Append tool discovery hint for models that benefit from explicit guidance.
-		if a.capabilities.NeedsToolDiscoveryHint {
+		// The latch freezes this decision at the first turn so a mid-session
+		// capability change cannot alter the system prompt's dynamic section,
+		// which would invalidate the provider's session prompt cache.
+		needsToolHint := a.latches.latchToolHint(a.capabilities.NeedsToolDiscoveryHint)
+		if needsToolHint {
 			toolHint := a.deferral.ToolSummary(activeTools)
 			systemPrompt = systemPrompt + "\n\n" + toolHint
 		}
@@ -1274,6 +1262,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			MaxTokens:        4096,
 			CacheBreakpoints: cacheBreakpoints,
 		}
+		// Latch ReasoningEffort so a mid-session capability change cannot
+		// alter the value passed to the provider. The latch is set on the
+		// first non-empty value; empty means "use provider default."
+		req.Capabilities.ReasoningEffort = a.latches.latchReasoningEffort(a.capabilities.ReasoningEffort)
 
 		if a.rateLimiter != nil {
 			if !a.rateLimiter.AllowNow() {
@@ -1286,7 +1278,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
-		stream, err := a.provider.Stream(ctx, req)
+		retryCfg := TurnRetryConfig{} // use defaults: 3 attempts, 2s base delay, 30s max delay
+		onRetry := func(attempt int, delay time.Duration, cause error) {
+			a.emit(ctx, ch, TurnEvent{
+				Type:  "retrying",
+				Error: fmt.Errorf("attempt %d after %s: %w", attempt, delay, cause),
+			})
+		}
+		stream, err := TurnRetry(ctx, retryCfg, func(ctx context.Context) (<-chan provider.StreamEvent, error) {
+			return a.provider.Stream(ctx, req)
+		}, onRetry)
 		if err != nil {
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
@@ -1301,6 +1302,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
 		var thinkingBuf string
+		var stopReason string
 
 		// Streaming dispatch: concurrency-safe tools run in the
 		// background as their tool_use blocks finalize during the stream,
@@ -1417,8 +1419,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				a.emit(ctx, ch, TurnEvent{Type: "error", Error: event.Error})
 
 			case "stop":
-				// Will be handled after the loop
+				// Capture stop reason for post-loop detection (e.g. max_tokens truncation).
+				if event.StopReason != "" {
+					stopReason = event.StopReason
+				}
 			}
+		}
+
+		// Warn if the model hit the output token cap so operators know to raise MaxOutputTokens.
+		if stopReason == agentsdk.StopReasonMaxTokens {
+			a.logger.Warn("response truncated by output token limit (consider increasing max_output_tokens in config)")
 		}
 
 		// Capture accumulated text before finalizing, for text-based tool extraction.

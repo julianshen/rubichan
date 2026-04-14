@@ -78,6 +78,11 @@ type ProviderError struct {
 	// Retryable is an explicit override for the retry decision.
 	// When true, IsRetryable returns true regardless of Kind.
 	Retryable bool
+	// RequestID is the client-generated UUID sent as x-client-request-id for
+	// request correlation. Present on stream errors and HTTP errors that were
+	// classified after the header was sent. Empty when the error originated
+	// before the request was built.
+	RequestID string
 }
 
 // Error implements the error interface.

@@ -8,8 +8,10 @@ import (
 
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSynthesizeMissingToolResultsFillsOrphans(t *testing.T) {
@@ -217,5 +219,67 @@ func TestRunLoopToolCancelLeavesNoOrphans(t *testing.T) {
 		if !answered[id] {
 			t.Fatalf("orphan tool_use %q has no matching tool_result; sweeper not wired", id)
 		}
+	}
+}
+
+// TestLoadSessionHistory_SynthesizesOrphans verifies that loadSessionHistory
+// calls synthesizeMissingToolResults so that a persisted session whose last
+// assistant message contains unanswered tool_use blocks is repaired on resume.
+// Without the fix a subsequent API call would fail with a 400 protocol error.
+func TestLoadSessionHistory_SynthesizesOrphans(t *testing.T) {
+	t.Parallel()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	const sessionID = "sess-orphan"
+	require.NoError(t, s.CreateSession(store.Session{
+		ID:           sessionID,
+		Model:        "gpt-4",
+		SystemPrompt: "You are helpful.",
+	}))
+
+	// Persist a user message followed by an assistant message whose
+	// tool_use block has no matching tool_result — simulating a session
+	// that died between emitting tool_use and executing the tool.
+	require.NoError(t, s.AppendMessage(sessionID, "user", []provider.ContentBlock{
+		{Type: "text", Text: "Run the tool please"},
+	}))
+	require.NoError(t, s.AppendMessage(sessionID, "assistant", []provider.ContentBlock{
+		{Type: "text", Text: "Sure, calling the tool now."},
+		{Type: "tool_use", ID: "orphan_call_1", Name: "read_file", Input: json.RawMessage(`{"path":"file.go"}`)},
+	}))
+
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "gpt-4"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	mp := &mockProvider{events: []provider.StreamEvent{{Type: "stop"}}}
+
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithStore(s))
+
+	err = a.ResumeSession(context.Background(), sessionID)
+	require.NoError(t, err)
+
+	// After load, the orphaned tool_use must have been sealed with a
+	// synthetic error tool_result so the conversation is protocol-valid.
+	msgs := a.conversation.Messages()
+	var found bool
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type == "tool_result" && b.ToolUseID == "orphan_call_1" {
+				found = true
+				if !b.IsError {
+					t.Errorf("synthesized tool_result should have IsError=true")
+				}
+				if !strings.Contains(b.Text, orphanReasonLoad) {
+					t.Errorf("synthesized content missing load reason: %q", b.Text)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no tool_result found for orphan_call_1 after session load; orphan repair not wired into loadSessionHistory")
 	}
 }

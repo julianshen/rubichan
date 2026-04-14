@@ -1689,7 +1689,11 @@ func runInteractive() error {
 	}
 
 	// Wire cross-session memory and summarizer.
-	summarizer := agent.NewLLMSummarizer(p, cfg.Provider.Model)
+	summaryModel := cfg.Provider.SummaryModel
+	if summaryModel == "" {
+		summaryModel = cfg.Provider.Model
+	}
+	summarizer := agent.NewLLMSummarizer(p, summaryModel)
 	opts = append(opts, agent.WithSummarizer(summarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
@@ -2183,7 +2187,11 @@ func runHeadless() error {
 	}
 
 	// Wire cross-session memory and summarizer.
-	headlessSummarizer := agent.NewLLMSummarizer(p, cfg.Provider.Model)
+	headlessSummaryModel := cfg.Provider.SummaryModel
+	if headlessSummaryModel == "" {
+		headlessSummaryModel = cfg.Provider.Model
+	}
+	headlessSummarizer := agent.NewLLMSummarizer(p, headlessSummaryModel)
 	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
