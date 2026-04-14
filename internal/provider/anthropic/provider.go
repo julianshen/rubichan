@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -165,25 +164,8 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 
 	if err := scanner.Err(); err != nil {
-		var streamErr *provider.ProviderError
-		if !errors.As(err, &streamErr) {
-			streamErr = &provider.ProviderError{
-				Kind:      provider.ErrStreamError,
-				Provider:  "anthropic",
-				Message:   err.Error(),
-				Retryable: true,
-				RequestID: requestID,
-			}
-		} else {
-			if streamErr.Provider == "" {
-				streamErr.Provider = "anthropic"
-			}
-			if streamErr.RequestID == "" {
-				streamErr.RequestID = requestID
-			}
-		}
 		select {
-		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: streamErr}:
+		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: provider.WrapScannerError(err, "anthropic", requestID)}:
 		case <-ctx.Done():
 		}
 	}

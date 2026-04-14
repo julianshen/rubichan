@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,10 +29,10 @@ func TestTurnRetry_SucceedsFirstAttempt(t *testing.T) {
 }
 
 func TestTurnRetry_RetriesOnRetryableError(t *testing.T) {
-	var attempts int32
+	attempts := 0
 	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
-		n := atomic.AddInt32(&attempts, 1)
-		if n < 3 {
+		attempts++
+		if attempts < 3 {
 			return nil, &provider.ProviderError{
 				Kind:    provider.ErrRateLimited,
 				Message: "slow down",
@@ -58,14 +57,14 @@ func TestTurnRetry_RetriesOnRetryableError(t *testing.T) {
 	ch, err := TurnRetry(context.Background(), cfg, fn, onRetry)
 	require.NoError(t, err)
 	require.NotNil(t, ch)
-	assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
+	assert.Equal(t, 3, attempts)
 	assert.Equal(t, []int{2, 3}, retryCalls)
 }
 
 func TestTurnRetry_DoesNotRetryNonRetryable(t *testing.T) {
-	var attempts int32
+	attempts := 0
 	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
-		atomic.AddInt32(&attempts, 1)
+		attempts++
 		return nil, &provider.ProviderError{
 			Kind:    provider.ErrAuthFailed,
 			Message: "bad api key",
@@ -74,25 +73,25 @@ func TestTurnRetry_DoesNotRetryNonRetryable(t *testing.T) {
 
 	_, err := TurnRetry(context.Background(), TurnRetryConfig{BaseDelay: time.Millisecond}, fn, nil)
 	require.Error(t, err)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
+	assert.Equal(t, 1, attempts)
 }
 
 func TestTurnRetry_DoesNotRetryPlainError(t *testing.T) {
-	var attempts int32
+	attempts := 0
 	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
-		atomic.AddInt32(&attempts, 1)
+		attempts++
 		return nil, errors.New("network refused")
 	}
 
 	_, err := TurnRetry(context.Background(), TurnRetryConfig{BaseDelay: time.Millisecond}, fn, nil)
 	require.Error(t, err)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "plain errors must not be retried")
+	assert.Equal(t, 1, attempts, "plain errors must not be retried")
 }
 
 func TestTurnRetry_ExhaustsAttempts(t *testing.T) {
-	var attempts int32
+	attempts := 0
 	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
-		atomic.AddInt32(&attempts, 1)
+		attempts++
 		return nil, &provider.ProviderError{
 			Kind:    provider.ErrServerError,
 			Message: "upstream down",
@@ -102,7 +101,7 @@ func TestTurnRetry_ExhaustsAttempts(t *testing.T) {
 	cfg := TurnRetryConfig{MaxAttempts: 3, BaseDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond}
 	_, err := TurnRetry(context.Background(), cfg, fn, nil)
 	require.Error(t, err)
-	assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
+	assert.Equal(t, 3, attempts)
 	var pe *provider.ProviderError
 	require.ErrorAs(t, err, &pe)
 	assert.Equal(t, provider.ErrServerError, pe.Kind)
@@ -110,10 +109,10 @@ func TestTurnRetry_ExhaustsAttempts(t *testing.T) {
 
 func TestTurnRetry_RespectsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	var attempts int32
+	attempts := 0
 	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
-		n := atomic.AddInt32(&attempts, 1)
-		if n == 1 {
+		attempts++
+		if attempts == 1 {
 			cancel() // cancel between first failure and retry delay
 		}
 		return nil, &provider.ProviderError{Kind: provider.ErrRateLimited, Message: "429"}

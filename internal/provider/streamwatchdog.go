@@ -45,7 +45,7 @@ func WatchBody(body io.ReadCloser, cfg WatchdogConfig, onWarn, onKill func()) io
 	// Pump: copy body -> pipe, signal activity on each read.
 	go func() {
 		defer stop()
-		buf := make([]byte, 32*1024)
+		buf := make([]byte, 4*1024)
 		for {
 			n, rerr := body.Read(buf)
 			if n > 0 {
@@ -81,19 +81,9 @@ func WatchBody(body io.ReadCloser, cfg WatchdogConfig, onWarn, onKill func()) io
 			case <-done:
 				return
 			case <-activity:
-				// Drain+reset both timers.
-				if !warnTimer.Stop() {
-					select {
-					case <-warnTimer.C:
-					default:
-					}
-				}
-				if !killTimer.Stop() {
-					select {
-					case <-killTimer.C:
-					default:
-					}
-				}
+				// Go 1.23+ semantics: Stop then Reset is safe without draining C.
+				warnTimer.Stop()
+				killTimer.Stop()
 				warnTimer.Reset(cfg.warnAfter())
 				killTimer.Reset(cfg.killAfter())
 				warnFired = false
@@ -108,9 +98,8 @@ func WatchBody(body io.ReadCloser, cfg WatchdogConfig, onWarn, onKill func()) io
 				}
 				_ = body.Close()
 				stallErr := &ProviderError{
-					Kind:      ErrStreamError,
-					Message:   "stream stalled: no data for " + cfg.killAfter().String(),
-					Retryable: true,
+					Kind:    ErrStreamError,
+					Message: "stream stalled: no data for " + cfg.killAfter().String(),
 				}
 				_ = pw.CloseWithError(stallErr)
 				return

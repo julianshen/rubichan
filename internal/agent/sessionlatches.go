@@ -7,9 +7,7 @@ import "sync"
 // value wins, subsequent calls return the stored value regardless of
 // what was passed. This prevents mid-session capability changes from
 // altering the system prompt's dynamic section, which would invalidate
-// the provider's session prompt cache.
-//
-// See: Chapter 4 — "The Sticky Latches in Action" for the design rationale.
+// ~50-70K tokens of the provider's session prompt cache.
 type sessionLatches struct {
 	mu sync.Mutex
 

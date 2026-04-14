@@ -1427,7 +1427,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		// Warn if the model hit the output token cap so operators know to raise MaxOutputTokens.
-		if stopReason == "max_tokens" {
+		if stopReason == agentsdk.StopReasonMaxTokens {
 			a.logger.Warn("response truncated by output token limit (consider increasing max_output_tokens in config)")
 		}
 

@@ -80,6 +80,15 @@ const (
 	EventError            = "error"
 )
 
+// Stop reason constants. Populated on StreamEvent.StopReason when the
+// provider signals how the model stopped generating.
+const (
+	StopReasonEndTurn      = "end_turn"
+	StopReasonMaxTokens    = "max_tokens"
+	StopReasonToolUse      = "tool_use"
+	StopReasonStopSequence = "stop_sequence"
+)
+
 // CompletionRequest represents a request to an LLM for completion.
 type CompletionRequest struct {
 	Model            string            `json:"model"`

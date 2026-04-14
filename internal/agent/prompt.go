@@ -48,7 +48,6 @@ func (pb *PromptBuilder) AddCacheableSection(name, content string) {
 // every cache-breaking decision. Example reasons: "contains session ID",
 // "runtime feature flag", "user-specific tool inventory".
 func (pb *PromptBuilder) AddDynamicSection_UNCACHED(name, content, reason string) {
-	_ = reason // documentation-only; unused at runtime by design
 	pb.sections = append(pb.sections, PromptSection{Name: name, Content: content, Cacheable: false})
 }
 

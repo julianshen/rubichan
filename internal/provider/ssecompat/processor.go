@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -202,21 +201,8 @@ func ProcessSSE(ctx context.Context, body io.ReadCloser, ch chan<- provider.Stre
 	}
 
 	if err := scanner.Err(); err != nil {
-		var streamErr *provider.ProviderError
-		if !errors.As(err, &streamErr) {
-			streamErr = &provider.ProviderError{
-				Kind:      provider.ErrStreamError,
-				Provider:  providerName,
-				Message:   err.Error(),
-				Retryable: true,
-			}
-		} else {
-			if streamErr.Provider == "" {
-				streamErr.Provider = providerName
-			}
-		}
 		select {
-		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: streamErr}:
+		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: provider.WrapScannerError(err, providerName, "")}:
 		case <-ctx.Done():
 		}
 	}
