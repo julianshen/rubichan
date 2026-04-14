@@ -36,21 +36,28 @@ func NewCLIGitLabClientWithExec(execFn ExecFunc) *CLIGitLabClient {
 func (c *CLIGitLabClient) Name() string { return "gitlab" }
 
 func (c *CLIGitLabClient) PostPRComment(ctx context.Context, repo string, prNum int, body string) error {
+	// Use --input - with a JSON payload rather than -f body=...:
+	//   1. `glab api -f body=@foo` treats @foo as a file read directive.
+	//   2. Large comment bodies can exceed ARG_MAX on the command line.
+	payload, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return fmt.Errorf("glab api: encoding comment body: %w", err)
+	}
 	path := fmt.Sprintf("projects/%s/merge_requests/%d/notes", glProjectPath(repo), prNum)
-	_, err := c.execFn(ctx, nil,
-		"glab", "api", path, "-X", "POST", "-f", "body="+body)
+	_, err = c.execFn(ctx, payload,
+		"glab", "api", path, "-X", "POST", "--input", "-")
 	if err != nil {
 		return fmt.Errorf("glab api: posting MR note: %w", err)
 	}
 	return nil
 }
 
-// PostPRReview emits the review body as a single MR note and appends each
-// inline comment as an additional note, prefixed with its file/line
-// location. GitLab's Discussions API requires a PositionOptions object
-// with diff SHAs that the CLI cannot easily supply without an additional
-// round-trip; the fallback keeps the information visible without
-// attempting to map it onto diff hunks.
+// PostPRReview emits a single MR note that contains the review body
+// followed by every inline comment fragment, each prefixed with its
+// file/line location. GitLab's Discussions API would allow true inline
+// comments but requires a PositionOptions object with diff SHAs the
+// CLI cannot cheaply supply; this fallback keeps the information
+// visible in one note without mapping it onto diff hunks.
 func (c *CLIGitLabClient) PostPRReview(ctx context.Context, repo string, prNum int, review Review) error {
 	var sb strings.Builder
 	sb.WriteString(review.Body)

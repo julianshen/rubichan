@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -17,7 +18,8 @@ func TestCLIGitLabPostMRComment(t *testing.T) {
 	var calls []recordedCall
 	c := NewCLIGitLabClientWithExec(fakeExec([]byte(`{"id":7}`), nil, &calls))
 
-	err := c.PostPRComment(context.Background(), "grp/proj", 17, "looks good")
+	body := "@file-read-guard\nlooks good"
+	err := c.PostPRComment(context.Background(), "grp/proj", 17, body)
 	require.NoError(t, err)
 
 	require.Len(t, calls, 1)
@@ -30,8 +32,15 @@ func TestCLIGitLabPostMRComment(t *testing.T) {
 	assert.Contains(t, joined, "projects/grp%2Fproj/merge_requests/17/notes")
 	assert.Contains(t, joined, "-X")
 	assert.Contains(t, joined, "POST")
-	assert.Contains(t, joined, "-f")
-	assert.Contains(t, joined, "body=looks good")
+	assert.Contains(t, joined, "--input")
+	assert.NotContains(t, joined, "-f",
+		"-f is unsafe for bodies starting with @ and can hit ARG_MAX")
+
+	var payload struct {
+		Body string `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(calls[0].Stdin, &payload))
+	assert.Equal(t, body, payload.Body)
 }
 
 func TestCLIGitLabGetMRDiff(t *testing.T) {
@@ -78,8 +87,8 @@ func TestCLIGitLabListMRFiles(t *testing.T) {
 }
 
 // PostPRReview on GitLab collapses the review body + inline comments
-// into a single MR note, so tests must see the same shell-out pattern
-// as PostPRComment plus a body that contains every inline fragment.
+// into a single MR note, so the note body travelling via stdin must
+// contain the summary plus every inline fragment.
 func TestCLIGitLabPostPRReviewFallsBackToSingleNote(t *testing.T) {
 	var calls []recordedCall
 	c := NewCLIGitLabClientWithExec(fakeExec([]byte(`{"id":42}`), nil, &calls))
@@ -96,10 +105,15 @@ func TestCLIGitLabPostPRReviewFallsBackToSingleNote(t *testing.T) {
 	require.Len(t, calls, 1)
 	joined := strings.Join(calls[0].Args, " ")
 	assert.Contains(t, joined, "projects/grp%2Fproj/merge_requests/6/notes")
-	// The note body should contain the summary plus each inline snippet.
-	assert.Contains(t, joined, "body=Summary")
-	assert.Contains(t, joined, "a.go:10")
-	assert.Contains(t, joined, "b.go:20")
+	assert.Contains(t, joined, "--input")
+
+	var payload struct {
+		Body string `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(calls[0].Stdin, &payload))
+	assert.Contains(t, payload.Body, "Summary")
+	assert.Contains(t, payload.Body, "a.go:10")
+	assert.Contains(t, payload.Body, "b.go:20")
 }
 
 func TestCLIGitLabUploadSARIFIsNoOp(t *testing.T) {

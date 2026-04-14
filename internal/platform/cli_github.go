@@ -44,9 +44,18 @@ func NewCLIGitHubClientWithExec(execFn ExecFunc) *CLIGitHubClient {
 func (c *CLIGitHubClient) Name() string { return "github" }
 
 func (c *CLIGitHubClient) PostPRComment(ctx context.Context, repo string, prNum int, body string) error {
+	// Use --input - with a JSON payload instead of -f body=... because:
+	//   1. `gh api -f body=@foo` treats "@foo" as a file read directive,
+	//      so any review comment starting with @ would silently corrupt.
+	//   2. Large comment bodies can exceed ARG_MAX on the command line.
+	// JSON on stdin sidesteps both.
+	payload, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return fmt.Errorf("gh api: encoding comment body: %w", err)
+	}
 	path := fmt.Sprintf("repos/%s/issues/%d/comments", repo, prNum)
-	_, err := c.execFn(ctx, nil,
-		"gh", "api", path, "-X", "POST", "-f", "body="+body)
+	_, err = c.execFn(ctx, payload,
+		"gh", "api", path, "-X", "POST", "--input", "-")
 	if err != nil {
 		return fmt.Errorf("gh api: posting PR comment: %w", err)
 	}
@@ -91,26 +100,32 @@ func (c *CLIGitHubClient) GetPRDiff(ctx context.Context, repo string, prNum int)
 }
 
 func (c *CLIGitHubClient) ListPRFiles(ctx context.Context, repo string, prNum int) ([]PRFile, error) {
-	// --paginate flattens all pages into a single JSON array, matching
-	// what the SDK client returns after its loop-and-append.
+	// Important: `gh api --paginate` emits each page as its own JSON
+	// document concatenated without a delimiter — that's NOT a single
+	// valid JSON array and json.Unmarshal will reject it on any PR
+	// large enough to paginate. `--slurp` wraps the pages into an
+	// outer array, producing `[[page1...], [page2...]]` which we then
+	// flatten to a single []PRFile. See cli/cli#10459.
 	path := fmt.Sprintf("repos/%s/pulls/%d/files", repo, prNum)
 	out, err := c.execFn(ctx, nil,
-		"gh", "api", path, "--paginate")
+		"gh", "api", path, "--paginate", "--slurp")
 	if err != nil {
 		return nil, fmt.Errorf("gh api: listing PR files: %w", err)
 	}
 
-	var raw []struct {
+	var pages [][]struct {
 		Filename string `json:"filename"`
 		Status   string `json:"status"`
 		Patch    string `json:"patch"`
 	}
-	if err := json.Unmarshal(out, &raw); err != nil {
+	if err := json.Unmarshal(out, &pages); err != nil {
 		return nil, fmt.Errorf("gh api: parsing PR files JSON: %w", err)
 	}
-	files := make([]PRFile, len(raw))
-	for i, r := range raw {
-		files[i] = PRFile{Filename: r.Filename, Status: r.Status, Patch: r.Patch}
+	var files []PRFile
+	for _, page := range pages {
+		for _, r := range page {
+			files = append(files, PRFile{Filename: r.Filename, Status: r.Status, Patch: r.Patch})
+		}
 	}
 	return files, nil
 }

@@ -36,21 +36,32 @@ func TestCLIGitHubPostPRComment(t *testing.T) {
 	var calls []recordedCall
 	c := NewCLIGitHubClientWithExec(fakeExec([]byte(`{"id":1}`), nil, &calls))
 
-	err := c.PostPRComment(context.Background(), "octo/hello", 42, "looks good")
+	// Include a body that starts with @ to lock in the `-f body=@foo`
+	// file-read regression: if the client ever reverts to -f the
+	// assertion below fails because the stdin payload won't contain
+	// the literal text.
+	body := "@please-do-not-read-a-file\nlooks good"
+	err := c.PostPRComment(context.Background(), "octo/hello", 42, body)
 	require.NoError(t, err)
 
 	require.Len(t, calls, 1)
 	assert.Equal(t, "gh", calls[0].Name)
 
-	// Must invoke `gh api repos/octo/hello/issues/42/comments` with
-	// method POST and the body as a form field.
 	joined := strings.Join(calls[0].Args, " ")
 	assert.Contains(t, joined, "api")
 	assert.Contains(t, joined, "repos/octo/hello/issues/42/comments")
 	assert.Contains(t, joined, "-X")
 	assert.Contains(t, joined, "POST")
-	assert.Contains(t, joined, "-f")
-	assert.Contains(t, joined, "body=looks good")
+	// Body must travel via --input - (JSON on stdin), not -f body=...
+	assert.Contains(t, joined, "--input")
+	assert.NotContains(t, joined, "-f",
+		"-f is unsafe for bodies starting with @ and can hit ARG_MAX")
+
+	var payload struct {
+		Body string `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(calls[0].Stdin, &payload))
+	assert.Equal(t, body, payload.Body)
 }
 
 func TestCLIGitHubPostPRReview(t *testing.T) {
@@ -127,26 +138,38 @@ index abc..def 100644
 }
 
 func TestCLIGitHubListPRFiles(t *testing.T) {
+	// `gh api --paginate --slurp` wraps pages in an outer array.
+	// This fixture emulates two pages worth of files to prove the
+	// flatten step actually runs.
 	jsonBody := `[
-		{"filename":"a.go","status":"modified","patch":"@@ -1 +1 @@\n-a\n+A"},
-		{"filename":"b.go","status":"added","patch":""}
+		[
+			{"filename":"a.go","status":"modified","patch":"@@ -1 +1 @@\n-a\n+A"},
+			{"filename":"b.go","status":"added","patch":""}
+		],
+		[
+			{"filename":"c.go","status":"removed","patch":""}
+		]
 	]`
 	var calls []recordedCall
 	c := NewCLIGitHubClientWithExec(fakeExec([]byte(jsonBody), nil, &calls))
 
 	files, err := c.ListPRFiles(context.Background(), "octo/hello", 3)
 	require.NoError(t, err)
-	require.Len(t, files, 2)
+	require.Len(t, files, 3, "pages must be flattened into a single slice")
 	assert.Equal(t, "a.go", files[0].Filename)
 	assert.Equal(t, "modified", files[0].Status)
 	assert.Equal(t, "b.go", files[1].Filename)
 	assert.Equal(t, "added", files[1].Status)
+	assert.Equal(t, "c.go", files[2].Filename)
+	assert.Equal(t, "removed", files[2].Status)
 
 	require.Len(t, calls, 1)
 	joined := strings.Join(calls[0].Args, " ")
 	assert.Contains(t, joined, "repos/octo/hello/pulls/3/files")
 	assert.Contains(t, joined, "--paginate",
 		"CLI client must request pagination so large PRs return fully")
+	assert.Contains(t, joined, "--slurp",
+		"--slurp is required; without it gh emits concatenated per-page JSON that json.Unmarshal rejects")
 }
 
 func TestCLIGitHubUploadSARIF(t *testing.T) {
