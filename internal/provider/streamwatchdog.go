@@ -93,6 +93,20 @@ func WatchBody(body io.ReadCloser, cfg WatchdogConfig, onWarn, onKill func()) io
 					warnFired = true
 				}
 			case <-killTimer.C:
+				// Select may fire killTimer.C even when an activity
+				// signal arrived simultaneously (Go makes no ordering
+				// promise between ready cases). Drain any pending
+				// activity before killing so a stream that just became
+				// live is not aborted spuriously.
+				select {
+				case <-activity:
+					warnTimer.Stop()
+					warnTimer.Reset(cfg.warnAfter())
+					killTimer.Reset(cfg.killAfter())
+					warnFired = false
+					continue
+				default:
+				}
 				if onKill != nil {
 					onKill()
 				}

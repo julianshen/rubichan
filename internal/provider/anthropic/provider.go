@@ -108,6 +108,10 @@ type pendingToolBlock struct {
 // inside processStream's goroutine so there is no cross-request sharing.
 type streamState struct {
 	pendingTools map[int]*pendingToolBlock
+	// stopEmitted gates the terminal EventStop so that the typical
+	// message_delta (carrying stop_reason) + message_stop pair does not
+	// produce two terminal events to the agent loop.
+	stopEmitted bool
 }
 
 func newStreamState() *streamState {
@@ -164,6 +168,18 @@ func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch cha
 	}
 
 	if err := scanner.Err(); err != nil {
+		// Prefer context cancellation over reclassifying a network-level
+		// read failure as a retryable ErrStreamError. When the caller
+		// cancels mid-stream the HTTP transport typically tears down
+		// the body with a low-level error; wrapping that as retryable
+		// would make TurnRetry re-run a user-cancelled operation.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			select {
+			case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: ctxErr}:
+			default:
+			}
+			return
+		}
 		select {
 		case ch <- provider.StreamEvent{Type: agentsdk.EventError, Error: provider.WrapScannerError(err, "anthropic", requestID)}:
 		case <-ctx.Done():
@@ -187,8 +203,15 @@ func (p *Provider) convertSSEEvent(state *streamState, evt sseEvent) (first, sec
 	case "content_block_stop":
 		return p.handleContentBlockStop(state, evt.Data)
 	case "message_delta":
-		return p.handleMessageDelta(evt.Data), nil
+		return p.handleMessageDelta(state, evt.Data), nil
 	case "message_stop":
+		// message_stop typically follows a message_delta that already
+		// carried stop_reason. Suppress the duplicate terminal event so
+		// downstream finalization runs exactly once per turn.
+		if state.stopEmitted {
+			return nil, nil
+		}
+		state.stopEmitted = true
 		return &provider.StreamEvent{Type: agentsdk.EventStop}, nil
 	default:
 		return nil, nil
@@ -224,7 +247,7 @@ func (p *Provider) handleMessageStart(data string) *provider.StreamEvent {
 	}
 }
 
-func (p *Provider) handleMessageDelta(data string) *provider.StreamEvent {
+func (p *Provider) handleMessageDelta(state *streamState, data string) *provider.StreamEvent {
 	var parsed struct {
 		Delta struct {
 			StopReason string `json:"stop_reason"`
@@ -239,9 +262,10 @@ func (p *Provider) handleMessageDelta(data string) *provider.StreamEvent {
 		}
 		return nil
 	}
-	if parsed.Delta.StopReason == "" {
+	if parsed.Delta.StopReason == "" || state.stopEmitted {
 		return nil
 	}
+	state.stopEmitted = true
 	return &provider.StreamEvent{
 		Type:         agentsdk.EventStop,
 		StopReason:   parsed.Delta.StopReason,

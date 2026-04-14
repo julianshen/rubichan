@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
@@ -110,8 +111,11 @@ func TestNonStream_ToolUseResponse(t *testing.T) {
 
 func TestNonStream_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
+		// Headers must be set BEFORE WriteHeader — anything set after is
+		// silently dropped by net/http. The Retry-After check below
+		// verifies the response actually round-trips the hint.
 		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusTooManyRequests)
 		fmt.Fprint(w, `{"error":{"type":"rate_limit_error","message":"slow down"}}`)
 	}))
 	defer srv.Close()
@@ -129,6 +133,8 @@ func TestNonStream_HTTPError(t *testing.T) {
 	require.ErrorAs(t, err, &pe)
 	assert.Equal(t, provider.ErrRateLimited, pe.Kind)
 	assert.NotEmpty(t, pe.RequestID, "RequestID must be populated on HTTP errors")
+	assert.Equal(t, 5*time.Second, pe.RetryAfter,
+		"Retry-After header must be parsed when set before WriteHeader")
 }
 
 func TestParseNonStreamResponse_EmptyInputToolUse(t *testing.T) {
