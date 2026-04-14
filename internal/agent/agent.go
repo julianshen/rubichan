@@ -1279,6 +1279,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		retryCfg := TurnRetryConfig{} // use defaults: 3 attempts, 2s base delay, 30s max delay
+		// Providers that implement NonStreamer get a non-streaming
+		// fallback wired in automatically. TurnRetry only invokes it
+		// after all streaming attempts exhaust with retryable errors,
+		// so the common path still hits the streaming endpoint first.
+		if ns, ok := a.provider.(NonStreamer); ok {
+			reqCopy := req
+			retryCfg.NonStreamFallback = func(ctx context.Context) ([]provider.StreamEvent, error) {
+				return ns.NonStream(ctx, reqCopy)
+			}
+		}
 		onRetry := func(attempt int, delay time.Duration, cause error) {
 			a.emit(ctx, ch, TurnEvent{
 				Type:  "retrying",
