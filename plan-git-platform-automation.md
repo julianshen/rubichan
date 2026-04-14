@@ -316,16 +316,16 @@ GitLab equivalents use `glab api` with corresponding GitLab API paths.
 
 ### Tests
 
-- [ ] **4.01** `TestCLIGitHubClientImplementsPlatform` — `*CLIGitHubClient` satisfies `Platform`
-- [ ] **4.02** `TestCLIGitLabClientImplementsPlatform` — `*CLIGitLabClient` satisfies `Platform`
-- [ ] **4.03** `TestCLIGitHubPostPRComment` — Executes correct `gh api` command with args
-- [ ] **4.04** `TestCLIGitHubPostPRReview` — Passes review JSON to `gh api` via stdin
-- [ ] **4.05** `TestCLIGitHubGetPRDiff` — Parses `gh pr diff` output
-- [ ] **4.06** `TestCLIGitLabPostMRComment` — Executes correct `glab api` command
-- [ ] **4.07** `TestCLIClientDetection_TokenAvailable` — Returns SDK client when token present
-- [ ] **4.08** `TestCLIClientDetection_CLIAvailable` — Returns CLI client when no token but CLI installed
-- [ ] **4.09** `TestCLIClientDetection_NeitherAvailable` — Returns descriptive error with install instructions
-- [ ] **4.10** `TestCLIClientExecFailure` — CLI error propagated with stderr context
+- [x] **4.01** `TestCLIGitHubClientImplementsPlatform` — `*CLIGitHubClient` satisfies `Platform`
+- [x] **4.02** `TestCLIGitLabClientImplementsPlatform` — `*CLIGitLabClient` satisfies `Platform`
+- [x] **4.03** `TestCLIGitHubPostPRComment` — Executes correct `gh api` command with args
+- [x] **4.04** `TestCLIGitHubPostPRReview` — Passes review JSON to `gh api` via stdin
+- [x] **4.05** `TestCLIGitHubGetPRDiff` — Parses `gh pr diff` output
+- [x] **4.06** `TestCLIGitLabPostMRComment` — Executes correct `glab api` command
+- [x] **4.07** `TestCLIClientDetection_TokenAvailable` — Returns SDK client when token present
+- [x] **4.08** `TestCLIClientDetection_CLIAvailable_{GitHub,GitLab}` — Returns CLI client when no token but CLI installed
+- [x] **4.09** `TestCLIClientDetection_NeitherAvailable_{GitHub,GitLab}` — Returns descriptive error with install instructions
+- [x] **4.10** `TestCLIGitHubExecFailurePropagates` — CLI error propagated with stderr context via `%w`
 
 ### Implementation Notes
 
