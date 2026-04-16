@@ -49,10 +49,10 @@ raw output (bytes)
 [StripANSI]          — remove terminal escape sequences
         │
         ▼
-[CommandFilter]      — command-aware compression (git, test, ls, …)
+[LogDeduplicator]    — collapse repeated log lines with [×N] counts
         │
         ▼
-[LogDeduplicator]    — collapse repeated log lines with [×N] counts
+[CommandFilter]      — command-aware compression (git, test, ls, …)
         │
         ▼
 [HeadTailWindow]     — keep first N + last M lines, elide middle
@@ -64,6 +64,13 @@ raw output (bytes)
 Each stage is a pure function `func(input string, cmd string) string` (or
 equivalent). Stages are composable and independently testable. A stage that
 recognises nothing passes input through unchanged.
+
+**Why LogDeduplicator precedes CommandFilter**: log dedup operates on raw line
+structure (timestamps, repeated messages). Running it before command-specific
+compression ensures it sees the original log lines, not structured output that
+a command filter may have already transformed. Command filters (e.g. git, test
+runner) are designed for their own output format and do not produce log-like
+lines that dedup would accidentally collapse.
 
 ### 2.2 New Package: `internal/tools/filter`
 
@@ -108,29 +115,51 @@ if len(output) > maxOutputBytes {
 Becomes:
 
 ```go
-content := filter.Apply(in.Command, string(output))
+rawOutput := string(output)
+
+// DisplayContent: raw output for the human viewer (ANSI preserved, uncompressed).
+// Populated only when output exceeded the LLM cap so the user still sees full output.
 var displayContent string
+if len(output) > maxOutputBytes {
+    displayContent = rawOutput
+    if len(output) > maxDisplayBytes {
+        displayContent = rawOutput[:maxDisplayBytes] + "\n... output truncated"
+    }
+}
+
+// filter.Apply owns the LLM byte cap. All pipeline stages run inside Apply,
+// which guarantees len(result) ≤ maxOutputBytes on return.
+content := filter.Apply(in.Command, rawOutput)
+
+// Defensive assertion: Apply guarantees the cap, but guard against filter bugs.
 if len(content) > maxOutputBytes {
-    content = filter.HeadTail(content, headLines, tailLines) // already within cap
+    content = filter.HeadTail(content, headLines, tailLines)
 }
 ```
 
-`filter.Apply` is the pipeline entry point. It runs all stages and returns a
-string that is already within the LLM size budget.
+`filter.Apply` is the sole pipeline entry point. It is responsible for the byte
+cap — callers must not impose an independent truncation before calling it.
+`DisplayContent` is set from `rawOutput` before filtering so the human always
+sees uncompressed, ANSI-coloured output regardless of what the LLM receives.
 
 ### 2.4 Failure Tee
 
 When exit code is non-zero **and** output was filtered or truncated, write the
-complete raw output to `os.TempDir()/rubichan-tee/<timestamp>-<hash>.txt` and
-append a hint line to the LLM content:
+complete raw output to a persistent per-user directory and append a hint line
+to the LLM content:
 
 ```
-[Full output: /tmp/rubichan-tee/20260416-143201-a3f2.txt]
+[Full output: ~/.cache/rubichan/tee/20260416-143201-a3f2.txt]
 ```
 
-The agent can re-read it via the file tool. The tee directory is capped at 20
-files; oldest are removed. Enabled by default; disabled via
-`config.Shell.DisableTee = true`.
+**Tee directory**: `os.UserCacheDir()/rubichan/tee/` (resolves to
+`~/.cache/rubichan/tee/` on Linux, `~/Library/Caches/rubichan/tee/` on macOS).
+This survives reboots unlike `os.TempDir()` (`/tmp`), so hint paths remain
+valid across sessions. The agent can re-read the file via the file tool without
+re-running the command.
+
+The tee directory is capped at 20 files; oldest files are removed on each new
+write. Enabled by default; disabled via `config.Shell.DisableTee = true`.
 
 ---
 
@@ -192,24 +221,34 @@ Normalization replacements (in order):
 4. Large numbers `\b\d{5,}\b` → `<NUM>`
 5. Absolute paths `/[a-zA-Z0-9_/.-]{10,}` → `<PATH>`
 
-Count normalized occurrences; for any line with count ≥ 2, output one
-representative line (the first occurrence, de-normalized for readability)
-with `[×N]` appended:
+Count normalized occurrences. Emit lines in **first-occurrence order** —
+temporal sequence is preserved. For any line with count ≥ 2, replace it with
+the first occurrence (original text, not normalized) and append `[×N]`:
 
 ```
-[ERROR] Connection refused [×47]
+[ERROR] Connection refused at 14:32:01 [×47]
 [WARN]  Retry attempt 3 of 5 [×12]
 [INFO]  Server started on :8080
 ```
 
-Show top-10 errors, top-5 warnings, then remaining unique info lines up to
-`maxUniqueLines = 30`.
+Output order mirrors the original log order (by first occurrence), not
+re-sorted by severity. This preserves the causal sequence of events, which
+matters when diagnosing startup failures or cascading errors. When unique line
+count exceeds `maxUniqueLines = 30`, the excess is truncated with a count
+message.
 
 ### 3.4 Git Output Compression (`filter/git.go`)
 
-Applied when the command matches `^git\s+(status|log|diff|show)\b`.
+Applied when the command matches `^git\s+(status|log|diff|show)\b`. Commands
+with flags before the subcommand (e.g. `git -C /path status`,
+`git --no-pager log`) are a known limitation: the regex will not match and
+output passes through unchanged. This is acceptable for the initial
+implementation; a shell-argument parser can be added later.
 
-**git status** — parse `git status --porcelain` format emitted inline:
+**git status** — two format paths:
+
+*Porcelain format* (detected when first non-empty line matches
+`^[MADRCU? ][MADRCU? ] `): parse two-char status codes.
 
 | Symbol | Section |
 |---|---|
@@ -218,7 +257,16 @@ Applied when the command matches `^git\s+(status|log|diff|show)\b`.
 | `??` | Untracked |
 | `UU`, `AA`, `DD` | Conflicts |
 
-Output:
+*Human-readable format* (default output of plain `git status`): detect section
+headers and extract file lists.
+
+| Header | Section |
+|---|---|
+| `Changes to be committed:` | Staged |
+| `Changes not staged for commit:` | Modified |
+| `Untracked files:` | Untracked |
+
+Both paths produce the same structured output:
 ```
 Staged (3): main.go, cmd/agent/main.go, internal/tools/shell.go
 Modified (7): internal/agent/agent.go ... +5 more
@@ -226,9 +274,8 @@ Untracked (2): docs/notes.txt, scratch.sh
 ```
 
 Cap: 15 staged, 15 modified, 10 untracked. Conflicts always shown in full.
-
-If output is not in porcelain format (user passed `--short`, `--long`, custom
-format), pass through unchanged.
+If neither format is detected (unknown `git status` flags or custom format),
+pass through unchanged.
 
 **git log** — detect log output by leading `commit [0-9a-f]{40}` lines:
 
@@ -326,7 +373,7 @@ Loaded at startup from:
 1. `.rubichan/filters.toml` (project-local, requires explicit trust grant)
 2. `~/.config/rubichan/filters.toml` (user-global)
 
-Schema (subset of RTK's TOML format for compatibility):
+Schema:
 
 ```toml
 schema_version = 1
@@ -341,11 +388,22 @@ strip_lines_matching = [
 ]
 tail_lines          = 40
 on_empty            = "Build produced no output"
+
+# match_output: short-circuit entire output with a canned message if the
+# full output blob matches this pattern (useful for "build succeeded" cases).
+[[filters.my-tool.match_output]]
+pattern = "BUILD SUCCESS"
+message = "Build succeeded."
+unless  = "ERROR"          # optional: suppress match when this also matches
 ```
 
 Supported fields: `match_command`, `strip_ansi`, `strip_lines_matching`,
 `keep_lines_matching`, `replace` (pattern+replacement pairs), `head_lines`,
-`tail_lines`, `max_lines`, `on_empty`.
+`tail_lines`, `max_lines`, `on_empty`, `match_output` (array of
+`{pattern, message, unless?}` short-circuit rules).
+
+`strip_lines_matching` and `keep_lines_matching` are mutually exclusive — a
+validation error is returned at load time if both are present.
 
 Project-local filters require `rubichan trust .rubichan/filters.toml` to
 activate. Untrusted project filters are silently skipped with a warning
@@ -391,6 +449,11 @@ max_files            = 20
    streaming events. Users see full output in real time; LLM sees compressed.
 5. **Idempotent**: Applying a filter twice produces the same result as
    applying it once.
+6. **DisplayContent preserved**: `ToolResult.DisplayContent` is populated from
+   the raw (pre-filter) byte buffer when output exceeded `maxOutputBytes`.
+   It retains ANSI codes and is not passed through any compression stage.
+   The human viewer always sees the unmodified output; only the LLM receives
+   the compressed version.
 
 ---
 

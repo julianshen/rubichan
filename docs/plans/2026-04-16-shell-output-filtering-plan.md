@@ -57,10 +57,11 @@
 
 ## Stage 3: Log Deduplication
 
-- [ ] **3.1** `TestLogDedupNoLogLines` — Non-log output (plain text below 40%
-  log-pattern threshold) is returned unchanged.
-- [ ] **3.2** `TestLogDedupDetectionThreshold` — Exactly 40% log lines triggers
-  dedup; 39% does not.
+- [ ] **3.1** `TestLogDedupNoLogLines` — Non-log output (e.g. plain Go source
+  code, ~5% log-pattern lines) is returned unchanged.
+- [ ] **3.2** `TestLogDedupDetectionThreshold` — Input with ~80% log-pattern
+  lines triggers dedup; input with ~10% log-pattern lines does not. Tests use
+  clearly supra- and sub-threshold inputs, not boundary values.
 - [ ] **3.3** `TestLogDedupTimestampNormalization` — Lines differing only by
   ISO timestamp are collapsed into one `[×N]` entry.
 - [ ] **3.4** `TestLogDedupUUIDNormalization` — Lines differing only by UUID
@@ -103,41 +104,50 @@
 - [ ] **4.7** `TestGitStatusUntrackedCap` — More than 10 untracked files shows
   first 10 + `... +N more`.
 - [ ] **4.8** `TestGitStatusNonPorcelainPassthrough` — Output not in porcelain
-  format (no two-char status codes) passes through unchanged.
-- [ ] **4.9** `TestGitStatusMixedCategories` — Single output with staged +
-  modified + untracked correctly groups all three sections.
+  format and not in human-readable format (no recognised headers, no two-char
+  status codes) passes through unchanged.
+- [ ] **4.9** `TestGitStatusMixedCategories` — Single porcelain output with
+  staged + modified + untracked correctly groups all three sections.
+- [ ] **4.10** `TestGitStatusHumanReadableStaged` — Human-readable `git status`
+  output with `Changes to be committed:` section → staged files extracted,
+  capped at 15, with `+N more` when exceeded.
+- [ ] **4.11** `TestGitStatusHumanReadableUntracked` — Human-readable output
+  with `Untracked files:` section capped at 10 with `+N more`.
+- [ ] **4.12** `TestGitStatusFlagsBeforeSubcmd` — `git -C /some/path status`
+  (flag before subcommand) does not match the filter regex; output passes
+  through unchanged. Documents the known limitation.
 
 ### 4B. git log
 
-- [ ] **4.10** `TestGitLogCommitCap` — More than 15 commits → first 15 + count
+- [ ] **4.13** `TestGitLogCommitCap` — More than 15 commits → first 15 + count
   message.
-- [ ] **4.11** `TestGitLogMessageTruncation` — Commit message lines exceeding
+- [ ] **4.14** `TestGitLogMessageTruncation` — Commit message lines exceeding
   100 chars are truncated with `...`.
-- [ ] **4.12** `TestGitLogTrailerStripping` — `Signed-off-by:`,
+- [ ] **4.15** `TestGitLogTrailerStripping` — `Signed-off-by:`,
   `Co-authored-by:`, `Change-Id:` lines are removed.
-- [ ] **4.13** `TestGitLogBodyLineLimit` — More than 3 body lines per commit →
+- [ ] **4.16** `TestGitLogBodyLineLimit` — More than 3 body lines per commit →
   first 3 + `[+N lines omitted]`.
-- [ ] **4.14** `TestGitLogNoBodyCommit` — Commit with subject only (no body)
+- [ ] **4.17** `TestGitLogNoBodyCommit` — Commit with subject only (no body)
   passes through without empty line injection.
-- [ ] **4.15** `TestGitLogNonLogFormatPassthrough` — Input that does not begin
+- [ ] **4.18** `TestGitLogNonLogFormatPassthrough` — Input that does not begin
   with `commit [0-9a-f]{40}` passes through unchanged.
 
 ### 4C. git diff
 
-- [ ] **4.16** `TestGitDiffFileHeaders` — `diff --git`, `index`, `---`, `+++`
+- [ ] **4.19** `TestGitDiffFileHeaders` — `diff --git`, `index`, `---`, `+++`
   lines are preserved intact.
-- [ ] **4.17** `TestGitDiffHunkHeader` — `@@` lines are preserved intact.
-- [ ] **4.18** `TestGitDiffHunkTruncation` — Hunk with more than 60
+- [ ] **4.20** `TestGitDiffHunkHeader` — `@@` lines are preserved intact.
+- [ ] **4.21** `TestGitDiffHunkTruncation` — Hunk with more than 60
   added/removed lines → first 60 + `... (N lines omitted in this hunk)`.
-- [ ] **4.19** `TestGitDiffNoTruncationSmallHunk` — Hunk with ≤ 60 changed
+- [ ] **4.22** `TestGitDiffNoTruncationSmallHunk` — Hunk with ≤ 60 changed
   lines is preserved in full.
-- [ ] **4.20** `TestGitDiffTotalCounter` — Output ends with `+X -Y` total
+- [ ] **4.23** `TestGitDiffTotalCounter` — Output ends with `+X -Y` total
   counter.
-- [ ] **4.21** `TestGitDiffHintOnTruncation` — When any truncation occurred,
+- [ ] **4.24** `TestGitDiffHintOnTruncation` — When any truncation occurred,
   hint line is appended.
-- [ ] **4.22** `TestGitDiffNoHintWhenNoTruncation` — No hint when output was
+- [ ] **4.25** `TestGitDiffNoHintWhenNoTruncation` — No hint when output was
   not truncated.
-- [ ] **4.23** `TestGitDiffNonDiffFormatPassthrough` — Input without
+- [ ] **4.26** `TestGitDiffNonDiffFormatPassthrough` — Input without
   `diff --git` header passes through unchanged.
 
 ---
@@ -150,8 +160,9 @@
   output; discard `--- PASS` and `=== RUN` lines.
 - [ ] **5.3** `TestGoTestSummaryLine` — Final `ok`/`FAIL` summary line is
   always preserved.
-- [ ] **5.4** `TestGoTestVerboseRespected` — When command contains `-v`, do
-  NOT apply summarization (user requested verbose).
+- [ ] **5.4** `TestVerboseFlagRespected` — When command contains `-v` (go
+  test), `--verbose` (pytest, cargo test), or `-v`/`--verbose` (jest/vitest),
+  do NOT apply summarization. Tests each runner's verbosity flag.
 - [ ] **5.5** `TestPytestAllPassed` — Output with only `PASSED` lines +
   summary → `"N passed in Xs"`.
 - [ ] **5.6** `TestPytestWithFailures` — Extract failure section between
@@ -256,8 +267,10 @@
   stages (escape codes don't confuse downstream regex).
 - [ ] **9.2** `TestPipelineCommandRouting` — `git status` output routed to git
   compressor; `go test` to test summarizer; `ls -la` to dir compressor.
-- [ ] **9.3** `TestPipelineLogDedupAfterCommandFilter` — Log dedup stage runs
-  on output from command filter, not on raw input.
+- [ ] **9.3** `TestPipelineLogDedupBeforeCommandFilter` — Log dedup stage runs
+  on post-ANSI-stripped output, before the command filter. Verifies that a
+  log-heavy output with repeated lines is deduplicated before git/test
+  compression runs on the result.
 - [ ] **9.4** `TestPipelineHeadTailLast` — Head+tail windowing is applied last,
   after all command-specific compression.
 - [ ] **9.5** `TestPipelineDeclarativeRuleOverride` — A matching TOML rule
@@ -304,12 +317,18 @@
 - [ ] **11.3** `TestShellToolANSIStrippedInResult` — Command that emits ANSI
   codes: `ToolResult.Content` contains no escape sequences.
 - [ ] **11.4** `TestShellToolDisplayContentUnfiltered` — `DisplayContent` (shown
-  to human) preserves ANSI and is not compressed (user sees full output).
-- [ ] **11.5** `TestShellToolTeeOnFailure` — Failed command (exit code 1) with
-  `tee.enabled = true` produces tee file and hint in content.
-- [ ] **11.6** `TestShellToolFilterDisabled` — Config `enabled = false`:
+  to human) is set from raw bytes when output exceeded `maxOutputBytes`; it is
+  not passed through any compression stage.
+- [ ] **11.5** `TestShellToolDisplayContentRetainsANSI` — Command that emits
+  ANSI codes with output exceeding `maxOutputBytes`: `ToolResult.Content` has
+  no escape sequences; `ToolResult.DisplayContent` retains the original ANSI
+  codes verbatim.
+- [ ] **11.6** `TestShellToolTeeOnFailure` — Failed command (exit code 1) with
+  `tee.enabled = true` produces tee file under `os.UserCacheDir()/rubichan/tee/`
+  and appends hint to content.
+- [ ] **11.7** `TestShellToolFilterDisabled` — Config `enabled = false`:
   `ToolResult.Content` is raw output (same as current behavior).
-- [ ] **11.7** `TestShellToolMaxBytesRespected` — After all filtering, content
+- [ ] **11.8** `TestShellToolMaxBytesRespected` — After all filtering, content
   never exceeds `maxOutputBytes`.
 
 ---
@@ -335,4 +354,4 @@ Structural commits (e.g., creating the package, moving constants) use
 | `[BEHAVIORAL]` | Stage 10: Failure tee |
 | `[BEHAVIORAL]` | Stage 11: Shell tool integration |
 
-Total: ~110 test cases across 12 commits.
+Total: ~117 test cases across 12 commits.
