@@ -1176,6 +1176,35 @@ func (a *Agent) makeDoneEvent(inputTokens, outputTokens int, reason agentsdk.Tur
 	return event
 }
 
+// dispatchAfterResponseHook fires HookOnAfterResponse at the end of a turn
+// that completed without pending tool calls. Handlers receive the assembled
+// response text and the turn's exit reason. Failures are logged but do not
+// alter the done event, since post-response hooks are informational.
+func (a *Agent) dispatchAfterResponseHook(ctx context.Context, blocks []provider.ContentBlock, reason agentsdk.TurnExitReason) {
+	if a.skillRuntime == nil {
+		return
+	}
+
+	var responseText strings.Builder
+	for _, block := range blocks {
+		if block.Type == "text" {
+			responseText.WriteString(block.Text)
+		}
+	}
+
+	event := skills.HookEvent{
+		Phase: skills.HookOnAfterResponse,
+		Ctx:   ctx,
+		Data: map[string]any{
+			"response":    responseText.String(),
+			"exit_reason": reason.String(),
+		},
+	}
+	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
+		a.logger.Warn("after-response hook failed: %v", err)
+	}
+}
+
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
@@ -1534,6 +1563,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// empty in this branch, but Drain is cheap and safe).
 		if len(pendingTools) == 0 {
 			_ = execStream.Drain()
+			a.dispatchAfterResponseHook(ctx, blocks, exitReason)
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
 			return
 		}

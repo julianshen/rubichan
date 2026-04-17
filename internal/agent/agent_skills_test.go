@@ -433,6 +433,52 @@ func TestAgentBeforePromptBuildHookCanModifyPrompt(t *testing.T) {
 	assert.Contains(t, capturedReq.System, "hook-fragment-text")
 }
 
+// TestAgentAfterResponseHookFires asserts that HookOnAfterResponse is
+// dispatched when the agent finishes a turn with no pending tool calls —
+// the "response is final" branch at the end of runLoop.
+func TestAgentAfterResponseHookFires(t *testing.T) {
+	var (
+		hookCalled     bool
+		capturedText   string
+		capturedReason string
+	)
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
+			hookCalled = true
+			require.NotNil(t, event.Ctx)
+			if text, ok := event.Data["response"].(string); ok {
+				capturedText = text
+			}
+			if reason, ok := event.Data["exit_reason"].(string); ok {
+				capturedReason = reason
+			}
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-hook", toolManifest("after-response-hook"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hello "},
+			{Type: "text_delta", Text: "world"},
+			{Type: "stop"},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assert.True(t, hookCalled, "HookOnAfterResponse should fire when turn completes cleanly")
+	assert.Equal(t, "hello world", capturedText, "response text should be passed in event data")
+	assert.NotEmpty(t, capturedReason, "exit_reason should be passed in event data")
+}
+
 func TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder(t *testing.T) {
 	basePromptManifest := &skills.SkillManifest{
 		Name:        "prompt-hook-order",
