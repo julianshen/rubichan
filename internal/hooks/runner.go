@@ -24,6 +24,8 @@ const (
 	EventPreEdit       = "pre_edit"
 	EventPostEdit      = "post_edit"
 	EventPreShell      = "pre_shell"
+	EventPrePrompt     = "pre_prompt"
+	EventPostResponse  = "post_response"
 	EventSessionStart  = "session_start"
 	EventSetup         = "setup"
 	EventTaskCreated   = "task_created"
@@ -290,6 +292,10 @@ func mapEventToPhase(event string) (skills.HookPhase, bool, func(skills.HookEven
 		return skills.HookOnAfterToolResult, false, filterFileWritePatch
 	case EventPreShell:
 		return skills.HookOnBeforeToolCall, true, filterShellTool
+	case EventPrePrompt:
+		return skills.HookOnBeforePromptBuild, false, noFilter
+	case EventPostResponse:
+		return skills.HookOnAfterResponse, false, noFilter
 	case EventSessionStart:
 		return skills.HookOnConversationStart, false, noFilter
 	case EventSetup:

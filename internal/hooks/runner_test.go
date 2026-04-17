@@ -419,6 +419,80 @@ func TestTaskCompletedEventMaps(t *testing.T) {
 	}
 }
 
+// --- Enhancement 4: Prompt/Response Lifecycle Hook Tests ---
+
+func TestPrePromptEventMaps(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_prompt", Command: "echo pre-prompt", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforePromptBuild,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"prompt": "hello"},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel, "pre_prompt success should not cancel")
+	}
+}
+
+func TestPrePromptModifiesPrompt(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "pre_prompt", Command: `echo '{"modified":{"prompt":"rewritten"}}'`, Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnBeforePromptBuild,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"prompt": "original"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Modified)
+	assert.Equal(t, "rewritten", result.Modified["prompt"])
+}
+
+func TestPostResponseEventMaps(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "post_response", Command: "echo post-response", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnAfterResponse,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"response": "hi"},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel, "post_response is non-blocking")
+	}
+}
+
+func TestPostResponseNonBlockingOnFailure(t *testing.T) {
+	lm := skills.NewLifecycleManager()
+	runner := hooks.NewUserHookRunner([]hooks.UserHookConfig{
+		{Event: "post_response", Command: "exit 1", Timeout: 5 * time.Second},
+	}, t.TempDir())
+	runner.RegisterIntoLM(lm)
+
+	result, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnAfterResponse,
+		Ctx:   context.Background(),
+		Data:  map[string]any{"response": "hi"},
+	})
+	require.NoError(t, err)
+	if result != nil {
+		assert.False(t, result.Cancel, "post_response failure must not cancel")
+	}
+}
+
 // --- ParseHookTimeout edge cases ---
 
 func TestParseHookTimeoutUnparseable(t *testing.T) {
