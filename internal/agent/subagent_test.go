@@ -178,6 +178,73 @@ func TestSpawnParallelErrorPropagation(t *testing.T) {
 	assert.Error(t, results[1].Error)
 }
 
+// TestSpawnDispatchesWorktreeCreateAndRemove asserts that the spawner
+// fires HookOnWorktreeCreate before asking the provider to create a
+// worktree and HookOnWorktreeRemove before removing a clean worktree.
+func TestSpawnDispatchesWorktreeCreateAndRemove(t *testing.T) {
+	var createData, removeData map[string]any
+
+	backendHooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnWorktreeCreate: func(event skills.HookEvent) (skills.HookResult, error) {
+			createData = event.Data
+			return skills.HookResult{}, nil
+		},
+		skills.HookOnWorktreeRemove: func(event skills.HookEvent) (skills.HookResult, error) {
+			removeData = event.Data
+			return skills.HookResult{}, nil
+		},
+	}
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	loader := skills.NewLoader("", "")
+	loader.RegisterBuiltin(&skills.SkillManifest{
+		Name:        "worktree-hook-skill",
+		Version:     "1.0.0",
+		Description: "Worktree hook observer",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: "main.star",
+		},
+	})
+
+	parentRuntime := skills.NewRuntime(loader, s, tools.NewRegistry(), []string{"worktree-hook-skill"},
+		func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
+			return &skillMockBackend{hooks: backendHooks}, nil
+		},
+		func(_ string, _ []skills.Permission) skills.PermissionChecker {
+			return &skillMockChecker{}
+		},
+	)
+	require.NoError(t, parentRuntime.Discover(nil))
+	require.NoError(t, parentRuntime.Activate("worktree-hook-skill"))
+
+	mockWT := &mockWorktreeProvider{dir: t.TempDir()}
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider:   mockWT,
+	}
+
+	_, err = spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "wt-hook-worker",
+		Isolation: "worktree",
+	}, "go")
+	require.NoError(t, err)
+
+	require.NotNil(t, createData, "HookOnWorktreeCreate should fire before worktree is created")
+	assert.Equal(t, "wt-hook-worker", createData["subagent_name"])
+	assert.NotEmpty(t, createData["worktree_name"])
+
+	require.NotNil(t, removeData, "HookOnWorktreeRemove should fire before clean worktree is removed")
+	assert.Equal(t, "wt-hook-worker", removeData["subagent_name"])
+}
+
 // TestSpawnDispatchesTaskCreatedAndCompleted asserts that the spawner
 // fires HookOnTaskCreated before running the child and HookOnTaskCompleted
 // after the child returns, dispatching on the parent runtime so parent

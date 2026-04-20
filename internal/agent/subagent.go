@@ -77,6 +77,10 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			return nil, fmt.Errorf("worktree isolation requested but no WorktreeProvider configured")
 		}
 		wtName := fmt.Sprintf("subagent-%s-%d", cfg.Name, time.Now().UnixNano())
+		s.dispatchTaskHook(ctx, skills.HookOnWorktreeCreate, map[string]any{
+			"subagent_name": cfg.Name,
+			"worktree_name": wtName,
+		})
 		wt, err := s.WorktreeProvider.CreateWorktree(ctx, wtName)
 		if err != nil {
 			return nil, fmt.Errorf("creating worktree for subagent: %w", err)
@@ -87,6 +91,10 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			if err != nil || changed {
 				return // Preserve on error or dirty state.
 			}
+			s.dispatchTaskHook(ctx, skills.HookOnWorktreeRemove, map[string]any{
+				"subagent_name": cfg.Name,
+				"worktree_name": wtName,
+			})
 			_ = s.WorktreeProvider.RemoveWorktree(ctx, wtName)
 		}
 	}
