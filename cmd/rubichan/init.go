@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -16,9 +17,10 @@ import (
 
 func initCmd() *cobra.Command {
 	var (
-		dir       string
-		force     bool
-		hooksOnly bool
+		dir        string
+		force      bool
+		hooksOnly  bool
+		trustHooks bool
 	)
 
 	cmd := &cobra.Command{
@@ -40,7 +42,7 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 
 			if hooksOnly {
 				fmt.Fprintf(cmd.OutOrStdout(), "Running setup hooks (mode=hooks-only)...\n")
-				return runSetupHooks(cmd.Context(), dir)
+				return runSetupHooks(cmd.Context(), cmd.OutOrStdout(), dir, trustHooks)
 			}
 
 			for _, sub := range []string{".agent/skills", ".agent/hooks"} {
@@ -74,26 +76,34 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Generated AGENT.md and .agent/ structure in %s\n", dir)
-			return runSetupHooks(cmd.Context(), dir)
+			return runSetupHooks(cmd.Context(), cmd.OutOrStdout(), dir, trustHooks)
 		},
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", "", "Project directory (default: current directory)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing AGENT.md")
 	cmd.Flags().BoolVar(&hooksOnly, "hooks-only", false, "Run setup hooks only, skip file generation")
+	cmd.Flags().BoolVar(&trustHooks, "trust-hooks", false, "Execute setup hooks from .agent/hooks.toml (runs shell commands; review the file first)")
 
 	return cmd
 }
 
 // runSetupHooks loads .agent/hooks.toml in dir and dispatches HookOnSetup to
-// any registered handlers. Missing hooks.toml is not an error — init may run
-// in projects that haven't configured hooks yet.
-func runSetupHooks(ctx context.Context, dir string) error {
+// any registered handlers. Hooks are shell commands, so they only run when
+// trustHooks is true — mirroring the trust gate used by the agent entry points
+// so an attacker who can write .agent/hooks.toml cannot get code execution via
+// `rubichan init`.
+func runSetupHooks(ctx context.Context, out io.Writer, dir string, trustHooks bool) error {
 	configs, err := hooks.LoadHooksTOML(dir)
 	if err != nil {
 		return fmt.Errorf("loading .agent/hooks.toml: %w", err)
 	}
 	if len(configs) == 0 {
+		return nil
+	}
+
+	if !trustHooks {
+		fmt.Fprintf(out, "Skipping %d setup hook(s) in .agent/hooks.toml — re-run with --trust-hooks after reviewing the file to execute them.\n", len(configs))
 		return nil
 	}
 

@@ -83,9 +83,30 @@ func TestInitCmdFiresSetupHookFromTOML(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "hooks.toml"), []byte(tomlContent), 0o644))
 
 	cmd := initCmd()
-	cmd.SetArgs([]string{"--dir", dir, "--hooks-only"})
+	cmd.SetArgs([]string{"--dir", dir, "--hooks-only", "--trust-hooks"})
 	require.NoError(t, cmd.Execute())
 
 	_, err := os.Stat(marker)
 	assert.NoError(t, err, "setup hook should have created marker file")
+}
+
+// TestInitCmdSkipsUntrustedSetupHooks asserts that setup hooks defined in
+// .agent/hooks.toml are NOT executed unless --trust-hooks is passed. This
+// closes the code-execution hole where an attacker who can write
+// .agent/hooks.toml could get shell execution on `rubichan init`.
+func TestInitCmdSkipsUntrustedSetupHooks(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, ".agent")
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+
+	marker := filepath.Join(dir, "should-not-exist")
+	tomlContent := "[[hooks]]\nevent = \"setup\"\ncommand = \"touch " + marker + "\"\ntimeout = \"5s\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "hooks.toml"), []byte(tomlContent), 0o644))
+
+	cmd := initCmd()
+	cmd.SetArgs([]string{"--dir", dir, "--hooks-only"})
+	require.NoError(t, cmd.Execute())
+
+	_, err := os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "untrusted setup hook must not run without --trust-hooks")
 }
