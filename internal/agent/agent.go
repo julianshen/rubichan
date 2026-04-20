@@ -857,6 +857,10 @@ func (a *Agent) saveSnapshotIfNeeded() {
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.turnMu.Lock()
 
+	if len(a.conversation.Messages()) == 0 {
+		a.dispatchConversationStartHook(ctx, userMessage)
+	}
+
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
 	if err := a.context.Compact(ctx, a.conversation); err != nil {
@@ -1174,6 +1178,25 @@ func (a *Agent) makeDoneEvent(inputTokens, outputTokens int, reason agentsdk.Tur
 		event.DiffSummary = a.diffTracker.Summarize()
 	}
 	return event
+}
+
+// dispatchConversationStartHook fires HookOnConversationStart at the
+// beginning of a conversation's first turn (before the first user message
+// is appended). Failures are logged and non-blocking.
+func (a *Agent) dispatchConversationStartHook(ctx context.Context, userMessage string) {
+	if a.skillRuntime == nil {
+		return
+	}
+	event := skills.HookEvent{
+		Phase: skills.HookOnConversationStart,
+		Ctx:   ctx,
+		Data: map[string]any{
+			"user_message": userMessage,
+		},
+	}
+	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
+		a.logger.Warn("conversation-start hook failed: %v", err)
+	}
 }
 
 // dispatchAfterResponseHook fires HookOnAfterResponse at the end of a turn

@@ -479,6 +479,43 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 	assert.NotEmpty(t, capturedReason, "exit_reason should be passed in event data")
 }
 
+// TestAgentConversationStartHookFiresOnce asserts that HookOnConversationStart
+// fires on the first Turn of a new conversation and does NOT refire on
+// subsequent turns within the same conversation.
+func TestAgentConversationStartHookFiresOnce(t *testing.T) {
+	callCount := 0
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnConversationStart: func(event skills.HookEvent) (skills.HookResult, error) {
+			callCount++
+			require.NotNil(t, event.Ctx)
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "conv-start-hook", toolManifest("conv-start-hook"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{{Type: "text_delta", Text: "ok"}, {Type: "stop"}},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch1, err := a.Turn(context.Background(), "first")
+	require.NoError(t, err)
+	for range ch1 {
+	}
+
+	// Rewind provider events for a second turn.
+	cp.events = []provider.StreamEvent{{Type: "text_delta", Text: "ok"}, {Type: "stop"}}
+	ch2, err := a.Turn(context.Background(), "second")
+	require.NoError(t, err)
+	for range ch2 {
+	}
+
+	assert.Equal(t, 1, callCount, "HookOnConversationStart should fire exactly once per conversation")
+}
+
 func TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder(t *testing.T) {
 	basePromptManifest := &skills.SkillManifest{
 		Name:        "prompt-hook-order",
