@@ -77,7 +77,7 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			return nil, fmt.Errorf("worktree isolation requested but no WorktreeProvider configured")
 		}
 		wtName := fmt.Sprintf("subagent-%s-%d", cfg.Name, time.Now().UnixNano())
-		s.dispatchTaskHook(ctx, skills.HookOnWorktreeCreate, map[string]any{
+		s.dispatchHook(ctx, skills.HookOnWorktreeCreate, map[string]any{
 			"subagent_name": cfg.Name,
 			"worktree_name": wtName,
 		})
@@ -91,7 +91,7 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			if err != nil || changed {
 				return // Preserve on error or dirty state.
 			}
-			s.dispatchTaskHook(ctx, skills.HookOnWorktreeRemove, map[string]any{
+			s.dispatchHook(ctx, skills.HookOnWorktreeRemove, map[string]any{
 				"subagent_name": cfg.Name,
 				"worktree_name": wtName,
 			})
@@ -156,7 +156,7 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	}
 	child := New(s.Provider, childTools, denyAllApproval, &childCfg, opts...)
 
-	s.dispatchTaskHook(ctx, skills.HookOnTaskCreated, map[string]any{
+	s.dispatchHook(ctx, skills.HookOnTaskCreated, map[string]any{
 		"name":   cfg.Name,
 		"prompt": prompt,
 		"depth":  cfg.Depth,
@@ -207,7 +207,7 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	result.Output = output.String()
 	result.ToolsUsed = toolsUsed
 
-	s.dispatchTaskHook(ctx, skills.HookOnTaskCompleted, map[string]any{
+	s.dispatchHook(ctx, skills.HookOnTaskCompleted, map[string]any{
 		"name":          result.Name,
 		"output":        result.Output,
 		"turn_count":    result.TurnCount,
@@ -220,9 +220,9 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	return result, nil
 }
 
-// dispatchTaskHook fires a task lifecycle hook on the parent runtime. Failures
-// are logged indirectly via the runtime and do not affect spawn behavior.
-func (s *DefaultSubagentSpawner) dispatchTaskHook(ctx context.Context, phase skills.HookPhase, data map[string]any) {
+// dispatchHook fires a skill lifecycle hook on the parent runtime. Failures
+// are surfaced via the runtime's own logging and never affect spawn behavior.
+func (s *DefaultSubagentSpawner) dispatchHook(ctx context.Context, phase skills.HookPhase, data map[string]any) {
 	if s.ParentSkillRuntime == nil {
 		return
 	}
