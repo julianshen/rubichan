@@ -857,8 +857,10 @@ func (a *Agent) saveSnapshotIfNeeded() {
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.turnMu.Lock()
 
-	if len(a.conversation.Messages()) == 0 {
-		a.dispatchConversationStartHook(ctx, userMessage)
+	if a.conversation.Len() == 0 {
+		a.dispatchHook(ctx, skills.HookOnConversationStart, map[string]any{
+			"user_message": userMessage,
+		})
 	}
 
 	a.conversation.AddUser(userMessage)
@@ -1180,52 +1182,32 @@ func (a *Agent) makeDoneEvent(inputTokens, outputTokens int, reason agentsdk.Tur
 	return event
 }
 
-// dispatchConversationStartHook fires HookOnConversationStart at the
-// beginning of a conversation's first turn (before the first user message
-// is appended). Failures are logged and non-blocking.
-func (a *Agent) dispatchConversationStartHook(ctx context.Context, userMessage string) {
+// dispatchHook sends a hook event to the skill runtime. No-op when the
+// runtime is unset; failures are logged and non-blocking so hooks cannot
+// disrupt the turn lifecycle.
+func (a *Agent) dispatchHook(ctx context.Context, phase skills.HookPhase, data map[string]any) {
 	if a.skillRuntime == nil {
 		return
 	}
-	event := skills.HookEvent{
-		Phase: skills.HookOnConversationStart,
+	if _, err := a.skillRuntime.DispatchHook(skills.HookEvent{
+		Phase: phase,
 		Ctx:   ctx,
-		Data: map[string]any{
-			"user_message": userMessage,
-		},
-	}
-	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
-		a.logger.Warn("conversation-start hook failed: %v", err)
+		Data:  data,
+	}); err != nil {
+		a.logger.Warn("%s hook failed: %v", phase, err)
 	}
 }
 
-// dispatchAfterResponseHook fires HookOnAfterResponse at the end of a turn
-// that completed without pending tool calls. Handlers receive the assembled
-// response text and the turn's exit reason. Failures are logged but do not
-// alter the done event, since post-response hooks are informational.
-func (a *Agent) dispatchAfterResponseHook(ctx context.Context, blocks []provider.ContentBlock, reason agentsdk.TurnExitReason) {
-	if a.skillRuntime == nil {
-		return
-	}
-
-	var responseText strings.Builder
+// assistantText concatenates the text of every text block in a content
+// block slice. Used to surface the final response to post-response hooks.
+func assistantText(blocks []provider.ContentBlock) string {
+	var b strings.Builder
 	for _, block := range blocks {
 		if block.Type == "text" {
-			responseText.WriteString(block.Text)
+			b.WriteString(block.Text)
 		}
 	}
-
-	event := skills.HookEvent{
-		Phase: skills.HookOnAfterResponse,
-		Ctx:   ctx,
-		Data: map[string]any{
-			"response":    responseText.String(),
-			"exit_reason": reason.String(),
-		},
-	}
-	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
-		a.logger.Warn("after-response hook failed: %v", err)
-	}
+	return b.String()
 }
 
 // runLoop iteratively processes LLM responses and tool calls.
@@ -1586,7 +1568,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// empty in this branch, but Drain is cheap and safe).
 		if len(pendingTools) == 0 {
 			_ = execStream.Drain()
-			a.dispatchAfterResponseHook(ctx, blocks, exitReason)
+			a.dispatchHook(ctx, skills.HookOnAfterResponse, map[string]any{
+				"response":    assistantText(blocks),
+				"exit_reason": exitReason.String(),
+			})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
 			return
 		}

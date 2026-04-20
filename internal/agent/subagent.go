@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -213,24 +214,27 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 		"turn_count":    result.TurnCount,
 		"input_tokens":  result.InputTokens,
 		"output_tokens": result.OutputTokens,
-		"tools_used":    append([]string(nil), result.ToolsUsed...),
+		"tools_used":    result.ToolsUsed,
 		"error":         errString(result.Error),
 	})
 
 	return result, nil
 }
 
-// dispatchHook fires a skill lifecycle hook on the parent runtime. Failures
-// are surfaced via the runtime's own logging and never affect spawn behavior.
+// dispatchHook fires a skill lifecycle hook on the parent runtime. No-op
+// when no parent runtime is attached. Failures are logged and swallowed
+// so hook misbehavior never aborts a subagent spawn.
 func (s *DefaultSubagentSpawner) dispatchHook(ctx context.Context, phase skills.HookPhase, data map[string]any) {
 	if s.ParentSkillRuntime == nil {
 		return
 	}
-	_, _ = s.ParentSkillRuntime.DispatchHook(skills.HookEvent{
+	if _, err := s.ParentSkillRuntime.DispatchHook(skills.HookEvent{
 		Phase: phase,
 		Ctx:   ctx,
 		Data:  data,
-	})
+	}); err != nil {
+		log.Printf("%s hook failed: %v", phase, err)
+	}
 }
 
 func errString(err error) string {

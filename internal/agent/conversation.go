@@ -27,6 +27,11 @@ func (c *Conversation) Messages() []provider.Message {
 	return cp
 }
 
+// Len returns the number of messages without allocating a copy.
+func (c *Conversation) Len() int {
+	return len(c.messages)
+}
+
 // AddUser appends a user message to the conversation.
 func (c *Conversation) AddUser(text string) {
 	c.messages = append(c.messages, provider.NewUserMessage(text))

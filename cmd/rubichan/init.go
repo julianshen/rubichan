@@ -100,9 +100,6 @@ func runSetupHooks(ctx context.Context, dir string) error {
 	lm := skills.NewLifecycleManager()
 	hooks.NewUserHookRunner(configs, dir).RegisterIntoLM(lm)
 
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if _, err := lm.Dispatch(skills.HookEvent{
 		Phase: skills.HookOnSetup,
 		Ctx:   ctx,

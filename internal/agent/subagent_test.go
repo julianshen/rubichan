@@ -195,33 +195,7 @@ func TestSpawnDispatchesWorktreeCreateAndRemove(t *testing.T) {
 		},
 	}
 
-	s, err := store.NewStore(":memory:")
-	require.NoError(t, err)
-	defer s.Close()
-
-	loader := skills.NewLoader("", "")
-	loader.RegisterBuiltin(&skills.SkillManifest{
-		Name:        "worktree-hook-skill",
-		Version:     "1.0.0",
-		Description: "Worktree hook observer",
-		Types:       []skills.SkillType{skills.SkillTypeTool},
-		Implementation: skills.ImplementationConfig{
-			Backend:    skills.BackendStarlark,
-			Entrypoint: "main.star",
-		},
-	})
-
-	parentRuntime := skills.NewRuntime(loader, s, tools.NewRegistry(), []string{"worktree-hook-skill"},
-		func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
-			return &skillMockBackend{hooks: backendHooks}, nil
-		},
-		func(_ string, _ []skills.Permission) skills.PermissionChecker {
-			return &skillMockChecker{}
-		},
-	)
-	require.NoError(t, parentRuntime.Discover(nil))
-	require.NoError(t, parentRuntime.Activate("worktree-hook-skill"))
-
+	parentRuntime := makeTestRuntime(t, "worktree-hook-skill", toolManifest("worktree-hook-skill"), nil, backendHooks)
 	mockWT := &mockWorktreeProvider{dir: t.TempDir()}
 	spawner := &DefaultSubagentSpawner{
 		Provider:           &recordingProvider{},
@@ -231,7 +205,7 @@ func TestSpawnDispatchesWorktreeCreateAndRemove(t *testing.T) {
 		WorktreeProvider:   mockWT,
 	}
 
-	_, err = spawner.Spawn(context.Background(), SubagentConfig{
+	_, err := spawner.Spawn(context.Background(), SubagentConfig{
 		Name:      "wt-hook-worker",
 		Isolation: "worktree",
 	}, "go")
@@ -263,33 +237,7 @@ func TestSpawnDispatchesTaskCreatedAndCompleted(t *testing.T) {
 		},
 	}
 
-	s, err := store.NewStore(":memory:")
-	require.NoError(t, err)
-	defer s.Close()
-
-	loader := skills.NewLoader("", "")
-	loader.RegisterBuiltin(&skills.SkillManifest{
-		Name:        "task-hook-skill",
-		Version:     "1.0.0",
-		Description: "Task hook observer",
-		Types:       []skills.SkillType{skills.SkillTypeTool},
-		Implementation: skills.ImplementationConfig{
-			Backend:    skills.BackendStarlark,
-			Entrypoint: "main.star",
-		},
-	})
-
-	parentRuntime := skills.NewRuntime(loader, s, tools.NewRegistry(), []string{"task-hook-skill"},
-		func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
-			return &skillMockBackend{hooks: backendHooks}, nil
-		},
-		func(_ string, _ []skills.Permission) skills.PermissionChecker {
-			return &skillMockChecker{}
-		},
-	)
-	require.NoError(t, parentRuntime.Discover(nil))
-	require.NoError(t, parentRuntime.Activate("task-hook-skill"))
-
+	parentRuntime := makeTestRuntime(t, "task-hook-skill", toolManifest("task-hook-skill"), nil, backendHooks)
 	spawner := &DefaultSubagentSpawner{
 		Provider:           &recordingProvider{},
 		ParentTools:        tools.NewRegistry(),
