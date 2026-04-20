@@ -79,8 +79,8 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 		}
 		wtName := fmt.Sprintf("subagent-%s-%d", cfg.Name, time.Now().UnixNano())
 		s.dispatchHook(ctx, skills.HookOnWorktreeCreate, map[string]any{
-			"subagent_name": cfg.Name,
-			"worktree_name": wtName,
+			skills.HookDataSubagentName: cfg.Name,
+			skills.HookDataWorktreeName: wtName,
 		})
 		wt, err := s.WorktreeProvider.CreateWorktree(ctx, wtName)
 		if err != nil {
@@ -93,8 +93,8 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 				return // Preserve on error or dirty state.
 			}
 			s.dispatchHook(ctx, skills.HookOnWorktreeRemove, map[string]any{
-				"subagent_name": cfg.Name,
-				"worktree_name": wtName,
+				skills.HookDataSubagentName: cfg.Name,
+				skills.HookDataWorktreeName: wtName,
 			})
 			_ = s.WorktreeProvider.RemoveWorktree(ctx, wtName)
 		}
@@ -158,9 +158,9 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	child := New(s.Provider, childTools, denyAllApproval, &childCfg, opts...)
 
 	s.dispatchHook(ctx, skills.HookOnTaskCreated, map[string]any{
-		"name":   cfg.Name,
-		"prompt": prompt,
-		"depth":  cfg.Depth,
+		skills.HookDataName:   cfg.Name,
+		skills.HookDataPrompt: prompt,
+		skills.HookDataDepth:  cfg.Depth,
 	})
 
 	// Run a single Turn — runLoop handles the full multi-turn loop internally,
@@ -209,13 +209,13 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	result.ToolsUsed = toolsUsed
 
 	s.dispatchHook(ctx, skills.HookOnTaskCompleted, map[string]any{
-		"name":          result.Name,
-		"output":        result.Output,
-		"turn_count":    result.TurnCount,
-		"input_tokens":  result.InputTokens,
-		"output_tokens": result.OutputTokens,
-		"tools_used":    result.ToolsUsed,
-		"error":         errString(result.Error),
+		skills.HookDataName:         result.Name,
+		skills.HookDataOutput:       result.Output,
+		skills.HookDataTurnCount:    result.TurnCount,
+		skills.HookDataInputTokens:  result.InputTokens,
+		skills.HookDataOutputTokens: result.OutputTokens,
+		skills.HookDataToolsUsed:    result.ToolsUsed,
+		skills.HookDataError:        errString(result.Error),
 	})
 
 	return result, nil

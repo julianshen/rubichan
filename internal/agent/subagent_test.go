@@ -212,11 +212,11 @@ func TestSpawnDispatchesWorktreeCreateAndRemove(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, createData, "HookOnWorktreeCreate should fire before worktree is created")
-	assert.Equal(t, "wt-hook-worker", createData["subagent_name"])
-	assert.NotEmpty(t, createData["worktree_name"])
+	assert.Equal(t, "wt-hook-worker", createData[skills.HookDataSubagentName])
+	assert.NotEmpty(t, createData[skills.HookDataWorktreeName])
 
 	require.NotNil(t, removeData, "HookOnWorktreeRemove should fire before clean worktree is removed")
-	assert.Equal(t, "wt-hook-worker", removeData["subagent_name"])
+	assert.Equal(t, "wt-hook-worker", removeData[skills.HookDataSubagentName])
 }
 
 // TestSpawnDispatchesTaskCreatedAndCompleted asserts that the spawner
@@ -252,12 +252,12 @@ func TestSpawnDispatchesTaskCreatedAndCompleted(t *testing.T) {
 	require.NotNil(t, result)
 
 	require.NotNil(t, createdData, "HookOnTaskCreated should fire before child runs")
-	assert.Equal(t, "hook-observed", createdData["name"])
-	assert.Equal(t, "do the thing", createdData["prompt"])
+	assert.Equal(t, "hook-observed", createdData[skills.HookDataName])
+	assert.Equal(t, "do the thing", createdData[skills.HookDataPrompt])
 
 	require.NotNil(t, completedData, "HookOnTaskCompleted should fire after child returns")
-	assert.Equal(t, "hook-observed", completedData["name"])
-	assert.NotNil(t, completedData["output"])
+	assert.Equal(t, "hook-observed", completedData[skills.HookDataName])
+	assert.NotNil(t, completedData[skills.HookDataOutput])
 }
 
 func TestDefaultSubagentSpawnerSkillSnapshotFiltering(t *testing.T) {

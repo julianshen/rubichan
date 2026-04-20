@@ -859,7 +859,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 
 	if a.conversation.Len() == 0 {
 		a.dispatchHook(ctx, skills.HookOnConversationStart, map[string]any{
-			"user_message": userMessage,
+			skills.HookDataUserMessage: userMessage,
 		})
 	}
 
@@ -1225,8 +1225,8 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 		Phase: skills.HookOnAfterResponse,
 		Ctx:   ctx,
 		Data: map[string]any{
-			"response":    original,
-			"exit_reason": reason.String(),
+			skills.HookDataResponse:   original,
+			skills.HookDataExitReason: reason.String(),
 		},
 	}
 	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
@@ -1236,7 +1236,7 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 
 	// modifyingPhases chains each handler's Modified into event.Data, so the
 	// final transformed text lives in event.Data after Dispatch returns.
-	mutated, ok := event.Data["response"].(string)
+	mutated, ok := event.Data[skills.HookDataResponse].(string)
 	if !ok || mutated == original {
 		return blocks
 	}

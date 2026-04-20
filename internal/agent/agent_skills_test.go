@@ -446,10 +446,10 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
 			hookCalled = true
 			require.NotNil(t, event.Ctx)
-			if text, ok := event.Data["response"].(string); ok {
+			if text, ok := event.Data[skills.HookDataResponse].(string); ok {
 				capturedText = text
 			}
-			if reason, ok := event.Data["exit_reason"].(string); ok {
+			if reason, ok := event.Data[skills.HookDataExitReason].(string); ok {
 				capturedReason = reason
 			}
 			return skills.HookResult{}, nil
@@ -487,10 +487,10 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 func TestAgentAfterResponseHookCanModifyPersistedText(t *testing.T) {
 	hooks := map[skills.HookPhase]skills.HookHandler{
 		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
-			original := event.Data["response"].(string)
+			original := event.Data[skills.HookDataResponse].(string)
 			return skills.HookResult{
 				Modified: map[string]any{
-					"response": strings.ToUpper(original),
+					skills.HookDataResponse: strings.ToUpper(original),
 				},
 			}, nil
 		},
