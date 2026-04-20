@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -519,6 +520,39 @@ func TestAgentAfterResponseHookCanModifyPersistedText(t *testing.T) {
 	require.Len(t, assistant.Content, 1, "single text block expected")
 	assert.Equal(t, "HELLO WORLD", assistant.Content[0].Text,
 		"persisted assistant text must reflect Modified[response] from the hook")
+}
+
+// TestAgentAfterResponseHookSkippedOnStreamError asserts that the
+// HookOnAfterResponse dispatch is confined to the clean-completion branch
+// of runLoop. When the provider stream aborts with an error, the turn
+// ends with ExitProviderError without ever reaching the post-response
+// branch, so the hook must not fire.
+func TestAgentAfterResponseHookSkippedOnStreamError(t *testing.T) {
+	hookCalled := false
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(_ skills.HookEvent) (skills.HookResult, error) {
+			hookCalled = true
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-error", toolManifest("after-response-error"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{
+			{Type: "error", Error: fmt.Errorf("provider blew up")},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assert.False(t, hookCalled, "HookOnAfterResponse must not fire on stream-error turn exit")
 }
 
 // TestAgentConversationStartHookFiresOnce asserts that HookOnConversationStart
