@@ -178,6 +178,73 @@ func TestSpawnParallelErrorPropagation(t *testing.T) {
 	assert.Error(t, results[1].Error)
 }
 
+// TestSpawnDispatchesTaskCreatedAndCompleted asserts that the spawner
+// fires HookOnTaskCreated before running the child and HookOnTaskCompleted
+// after the child returns, dispatching on the parent runtime so parent
+// hooks observe the task lifecycle.
+func TestSpawnDispatchesTaskCreatedAndCompleted(t *testing.T) {
+	var createdData, completedData map[string]any
+
+	backendHooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnTaskCreated: func(event skills.HookEvent) (skills.HookResult, error) {
+			createdData = event.Data
+			return skills.HookResult{}, nil
+		},
+		skills.HookOnTaskCompleted: func(event skills.HookEvent) (skills.HookResult, error) {
+			completedData = event.Data
+			return skills.HookResult{}, nil
+		},
+	}
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	loader := skills.NewLoader("", "")
+	loader.RegisterBuiltin(&skills.SkillManifest{
+		Name:        "task-hook-skill",
+		Version:     "1.0.0",
+		Description: "Task hook observer",
+		Types:       []skills.SkillType{skills.SkillTypeTool},
+		Implementation: skills.ImplementationConfig{
+			Backend:    skills.BackendStarlark,
+			Entrypoint: "main.star",
+		},
+	})
+
+	parentRuntime := skills.NewRuntime(loader, s, tools.NewRegistry(), []string{"task-hook-skill"},
+		func(_ skills.SkillManifest, _ string) (skills.SkillBackend, error) {
+			return &skillMockBackend{hooks: backendHooks}, nil
+		},
+		func(_ string, _ []skills.Permission) skills.PermissionChecker {
+			return &skillMockChecker{}
+		},
+	)
+	require.NoError(t, parentRuntime.Discover(nil))
+	require.NoError(t, parentRuntime.Activate("task-hook-skill"))
+
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+	}
+
+	result, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name: "hook-observed",
+	}, "do the thing")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.NotNil(t, createdData, "HookOnTaskCreated should fire before child runs")
+	assert.Equal(t, "hook-observed", createdData["name"])
+	assert.Equal(t, "do the thing", createdData["prompt"])
+
+	require.NotNil(t, completedData, "HookOnTaskCompleted should fire after child returns")
+	assert.Equal(t, "hook-observed", completedData["name"])
+	assert.NotNil(t, completedData["output"])
+}
+
 func TestDefaultSubagentSpawnerSkillSnapshotFiltering(t *testing.T) {
 	s, err := store.NewStore(":memory:")
 	require.NoError(t, err)

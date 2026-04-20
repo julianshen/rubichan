@@ -148,6 +148,12 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	}
 	child := New(s.Provider, childTools, denyAllApproval, &childCfg, opts...)
 
+	s.dispatchTaskHook(ctx, skills.HookOnTaskCreated, map[string]any{
+		"name":   cfg.Name,
+		"prompt": prompt,
+		"depth":  cfg.Depth,
+	})
+
 	// Run a single Turn — runLoop handles the full multi-turn loop internally,
 	// calling the LLM and executing tools iteratively until a text-only response
 	// or the turn limit is reached. This avoids appending empty user messages.
@@ -193,7 +199,37 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	result.Output = output.String()
 	result.ToolsUsed = toolsUsed
 
+	s.dispatchTaskHook(ctx, skills.HookOnTaskCompleted, map[string]any{
+		"name":          result.Name,
+		"output":        result.Output,
+		"turn_count":    result.TurnCount,
+		"input_tokens":  result.InputTokens,
+		"output_tokens": result.OutputTokens,
+		"tools_used":    append([]string(nil), result.ToolsUsed...),
+		"error":         errString(result.Error),
+	})
+
 	return result, nil
+}
+
+// dispatchTaskHook fires a task lifecycle hook on the parent runtime. Failures
+// are logged indirectly via the runtime and do not affect spawn behavior.
+func (s *DefaultSubagentSpawner) dispatchTaskHook(ctx context.Context, phase skills.HookPhase, data map[string]any) {
+	if s.ParentSkillRuntime == nil {
+		return
+	}
+	_, _ = s.ParentSkillRuntime.DispatchHook(skills.HookEvent{
+		Phase: phase,
+		Ctx:   ctx,
+		Data:  data,
+	})
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // SpawnParallel runs multiple subagent requests concurrently, returning one
