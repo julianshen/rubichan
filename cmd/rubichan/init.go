@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/julianshen/rubichan/internal/commands"
+	"github.com/julianshen/rubichan/internal/hooks"
+	"github.com/julianshen/rubichan/internal/skills"
 )
 
 func initCmd() *cobra.Command {
@@ -37,7 +40,7 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 
 			if hooksOnly {
 				fmt.Fprintf(cmd.OutOrStdout(), "Running setup hooks (mode=hooks-only)...\n")
-				return nil
+				return runSetupHooks(cmd.Context(), dir)
 			}
 
 			for _, sub := range []string{".agent/skills", ".agent/hooks"} {
@@ -71,7 +74,7 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Generated AGENT.md and .agent/ structure in %s\n", dir)
-			return nil
+			return runSetupHooks(cmd.Context(), dir)
 		},
 	}
 
@@ -80,4 +83,32 @@ AGENT.md sections. Sections that cannot be auto-detected use TODO placeholders.`
 	cmd.Flags().BoolVar(&hooksOnly, "hooks-only", false, "Run setup hooks only, skip file generation")
 
 	return cmd
+}
+
+// runSetupHooks loads .agent/hooks.toml in dir and dispatches HookOnSetup to
+// any registered handlers. Missing hooks.toml is not an error — init may run
+// in projects that haven't configured hooks yet.
+func runSetupHooks(ctx context.Context, dir string) error {
+	configs, err := hooks.LoadHooksTOML(dir)
+	if err != nil {
+		return fmt.Errorf("loading .agent/hooks.toml: %w", err)
+	}
+	if len(configs) == 0 {
+		return nil
+	}
+
+	lm := skills.NewLifecycleManager()
+	hooks.NewUserHookRunner(configs, dir).RegisterIntoLM(lm)
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := lm.Dispatch(skills.HookEvent{
+		Phase: skills.HookOnSetup,
+		Ctx:   ctx,
+		Data:  map[string]any{"mode": "init", "dir": dir},
+	}); err != nil {
+		return fmt.Errorf("dispatching setup hooks: %w", err)
+	}
+	return nil
 }
