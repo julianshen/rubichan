@@ -5,11 +5,16 @@ package skills
 // stable surface for that contract: dispatch sites must use them when
 // writing keys, handlers should use them when reading. Adding a new
 // dispatch-site field requires adding a constant here.
+
+// Turn lifecycle data keys.
 const (
 	HookDataUserMessage = "user_message"
 	HookDataResponse    = "response"
 	HookDataExitReason  = "exit_reason"
+)
 
+// Task lifecycle data keys.
+const (
 	HookDataName         = "name"
 	HookDataPrompt       = "prompt"
 	HookDataDepth        = "depth"
@@ -19,10 +24,16 @@ const (
 	HookDataOutputTokens = "output_tokens"
 	HookDataToolsUsed    = "tools_used"
 	HookDataError        = "error"
+)
 
+// Worktree lifecycle data keys.
+const (
 	HookDataSubagentName = "subagent_name"
 	HookDataWorktreeName = "worktree_name"
+)
 
+// Security scan completion data keys.
+const (
 	HookDataFindings      = "findings"
 	HookDataAttackChains  = "attack_chains"
 	HookDataErrors        = "errors"
@@ -31,7 +42,10 @@ const (
 	HookDataFilesScanned  = "files_scanned"
 	HookDataDurationMs    = "duration_ms"
 	HookDataErrorsCount   = "errors_count"
+)
 
+// Project setup data keys.
+const (
 	HookDataMode = "mode"
 	HookDataDir  = "dir"
 )
