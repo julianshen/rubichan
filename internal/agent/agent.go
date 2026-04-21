@@ -1210,6 +1210,63 @@ func assistantText(blocks []provider.ContentBlock) string {
 	return b.String()
 }
 
+// applyAfterResponseHook fires HookOnAfterResponse with the assembled response
+// text. When handlers return a modified "response" key, the text blocks are
+// rewritten so the persisted assistant message reflects the transform. This is
+// the consumer side of the transform-skill design (see internal/skills/integration.go).
+// No-op when skillRuntime is unset.
+func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.ContentBlock, reason agentsdk.TurnExitReason) []provider.ContentBlock {
+	if a.skillRuntime == nil {
+		return blocks
+	}
+
+	original := assistantText(blocks)
+	event := skills.HookEvent{
+		Phase: skills.HookOnAfterResponse,
+		Ctx:   ctx,
+		Data: map[string]any{
+			"response":    original,
+			"exit_reason": reason.String(),
+		},
+	}
+	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
+		a.logger.Warn("%s hook failed: %v", skills.HookOnAfterResponse, err)
+		return blocks
+	}
+
+	// modifyingPhases chains each handler's Modified into event.Data, so the
+	// final transformed text lives in event.Data after Dispatch returns.
+	mutated, ok := event.Data["response"].(string)
+	if !ok || mutated == original {
+		return blocks
+	}
+	return replaceAssistantText(blocks, mutated)
+}
+
+// replaceAssistantText rewrites the text content of a block slice so its
+// concatenated text equals newText. The first text block carries newText;
+// subsequent text blocks are dropped. Non-text blocks (thinking, tool_use)
+// are preserved in their original order. If no text block exists one is
+// appended at the end.
+func replaceAssistantText(blocks []provider.ContentBlock, newText string) []provider.ContentBlock {
+	out := make([]provider.ContentBlock, 0, len(blocks))
+	placed := false
+	for _, block := range blocks {
+		if block.Type == "text" {
+			if placed {
+				continue
+			}
+			block.Text = newText
+			placed = true
+		}
+		out = append(out, block)
+	}
+	if !placed {
+		out = append(out, provider.ContentBlock{Type: "text", Text: newText})
+	}
+	return out
+}
+
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
@@ -1557,6 +1614,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			exitReason = agentsdk.ExitEmptyResponse
 		}
 
+		// On final-response turns (no pending tool calls), give the
+		// HookOnAfterResponse handlers a chance to rewrite the assistant
+		// text before it's persisted. The streamed text already reached
+		// the user, but the persisted version is what subsequent turns
+		// see in conversation context — that's the surface transform
+		// skills target.
+		if len(pendingTools) == 0 {
+			blocks = a.applyAfterResponseHook(ctx, blocks, exitReason)
+		}
+
 		// Add assistant message with accumulated blocks
 		if len(blocks) > 0 {
 			a.conversation.AddAssistant(blocks)
@@ -1568,10 +1635,6 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// empty in this branch, but Drain is cheap and safe).
 		if len(pendingTools) == 0 {
 			_ = execStream.Drain()
-			a.dispatchHook(ctx, skills.HookOnAfterResponse, map[string]any{
-				"response":    assistantText(blocks),
-				"exit_reason": exitReason.String(),
-			})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
 			return
 		}

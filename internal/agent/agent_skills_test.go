@@ -479,6 +479,48 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 	assert.NotEmpty(t, capturedReason, "exit_reason should be passed in event data")
 }
 
+// TestAgentAfterResponseHookCanModifyPersistedText asserts that handlers
+// returning Modified["response"] actually rewrite the persisted assistant
+// message. Without this, transform skills (registered via the same phase)
+// would be silently dead — the dispatch would fire but the modification
+// would never be applied.
+func TestAgentAfterResponseHookCanModifyPersistedText(t *testing.T) {
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
+			original := event.Data["response"].(string)
+			return skills.HookResult{
+				Modified: map[string]any{
+					"response": strings.ToUpper(original),
+				},
+			}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-mutator", toolManifest("after-response-mutator"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hello world"},
+			{Type: "stop"},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	msgs := a.conversation.Messages()
+	require.Len(t, msgs, 2, "user + assistant messages")
+	assistant := msgs[1]
+	require.Len(t, assistant.Content, 1, "single text block expected")
+	assert.Equal(t, "HELLO WORLD", assistant.Content[0].Text,
+		"persisted assistant text must reflect Modified[response] from the hook")
+}
+
 // TestAgentConversationStartHookFiresOnce asserts that HookOnConversationStart
 // fires on the first Turn of a new conversation and does NOT refire on
 // subsequent turns within the same conversation.
