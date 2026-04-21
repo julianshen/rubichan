@@ -14,6 +14,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -553,6 +554,52 @@ func TestAgentAfterResponseHookSkippedOnStreamError(t *testing.T) {
 	}
 
 	assert.False(t, hookCalled, "HookOnAfterResponse must not fire on stream-error turn exit")
+}
+
+// TestAgentAfterResponseHookFiresOnTaskComplete asserts that the post-response
+// hook also fires when the turn ends via the task_complete tool, not only on
+// the no-pending-tools branch. Both code paths exit the runLoop with a final
+// response, so handlers must observe both — otherwise transform skills miss
+// roughly half the agent's terminal turns.
+func TestAgentAfterResponseHookFiresOnTaskComplete(t *testing.T) {
+	var captured map[string]any
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
+			captured = event.Data
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-task-complete", toolManifest("after-response-task-complete"), nil, hooks)
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "text_delta", Text: "all done"},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tc_1",
+					Name: tools.TaskCompleteName,
+				}},
+				{Type: "text_delta", Text: `{"summary":"done"}`},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	agentReg := tools.NewRegistry()
+	require.NoError(t, agentReg.Register(tools.NewCompletionSignalTool()))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, agentReg, autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "go")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.NotNil(t, captured, "HookOnAfterResponse should fire on task_complete exit too")
+	assert.Equal(t, "all done", captured[skills.HookDataResponse])
+	assert.Equal(t, agentsdk.ExitTaskComplete.String(), captured[skills.HookDataExitReason])
 }
 
 // TestAgentConversationStartHookFiresOnce asserts that HookOnConversationStart

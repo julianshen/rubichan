@@ -1243,6 +1243,22 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 	return replaceAssistantText(blocks, mutated)
 }
 
+// terminalExitReason reports whether the current pending-tool batch
+// terminates the turn — i.e. no further LLM round will run after the
+// pending tools execute. Returns the final exit reason in that case.
+// Used to decide whether HookOnAfterResponse should fire on this turn.
+func terminalExitReason(pendingTools []provider.ToolUseBlock, defaultReason agentsdk.TurnExitReason) (agentsdk.TurnExitReason, bool) {
+	if len(pendingTools) == 0 {
+		return defaultReason, true
+	}
+	for _, tc := range pendingTools {
+		if tc.Name == tools.TaskCompleteName {
+			return agentsdk.ExitTaskComplete, true
+		}
+	}
+	return defaultReason, false
+}
+
 // replaceAssistantText rewrites the text content of a block slice so its
 // concatenated text equals newText. The first text block carries newText;
 // subsequent text blocks are dropped. Non-text blocks (thinking, tool_use)
@@ -1614,14 +1630,15 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			exitReason = agentsdk.ExitEmptyResponse
 		}
 
-		// On final-response turns (no pending tool calls), give the
-		// HookOnAfterResponse handlers a chance to rewrite the assistant
-		// text before it's persisted. The streamed text already reached
-		// the user, but the persisted version is what subsequent turns
-		// see in conversation context — that's the surface transform
-		// skills target.
-		if len(pendingTools) == 0 {
-			blocks = a.applyAfterResponseHook(ctx, blocks, exitReason)
+		// On final-response turns, give HookOnAfterResponse handlers a chance
+		// to rewrite the assistant text before it's persisted. The streamed
+		// text already reached the user, but the persisted version is what
+		// subsequent turns see in conversation context — that's the surface
+		// transform skills target. A turn is final on either no-pending-tools
+		// (clean completion) or when task_complete is in the pending batch.
+		finalReason, isFinal := terminalExitReason(pendingTools, exitReason)
+		if isFinal {
+			blocks = a.applyAfterResponseHook(ctx, blocks, finalReason)
 		}
 
 		// Add assistant message with accumulated blocks
