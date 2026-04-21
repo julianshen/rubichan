@@ -1140,23 +1140,30 @@ func newDefaultSecurityEngine(cfg security.EngineConfig, llm provider.LLMProvide
 
 // securityScanCompleteHook returns an OnScanComplete callback that forwards
 // the final scan report to the skill runtime as a HookOnSecurityScanComplete
-// event so security-rule skills can observe scan results.
+// event so security-rule skills can observe scan results. The full Findings
+// and AttackChains slices are exposed so handlers can react to specific
+// vulnerabilities, not just summary counts.
 func securityScanCompleteHook(rt *skills.Runtime) func(context.Context, *security.Report) {
 	return func(ctx context.Context, report *security.Report) {
 		if rt == nil || report == nil {
 			return
 		}
-		_, _ = rt.DispatchHook(skills.HookEvent{
+		if _, err := rt.DispatchHook(skills.HookEvent{
 			Phase: skills.HookOnSecurityScanComplete,
 			Ctx:   ctx,
 			Data: map[string]any{
+				"findings":       report.Findings,
+				"attack_chains":  report.AttackChains,
+				"errors":         report.Errors,
 				"findings_count": report.Stats.FindingsCount,
 				"chain_count":    report.Stats.ChainCount,
 				"files_scanned":  report.Stats.FilesScanned,
 				"duration_ms":    report.Stats.Duration.Milliseconds(),
 				"errors_count":   len(report.Errors),
 			},
-		})
+		}); err != nil {
+			log.Printf("HookOnSecurityScanComplete failed: %v", err)
+		}
 	}
 }
 
