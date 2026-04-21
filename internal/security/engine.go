@@ -113,6 +113,10 @@ func (e *Engine) Run(ctx context.Context, target ScanTarget) (*Report, error) {
 		Errors: allErrors,
 	}
 
+	if e.config.OnScanComplete != nil {
+		e.config.OnScanComplete(ctx, report)
+	}
+
 	return report, nil
 }
 

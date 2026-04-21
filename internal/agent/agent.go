@@ -857,6 +857,12 @@ func (a *Agent) saveSnapshotIfNeeded() {
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.turnMu.Lock()
 
+	if a.conversation.Len() == 0 {
+		a.dispatchHook(ctx, skills.HookOnConversationStart, map[string]any{
+			"user_message": userMessage,
+		})
+	}
+
 	a.conversation.AddUser(userMessage)
 	a.persistMessage("user", []provider.ContentBlock{{Type: "text", Text: userMessage}})
 	if err := a.context.Compact(ctx, a.conversation); err != nil {
@@ -1174,6 +1180,91 @@ func (a *Agent) makeDoneEvent(inputTokens, outputTokens int, reason agentsdk.Tur
 		event.DiffSummary = a.diffTracker.Summarize()
 	}
 	return event
+}
+
+// dispatchHook sends a hook event to the skill runtime. No-op when the
+// runtime is unset; failures are logged and non-blocking so hooks cannot
+// disrupt the turn lifecycle.
+func (a *Agent) dispatchHook(ctx context.Context, phase skills.HookPhase, data map[string]any) {
+	if a.skillRuntime == nil {
+		return
+	}
+	if _, err := a.skillRuntime.DispatchHook(skills.HookEvent{
+		Phase: phase,
+		Ctx:   ctx,
+		Data:  data,
+	}); err != nil {
+		a.logger.Warn("%s hook failed: %v", phase, err)
+	}
+}
+
+// assistantText concatenates the text of every text block in a content
+// block slice. Used to surface the final response to post-response hooks.
+func assistantText(blocks []provider.ContentBlock) string {
+	var b strings.Builder
+	for _, block := range blocks {
+		if block.Type == "text" {
+			b.WriteString(block.Text)
+		}
+	}
+	return b.String()
+}
+
+// applyAfterResponseHook fires HookOnAfterResponse with the assembled response
+// text. When handlers return a modified "response" key, the text blocks are
+// rewritten so the persisted assistant message reflects the transform. This is
+// the consumer side of the transform-skill design (see internal/skills/integration.go).
+// No-op when skillRuntime is unset.
+func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.ContentBlock, reason agentsdk.TurnExitReason) []provider.ContentBlock {
+	if a.skillRuntime == nil {
+		return blocks
+	}
+
+	original := assistantText(blocks)
+	event := skills.HookEvent{
+		Phase: skills.HookOnAfterResponse,
+		Ctx:   ctx,
+		Data: map[string]any{
+			"response":    original,
+			"exit_reason": reason.String(),
+		},
+	}
+	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
+		a.logger.Warn("%s hook failed: %v", skills.HookOnAfterResponse, err)
+		return blocks
+	}
+
+	// modifyingPhases chains each handler's Modified into event.Data, so the
+	// final transformed text lives in event.Data after Dispatch returns.
+	mutated, ok := event.Data["response"].(string)
+	if !ok || mutated == original {
+		return blocks
+	}
+	return replaceAssistantText(blocks, mutated)
+}
+
+// replaceAssistantText rewrites the text content of a block slice so its
+// concatenated text equals newText. The first text block carries newText;
+// subsequent text blocks are dropped. Non-text blocks (thinking, tool_use)
+// are preserved in their original order. If no text block exists one is
+// appended at the end.
+func replaceAssistantText(blocks []provider.ContentBlock, newText string) []provider.ContentBlock {
+	out := make([]provider.ContentBlock, 0, len(blocks))
+	placed := false
+	for _, block := range blocks {
+		if block.Type == "text" {
+			if placed {
+				continue
+			}
+			block.Text = newText
+			placed = true
+		}
+		out = append(out, block)
+	}
+	if !placed {
+		out = append(out, provider.ContentBlock{Type: "text", Text: newText})
+	}
+	return out
 }
 
 // runLoop iteratively processes LLM responses and tool calls.
@@ -1521,6 +1612,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			blocks = append(blocks, provider.ContentBlock{Type: "text", Text: emptyModelResponseText})
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("empty response from model")})
 			exitReason = agentsdk.ExitEmptyResponse
+		}
+
+		// On final-response turns (no pending tool calls), give the
+		// HookOnAfterResponse handlers a chance to rewrite the assistant
+		// text before it's persisted. The streamed text already reached
+		// the user, but the persisted version is what subsequent turns
+		// see in conversation context — that's the surface transform
+		// skills target.
+		if len(pendingTools) == 0 {
+			blocks = a.applyAfterResponseHook(ctx, blocks, exitReason)
 		}
 
 		// Add assistant message with accumulated blocks

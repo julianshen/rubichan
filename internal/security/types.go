@@ -225,6 +225,13 @@ type EngineConfig struct {
 	ExcludePatterns []string      // file patterns to exclude from scanning
 	Concurrency     int           // maximum concurrent scanner/analyzer goroutines
 	ScannerTimeout  time.Duration // per-scanner timeout; zero means 30s default
+
+	// OnScanComplete, when non-nil, is invoked once after Run produces the final
+	// report. It runs synchronously in Run's goroutine and must not block, since
+	// the caller receives the report only after the callback returns. This is
+	// the extension point that bridges the engine to skill lifecycle hooks
+	// (HookOnSecurityScanComplete) without coupling the engine to internal/skills.
+	OnScanComplete func(ctx context.Context, report *Report)
 }
 
 // OutputFormatter is the interface for rendering a security report into a

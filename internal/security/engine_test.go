@@ -74,6 +74,49 @@ func main() { exec.Command("sh").Run() }
 	assert.Greater(t, report.Stats.Duration, time.Duration(0))
 }
 
+// TestEngineRunFiresOnScanCompleteCallback asserts that a configured
+// OnScanComplete callback fires once per Run and receives the final
+// report. This is the extension point that the agent wires to
+// HookOnSecurityScanComplete.
+func TestEngineRunFiresOnScanCompleteCallback(t *testing.T) {
+	t.Parallel()
+
+	var (
+		callCount  int
+		gotReport  *Report
+		gotContext context.Context
+	)
+
+	e := NewEngine(EngineConfig{
+		MaxLLMChunks: 100,
+		Concurrency:  1,
+		OnScanComplete: func(ctx context.Context, report *Report) {
+			callCount++
+			gotReport = report
+			gotContext = ctx
+		},
+	})
+	e.AddScanner(&mockScanner{
+		name: "cb-scanner",
+		findings: []Finding{
+			{ID: "cb-1", Severity: SeverityLow, Category: CategorySecretsExposure, Title: "x",
+				CWE: "CWE-798", Location: Location{File: "a.go", StartLine: 1}},
+		},
+	})
+
+	dir := t.TempDir()
+	writeTestFile(t, dir, "a.go", "package a\n")
+
+	ctx := context.Background()
+	report, err := e.Run(ctx, ScanTarget{RootDir: dir})
+	require.NoError(t, err)
+	require.NotNil(t, report)
+
+	assert.Equal(t, 1, callCount, "OnScanComplete should fire exactly once")
+	assert.Same(t, report, gotReport, "callback should receive the final report")
+	assert.NotNil(t, gotContext, "callback should receive the run context")
+}
+
 func TestEngineHandlesScannerError(t *testing.T) {
 	t.Parallel()
 

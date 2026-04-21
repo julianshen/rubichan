@@ -178,6 +178,88 @@ func TestSpawnParallelErrorPropagation(t *testing.T) {
 	assert.Error(t, results[1].Error)
 }
 
+// TestSpawnDispatchesWorktreeCreateAndRemove asserts that the spawner
+// fires HookOnWorktreeCreate before asking the provider to create a
+// worktree and HookOnWorktreeRemove before removing a clean worktree.
+func TestSpawnDispatchesWorktreeCreateAndRemove(t *testing.T) {
+	var createData, removeData map[string]any
+
+	backendHooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnWorktreeCreate: func(event skills.HookEvent) (skills.HookResult, error) {
+			createData = event.Data
+			return skills.HookResult{}, nil
+		},
+		skills.HookOnWorktreeRemove: func(event skills.HookEvent) (skills.HookResult, error) {
+			removeData = event.Data
+			return skills.HookResult{}, nil
+		},
+	}
+
+	parentRuntime := makeTestRuntime(t, "worktree-hook-skill", toolManifest("worktree-hook-skill"), nil, backendHooks)
+	mockWT := &mockWorktreeProvider{dir: t.TempDir()}
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider:   mockWT,
+	}
+
+	_, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "wt-hook-worker",
+		Isolation: "worktree",
+	}, "go")
+	require.NoError(t, err)
+
+	require.NotNil(t, createData, "HookOnWorktreeCreate should fire before worktree is created")
+	assert.Equal(t, "wt-hook-worker", createData["subagent_name"])
+	assert.NotEmpty(t, createData["worktree_name"])
+
+	require.NotNil(t, removeData, "HookOnWorktreeRemove should fire before clean worktree is removed")
+	assert.Equal(t, "wt-hook-worker", removeData["subagent_name"])
+}
+
+// TestSpawnDispatchesTaskCreatedAndCompleted asserts that the spawner
+// fires HookOnTaskCreated before running the child and HookOnTaskCompleted
+// after the child returns, dispatching on the parent runtime so parent
+// hooks observe the task lifecycle.
+func TestSpawnDispatchesTaskCreatedAndCompleted(t *testing.T) {
+	var createdData, completedData map[string]any
+
+	backendHooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnTaskCreated: func(event skills.HookEvent) (skills.HookResult, error) {
+			createdData = event.Data
+			return skills.HookResult{}, nil
+		},
+		skills.HookOnTaskCompleted: func(event skills.HookEvent) (skills.HookResult, error) {
+			completedData = event.Data
+			return skills.HookResult{}, nil
+		},
+	}
+
+	parentRuntime := makeTestRuntime(t, "task-hook-skill", toolManifest("task-hook-skill"), nil, backendHooks)
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+	}
+
+	result, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name: "hook-observed",
+	}, "do the thing")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.NotNil(t, createdData, "HookOnTaskCreated should fire before child runs")
+	assert.Equal(t, "hook-observed", createdData["name"])
+	assert.Equal(t, "do the thing", createdData["prompt"])
+
+	require.NotNil(t, completedData, "HookOnTaskCompleted should fire after child returns")
+	assert.Equal(t, "hook-observed", completedData["name"])
+	assert.NotNil(t, completedData["output"])
+}
+
 func TestDefaultSubagentSpawnerSkillSnapshotFiltering(t *testing.T) {
 	s, err := store.NewStore(":memory:")
 	require.NoError(t, err)

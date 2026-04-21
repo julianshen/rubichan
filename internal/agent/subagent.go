@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -77,6 +78,10 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			return nil, fmt.Errorf("worktree isolation requested but no WorktreeProvider configured")
 		}
 		wtName := fmt.Sprintf("subagent-%s-%d", cfg.Name, time.Now().UnixNano())
+		s.dispatchHook(ctx, skills.HookOnWorktreeCreate, map[string]any{
+			"subagent_name": cfg.Name,
+			"worktree_name": wtName,
+		})
 		wt, err := s.WorktreeProvider.CreateWorktree(ctx, wtName)
 		if err != nil {
 			return nil, fmt.Errorf("creating worktree for subagent: %w", err)
@@ -87,6 +92,10 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			if err != nil || changed {
 				return // Preserve on error or dirty state.
 			}
+			s.dispatchHook(ctx, skills.HookOnWorktreeRemove, map[string]any{
+				"subagent_name": cfg.Name,
+				"worktree_name": wtName,
+			})
 			_ = s.WorktreeProvider.RemoveWorktree(ctx, wtName)
 		}
 	}
@@ -148,6 +157,12 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	}
 	child := New(s.Provider, childTools, denyAllApproval, &childCfg, opts...)
 
+	s.dispatchHook(ctx, skills.HookOnTaskCreated, map[string]any{
+		"name":   cfg.Name,
+		"prompt": prompt,
+		"depth":  cfg.Depth,
+	})
+
 	// Run a single Turn — runLoop handles the full multi-turn loop internally,
 	// calling the LLM and executing tools iteratively until a text-only response
 	// or the turn limit is reached. This avoids appending empty user messages.
@@ -193,7 +208,40 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	result.Output = output.String()
 	result.ToolsUsed = toolsUsed
 
+	s.dispatchHook(ctx, skills.HookOnTaskCompleted, map[string]any{
+		"name":          result.Name,
+		"output":        result.Output,
+		"turn_count":    result.TurnCount,
+		"input_tokens":  result.InputTokens,
+		"output_tokens": result.OutputTokens,
+		"tools_used":    result.ToolsUsed,
+		"error":         errString(result.Error),
+	})
+
 	return result, nil
+}
+
+// dispatchHook fires a skill lifecycle hook on the parent runtime. No-op
+// when no parent runtime is attached. Failures are logged and swallowed
+// so hook misbehavior never aborts a subagent spawn.
+func (s *DefaultSubagentSpawner) dispatchHook(ctx context.Context, phase skills.HookPhase, data map[string]any) {
+	if s.ParentSkillRuntime == nil {
+		return
+	}
+	if _, err := s.ParentSkillRuntime.DispatchHook(skills.HookEvent{
+		Phase: phase,
+		Ctx:   ctx,
+		Data:  data,
+	}); err != nil {
+		log.Printf("%s hook failed: %v", phase, err)
+	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // SpawnParallel runs multiple subagent requests concurrently, returning one

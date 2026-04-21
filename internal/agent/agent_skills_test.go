@@ -433,6 +433,131 @@ func TestAgentBeforePromptBuildHookCanModifyPrompt(t *testing.T) {
 	assert.Contains(t, capturedReq.System, "hook-fragment-text")
 }
 
+// TestAgentAfterResponseHookFires asserts that HookOnAfterResponse is
+// dispatched when the agent finishes a turn with no pending tool calls —
+// the "response is final" branch at the end of runLoop.
+func TestAgentAfterResponseHookFires(t *testing.T) {
+	var (
+		hookCalled     bool
+		capturedText   string
+		capturedReason string
+	)
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
+			hookCalled = true
+			require.NotNil(t, event.Ctx)
+			if text, ok := event.Data["response"].(string); ok {
+				capturedText = text
+			}
+			if reason, ok := event.Data["exit_reason"].(string); ok {
+				capturedReason = reason
+			}
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-hook", toolManifest("after-response-hook"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hello "},
+			{Type: "text_delta", Text: "world"},
+			{Type: "stop"},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assert.True(t, hookCalled, "HookOnAfterResponse should fire when turn completes cleanly")
+	assert.Equal(t, "hello world", capturedText, "response text should be passed in event data")
+	assert.NotEmpty(t, capturedReason, "exit_reason should be passed in event data")
+}
+
+// TestAgentAfterResponseHookCanModifyPersistedText asserts that handlers
+// returning Modified["response"] actually rewrite the persisted assistant
+// message. Without this, transform skills (registered via the same phase)
+// would be silently dead — the dispatch would fire but the modification
+// would never be applied.
+func TestAgentAfterResponseHookCanModifyPersistedText(t *testing.T) {
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
+			original := event.Data["response"].(string)
+			return skills.HookResult{
+				Modified: map[string]any{
+					"response": strings.ToUpper(original),
+				},
+			}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-mutator", toolManifest("after-response-mutator"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{
+			{Type: "text_delta", Text: "hello world"},
+			{Type: "stop"},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	msgs := a.conversation.Messages()
+	require.Len(t, msgs, 2, "user + assistant messages")
+	assistant := msgs[1]
+	require.Len(t, assistant.Content, 1, "single text block expected")
+	assert.Equal(t, "HELLO WORLD", assistant.Content[0].Text,
+		"persisted assistant text must reflect Modified[response] from the hook")
+}
+
+// TestAgentConversationStartHookFiresOnce asserts that HookOnConversationStart
+// fires on the first Turn of a new conversation and does NOT refire on
+// subsequent turns within the same conversation.
+func TestAgentConversationStartHookFiresOnce(t *testing.T) {
+	callCount := 0
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnConversationStart: func(event skills.HookEvent) (skills.HookResult, error) {
+			callCount++
+			require.NotNil(t, event.Ctx)
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "conv-start-hook", toolManifest("conv-start-hook"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{{Type: "text_delta", Text: "ok"}, {Type: "stop"}},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch1, err := a.Turn(context.Background(), "first")
+	require.NoError(t, err)
+	for range ch1 {
+	}
+
+	// Rewind provider events for a second turn.
+	cp.events = []provider.StreamEvent{{Type: "text_delta", Text: "ok"}, {Type: "stop"}}
+	ch2, err := a.Turn(context.Background(), "second")
+	require.NoError(t, err)
+	for range ch2 {
+	}
+
+	assert.Equal(t, 1, callCount, "HookOnConversationStart should fire exactly once per conversation")
+}
+
 func TestAgentBeforePromptBuildHookReplacesAndAppendsPromptFragmentsInOrder(t *testing.T) {
 	basePromptManifest := &skills.SkillManifest{
 		Name:        "prompt-hook-order",
