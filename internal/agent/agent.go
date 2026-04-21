@@ -1042,7 +1042,7 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 			Phase: skills.HookOnBeforePromptBuild,
 			Ctx:   ctx,
 			Data: map[string]any{
-				"prompt_build": promptBuildContext{
+				skills.HookDataPromptBuild: promptBuildContext{
 					BaseSystemPrompt:      baseSystemPrompt,
 					SkillPromptFragments:  builtFragments,
 					ContextBudgetTotal:    budget.Total,

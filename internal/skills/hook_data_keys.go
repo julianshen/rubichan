@@ -11,6 +11,15 @@ const (
 	HookDataUserMessage = "user_message"
 	HookDataResponse    = "response"
 	HookDataExitReason  = "exit_reason"
+	HookDataPromptBuild = "prompt_build"
+)
+
+// Tool execution data keys.
+const (
+	HookDataToolName = "tool_name"
+	HookDataInput    = "input"
+	HookDataContent  = "content"
+	HookDataIsError  = "is_error"
 )
 
 // Task lifecycle data keys.
