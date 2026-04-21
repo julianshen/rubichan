@@ -20,8 +20,11 @@ func (h *SkillHookAdapter) DispatchBeforeToolCall(ctx context.Context, toolName 
 	}
 	result, err := h.Runtime.DispatchHook(skills.HookEvent{
 		Phase: skills.HookOnBeforeToolCall,
-		Data:  map[string]any{"tool_name": toolName, "input": string(input)},
-		Ctx:   ctx,
+		Data: map[string]any{
+			skills.HookDataToolName: toolName,
+			skills.HookDataInput:    string(input),
+		},
+		Ctx: ctx,
 	})
 	if err != nil {
 		return false, err
@@ -40,8 +43,12 @@ func (h *SkillHookAdapter) DispatchAfterToolResult(ctx context.Context, toolName
 	}
 	result, err := h.Runtime.DispatchHook(skills.HookEvent{
 		Phase: skills.HookOnAfterToolResult,
-		Data:  map[string]any{"tool_name": toolName, "content": content, "is_error": isError},
-		Ctx:   ctx,
+		Data: map[string]any{
+			skills.HookDataToolName: toolName,
+			skills.HookDataContent:  content,
+			skills.HookDataIsError:  isError,
+		},
+		Ctx: ctx,
 	})
 	if err != nil {
 		return nil, err

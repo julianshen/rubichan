@@ -1152,14 +1152,14 @@ func securityScanCompleteHook(rt *skills.Runtime) func(context.Context, *securit
 			Phase: skills.HookOnSecurityScanComplete,
 			Ctx:   ctx,
 			Data: map[string]any{
-				"findings":       report.Findings,
-				"attack_chains":  report.AttackChains,
-				"errors":         report.Errors,
-				"findings_count": report.Stats.FindingsCount,
-				"chain_count":    report.Stats.ChainCount,
-				"files_scanned":  report.Stats.FilesScanned,
-				"duration_ms":    report.Stats.Duration.Milliseconds(),
-				"errors_count":   len(report.Errors),
+				skills.HookDataFindings:      report.Findings,
+				skills.HookDataAttackChains:  report.AttackChains,
+				skills.HookDataErrors:        report.Errors,
+				skills.HookDataFindingsCount: report.Stats.FindingsCount,
+				skills.HookDataChainCount:    report.Stats.ChainCount,
+				skills.HookDataFilesScanned:  report.Stats.FilesScanned,
+				skills.HookDataDurationMs:    report.Stats.Duration.Milliseconds(),
+				skills.HookDataErrorsCount:   len(report.Errors),
 			},
 		}); err != nil {
 			log.Printf("HookOnSecurityScanComplete failed: %v", err)

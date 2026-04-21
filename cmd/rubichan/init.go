@@ -113,7 +113,10 @@ func runSetupHooks(ctx context.Context, out io.Writer, dir string, trustHooks bo
 	if _, err := lm.Dispatch(skills.HookEvent{
 		Phase: skills.HookOnSetup,
 		Ctx:   ctx,
-		Data:  map[string]any{"mode": "init", "dir": dir},
+		Data: map[string]any{
+			skills.HookDataMode: "init",
+			skills.HookDataDir:  dir,
+		},
 	}); err != nil {
 		return fmt.Errorf("dispatching setup hooks: %w", err)
 	}

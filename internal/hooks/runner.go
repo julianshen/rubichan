@@ -190,8 +190,8 @@ func matchesIfPattern(ifPattern string, data map[string]any) bool {
 		return true
 	}
 
-	toolName, _ := data["tool_name"].(string)
-	inputStr, _ := data["input"].(string)
+	toolName, _ := data[skills.HookDataToolName].(string)
+	inputStr, _ := data[skills.HookDataInput].(string)
 
 	var parsed map[string]any
 	if inputStr != "" {
@@ -310,11 +310,11 @@ func mapEventToPhase(event string) (skills.HookPhase, bool, func(skills.HookEven
 }
 
 func filterFileWritePatch(event skills.HookEvent, pattern string) bool {
-	toolName, _ := event.Data["tool_name"].(string)
+	toolName, _ := event.Data[skills.HookDataToolName].(string)
 	if toolName != "file" {
 		return false
 	}
-	inputStr, _ := event.Data["input"].(string)
+	inputStr, _ := event.Data[skills.HookDataInput].(string)
 	var input struct {
 		Operation string `json:"operation"`
 		Path      string `json:"path"`
@@ -333,13 +333,13 @@ func filterFileWritePatch(event skills.HookEvent, pattern string) bool {
 }
 
 func filterShellTool(event skills.HookEvent, _ string) bool {
-	toolName, _ := event.Data["tool_name"].(string)
+	toolName, _ := event.Data[skills.HookDataToolName].(string)
 	return toolName == "shell"
 }
 
 func expandTemplateVars(cmd string, event skills.HookEvent) string {
-	toolName, _ := event.Data["tool_name"].(string)
-	inputStr, _ := event.Data["input"].(string)
+	toolName, _ := event.Data[skills.HookDataToolName].(string)
+	inputStr, _ := event.Data[skills.HookDataInput].(string)
 
 	var filePath, shellCmd string
 	var parsed map[string]any

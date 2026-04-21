@@ -255,10 +255,10 @@ func TestTransformSkillModifiesOutput(t *testing.T) {
 			tools: []tools.Tool{},
 			hooks: map[HookPhase]HookHandler{
 				HookOnAfterResponse: func(event HookEvent) (HookResult, error) {
-					original := event.Data["response"].(string)
+					original := event.Data[HookDataResponse].(string)
 					return HookResult{
 						Modified: map[string]any{
-							"response": original + " [transformed]",
+							HookDataResponse: original + " [transformed]",
 						},
 					}, nil
 				},

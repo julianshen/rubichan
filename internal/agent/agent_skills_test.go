@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -446,10 +448,10 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
 			hookCalled = true
 			require.NotNil(t, event.Ctx)
-			if text, ok := event.Data["response"].(string); ok {
+			if text, ok := event.Data[skills.HookDataResponse].(string); ok {
 				capturedText = text
 			}
-			if reason, ok := event.Data["exit_reason"].(string); ok {
+			if reason, ok := event.Data[skills.HookDataExitReason].(string); ok {
 				capturedReason = reason
 			}
 			return skills.HookResult{}, nil
@@ -487,10 +489,10 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 func TestAgentAfterResponseHookCanModifyPersistedText(t *testing.T) {
 	hooks := map[skills.HookPhase]skills.HookHandler{
 		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
-			original := event.Data["response"].(string)
+			original := event.Data[skills.HookDataResponse].(string)
 			return skills.HookResult{
 				Modified: map[string]any{
-					"response": strings.ToUpper(original),
+					skills.HookDataResponse: strings.ToUpper(original),
 				},
 			}, nil
 		},
@@ -519,6 +521,85 @@ func TestAgentAfterResponseHookCanModifyPersistedText(t *testing.T) {
 	require.Len(t, assistant.Content, 1, "single text block expected")
 	assert.Equal(t, "HELLO WORLD", assistant.Content[0].Text,
 		"persisted assistant text must reflect Modified[response] from the hook")
+}
+
+// TestAgentAfterResponseHookSkippedOnStreamError asserts that the
+// HookOnAfterResponse dispatch is confined to the clean-completion branch
+// of runLoop. When the provider stream aborts with an error, the turn
+// ends with ExitProviderError without ever reaching the post-response
+// branch, so the hook must not fire.
+func TestAgentAfterResponseHookSkippedOnStreamError(t *testing.T) {
+	hookCalled := false
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(_ skills.HookEvent) (skills.HookResult, error) {
+			hookCalled = true
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-error", toolManifest("after-response-error"), nil, hooks)
+
+	cp := &capturingMockProvider{
+		events: []provider.StreamEvent{
+			{Type: "error", Error: fmt.Errorf("provider blew up")},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "hi")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assert.False(t, hookCalled, "HookOnAfterResponse must not fire on stream-error turn exit")
+}
+
+// TestAgentAfterResponseHookFiresOnTaskComplete asserts that the post-response
+// hook also fires when the turn ends via the task_complete tool, not only on
+// the no-pending-tools branch. Both code paths exit the runLoop with a final
+// response, so handlers must observe both — otherwise transform skills miss
+// roughly half the agent's terminal turns.
+func TestAgentAfterResponseHookFiresOnTaskComplete(t *testing.T) {
+	var captured map[string]any
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterResponse: func(event skills.HookEvent) (skills.HookResult, error) {
+			captured = event.Data
+			return skills.HookResult{}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "after-response-task-complete", toolManifest("after-response-task-complete"), nil, hooks)
+
+	dmp := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "text_delta", Text: "all done"},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID:   "tc_1",
+					Name: tools.TaskCompleteName,
+				}},
+				{Type: "text_delta", Text: `{"summary":"done"}`},
+				{Type: "stop"},
+			},
+		},
+	}
+
+	agentReg := tools.NewRegistry()
+	require.NoError(t, agentReg.Register(tools.NewCompletionSignalTool()))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, agentReg, autoApprove, cfg, WithSkillRuntime(rt))
+
+	ch, err := a.Turn(context.Background(), "go")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.NotNil(t, captured, "HookOnAfterResponse should fire on task_complete exit too")
+	assert.Equal(t, "all done", captured[skills.HookDataResponse])
+	assert.Equal(t, agentsdk.ExitTaskComplete.String(), captured[skills.HookDataExitReason])
 }
 
 // TestAgentConversationStartHookFiresOnce asserts that HookOnConversationStart
