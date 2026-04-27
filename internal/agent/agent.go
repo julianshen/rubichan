@@ -1668,13 +1668,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		signature := pendingToolSignature(pendingTools)
-		if !hasTextContent(blocks) && signature == ls.lastToolSignature {
-			ls.repeatedToolRounds++
-		} else {
-			ls.lastToolSignature = signature
-			ls.repeatedToolRounds = 1
-		}
-		if ls.repeatedToolRounds >= maxRepeatedPendingToolRounds {
+		if ls.recordToolSignature(signature, hasTextContent(blocks)) {
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", ls.repeatedToolRounds)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitNoProgress))
 			return
