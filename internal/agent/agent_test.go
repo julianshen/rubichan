@@ -1018,7 +1018,7 @@ func TestTurnWithStreamInitError(t *testing.T) {
 	assert.Equal(t, "done", events[len(events)-1].Type)
 }
 
-func TestRunLoop_PromptTooLong_ExitsWithProviderError(t *testing.T) {
+func TestRunLoop_PromptTooLong_ExitsWithContextOverflowAfterRetries(t *testing.T) {
 	errProvider := &errorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
 	reg := tools.NewRegistry()
 	cfg := config.DefaultConfig()
@@ -1033,7 +1033,43 @@ func TestRunLoop_PromptTooLong_ExitsWithProviderError(t *testing.T) {
 			exitReason = evt.ExitReason
 		}
 	}
-	assert.Equal(t, agentsdk.ExitProviderError, exitReason)
+	assert.Equal(t, agentsdk.ExitContextOverflow, exitReason)
+}
+
+type retryAfterErrorProvider struct {
+	err       error
+	callCount int
+}
+
+func (r *retryAfterErrorProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	r.callCount++
+	if r.callCount == 1 {
+		return nil, r.err
+	}
+	ch := make(chan provider.StreamEvent, 2)
+	ch <- provider.StreamEvent{Type: "text_delta", Text: "recovered"}
+	ch <- provider.StreamEvent{Type: "done", InputTokens: 1, OutputTokens: 1}
+	close(ch)
+	return ch, nil
+}
+
+func TestRunLoop_PromptTooLong_RecoversWithCompaction(t *testing.T) {
+	prov := &retryAfterErrorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	for evt := range ch {
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+	}
+	assert.Equal(t, agentsdk.ExitCompleted, exitReason, "should recover after reactive compaction")
+	assert.Equal(t, 2, prov.callCount, "should retry after reactive compaction")
 }
 
 func TestTurnWithApprovalError(t *testing.T) {
