@@ -11,8 +11,8 @@ type loopState struct {
 	streamErr                 bool
 }
 
-func newLoopState(maxTurns int) *loopState {
-	return &loopState{maxTurns: maxTurns}
+func newLoopState(maxTurns, turnCount int) *loopState {
+	return &loopState{maxTurns: maxTurns, turnCount: turnCount}
 }
 
 func (s *loopState) canRecoverMaxTokens() bool {
@@ -23,6 +23,10 @@ func (s *loopState) incrementMaxTokensRecovery() {
 	s.maxTokensRecoveryAttempts++
 }
 
-func (s *loopState) shouldExit() bool {
-	return s.turnCount >= s.maxTurns
+func (s *loopState) hasMoreTurns() bool {
+	return s.turnCount < s.maxTurns
+}
+
+func (s *loopState) resetPerTurn() {
+	s.streamErr = false
 }

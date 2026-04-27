@@ -1287,8 +1287,7 @@ func replaceAssistantText(blocks []provider.ContentBlock, newText string) []prov
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
-	ls := newLoopState(a.maxTurns)
-	ls.turnCount = turnCount
+	ls := newLoopState(a.maxTurns, turnCount)
 	if a.skillRuntime != nil {
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
@@ -1297,7 +1296,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 	}
-	for ; !ls.shouldExit(); ls.turnCount++ {
+	for ; ls.hasMoreTurns(); ls.turnCount++ {
 		// Track turn number for checkpoint middleware.
 		a.turnNumber.Store(int32(ls.turnCount))
 
@@ -1417,7 +1416,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var blocks []provider.ContentBlock
 		var pendingTools []provider.ToolUseBlock
 		var currentTextBuf string
-		ls.streamErr = false
+		ls.resetPerTurn()
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
 		var thinkingBuf string
