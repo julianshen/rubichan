@@ -20,6 +20,7 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
 	"github.com/julianshen/rubichan/internal/acp"
+	"github.com/julianshen/rubichan/internal/agent/errorclass"
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/evaluator"
@@ -1406,6 +1407,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return a.provider.Stream(ctx, req)
 		}, onRetry)
 		if err != nil {
+			a.logger.Warn("provider error classified as %s: %v", errorclass.Classify(err), err)
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
 			return
