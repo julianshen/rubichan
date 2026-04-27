@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -65,7 +66,6 @@ func TestDefaultSubagentSpawnerWorktreeIsolation_NoProvider(t *testing.T) {
 		Provider:    recorder,
 		ParentTools: tools.NewRegistry(),
 		Config:      &config.Config{Provider: config.ProviderConfig{Model: "test"}},
-		// WorktreeProvider intentionally nil
 	}
 	_, err := spawner.Spawn(context.Background(), SubagentConfig{
 		Name:      "isolated",
@@ -113,15 +113,18 @@ func TestDefaultSubagentSpawnerWorktreeIsolation_PreserveDirty(t *testing.T) {
 	assert.False(t, mockWT.removed, "dirty worktree should NOT have been removed")
 }
 
-// mockWorktreeProvider implements WorktreeProvider for testing.
 type mockWorktreeProvider struct {
 	dir        string
 	hasChanges bool
 	created    bool
 	removed    bool
+	createErr  error
 }
 
 func (m *mockWorktreeProvider) CreateWorktree(_ context.Context, _ string) (*WorktreeHandle, error) {
+	if m.createErr != nil {
+		return nil, m.createErr
+	}
 	m.created = true
 	return &WorktreeHandle{Dir: m.dir, Name: "test-wt"}, nil
 }
@@ -170,18 +173,17 @@ func TestSpawnParallelErrorPropagation(t *testing.T) {
 		{Config: SubagentConfig{Name: "b"}, Prompt: "task b"},
 	}
 
-	// Without a provider, Spawn will fail — SpawnParallel should collect errors
 	results, err := spawner.SpawnParallel(context.Background(), requests, 2)
-	assert.NoError(t, err) // top-level error is nil
+	assert.NoError(t, err)
 	assert.Len(t, results, 2)
 	assert.Error(t, results[0].Error)
 	assert.Error(t, results[1].Error)
 }
 
-// TestSpawnDispatchesWorktreeCreateAndRemove asserts that the spawner
-// fires HookOnWorktreeCreate before asking the provider to create a
-// worktree and HookOnWorktreeRemove before removing a clean worktree.
-func TestSpawnDispatchesWorktreeCreateAndRemove(t *testing.T) {
+// TestSpawnDispatchesWorktreeCreateAfterSuccess asserts that the spawner
+// fires HookOnWorktreeCreate only after the worktree is successfully created,
+// and HookOnWorktreeRemove before removing a clean worktree.
+func TestSpawnDispatchesWorktreeCreateAfterSuccess(t *testing.T) {
 	var createData, removeData map[string]any
 
 	backendHooks := map[skills.HookPhase]skills.HookHandler{
@@ -211,12 +213,38 @@ func TestSpawnDispatchesWorktreeCreateAndRemove(t *testing.T) {
 	}, "go")
 	require.NoError(t, err)
 
-	require.NotNil(t, createData, "HookOnWorktreeCreate should fire before worktree is created")
+	require.NotNil(t, createData, "HookOnWorktreeCreate should fire after worktree is created")
 	assert.Equal(t, "wt-hook-worker", createData[skills.HookDataSubagentName])
 	assert.NotEmpty(t, createData[skills.HookDataWorktreeName])
 
 	require.NotNil(t, removeData, "HookOnWorktreeRemove should fire before clean worktree is removed")
 	assert.Equal(t, "wt-hook-worker", removeData[skills.HookDataSubagentName])
+}
+
+func TestWorktreeHookCreateNotFiredOnFailure(t *testing.T) {
+	var createEvents []skills.HookEvent
+	backendHooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnWorktreeCreate: func(event skills.HookEvent) (skills.HookResult, error) {
+			createEvents = append(createEvents, event)
+			return skills.HookResult{}, nil
+		},
+	}
+
+	parentRuntime := makeTestRuntime(t, "worktree-hook-skill", toolManifest("worktree-hook-skill"), nil, backendHooks)
+	mockWT := &mockWorktreeProvider{dir: t.TempDir(), createErr: fmt.Errorf("disk full")}
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider:   mockWT,
+	}
+	_, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "worker",
+		Isolation: "worktree",
+	}, "hello")
+	assert.Error(t, err)
+	assert.Empty(t, createEvents, "HookOnWorktreeCreate should NOT fire when creation fails")
 }
 
 // TestSpawnDispatchesTaskCreatedAndCompleted asserts that the spawner

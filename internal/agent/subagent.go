@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -50,6 +51,7 @@ type DefaultSubagentSpawner struct {
 	AgentDefs          *AgentDefRegistry
 	WorktreeProvider   WorktreeProvider   // Optional; required for isolation: "worktree"
 	RateLimiter        *SharedRateLimiter // Optional; shared rate limiter propagated to children
+	Logger             Logger             // Optional; defaults to log.Printf-based logger
 }
 
 // Spawn creates and runs a child agent with the given configuration and
@@ -70,7 +72,8 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 		return nil, fmt.Errorf("subagent spawner has no provider configured")
 	}
 
-	// Handle worktree isolation: create an isolated worktree for this subagent.
+	// Handle worktree isolation: create an isolated worktree for this subagent,
+	// dispatch lifecycle hooks, and register cleanup for removal.
 	var wtCleanup func()
 	var workDir string
 	if cfg.Isolation == IsolationWorktree {
@@ -78,25 +81,33 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			return nil, fmt.Errorf("worktree isolation requested but no WorktreeProvider configured")
 		}
 		wtName := fmt.Sprintf("subagent-%s-%d", cfg.Name, time.Now().UnixNano())
-		s.dispatchHook(ctx, skills.HookOnWorktreeCreate, map[string]any{
-			skills.HookDataSubagentName: cfg.Name,
-			skills.HookDataWorktreeName: wtName,
-		})
 		wt, err := s.WorktreeProvider.CreateWorktree(ctx, wtName)
 		if err != nil {
 			return nil, fmt.Errorf("creating worktree for subagent: %w", err)
 		}
 		workDir = wt.Dir
+		s.dispatchHook(ctx, skills.HookOnWorktreeCreate, map[string]any{
+			skills.HookDataSubagentName: cfg.Name,
+			skills.HookDataWorktreeName: wtName,
+		})
 		wtCleanup = func() {
-			changed, err := s.WorktreeProvider.HasWorktreeChanges(ctx, wtName)
-			if err != nil || changed {
-				return // Preserve on error or dirty state.
-			}
-			s.dispatchHook(ctx, skills.HookOnWorktreeRemove, map[string]any{
+			defer func() {
+				if r := recover(); r != nil {
+					s.logger().Error("worktree cleanup panic recovered: %v\n%s", r, debug.Stack())
+				}
+			}()
+			const cleanupTimeout = 60 * time.Second
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+			defer cancel()
+			s.dispatchHook(cleanupCtx, skills.HookOnWorktreeRemove, map[string]any{
 				skills.HookDataSubagentName: cfg.Name,
 				skills.HookDataWorktreeName: wtName,
 			})
-			_ = s.WorktreeProvider.RemoveWorktree(ctx, wtName)
+			changed, err := s.WorktreeProvider.HasWorktreeChanges(cleanupCtx, wtName)
+			if err != nil || changed {
+				return
+			}
+			_ = s.WorktreeProvider.RemoveWorktree(cleanupCtx, wtName)
 		}
 	}
 	if wtCleanup != nil {
@@ -221,6 +232,13 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 	return result, nil
 }
 
+func (s *DefaultSubagentSpawner) logger() Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return defaultSpawnerLogger{}
+}
+
 // dispatchHook fires a skill lifecycle hook on the parent runtime. No-op
 // when no parent runtime is attached. Failures are logged and swallowed
 // so hook misbehavior never aborts a subagent spawn.
@@ -233,7 +251,7 @@ func (s *DefaultSubagentSpawner) dispatchHook(ctx context.Context, phase skills.
 		Ctx:   ctx,
 		Data:  data,
 	}); err != nil {
-		log.Printf("%s hook failed: %v", phase, err)
+		s.logger().Warn("%s hook failed: %v", phase, err)
 	}
 }
 
@@ -243,6 +261,11 @@ func errString(err error) string {
 	}
 	return err.Error()
 }
+
+type defaultSpawnerLogger struct{}
+
+func (defaultSpawnerLogger) Warn(msg string, args ...any)  { log.Printf("WARN: "+msg, args...) }
+func (defaultSpawnerLogger) Error(msg string, args ...any) { log.Printf("ERROR: "+msg, args...) }
 
 // SpawnParallel runs multiple subagent requests concurrently, returning one
 // result per request in the same order. Individual spawn failures are captured

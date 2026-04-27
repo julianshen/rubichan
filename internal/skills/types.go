@@ -78,7 +78,7 @@ const (
 	HookOnBeforeWikiSection
 	// HookOnSecurityScanComplete is called after all security scans finish.
 	HookOnSecurityScanComplete
-	// HookOnWorktreeCreate is called before a git worktree is created.
+	// HookOnWorktreeCreate is called after a git worktree is successfully created.
 	HookOnWorktreeCreate
 	// HookOnWorktreeRemove is called before a git worktree is removed.
 	HookOnWorktreeRemove
