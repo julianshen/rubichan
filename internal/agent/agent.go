@@ -1287,8 +1287,7 @@ func replaceAssistantText(blocks []provider.ContentBlock, newText string) []prov
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
-	var lastPendingToolSignature string
-	repeatedPendingToolRounds := 0
+	ls := newLoopState(a.maxTurns, turnCount)
 	if a.skillRuntime != nil {
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
@@ -1297,9 +1296,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 	}
-	for ; turnCount < a.maxTurns; turnCount++ {
+	for ; ls.hasMoreTurns(); ls.turnCount++ {
 		// Track turn number for checkpoint middleware.
-		a.turnNumber.Store(int32(turnCount))
+		a.turnNumber.Store(int32(ls.turnCount))
 
 		if ctx.Err() != nil {
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: ctx.Err()})
@@ -1417,7 +1416,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		var blocks []provider.ContentBlock
 		var pendingTools []provider.ToolUseBlock
 		var currentTextBuf string
-		var streamErr bool
+		ls.resetPerTurn()
 		var currentTool *provider.ToolUseBlock
 		var toolInputBuf string
 		var thinkingBuf string
@@ -1534,7 +1533,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				finalizeTool()
 
 			case "error":
-				streamErr = true
+				ls.streamErr = true
 				a.emit(ctx, ch, TurnEvent{Type: "error", Error: event.Error})
 
 			case "stop":
@@ -1578,7 +1577,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// event channel. executeSingleTool emits tool_progress events as
 		// the tool runs; if we don't also emit a matching tool_call +
 		// tool_result, the UI sees orphan progress with no terminal event.
-		if streamErr {
+		if ls.streamErr {
 			if unmatched := surfaceStreamedResults(ctx, a, ch, pendingTools, execStream.Drain()); unmatched > 0 {
 				// Invariant broken: every dispatched tool should have been
 				// appended to pendingTools before Dispatch ran. If this
@@ -1669,14 +1668,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		signature := pendingToolSignature(pendingTools)
-		if !hasTextContent(blocks) && signature == lastPendingToolSignature {
-			repeatedPendingToolRounds++
-		} else {
-			lastPendingToolSignature = signature
-			repeatedPendingToolRounds = 1
-		}
-		if repeatedPendingToolRounds >= maxRepeatedPendingToolRounds {
-			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", repeatedPendingToolRounds)})
+		if ls.recordToolSignature(signature, hasTextContent(blocks)) {
+			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", ls.repeatedToolRounds)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitNoProgress))
 			return
 		}
