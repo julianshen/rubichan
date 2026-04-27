@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -119,10 +120,14 @@ type mockWorktreeProvider struct {
 	hasChanges bool
 	created    bool
 	removed    bool
+	createErr  error
 }
 
 func (m *mockWorktreeProvider) CreateWorktree(_ context.Context, _ string) (*WorktreeHandle, error) {
 	m.created = true
+	if m.createErr != nil {
+		return nil, m.createErr
+	}
 	return &WorktreeHandle{Dir: m.dir, Name: "test-wt"}, nil
 }
 
@@ -317,4 +322,166 @@ func TestDefaultSubagentSpawnerSkillSnapshotFiltering(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, recorder.system, "Alpha guidance.")
 	assert.NotContains(t, recorder.system, "Beta guidance.")
+}
+
+func TestWorktreeHookCreateFiresAfterSuccess(t *testing.T) {
+	var createEvents []skills.HookEvent
+	loader := skills.NewLoader("", "")
+	loader.RegisterBuiltin(&skills.SkillManifest{
+		Name:    "wt-hook-skill",
+		Version: "1.0.0",
+		Types:   []skills.SkillType{skills.SkillTypePrompt},
+		Prompt:  skills.PromptConfig{SystemPromptFile: "wt hook"},
+	})
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+	parentRuntime := skills.NewRuntime(loader, s, tools.NewRegistry(), nil,
+		func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
+			return &skillMockBackend{
+				hooks: map[skills.HookPhase]skills.HookHandler{
+					skills.HookOnWorktreeCreate: func(event skills.HookEvent) (skills.HookResult, error) {
+						createEvents = append(createEvents, event)
+						return skills.HookResult{}, nil
+					},
+				},
+			}, nil
+		},
+		func(skillName string, declared []skills.Permission) skills.PermissionChecker {
+			return &skillMockChecker{}
+		},
+	)
+	require.NoError(t, parentRuntime.Discover(nil))
+	require.NoError(t, parentRuntime.Activate("wt-hook-skill"))
+
+	mockWT := &mockWorktreeProvider{dir: t.TempDir()}
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider:   mockWT,
+	}
+	_, err = spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "worker",
+		Isolation: "worktree",
+	}, "hello")
+	require.NoError(t, err)
+	assert.True(t, mockWT.created, "worktree should have been created")
+	require.Len(t, createEvents, 1, "HookOnWorktreeCreate should fire exactly once")
+	assert.Equal(t, skills.HookOnWorktreeCreate, createEvents[0].Phase)
+	assert.NotNil(t, createEvents[0].Data["dir"])
+	assert.NotNil(t, createEvents[0].Data["name"])
+}
+
+func TestWorktreeHookCreateNotFiredOnFailure(t *testing.T) {
+	var createEvents []skills.HookEvent
+	loader := skills.NewLoader("", "")
+	loader.RegisterBuiltin(&skills.SkillManifest{
+		Name:    "wt-hook-skill",
+		Version: "1.0.0",
+		Types:   []skills.SkillType{skills.SkillTypePrompt},
+		Prompt:  skills.PromptConfig{SystemPromptFile: "wt hook"},
+	})
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+	parentRuntime := skills.NewRuntime(loader, s, tools.NewRegistry(), nil,
+		func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
+			return &skillMockBackend{
+				hooks: map[skills.HookPhase]skills.HookHandler{
+					skills.HookOnWorktreeCreate: func(event skills.HookEvent) (skills.HookResult, error) {
+						createEvents = append(createEvents, event)
+						return skills.HookResult{}, nil
+					},
+				},
+			}, nil
+		},
+		func(skillName string, declared []skills.Permission) skills.PermissionChecker {
+			return &skillMockChecker{}
+		},
+	)
+	require.NoError(t, parentRuntime.Discover(nil))
+	require.NoError(t, parentRuntime.Activate("wt-hook-skill"))
+
+	mockWT := &mockWorktreeProvider{dir: t.TempDir(), createErr: fmt.Errorf("disk full")}
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider:   mockWT,
+	}
+	_, err = spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "worker",
+		Isolation: "worktree",
+	}, "hello")
+	assert.Error(t, err)
+	assert.Empty(t, createEvents, "HookOnWorktreeCreate should NOT fire when creation fails")
+}
+
+func TestWorktreeHookRemoveFiresOnCleanup(t *testing.T) {
+	var removeEvents []skills.HookEvent
+	loader := skills.NewLoader("", "")
+	loader.RegisterBuiltin(&skills.SkillManifest{
+		Name:    "wt-hook-skill",
+		Version: "1.0.0",
+		Types:   []skills.SkillType{skills.SkillTypePrompt},
+		Prompt:  skills.PromptConfig{SystemPromptFile: "wt hook"},
+	})
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+	parentRuntime := skills.NewRuntime(loader, s, tools.NewRegistry(), nil,
+		func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
+			return &skillMockBackend{
+				hooks: map[skills.HookPhase]skills.HookHandler{
+					skills.HookOnWorktreeRemove: func(event skills.HookEvent) (skills.HookResult, error) {
+						removeEvents = append(removeEvents, event)
+						return skills.HookResult{}, nil
+					},
+				},
+			}, nil
+		},
+		func(skillName string, declared []skills.Permission) skills.PermissionChecker {
+			return &skillMockChecker{}
+		},
+	)
+	require.NoError(t, parentRuntime.Discover(nil))
+	require.NoError(t, parentRuntime.Activate("wt-hook-skill"))
+
+	mockWT := &mockWorktreeProvider{dir: t.TempDir()}
+	spawner := &DefaultSubagentSpawner{
+		Provider:           &recordingProvider{},
+		ParentTools:        tools.NewRegistry(),
+		ParentSkillRuntime: parentRuntime,
+		Config:             &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider:   mockWT,
+	}
+	_, err = spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "worker",
+		Isolation: "worktree",
+	}, "hello")
+	require.NoError(t, err)
+	assert.True(t, mockWT.removed, "clean worktree should be removed")
+	require.Len(t, removeEvents, 1, "HookOnWorktreeRemove should fire exactly once")
+	assert.Equal(t, skills.HookOnWorktreeRemove, removeEvents[0].Phase)
+}
+
+func TestWorktreeHooksNotFiredWithoutSkillRuntime(t *testing.T) {
+	mockWT := &mockWorktreeProvider{dir: t.TempDir()}
+	spawner := &DefaultSubagentSpawner{
+		Provider:         &recordingProvider{},
+		ParentTools:      tools.NewRegistry(),
+		Config:           &config.Config{Provider: config.ProviderConfig{Model: "test"}},
+		WorktreeProvider: mockWT,
+	}
+	result, err := spawner.Spawn(context.Background(), SubagentConfig{
+		Name:      "worker",
+		Isolation: "worktree",
+	}, "hello")
+	require.NoError(t, err)
+	assert.True(t, mockWT.created)
+	assert.True(t, mockWT.removed)
+	assert.NoError(t, result.Error)
 }

@@ -87,7 +87,21 @@ func (s *DefaultSubagentSpawner) Spawn(ctx context.Context, cfg SubagentConfig, 
 			return nil, fmt.Errorf("creating worktree for subagent: %w", err)
 		}
 		workDir = wt.Dir
+		if s.ParentSkillRuntime != nil {
+			s.ParentSkillRuntime.DispatchHook(skills.HookEvent{
+				Phase: skills.HookOnWorktreeCreate,
+				Ctx:   ctx,
+				Data:  map[string]any{"name": wtName, "dir": wt.Dir},
+			})
+		}
 		wtCleanup = func() {
+			if s.ParentSkillRuntime != nil {
+				s.ParentSkillRuntime.DispatchHook(skills.HookEvent{
+					Phase: skills.HookOnWorktreeRemove,
+					Ctx:   ctx,
+					Data:  map[string]any{"name": wtName, "dir": wt.Dir},
+				})
+			}
 			changed, err := s.WorktreeProvider.HasWorktreeChanges(ctx, wtName)
 			if err != nil || changed {
 				return // Preserve on error or dirty state.
