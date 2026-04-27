@@ -1018,6 +1018,24 @@ func TestTurnWithStreamInitError(t *testing.T) {
 	assert.Equal(t, "done", events[len(events)-1].Type)
 }
 
+func TestRunLoop_PromptTooLong_ExitsWithProviderError(t *testing.T) {
+	errProvider := &errorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(errProvider, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	for evt := range ch {
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+	}
+	assert.Equal(t, agentsdk.ExitProviderError, exitReason)
+}
+
 func TestTurnWithApprovalError(t *testing.T) {
 	// The approval function returns an error
 	approvalErr := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
