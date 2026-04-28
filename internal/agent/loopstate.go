@@ -5,13 +5,18 @@ package agent
 // provider still rejected the request.
 const maxPromptTooLongRetries = 3
 
+// maxOutputTokensRecoveryLimit caps continuation retries when the model
+// hits the output token limit on every attempt.
+const maxOutputTokensRecoveryLimit = 3
+
 type loopState struct {
-	maxTurns              int
-	turnCount             int
-	repeatedToolRounds    int
-	lastToolSignature     string
-	streamErr             bool
-	promptTooLongAttempts int
+	maxTurns                  int
+	turnCount                 int
+	repeatedToolRounds        int
+	lastToolSignature         string
+	streamErr                 bool
+	promptTooLongAttempts     int
+	maxTokensRecoveryAttempts int
 }
 
 func newLoopState(maxTurns, turnCount int) *loopState {
@@ -23,7 +28,8 @@ func (s *loopState) hasMoreTurns() bool {
 }
 
 // resetPerTurn clears per-iteration state. Cross-turn fields
-// (repeatedToolRounds, lastToolSignature) are intentionally preserved.
+// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts)
+// are intentionally preserved across sub-turns within a single Turn().
 func (s *loopState) resetPerTurn() {
 	s.streamErr = false
 }
