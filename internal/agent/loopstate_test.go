@@ -92,3 +92,20 @@ func TestLoopState_CheckDiminishingReturns_ResetsOnSpike(t *testing.T) {
 	assert.False(t, ls.checkDiminishingReturns(2100))
 	assert.False(t, ls.checkDiminishingReturns(2150))
 }
+
+func TestContinueReason_String(t *testing.T) {
+	tests := []struct {
+		reason ContinueReason
+		want   string
+	}{
+		{ContinueNextTurn, "next_turn"},
+		{ContinuePromptTooLongRetry, "prompt_too_long_retry"},
+		{ContinueMaxTokensRecovery, "max_tokens_recovery"},
+		{ContinueModelFallback, "model_fallback"},
+		{ContinueUnknown, "unknown"},
+		{ContinueReason(99), "unknown"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, tt.reason.String())
+	}
+}
