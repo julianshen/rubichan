@@ -1750,6 +1750,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
+		if ls.checkDiminishingReturns(totalOutputTokens) {
+			a.logger.Warn("diminishing returns: %d consecutive turns with < %d output tokens", ls.continuationCount, diminishingThreshold)
+			a.executeTools(ctx, ch, pendingTools, streamedResults)
+			a.emit(ctx, ch, TurnEvent{Type: "diminishing_returns"})
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitDiminishingReturns))
+			return
+		}
+
 		signature := pendingToolSignature(pendingTools)
 		if ls.recordToolSignature(signature, hasTextContent(blocks)) {
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", ls.repeatedToolRounds)})

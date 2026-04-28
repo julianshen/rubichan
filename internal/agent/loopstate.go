@@ -9,6 +9,11 @@ const maxPromptTooLongRetries = 3
 // hits the output token limit on every attempt.
 const maxOutputTokensRecoveryLimit = 3
 
+// diminishingThreshold is the output-token delta below which a turn is
+// considered to have made negligible progress. When 3+ consecutive turns
+// stay below this threshold the loop exits with ExitDiminishingReturns.
+const diminishingThreshold = 500
+
 type loopState struct {
 	maxTurns                  int
 	turnCount                 int
@@ -17,6 +22,9 @@ type loopState struct {
 	streamErr                 bool
 	promptTooLongAttempts     int
 	maxTokensRecoveryAttempts int
+	continuationCount         int
+	lastDeltaTokens           int
+	lastGlobalOutputTokens    int
 }
 
 func newLoopState(maxTurns, turnCount int) *loopState {
@@ -28,7 +36,8 @@ func (s *loopState) hasMoreTurns() bool {
 }
 
 // resetPerTurn clears per-iteration state. Cross-turn fields
-// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts)
+// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts,
+// continuationCount, lastDeltaTokens, lastGlobalOutputTokens)
 // are intentionally preserved across sub-turns within a single Turn().
 func (s *loopState) resetPerTurn() {
 	s.streamErr = false
@@ -44,4 +53,19 @@ func (s *loopState) recordToolSignature(sig string, hasText bool) bool {
 		s.repeatedToolRounds = 1
 	}
 	return s.repeatedToolRounds >= maxRepeatedPendingToolRounds
+}
+
+func (s *loopState) checkDiminishingReturns(currentOutputTokens int) bool {
+	delta := currentOutputTokens - s.lastGlobalOutputTokens
+	isDiminishing := s.continuationCount >= 3 &&
+		delta < diminishingThreshold &&
+		s.lastDeltaTokens < diminishingThreshold
+	s.lastDeltaTokens = delta
+	s.lastGlobalOutputTokens = currentOutputTokens
+	if delta >= diminishingThreshold {
+		s.continuationCount = 0
+	} else {
+		s.continuationCount++
+	}
+	return isDiminishing
 }
