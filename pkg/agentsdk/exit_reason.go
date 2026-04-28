@@ -48,6 +48,10 @@ const (
 	// repeated no-shrink attempts.
 	ExitCompactionFailed
 
+	// ExitContextOverflow: context exceeded provider limits and reactive
+	// compaction could not recover enough space to retry.
+	ExitContextOverflow
+
 	// ExitPanic: a panic was recovered in Turn's deferred handler.
 	ExitPanic
 )
@@ -75,6 +79,8 @@ func (r TurnExitReason) String() string {
 		return "empty_response"
 	case ExitCompactionFailed:
 		return "compaction_failed"
+	case ExitContextOverflow:
+		return "context_overflow"
 	case ExitPanic:
 		return "panic"
 	default:

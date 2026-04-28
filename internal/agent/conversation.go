@@ -57,6 +57,30 @@ func (c *Conversation) LoadFromMessages(msgs []provider.Message) {
 	copy(c.messages, msgs)
 }
 
+// DrainMessages removes the oldest message pairs until only minPairsToKeep
+// remain. Returns true if any messages were removed. Copies into a fresh
+// slice to avoid retaining the drained messages in the backing array.
+// Ensures the kept slice starts on a non-tool_result boundary.
+func (c *Conversation) DrainMessages(minPairsToKeep int) bool {
+	if len(c.messages) <= minPairsToKeep*2 {
+		return false
+	}
+	cutoff := len(c.messages) - minPairsToKeep*2
+	if cutoff <= 0 {
+		return false
+	}
+	for cutoff < len(c.messages) && cutoff > 0 && c.messages[cutoff].Role == "tool_result" {
+		cutoff++
+	}
+	if cutoff >= len(c.messages) {
+		return false
+	}
+	kept := make([]provider.Message, len(c.messages)-cutoff)
+	copy(kept, c.messages[cutoff:])
+	c.messages = kept
+	return true
+}
+
 // Clear removes all messages but preserves the system prompt.
 func (c *Conversation) Clear() {
 	c.messages = nil

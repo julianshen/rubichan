@@ -1016,9 +1016,10 @@ func TestTurnWithStreamInitError(t *testing.T) {
 	}
 	assert.True(t, hasError, "should have error event from Stream() failure")
 	assert.Equal(t, "done", events[len(events)-1].Type)
+	assert.Equal(t, agentsdk.ExitProviderError, events[len(events)-1].ExitReason)
 }
 
-func TestRunLoop_PromptTooLong_ExitsWithProviderError(t *testing.T) {
+func TestRunLoop_PromptTooLong_SmallConversation_ExitsImmediately(t *testing.T) {
 	errProvider := &errorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
 	reg := tools.NewRegistry()
 	cfg := config.DefaultConfig()
@@ -1033,7 +1034,79 @@ func TestRunLoop_PromptTooLong_ExitsWithProviderError(t *testing.T) {
 			exitReason = evt.ExitReason
 		}
 	}
-	assert.Equal(t, agentsdk.ExitProviderError, exitReason)
+	assert.Equal(t, agentsdk.ExitContextOverflow, exitReason)
+}
+
+type retryAfterErrorProvider struct {
+	err       error
+	callCount int
+}
+
+func (r *retryAfterErrorProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	r.callCount++
+	if r.callCount == 1 {
+		return nil, r.err
+	}
+	ch := make(chan provider.StreamEvent, 2)
+	ch <- provider.StreamEvent{Type: "text_delta", Text: "recovered"}
+	ch <- provider.StreamEvent{Type: "done", InputTokens: 1, OutputTokens: 1}
+	close(ch)
+	return ch, nil
+}
+
+func TestRunLoop_PromptTooLong_RecoversViaDrain(t *testing.T) {
+	prov := &retryAfterErrorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+	for i := 0; i < 10; i++ {
+		agent.conversation.AddUser(fmt.Sprintf("prior message %d", i))
+		agent.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("response %d", i)}})
+	}
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	var sawOverflowEvent bool
+	for evt := range ch {
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+		if evt.Type == "context_overflow" {
+			sawOverflowEvent = true
+		}
+	}
+	assert.Equal(t, agentsdk.ExitCompleted, exitReason, "should recover after drain")
+	assert.True(t, sawOverflowEvent, "should emit context_overflow event on recovery")
+	assert.Equal(t, 2, prov.callCount, "should retry after drain")
+}
+
+func TestRunLoop_PromptTooLong_ExhaustsRetries(t *testing.T) {
+	prov := &errorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+	for i := 0; i < 20; i++ {
+		agent.conversation.AddUser(fmt.Sprintf("prior message %d", i))
+		agent.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("response %d", i)}})
+	}
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	var overflowEvents int
+	for evt := range ch {
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+		if evt.Type == "context_overflow" {
+			overflowEvents++
+		}
+	}
+	assert.Equal(t, agentsdk.ExitContextOverflow, exitReason, "should exhaust retries and exit")
+	assert.GreaterOrEqual(t, overflowEvents, 1, "should attempt at least one recovery before giving up")
 }
 
 func TestTurnWithApprovalError(t *testing.T) {

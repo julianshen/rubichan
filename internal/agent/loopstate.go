@@ -1,11 +1,17 @@
 package agent
 
+// maxPromptTooLongRetries caps total reactive-compaction rounds within a
+// single Turn() call, including rounds where compaction succeeded but the
+// provider still rejected the request.
+const maxPromptTooLongRetries = 3
+
 type loopState struct {
-	maxTurns           int
-	turnCount          int
-	repeatedToolRounds int
-	lastToolSignature  string
-	streamErr          bool
+	maxTurns              int
+	turnCount             int
+	repeatedToolRounds    int
+	lastToolSignature     string
+	streamErr             bool
+	promptTooLongAttempts int
 }
 
 func newLoopState(maxTurns, turnCount int) *loopState {

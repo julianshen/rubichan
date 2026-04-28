@@ -1406,7 +1406,30 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return a.provider.Stream(ctx, req)
 		}, onRetry)
 		if err != nil {
-			a.logger.Warn("provider error classified as %s: %v", errorclass.Classify(err), err)
+			class := errorclass.Classify(err)
+			a.logger.Warn("provider error classified as %s: %v", class, err)
+
+			if class == errorclass.ClassPromptTooLong {
+				compacted := reactiveCompact(ctx, a.context, a.conversation)
+				drained := false
+				if !compacted {
+					drained = a.conversation.DrainMessages(minDrainPairs)
+					if drained {
+						a.logger.Warn("forceCompact did not reduce; fell back to DrainMessages")
+					}
+				}
+				if ls.promptTooLongAttempts < maxPromptTooLongRetries && (compacted || drained) {
+					ls.promptTooLongAttempts++
+					a.emit(ctx, ch, TurnEvent{Type: "context_overflow"})
+					a.saveSnapshotIfNeeded()
+					ls.turnCount--
+					continue
+				}
+				a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
+				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitContextOverflow))
+				return
+			}
+
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
 			return
