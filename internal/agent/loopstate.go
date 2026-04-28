@@ -28,7 +28,8 @@ func (s *loopState) hasMoreTurns() bool {
 }
 
 // resetPerTurn clears per-iteration state. Cross-turn fields
-// (repeatedToolRounds, lastToolSignature) are intentionally preserved.
+// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts)
+// are intentionally preserved across sub-turns within a single Turn().
 func (s *loopState) resetPerTurn() {
 	s.streamErr = false
 }

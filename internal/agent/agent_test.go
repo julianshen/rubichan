@@ -1138,6 +1138,7 @@ func TestRunLoop_MaxTokens_RetriesWithContinuation(t *testing.T) {
 
 	var exitReason agentsdk.TurnExitReason
 	var output string
+	var recoveryEvents int
 	for evt := range ch {
 		if evt.Type == "text_delta" {
 			output += evt.Text
@@ -1145,10 +1146,14 @@ func TestRunLoop_MaxTokens_RetriesWithContinuation(t *testing.T) {
 		if evt.Type == "done" {
 			exitReason = evt.ExitReason
 		}
+		if evt.Type == "max_tokens_recovery" {
+			recoveryEvents++
+		}
 	}
 	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
 	assert.Equal(t, 3, prov.callCount, "should retry on max_tokens until end_turn")
 	assert.Contains(t, output, "response_3")
+	assert.Equal(t, 2, recoveryEvents, "should emit 2 recovery events (attempts 1 and 2)")
 }
 
 func TestRunLoop_MaxTokens_StopsAfterMaxRecovery(t *testing.T) {
@@ -1161,13 +1166,57 @@ func TestRunLoop_MaxTokens_StopsAfterMaxRecovery(t *testing.T) {
 	require.NoError(t, err)
 
 	var exitReason agentsdk.TurnExitReason
+	var recoveryEvents int
 	for evt := range ch {
 		if evt.Type == "done" {
 			exitReason = evt.ExitReason
 		}
+		if evt.Type == "max_tokens_recovery" {
+			recoveryEvents++
+		}
 	}
 	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
-	assert.LessOrEqual(t, prov.callCount, maxOutputTokensRecoveryLimit+1, "should stop after max recovery attempts + 1")
+	assert.Equal(t, maxOutputTokensRecoveryLimit, recoveryEvents, "should attempt exactly maxOutputTokensRecoveryLimit recoveries")
+	assert.Equal(t, maxOutputTokensRecoveryLimit+1, prov.callCount, "should stop after max recovery attempts + final call")
+}
+
+func TestRunLoop_MaxTokens_WithToolCalls_DoesNotRetry(t *testing.T) {
+	prov := &maxTokensWithToolProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var recoveryEvents int
+	for evt := range ch {
+		if evt.Type == "max_tokens_recovery" {
+			recoveryEvents++
+		}
+	}
+	assert.Equal(t, 0, recoveryEvents, "should not emit recovery events when max_tokens has tool calls")
+}
+
+type maxTokensWithToolProvider struct {
+	callCount int
+}
+
+func (m *maxTokensWithToolProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	m.callCount++
+	ch := make(chan provider.StreamEvent, 4)
+	ch <- provider.StreamEvent{Type: "text_delta", Text: "partial response"}
+	ch <- provider.StreamEvent{
+		Type: "tool_use",
+		ToolUse: &provider.ToolUseBlock{
+			ID:    "tu_1",
+			Name:  "read_file",
+			Input: json.RawMessage(`{"path": "/etc/hosts"}`),
+		},
+	}
+	ch <- provider.StreamEvent{Type: "stop", StopReason: "max_tokens", InputTokens: 1, OutputTokens: 1}
+	close(ch)
+	return ch, nil
 }
 
 func TestTurnWithApprovalError(t *testing.T) {
