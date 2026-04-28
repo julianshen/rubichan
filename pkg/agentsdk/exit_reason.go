@@ -54,6 +54,10 @@ const (
 
 	// ExitPanic: a panic was recovered in Turn's deferred handler.
 	ExitPanic
+
+	// ExitDiminishingReturns: output tokens per turn fell below the
+	// diminishing-returns threshold for multiple consecutive turns.
+	ExitDiminishingReturns
 )
 
 // String returns a stable lowercase identifier usable in logs and tests.
@@ -83,6 +87,8 @@ func (r TurnExitReason) String() string {
 		return "context_overflow"
 	case ExitPanic:
 		return "panic"
+	case ExitDiminishingReturns:
+		return "diminishing_returns"
 	default:
 		return "unknown"
 	}

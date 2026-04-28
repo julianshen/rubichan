@@ -60,3 +60,35 @@ func TestLoopState_RecordToolSignature_ResetsOnTextContent(t *testing.T) {
 	ls.recordToolSignature("read_file", false)
 	assert.False(t, ls.recordToolSignature("read_file", true), "text content resets counter")
 }
+
+func TestLoopState_CheckDiminishingReturns_BelowThreshold(t *testing.T) {
+	ls := newLoopState(50, 0)
+
+	assert.False(t, ls.checkDiminishingReturns(100), "turn 1: not enough continuations")
+	assert.False(t, ls.checkDiminishingReturns(200), "turn 2: not enough continuations")
+	assert.False(t, ls.checkDiminishingReturns(250), "turn 3: delta=50 < threshold but need one more check")
+	assert.True(t, ls.checkDiminishingReturns(300), "turn 4: delta=50 AND lastDelta=50, both < threshold")
+}
+
+func TestLoopState_CheckDiminishingReturns_AboveThreshold(t *testing.T) {
+	ls := newLoopState(50, 0)
+
+	assert.False(t, ls.checkDiminishingReturns(100))
+	assert.False(t, ls.checkDiminishingReturns(800))
+	assert.False(t, ls.checkDiminishingReturns(1500))
+	assert.False(t, ls.checkDiminishingReturns(2500))
+	assert.False(t, ls.checkDiminishingReturns(3500))
+}
+
+func TestLoopState_CheckDiminishingReturns_ResetsOnSpike(t *testing.T) {
+	ls := newLoopState(50, 0)
+
+	assert.False(t, ls.checkDiminishingReturns(100))
+	assert.False(t, ls.checkDiminishingReturns(200))
+	assert.False(t, ls.checkDiminishingReturns(250))
+
+	assert.False(t, ls.checkDiminishingReturns(2000), "big spike resets the pattern")
+	assert.False(t, ls.checkDiminishingReturns(2050))
+	assert.False(t, ls.checkDiminishingReturns(2100))
+	assert.False(t, ls.checkDiminishingReturns(2150))
+}
