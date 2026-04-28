@@ -854,7 +854,7 @@ func (a *Agent) saveSnapshotIfNeeded() {
 }
 
 // Generation returns the current generation counter, which increments once per
-// completed Turn. It is safe to call concurrently.
+// Turn when the turn goroutine begins executing. It is safe to call concurrently.
 func (a *Agent) Generation() int64 {
 	return a.generation.Load()
 }

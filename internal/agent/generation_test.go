@@ -11,6 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAgent_GenerationStartsAtZero(t *testing.T) {
+	prov := &dynamicMockProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+	assert.Equal(t, int64(0), agent.Generation(), "generation should start at 0")
+}
+
 func TestAgent_GenerationIncrementsPerTurn(t *testing.T) {
 	prov := &dynamicMockProvider{
 		responses: [][]provider.StreamEvent{
