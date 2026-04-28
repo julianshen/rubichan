@@ -1567,9 +1567,22 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
-		// Warn if the model hit the output token cap so operators know to raise MaxOutputTokens.
-		if stopReason == agentsdk.StopReasonMaxTokens {
-			a.logger.Warn("response truncated by output token limit (consider increasing max_output_tokens in config)")
+		// Handle max_tokens truncation: inject a continuation message and
+		// retry so the model can complete its response. Escalate once (to
+		// increase the output limit on the next call), then retry up to
+		// maxOutputTokensRecoveryLimit times with continuation prompts.
+		if stopReason == agentsdk.StopReasonMaxTokens && len(pendingTools) == 0 {
+			if ls.maxTokensRecoveryAttempts < maxOutputTokensRecoveryLimit {
+				ls.maxTokensRecoveryAttempts++
+				a.conversation.AddAssistant(blocks)
+				a.persistMessage("assistant", blocks)
+				a.conversation.AddUser(fmt.Sprintf(
+					"[max_output_tokens recovery %d/%d] Continue your response from where you left off.",
+					ls.maxTokensRecoveryAttempts, maxOutputTokensRecoveryLimit))
+				ls.turnCount--
+				continue
+			}
+			a.logger.Warn("response truncated by output token limit after %d recovery attempts", ls.maxTokensRecoveryAttempts)
 		}
 
 		// Capture accumulated text before finalizing, for text-based tool extraction.

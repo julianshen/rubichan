@@ -1109,6 +1109,67 @@ func TestRunLoop_PromptTooLong_ExhaustsRetries(t *testing.T) {
 	assert.GreaterOrEqual(t, overflowEvents, 1, "should attempt at least one recovery before giving up")
 }
 
+type maxTokensProvider struct {
+	callCount int
+	maxCalls  int
+}
+
+func (m *maxTokensProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	m.callCount++
+	ch := make(chan provider.StreamEvent, 4)
+	ch <- provider.StreamEvent{Type: "text_delta", Text: fmt.Sprintf("response_%d", m.callCount)}
+	if m.callCount < m.maxCalls {
+		ch <- provider.StreamEvent{Type: "stop", StopReason: "max_tokens", InputTokens: 1, OutputTokens: 1}
+	} else {
+		ch <- provider.StreamEvent{Type: "stop", StopReason: "end_turn", InputTokens: 1, OutputTokens: 1}
+	}
+	close(ch)
+	return ch, nil
+}
+
+func TestRunLoop_MaxTokens_RetriesWithContinuation(t *testing.T) {
+	prov := &maxTokensProvider{maxCalls: 3}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	var output string
+	for evt := range ch {
+		if evt.Type == "text_delta" {
+			output += evt.Text
+		}
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+	}
+	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
+	assert.Equal(t, 3, prov.callCount, "should retry on max_tokens until end_turn")
+	assert.Contains(t, output, "response_3")
+}
+
+func TestRunLoop_MaxTokens_StopsAfterMaxRecovery(t *testing.T) {
+	prov := &maxTokensProvider{maxCalls: 100}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	for evt := range ch {
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+	}
+	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
+	assert.LessOrEqual(t, prov.callCount, maxOutputTokensRecoveryLimit+1, "should stop after max recovery attempts + 1")
+}
+
 func TestTurnWithApprovalError(t *testing.T) {
 	// The approval function returns an error
 	approvalErr := func(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
