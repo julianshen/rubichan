@@ -1436,6 +1436,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					a.emit(ctx, ch, TurnEvent{Type: "context_overflow"})
 					a.saveSnapshotIfNeeded()
 					ls.turnCount--
+					ls.lastContinueReason = ContinuePromptTooLongRetry
 					continue
 				}
 				a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
@@ -1461,6 +1462,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					return a.provider.Stream(ctx, fallbackReq)
 				}, onRetry)
 				if fallbackErr == nil {
+					ls.lastContinueReason = ContinueModelFallback
 					goto processStream
 				}
 				a.logger.Warn("fallback model also failed: %v", fallbackErr)
@@ -1626,6 +1628,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				a.emit(ctx, ch, TurnEvent{Type: "max_tokens_recovery"})
 				a.saveSnapshotIfNeeded()
 				ls.turnCount--
+				ls.lastContinueReason = ContinueMaxTokensRecovery
 				continue
 			} else {
 				a.logger.Warn("response truncated by output token limit after %d recovery attempts", ls.maxTokensRecoveryAttempts)
@@ -1792,6 +1795,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		// Continue to the next turn after tool results.
+		ls.lastContinueReason = ContinueNextTurn
 	}
 
 	// Reached max turns.

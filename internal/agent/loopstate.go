@@ -14,6 +14,31 @@ const maxOutputTokensRecoveryLimit = 3
 // stay below this threshold the loop exits with ExitDiminishingReturns.
 const diminishingThreshold = 500
 
+type ContinueReason int
+
+const (
+	ContinueUnknown            ContinueReason = iota
+	ContinueNextTurn                          // normal tool-use continuation
+	ContinuePromptTooLongRetry                // reactive compact recovered context
+	ContinueMaxTokensRecovery                 // max_tokens continuation prompt
+	ContinueModelFallback                     // fell back to alternate model
+)
+
+func (r ContinueReason) String() string {
+	switch r {
+	case ContinueNextTurn:
+		return "next_turn"
+	case ContinuePromptTooLongRetry:
+		return "prompt_too_long_retry"
+	case ContinueMaxTokensRecovery:
+		return "max_tokens_recovery"
+	case ContinueModelFallback:
+		return "model_fallback"
+	default:
+		return "unknown"
+	}
+}
+
 type loopState struct {
 	maxTurns                  int
 	turnCount                 int
@@ -25,6 +50,7 @@ type loopState struct {
 	continuationCount         int
 	lastDeltaTokens           int
 	lastGlobalOutputTokens    int
+	lastContinueReason        ContinueReason
 }
 
 func newLoopState(maxTurns, turnCount int) *loopState {
