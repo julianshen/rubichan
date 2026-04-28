@@ -1409,26 +1409,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			class := errorclass.Classify(err)
 			a.logger.Warn("provider error classified as %s: %v", class, err)
 
-			if class == errorclass.ClassPromptTooLong && ls.promptTooLongAttempts < maxPromptTooLongRetries {
-				ls.promptTooLongAttempts++
-				result := reactiveCompact(ctx, a.context, a.conversation)
-				if result.compacted {
-					a.saveSnapshotIfNeeded()
-					ls.turnCount--
-					continue
-				}
-				drained := contextCollapseDrain(a.conversation.Messages(), 2)
-				if len(drained) < a.conversation.Len() {
-					a.conversation.LoadFromMessages(drained)
-					a.saveSnapshotIfNeeded()
-					ls.turnCount--
-					continue
-				}
-				ls.turnCount--
-				continue
-			}
-
 			if class == errorclass.ClassPromptTooLong {
+				if ls.promptTooLongAttempts < maxPromptTooLongRetries &&
+					(reactiveCompact(ctx, a.context, a.conversation) || a.conversation.DrainMessages(minDrainPairs)) {
+					ls.promptTooLongAttempts++
+					a.saveSnapshotIfNeeded()
+					ls.turnCount--
+					continue
+				}
 				a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
 				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitContextOverflow))
 				return

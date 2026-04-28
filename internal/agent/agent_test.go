@@ -1058,6 +1058,10 @@ func TestRunLoop_PromptTooLong_RecoversWithCompaction(t *testing.T) {
 	reg := tools.NewRegistry()
 	cfg := config.DefaultConfig()
 	agent := New(prov, reg, autoApprove, cfg)
+	for i := 0; i < 10; i++ {
+		agent.conversation.AddUser(fmt.Sprintf("prior message %d", i))
+		agent.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("response %d", i)}})
+	}
 
 	ch, err := agent.Turn(context.Background(), "hello")
 	require.NoError(t, err)

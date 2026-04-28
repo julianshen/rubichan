@@ -20,7 +20,7 @@ func TestReactiveCompact_ReducesMessages(t *testing.T) {
 	initialLen := conv.Len()
 
 	result := reactiveCompact(context.Background(), cm, conv)
-	assert.True(t, result.compacted, "should have compacted")
+	assert.True(t, result, "should have compacted")
 	assert.Less(t, conv.Len(), initialLen, "messages should be reduced")
 }
 
@@ -29,7 +29,7 @@ func TestReactiveCompact_EmptyConversation(t *testing.T) {
 	conv := NewConversation("system")
 
 	result := reactiveCompact(context.Background(), cm, conv)
-	assert.False(t, result.compacted, "empty conversation should not compact")
+	assert.False(t, result, "empty conversation should not compact")
 }
 
 func TestReactiveCompact_NoReduction(t *testing.T) {
@@ -41,23 +41,31 @@ func TestReactiveCompact_NoReduction(t *testing.T) {
 	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "hi"}})
 
 	result := reactiveCompact(context.Background(), cm, conv)
-	assert.False(t, result.compacted, "strategy that doesn't reduce should return false")
+	assert.False(t, result, "strategy that doesn't reduce should return false")
 }
 
-func TestContextCollapseDrain(t *testing.T) {
-	msgs := make([]int, 20)
-	drained := contextCollapseDrain(msgs, 5)
-	assert.Equal(t, 10, len(drained), "should keep 5 pairs = 10 messages")
+func TestDrainMessages(t *testing.T) {
+	conv := NewConversation("system")
+	for i := 0; i < 20; i++ {
+		conv.AddUser("msg")
+		conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "resp"}})
+	}
+	assert.True(t, conv.DrainMessages(5))
+	assert.Equal(t, 10, conv.Len(), "should keep 5 pairs = 10 messages")
 }
 
-func TestContextCollapseDrain_SmallInput(t *testing.T) {
-	msgs := make([]int, 8)
-	drained := contextCollapseDrain(msgs, 5)
-	assert.Equal(t, 8, len(drained), "should keep all when below minPairs")
+func TestDrainMessages_SmallConversation(t *testing.T) {
+	conv := NewConversation("system")
+	conv.AddUser("hello")
+	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "hi"}})
+	assert.False(t, conv.DrainMessages(5), "should not drain small conversation")
 }
 
-func TestContextCollapseDrain_ZeroMinPairs(t *testing.T) {
-	msgs := make([]int, 20)
-	drained := contextCollapseDrain(msgs, 0)
-	assert.Equal(t, 20, len(drained), "zero minPairs keeps all")
+func TestDrainMessages_ExactBoundary(t *testing.T) {
+	conv := NewConversation("system")
+	conv.AddUser("msg")
+	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "resp"}})
+	conv.AddUser("msg2")
+	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "resp2"}})
+	assert.False(t, conv.DrainMessages(2), "4 messages = exactly 2 pairs, should not drain")
 }

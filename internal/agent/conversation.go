@@ -57,6 +57,25 @@ func (c *Conversation) LoadFromMessages(msgs []provider.Message) {
 	copy(c.messages, msgs)
 }
 
+// DrainMessages removes the oldest message pairs until only minPairsToKeep
+// remain. Returns true if any messages were removed. Operates in-place
+// without allocating a copy.
+func (c *Conversation) DrainMessages(minPairsToKeep int) bool {
+	if len(c.messages) <= minPairsToKeep*2 {
+		return false
+	}
+	pairsToRemove := (len(c.messages) - minPairsToKeep*2) / 2
+	if pairsToRemove <= 0 {
+		return false
+	}
+	cutoff := pairsToRemove * 2
+	if cutoff >= len(c.messages) {
+		return false
+	}
+	c.messages = c.messages[cutoff:]
+	return true
+}
+
 // Clear removes all messages but preserves the system prompt.
 func (c *Conversation) Clear() {
 	c.messages = nil
