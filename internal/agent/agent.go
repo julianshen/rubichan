@@ -342,6 +342,7 @@ type Agent struct {
 	checkpointMgr     *checkpoint.Manager
 	userHookRunner    *hooks.UserHookRunner
 	turnNumber        atomic.Int32
+	generation        atomic.Int64
 	rateLimiter       *SharedRateLimiter
 	capabilities      provider.ModelCapabilities
 	progress          *ProgressTracker
@@ -852,6 +853,12 @@ func (a *Agent) saveSnapshotIfNeeded() {
 	}
 }
 
+// Generation returns the current generation counter, which increments once per
+// Turn when the turn goroutine begins executing. It is safe to call concurrently.
+func (a *Agent) Generation() int64 {
+	return a.generation.Load()
+}
+
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
 // Concurrent calls are serialized to prevent DiffTracker race conditions.
@@ -882,6 +889,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 
 	ch := make(chan TurnEvent, 64)
 	go func() {
+		a.generation.Add(1)
 		defer a.turnMu.Unlock()
 		defer close(ch)
 		defer func() {
