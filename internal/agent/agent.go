@@ -1410,9 +1410,17 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			a.logger.Warn("provider error classified as %s: %v", class, err)
 
 			if class == errorclass.ClassPromptTooLong {
-				if ls.promptTooLongAttempts < maxPromptTooLongRetries &&
-					(reactiveCompact(ctx, a.context, a.conversation) || a.conversation.DrainMessages(minDrainPairs)) {
+				compacted := reactiveCompact(ctx, a.context, a.conversation)
+				drained := false
+				if !compacted {
+					drained = a.conversation.DrainMessages(minDrainPairs)
+					if drained {
+						a.logger.Warn("forceCompact did not reduce; fell back to DrainMessages")
+					}
+				}
+				if ls.promptTooLongAttempts < maxPromptTooLongRetries && (compacted || drained) {
 					ls.promptTooLongAttempts++
+					a.emit(ctx, ch, TurnEvent{Type: "context_overflow"})
 					a.saveSnapshotIfNeeded()
 					ls.turnCount--
 					continue

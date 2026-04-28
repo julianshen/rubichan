@@ -69,3 +69,14 @@ func TestDrainMessages_ExactBoundary(t *testing.T) {
 	conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "resp2"}})
 	assert.False(t, conv.DrainMessages(2), "4 messages = exactly 2 pairs, should not drain")
 }
+
+func TestDrainMessages_SkipsLeadingToolResult(t *testing.T) {
+	conv := NewConversation("system")
+	for i := 0; i < 10; i++ {
+		conv.AddUser("msg")
+		conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "resp"}})
+	}
+	conv.AddToolResult("tool-1", "result", false)
+	assert.True(t, conv.DrainMessages(2))
+	assert.NotEqual(t, "tool_result", conv.messages[0].Role, "should not start with tool_result")
+}
