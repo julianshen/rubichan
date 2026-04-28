@@ -187,6 +187,10 @@ func WithCapabilities(caps provider.ModelCapabilities) AgentOption {
 	return func(a *Agent) { a.capabilities = caps }
 }
 
+func WithFallbackModel(model string) AgentOption {
+	return func(a *Agent) { a.fallbackModel = model }
+}
+
 // WorkingDir returns the agent's effective working directory.
 // The value is frozen at construction time and never changes.
 func (a *Agent) WorkingDir() string {
@@ -343,6 +347,7 @@ type Agent struct {
 	userHookRunner    *hooks.UserHookRunner
 	turnNumber        atomic.Int32
 	generation        atomic.Int64
+	fallbackModel     string
 	rateLimiter       *SharedRateLimiter
 	capabilities      provider.ModelCapabilities
 	progress          *ProgressTracker
@@ -1438,11 +1443,31 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				return
 			}
 
+			if class == errorclass.ClassModelOverloaded && a.fallbackModel != "" {
+				a.logger.Warn("primary model overloaded; retrying with fallback model %s", a.fallbackModel)
+				a.emit(ctx, ch, TurnEvent{Type: "model_fallback", Model: a.fallbackModel})
+				fallbackReq := req
+				fallbackReq.Model = a.fallbackModel
+				fallbackReq.Messages = stripThinkingBlocks(req.Messages)
+				var fallbackErr error
+				stream, fallbackErr = TurnRetry(ctx, retryCfg, func(ctx context.Context) (<-chan provider.StreamEvent, error) {
+					return a.provider.Stream(ctx, fallbackReq)
+				}, onRetry)
+				if fallbackErr == nil {
+					goto processStream
+				}
+				a.logger.Warn("fallback model also failed: %v", fallbackErr)
+				a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream (fallback): %w", fallbackErr)})
+				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
+				return
+			}
+
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
 			return
 		}
 
+	processStream:
 		// Accumulate assistant content blocks and track tool calls
 		var blocks []provider.ContentBlock
 		var pendingTools []provider.ToolUseBlock
