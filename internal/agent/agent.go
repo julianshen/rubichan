@@ -1449,8 +1449,15 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				fallbackReq := req
 				fallbackReq.Model = a.fallbackModel
 				fallbackReq.Messages = stripThinkingBlocks(req.Messages)
+				fallbackRetryCfg := TurnRetryConfig{}
+				if ns, ok := a.provider.(NonStreamer); ok {
+					fbReq := fallbackReq
+					fallbackRetryCfg.NonStreamFallback = func(ctx context.Context) ([]provider.StreamEvent, error) {
+						return ns.NonStream(ctx, fbReq)
+					}
+				}
 				var fallbackErr error
-				stream, fallbackErr = TurnRetry(ctx, retryCfg, func(ctx context.Context) (<-chan provider.StreamEvent, error) {
+				stream, fallbackErr = TurnRetry(ctx, fallbackRetryCfg, func(ctx context.Context) (<-chan provider.StreamEvent, error) {
 					return a.provider.Stream(ctx, fallbackReq)
 				}, onRetry)
 				if fallbackErr == nil {
