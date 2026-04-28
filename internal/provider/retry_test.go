@@ -199,6 +199,32 @@ func TestDoWithRetry_SkipsRetryOnContextOverflow(t *testing.T) {
 	assert.EqualValues(t, 1, calls.Load(), "should not retry context overflow")
 }
 
+func TestRetryDelay_UsesJitter(t *testing.T) {
+	oldBase, oldMax := retryBaseDelay, retryMaxDelay
+	retryBaseDelay, retryMaxDelay = 100*time.Millisecond, 10*time.Second
+	t.Cleanup(func() {
+		retryBaseDelay, retryMaxDelay = oldBase, oldMax
+	})
+
+	var delays []time.Duration
+	for i := 0; i < 20; i++ {
+		delays = append(delays, retryDelay(1))
+	}
+	allSame := true
+	for i := 1; i < len(delays); i++ {
+		if delays[i] != delays[0] {
+			allSame = false
+			break
+		}
+	}
+	assert.False(t, allSame, "jitter should produce different delays across calls, got %v", delays)
+
+	for _, d := range delays {
+		assert.Greater(t, d, time.Duration(0))
+		assert.LessOrEqual(t, d, retryBaseDelay+retryBaseDelay/4, "delay should be base + up to 25%% jitter")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

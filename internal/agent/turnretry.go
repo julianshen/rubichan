@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -93,13 +94,14 @@ func TurnRetry(ctx context.Context, cfg TurnRetryConfig, fn StreamFunc, onRetry 
 
 	for attempt := 1; attempt <= cfg.maxAttempts(); attempt++ {
 		if attempt > 1 {
+			jittered := addJitter(delay)
 			if onRetry != nil {
-				onRetry(attempt, delay, lastErr)
+				onRetry(attempt, jittered, lastErr)
 			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(delay):
+			case <-time.After(jittered):
 			}
 			delay *= 2
 			if delay > cfg.maxDelay() {
@@ -155,4 +157,9 @@ func isRetryableProviderError(err error) bool {
 		return pe.IsRetryable()
 	}
 	return false
+}
+
+func addJitter(d time.Duration) time.Duration {
+	jitter := time.Duration(rand.Float64() * 0.25 * float64(d))
+	return d + jitter
 }

@@ -221,6 +221,82 @@ func TestTurnRetry_NonStreamFallbackError(t *testing.T) {
 
 // Without a NonStreamFallback, TurnRetry must preserve its original
 // behavior: return the last stream error after exhausting attempts.
+func TestTurnRetry_JitterProducesVariableDelays(t *testing.T) {
+	var delays []time.Duration
+	cfg := TurnRetryConfig{
+		MaxAttempts: 5,
+		BaseDelay:   50 * time.Millisecond,
+		MaxDelay:    500 * time.Millisecond,
+	}
+	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
+		return nil, &provider.ProviderError{Kind: provider.ErrRateLimited, Message: "429"}
+	}
+	onRetry := func(attempt int, delay time.Duration, cause error) {
+		delays = append(delays, delay)
+	}
+
+	_, _ = TurnRetry(context.Background(), cfg, fn, onRetry)
+	require.Len(t, delays, 4, "should have 4 retry callbacks for 5 attempts")
+
+	allSame := true
+	for i := 1; i < len(delays); i++ {
+		if delays[i] != delays[0] {
+			allSame = false
+			break
+		}
+	}
+	assert.False(t, allSame, "jitter should produce different delays across retries, got %v", delays)
+
+	for _, d := range delays {
+		assert.Greater(t, d, time.Duration(0), "delay must be positive")
+	}
+}
+
+func TestTurnRetry_JitterAppliedToBaseDelay(t *testing.T) {
+	base := 100 * time.Millisecond
+	var firstDelay time.Duration
+	cfg := TurnRetryConfig{
+		MaxAttempts: 2,
+		BaseDelay:   base,
+		MaxDelay:    10 * time.Second,
+	}
+	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
+		return nil, &provider.ProviderError{Kind: provider.ErrRateLimited, Message: "429"}
+	}
+	onRetry := func(attempt int, delay time.Duration, cause error) {
+		if attempt == 2 {
+			firstDelay = delay
+		}
+	}
+
+	_, _ = TurnRetry(context.Background(), cfg, fn, onRetry)
+	assert.Greater(t, firstDelay, time.Duration(0))
+	assert.LessOrEqual(t, firstDelay, base+base/4, "first retry delay should be base + up to 25%% jitter, got %v", firstDelay)
+}
+
+func TestTurnRetry_JitterStaysWithinBounds(t *testing.T) {
+	base := 100 * time.Millisecond
+	maxD := 2 * time.Second
+	var delays []time.Duration
+	cfg := TurnRetryConfig{
+		MaxAttempts: 8,
+		BaseDelay:   base,
+		MaxDelay:    maxD,
+	}
+	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
+		return nil, &provider.ProviderError{Kind: provider.ErrRateLimited, Message: "429"}
+	}
+	onRetry := func(attempt int, delay time.Duration, cause error) {
+		delays = append(delays, delay)
+	}
+
+	_, _ = TurnRetry(context.Background(), cfg, fn, onRetry)
+	for _, d := range delays {
+		assert.Greater(t, d, time.Duration(0))
+		assert.LessOrEqual(t, d, maxD+maxD/4, "delay with jitter should not exceed maxDelay + 25%%")
+	}
+}
+
 func TestTurnRetry_NoFallbackConfigured(t *testing.T) {
 	attempts := 0
 	fn := func(ctx context.Context) (<-chan provider.StreamEvent, error) {
