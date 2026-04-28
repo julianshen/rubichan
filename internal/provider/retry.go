@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"strconv"
@@ -113,7 +114,8 @@ func retryDelay(attempt int) time.Duration {
 			return retryMaxDelay
 		}
 	}
-	return delay
+	jitter := time.Duration(rand.Float64() * 0.25 * float64(delay))
+	return delay + jitter
 }
 
 func parseRetryAfter(v string) (time.Duration, bool) {
