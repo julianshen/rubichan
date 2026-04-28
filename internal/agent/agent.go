@@ -1787,6 +1787,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Drain any pending wake events from background subagents.
 		a.drainWakeEvents(ctx, ch)
 
+		if nudge := a.context.BudgetNudge(a.conversation); nudge != "" {
+			a.conversation.AddUser(nudge)
+		}
+
 		// Continue to the next turn after tool results.
 	}
 

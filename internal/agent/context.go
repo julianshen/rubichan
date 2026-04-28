@@ -251,6 +251,23 @@ func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
 	return cm.EstimateTokens(conv) > cm.budget.EffectiveWindow()
 }
 
+// BudgetNudge returns a budget awareness message if context usage is
+// between 70% and the compact trigger threshold. Returns empty string
+// when no nudge is needed (below 70% or already compacting).
+func (cm *ContextManager) BudgetNudge(conv *Conversation) string {
+	used := cm.EstimateTokens(conv)
+	window := cm.budget.EffectiveWindow()
+	if window <= 0 {
+		return ""
+	}
+	pct := float64(used) / float64(window)
+	if pct < 0.70 || pct >= cm.compactTrigger {
+		return ""
+	}
+	return fmt.Sprintf("Context usage: %d%% (%d/%d tokens). You have budget remaining — keep working but be mindful of context length.",
+		int(pct*100), used, window)
+}
+
 // Truncate removes the oldest messages until the conversation is within budget.
 // Deprecated: use Compact() which runs the full strategy chain.
 func (cm *ContextManager) Truncate(conv *Conversation) {
