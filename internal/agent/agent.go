@@ -1310,7 +1310,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 	}
 	for ; ls.hasMoreTurns(); ls.turnCount++ {
-		if ls.turnCount > turnCount && ls.lastContinueReason != ContinueUnknown {
+		if ls.turnCount > turnCount && ls.lastContinueReason != ContinueNextTurn {
 			a.logger.Warn("loop continue: reason=%s turn=%d/%d", ls.lastContinueReason, ls.turnCount, ls.maxTurns)
 		}
 		// Track turn number for checkpoint middleware.

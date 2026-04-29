@@ -235,6 +235,7 @@ func TestRetryDelay_CappedAtMaxWithJitter(t *testing.T) {
 
 	for i := 0; i < 20; i++ {
 		d := retryDelay(5)
+		assert.GreaterOrEqual(t, d, retryMaxDelay, "delay should be at least maxDelay, got %v", d)
 		assert.LessOrEqual(t, d, retryMaxDelay+retryMaxDelay/4, "delay should not exceed maxDelay + 25%% jitter, got %v", d)
 	}
 }

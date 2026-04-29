@@ -375,9 +375,12 @@ func TestBudgetNudge_NudgeEmittedOnce(t *testing.T) {
 	}
 	nudge := cm.BudgetNudge(conv)
 	assert.NotEmpty(t, nudge)
+	shouldEmit := nudge != "" && !ls.nudgeEmitted
+	assert.True(t, shouldEmit, "first call should emit")
+
 	ls.nudgeEmitted = true
-	ls.nudgeEmitted = true
-	assert.True(t, ls.nudgeEmitted, "nudge guard should prevent re-injection")
+	shouldEmit = nudge != "" && !ls.nudgeEmitted
+	assert.False(t, shouldEmit, "second call should be suppressed")
 }
 
 func TestVerdictContextBlockAllFailures(t *testing.T) {
