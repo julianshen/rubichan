@@ -1128,7 +1128,7 @@ func (m *maxTokensProvider) Stream(_ context.Context, _ provider.CompletionReque
 }
 
 func TestRunLoop_MaxTokens_RetriesWithContinuation(t *testing.T) {
-	prov := &maxTokensProvider{maxCalls: 3}
+	prov := &maxTokensProvider{maxCalls: 4}
 	reg := tools.NewRegistry()
 	cfg := config.DefaultConfig()
 	agent := New(prov, reg, autoApprove, cfg)
@@ -1139,6 +1139,7 @@ func TestRunLoop_MaxTokens_RetriesWithContinuation(t *testing.T) {
 	var exitReason agentsdk.TurnExitReason
 	var output string
 	var recoveryEvents int
+	var escalationEvents int
 	for evt := range ch {
 		if evt.Type == "text_delta" {
 			output += evt.Text
@@ -1149,11 +1150,15 @@ func TestRunLoop_MaxTokens_RetriesWithContinuation(t *testing.T) {
 		if evt.Type == "max_tokens_recovery" {
 			recoveryEvents++
 		}
+		if evt.Type == "max_tokens_escalation" {
+			escalationEvents++
+		}
 	}
 	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
-	assert.Equal(t, 3, prov.callCount, "should retry on max_tokens until end_turn")
-	assert.Contains(t, output, "response_3")
-	assert.Equal(t, 2, recoveryEvents, "should emit 2 recovery events (attempts 1 and 2)")
+	assert.Equal(t, 4, prov.callCount, "should retry on max_tokens until end_turn")
+	assert.Contains(t, output, "response_4")
+	assert.Equal(t, 1, escalationEvents, "should emit 1 escalation event (first max_tokens hit)")
+	assert.Equal(t, 2, recoveryEvents, "should emit 2 recovery events (attempts after escalation)")
 }
 
 func TestRunLoop_MaxTokens_StopsAfterMaxRecovery(t *testing.T) {
@@ -1167,6 +1172,7 @@ func TestRunLoop_MaxTokens_StopsAfterMaxRecovery(t *testing.T) {
 
 	var exitReason agentsdk.TurnExitReason
 	var recoveryEvents int
+	var escalationEvents int
 	for evt := range ch {
 		if evt.Type == "done" {
 			exitReason = evt.ExitReason
@@ -1174,10 +1180,14 @@ func TestRunLoop_MaxTokens_StopsAfterMaxRecovery(t *testing.T) {
 		if evt.Type == "max_tokens_recovery" {
 			recoveryEvents++
 		}
+		if evt.Type == "max_tokens_escalation" {
+			escalationEvents++
+		}
 	}
 	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
-	assert.Equal(t, maxOutputTokensRecoveryLimit, recoveryEvents, "should attempt exactly maxOutputTokensRecoveryLimit recoveries")
-	assert.Equal(t, maxOutputTokensRecoveryLimit+1, prov.callCount, "should stop after max recovery attempts + final call")
+	assert.Equal(t, 1, escalationEvents, "should escalate once")
+	assert.Equal(t, maxOutputTokensRecoveryLimit, recoveryEvents, "should attempt exactly maxOutputTokensRecoveryLimit recoveries after escalation")
+	assert.Equal(t, 1+maxOutputTokensRecoveryLimit+1, prov.callCount, "1 escalation + maxOutputTokensRecoveryLimit recovery + 1 final call")
 }
 
 func TestRunLoop_MaxTokens_WithToolCalls_DoesNotRetry(t *testing.T) {

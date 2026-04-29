@@ -367,7 +367,7 @@ func TestContextManager_BudgetNudge_AboveCompactTrigger(t *testing.T) {
 }
 
 func TestBudgetNudge_NudgeEmittedOnce(t *testing.T) {
-	ls := newLoopState(50, 0)
+	ls := newLoopState(50, 0, 8192)
 	cm := NewContextManager(100, 0)
 	conv := NewConversation("short")
 	for i := 0; i < 4; i++ {

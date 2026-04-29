@@ -308,53 +308,54 @@ func WithACP() AgentOption {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider          provider.LLMProvider
-	tools             *tools.Registry
-	conversation      *Conversation
-	context           *ContextManager
-	approve           ApprovalFunc
-	approvalChecker   ApprovalChecker
-	uiRequestHandler  UIRequestHandler
-	model             string
-	maxTurns          int
-	basePrompt        string
-	staticPrompts     []PromptSection
-	skillRuntime      *skills.Runtime
-	store             *store.Store
-	sessionID         string
-	resumeSessionID   string
-	agentMD           string
-	identityMD        string
-	soulMD            string
-	extraPrompts      []namedPrompt
-	summarizer        Summarizer
-	scratchpad        *Scratchpad
-	memoryStore       MemoryStore
-	knowledgeSelector kg.ContextSelector
-	customStrategies  bool
-	resultStore       *ResultStore
-	promptBuilder     *PromptBuilder
-	deferral          *tools.DeferralManager
-	diffTracker       *tools.DiffTracker
-	turnMu            sync.Mutex // serializes Turn() calls to prevent DiffTracker race
-	wakeManager       *WakeManager
-	pipeline          *toolexec.Pipeline
-	workingDir        string // override working directory (empty = os.Getwd)
-	parallelPolicy    ToolParallelPolicy
-	logger            Logger
-	mode              string
-	checkpointMgr     *checkpoint.Manager
-	userHookRunner    *hooks.UserHookRunner
-	turnNumber        atomic.Int32
-	generation        atomic.Int64
-	fallbackModel     string
-	rateLimiter       *SharedRateLimiter
-	capabilities      provider.ModelCapabilities
-	progress          *ProgressTracker
-	acpServer         *acp.Server             // ACP server instance (if enabled)
-	acpRegistry       *acp.CapabilityRegistry // Capability registry for ACP
-	useACP            bool                    // Enable ACP server
-	latches           *sessionLatches         // one-way ratchets for session-stable capability values
+	provider            provider.LLMProvider
+	tools               *tools.Registry
+	conversation        *Conversation
+	context             *ContextManager
+	approve             ApprovalFunc
+	approvalChecker     ApprovalChecker
+	uiRequestHandler    UIRequestHandler
+	model               string
+	maxTurns            int
+	basePrompt          string
+	staticPrompts       []PromptSection
+	skillRuntime        *skills.Runtime
+	store               *store.Store
+	sessionID           string
+	resumeSessionID     string
+	agentMD             string
+	identityMD          string
+	soulMD              string
+	extraPrompts        []namedPrompt
+	summarizer          Summarizer
+	scratchpad          *Scratchpad
+	memoryStore         MemoryStore
+	knowledgeSelector   kg.ContextSelector
+	customStrategies    bool
+	resultStore         *ResultStore
+	promptBuilder       *PromptBuilder
+	deferral            *tools.DeferralManager
+	diffTracker         *tools.DiffTracker
+	turnMu              sync.Mutex // serializes Turn() calls to prevent DiffTracker race
+	wakeManager         *WakeManager
+	pipeline            *toolexec.Pipeline
+	workingDir          string // override working directory (empty = os.Getwd)
+	parallelPolicy      ToolParallelPolicy
+	logger              Logger
+	mode                string
+	checkpointMgr       *checkpoint.Manager
+	userHookRunner      *hooks.UserHookRunner
+	turnNumber          atomic.Int32
+	generation          atomic.Int64
+	fallbackModel       string
+	rateLimiter         *SharedRateLimiter
+	capabilities        provider.ModelCapabilities
+	configuredMaxTokens int
+	progress            *ProgressTracker
+	acpServer           *acp.Server             // ACP server instance (if enabled)
+	acpRegistry         *acp.CapabilityRegistry // Capability registry for ACP
+	useACP              bool                    // Enable ACP server
+	latches             *sessionLatches         // one-way ratchets for session-stable capability values
 }
 
 const maxUIRequestInputBytes = 2048
@@ -365,18 +366,19 @@ const maxUIRequestInputBytes = 2048
 func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *config.Config, opts ...AgentOption) *Agent {
 	systemPrompt := buildSystemPrompt(cfg)
 	a := &Agent{
-		provider:     p,
-		tools:        t,
-		basePrompt:   systemPrompt,
-		conversation: NewConversation(systemPrompt),
-		context:      newContextManagerFromConfig(cfg),
-		approve:      approve,
-		model:        cfg.Provider.Model,
-		maxTurns:     cfg.Agent.MaxTurns,
-		scratchpad:   NewScratchpad(),
-		progress:     NewProgressTracker(),
-		capabilities: agentsdk.DefaultCapabilities(),
-		latches:      newSessionLatches(),
+		provider:            p,
+		tools:               t,
+		basePrompt:          systemPrompt,
+		conversation:        NewConversation(systemPrompt),
+		context:             newContextManagerFromConfig(cfg),
+		approve:             approve,
+		model:               cfg.Provider.Model,
+		maxTurns:            cfg.Agent.MaxTurns,
+		configuredMaxTokens: cfg.Agent.MaxOutputTokens,
+		scratchpad:          NewScratchpad(),
+		progress:            NewProgressTracker(),
+		capabilities:        agentsdk.DefaultCapabilities(),
+		latches:             newSessionLatches(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -846,6 +848,10 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 	}
 }
 
+func (a *Agent) escalateMaxTokens(ls *loopState) {
+	ls.maxOutputTokens = escalatedMaxOutputTokens
+}
+
 // saveSnapshotIfNeeded persists the current conversation state as a
 // resume snapshot if persistence is enabled.
 func (a *Agent) saveSnapshotIfNeeded() {
@@ -1300,7 +1306,7 @@ func replaceAssistantText(blocks []provider.ContentBlock, newText string) []prov
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
-	ls := newLoopState(a.maxTurns, turnCount)
+	ls := newLoopState(a.maxTurns, turnCount, a.configuredMaxTokens)
 	if a.skillRuntime != nil {
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
@@ -1382,7 +1388,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			System:           systemPrompt,
 			Messages:         normalizeMessages(a.conversation.Messages()),
 			Tools:            reqTools,
-			MaxTokens:        4096,
+			MaxTokens:        ls.maxOutputTokens,
 			CacheBreakpoints: cacheBreakpoints,
 		}
 		// Latch ReasoningEffort so a mid-session capability change cannot
@@ -1621,6 +1627,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			hasPendingTools := len(pendingTools) > 0 || currentTool != nil
 			if hasPendingTools {
 				a.logger.Warn("response hit output token limit with %d pending tool calls; tool arguments may be truncated", len(pendingTools))
+			} else if ls.maxOutputTokens < escalatedMaxOutputTokens {
+				a.logger.Warn("output token limit hit; escalating max_tokens from %d to %d", ls.maxOutputTokens, escalatedMaxOutputTokens)
+				a.escalateMaxTokens(ls)
+				a.emit(ctx, ch, TurnEvent{Type: "max_tokens_escalation"})
+				ls.turnCount--
+				ls.lastContinueReason = ContinueMaxTokensRecovery
+				continue
 			} else if ls.maxTokensRecoveryAttempts < maxOutputTokensRecoveryLimit {
 				ls.maxTokensRecoveryAttempts++
 				a.conversation.AddAssistant(blocks)

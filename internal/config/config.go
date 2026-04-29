@@ -411,7 +411,7 @@ func DefaultConfig() *Config {
 			MaxTurns:               50,
 			ApprovalMode:           "prompt",
 			ContextBudget:          100000,
-			MaxOutputTokens:        4096,
+			MaxOutputTokens:        8192,
 			CompactTrigger:         0.95,
 			HardBlock:              0.98,
 			ResultOffloadThreshold: 4096,
