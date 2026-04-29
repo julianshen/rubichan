@@ -1,5 +1,7 @@
 package agentsdk
 
+import "encoding/json"
+
 // ResultCapped is an optional extension interface for tools that want
 // the agent to truncate their output before it enters the conversation.
 //
@@ -56,4 +58,17 @@ type ResultCapped interface {
 // contents are already in memory."
 type ConcurrencySafeTool interface {
 	IsConcurrencySafe() bool
+}
+
+// InputConcurrencySafeTool is an optional extension that allows tools to
+// declare per-invocation safety based on the tool input. Tools like shell
+// can return true for read-only commands (cat, grep, ls) and false for
+// mutating commands (rm, write, mkdir).
+//
+// When both ConcurrencySafeTool and InputConcurrencySafeTool are
+// implemented, the agent calls IsConcurrencySafeForInput first. If it
+// returns true, the tool is dispatched during streaming. Otherwise the
+// static IsConcurrencySafe() is used as fallback.
+type InputConcurrencySafeTool interface {
+	IsConcurrencySafeForInput(input json.RawMessage) bool
 }
