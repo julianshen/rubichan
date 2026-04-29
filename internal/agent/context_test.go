@@ -366,6 +366,20 @@ func TestContextManager_BudgetNudge_AboveCompactTrigger(t *testing.T) {
 	assert.Empty(t, nudge, "should not nudge when usage is above compact trigger (compact handles it)")
 }
 
+func TestBudgetNudge_NudgeEmittedOnce(t *testing.T) {
+	ls := newLoopState(50, 0)
+	cm := NewContextManager(100, 0)
+	conv := NewConversation("short")
+	for i := 0; i < 4; i++ {
+		conv.AddUser(strings.Repeat("x", 20))
+	}
+	nudge := cm.BudgetNudge(conv)
+	assert.NotEmpty(t, nudge)
+	ls.nudgeEmitted = true
+	ls.nudgeEmitted = true
+	assert.True(t, ls.nudgeEmitted, "nudge guard should prevent re-injection")
+}
+
 func TestVerdictContextBlockAllFailures(t *testing.T) {
 	hist := session.NewVerdictHistory()
 	hist.Record(session.Verdict{
