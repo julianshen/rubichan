@@ -848,14 +848,8 @@ func (a *Agent) persistMessage(role string, content []provider.ContentBlock) {
 	}
 }
 
-func (a *Agent) effectiveMaxTokens(ls *loopState) int {
-	if ls.tokensEscalated {
-		return escalatedMaxOutputTokens
-	}
-	if a.configuredMaxTokens > 0 {
-		return a.configuredMaxTokens
-	}
-	return defaultMaxOutputTokens
+func (a *Agent) escalateMaxTokens(ls *loopState) {
+	ls.maxOutputTokens = escalatedMaxOutputTokens
 }
 
 // saveSnapshotIfNeeded persists the current conversation state as a
@@ -1312,7 +1306,7 @@ func replaceAssistantText(blocks []provider.ContentBlock, newText string) []prov
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
 	var totalInputTokens, totalOutputTokens int
-	ls := newLoopState(a.maxTurns, turnCount)
+	ls := newLoopState(a.maxTurns, turnCount, a.configuredMaxTokens)
 	if a.skillRuntime != nil {
 		triggerCtx := a.buildSkillTriggerContext(lastUserMessage)
 		if err := a.skillRuntime.EvaluateAndActivate(triggerCtx); err != nil {
@@ -1394,7 +1388,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			System:           systemPrompt,
 			Messages:         normalizeMessages(a.conversation.Messages()),
 			Tools:            reqTools,
-			MaxTokens:        a.effectiveMaxTokens(ls),
+			MaxTokens:        ls.maxOutputTokens,
 			CacheBreakpoints: cacheBreakpoints,
 		}
 		// Latch ReasoningEffort so a mid-session capability change cannot
@@ -1633,10 +1627,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			hasPendingTools := len(pendingTools) > 0 || currentTool != nil
 			if hasPendingTools {
 				a.logger.Warn("response hit output token limit with %d pending tool calls; tool arguments may be truncated", len(pendingTools))
-			} else if !ls.tokensEscalated {
-				prevMax := a.effectiveMaxTokens(ls)
-				ls.tokensEscalated = true
-				a.logger.Warn("output token limit hit; escalating max_tokens from %d to %d", prevMax, escalatedMaxOutputTokens)
+			} else if ls.maxOutputTokens < escalatedMaxOutputTokens {
+				a.logger.Warn("output token limit hit; escalating max_tokens from %d to %d", ls.maxOutputTokens, escalatedMaxOutputTokens)
+				a.escalateMaxTokens(ls)
 				a.emit(ctx, ch, TurnEvent{Type: "max_tokens_escalation"})
 				ls.turnCount--
 				ls.lastContinueReason = ContinueMaxTokensRecovery

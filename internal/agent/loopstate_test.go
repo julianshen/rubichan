@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewLoopState(t *testing.T) {
-	ls := newLoopState(10, 3)
+	ls := newLoopState(10, 3, 8192)
 	assert.Equal(t, 10, ls.maxTurns)
 	assert.Equal(t, 3, ls.turnCount)
 	assert.Equal(t, 0, ls.repeatedToolRounds)
@@ -16,7 +16,7 @@ func TestNewLoopState(t *testing.T) {
 }
 
 func TestLoopState_HasMoreTurns(t *testing.T) {
-	ls := newLoopState(5, 3)
+	ls := newLoopState(5, 3, 8192)
 	assert.True(t, ls.hasMoreTurns(), "turnCount=3, maxTurns=5: has more")
 
 	ls.turnCount = 4
@@ -27,7 +27,7 @@ func TestLoopState_HasMoreTurns(t *testing.T) {
 }
 
 func TestLoopState_ResetPerTurn(t *testing.T) {
-	ls := newLoopState(10, 0)
+	ls := newLoopState(10, 0, 8192)
 	ls.streamErr = true
 	ls.repeatedToolRounds = 2
 	ls.lastToolSignature = "read_file"
@@ -38,7 +38,7 @@ func TestLoopState_ResetPerTurn(t *testing.T) {
 }
 
 func TestLoopState_RecordToolSignature_NoProgress(t *testing.T) {
-	ls := newLoopState(10, 0)
+	ls := newLoopState(10, 0, 8192)
 
 	assert.False(t, ls.recordToolSignature("read_file", false), "first occurrence")
 	assert.False(t, ls.recordToolSignature("read_file", false), "second occurrence")
@@ -46,7 +46,7 @@ func TestLoopState_RecordToolSignature_NoProgress(t *testing.T) {
 }
 
 func TestLoopState_RecordToolSignature_ResetsOnNewSignature(t *testing.T) {
-	ls := newLoopState(10, 0)
+	ls := newLoopState(10, 0, 8192)
 
 	ls.recordToolSignature("read_file", false)
 	ls.recordToolSignature("read_file", false)
@@ -54,7 +54,7 @@ func TestLoopState_RecordToolSignature_ResetsOnNewSignature(t *testing.T) {
 }
 
 func TestLoopState_RecordToolSignature_ResetsOnTextContent(t *testing.T) {
-	ls := newLoopState(10, 0)
+	ls := newLoopState(10, 0, 8192)
 
 	ls.recordToolSignature("read_file", false)
 	ls.recordToolSignature("read_file", false)
@@ -62,7 +62,7 @@ func TestLoopState_RecordToolSignature_ResetsOnTextContent(t *testing.T) {
 }
 
 func TestLoopState_CheckDiminishingReturns_BelowThreshold(t *testing.T) {
-	ls := newLoopState(50, 0)
+	ls := newLoopState(50, 0, 8192)
 
 	assert.False(t, ls.checkDiminishingReturns(100), "turn 1: not enough continuations")
 	assert.False(t, ls.checkDiminishingReturns(200), "turn 2: not enough continuations")
@@ -71,7 +71,7 @@ func TestLoopState_CheckDiminishingReturns_BelowThreshold(t *testing.T) {
 }
 
 func TestLoopState_CheckDiminishingReturns_AboveThreshold(t *testing.T) {
-	ls := newLoopState(50, 0)
+	ls := newLoopState(50, 0, 8192)
 
 	assert.False(t, ls.checkDiminishingReturns(100))
 	assert.False(t, ls.checkDiminishingReturns(800))
@@ -81,7 +81,7 @@ func TestLoopState_CheckDiminishingReturns_AboveThreshold(t *testing.T) {
 }
 
 func TestLoopState_CheckDiminishingReturns_ResetsOnSpike(t *testing.T) {
-	ls := newLoopState(50, 0)
+	ls := newLoopState(50, 0, 8192)
 
 	assert.False(t, ls.checkDiminishingReturns(100))
 	assert.False(t, ls.checkDiminishingReturns(200))
@@ -94,7 +94,7 @@ func TestLoopState_CheckDiminishingReturns_ResetsOnSpike(t *testing.T) {
 }
 
 func TestLoopState_CheckDiminishingReturns_NegativeDeltaClamped(t *testing.T) {
-	ls := newLoopState(50, 0)
+	ls := newLoopState(50, 0, 8192)
 
 	ls.checkDiminishingReturns(1000)
 	assert.Equal(t, 1000, ls.lastGlobalOutputTokens)
@@ -106,7 +106,7 @@ func TestLoopState_CheckDiminishingReturns_NegativeDeltaClamped(t *testing.T) {
 }
 
 func TestLoopState_CheckDiminishingReturns_FirstCallZero(t *testing.T) {
-	ls := newLoopState(50, 0)
+	ls := newLoopState(50, 0, 8192)
 	assert.False(t, ls.checkDiminishingReturns(0))
 	assert.Equal(t, 1, ls.continuationCount)
 	assert.Equal(t, 0, ls.lastDeltaTokens)
@@ -130,8 +130,8 @@ func TestContinueReason_String(t *testing.T) {
 }
 
 func TestSlotReservation_EscalationFlag(t *testing.T) {
-	ls := newLoopState(50, 0)
-	assert.False(t, ls.tokensEscalated)
-	ls.tokensEscalated = true
-	assert.True(t, ls.tokensEscalated)
+	ls := newLoopState(50, 0, 8192)
+	assert.Equal(t, 8192, ls.maxOutputTokens)
+	ls.maxOutputTokens = escalatedMaxOutputTokens
+	assert.Equal(t, escalatedMaxOutputTokens, ls.maxOutputTokens)
 }

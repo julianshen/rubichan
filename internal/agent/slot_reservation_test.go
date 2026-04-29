@@ -6,28 +6,28 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestEffectiveMaxTokens_Default(t *testing.T) {
-	a := &Agent{configuredMaxTokens: 0}
-	ls := newLoopState(50, 0)
-	assert.Equal(t, defaultMaxOutputTokens, a.effectiveMaxTokens(ls))
+func TestEffectiveMaxTokens_FromConfig(t *testing.T) {
+	ls := newLoopState(50, 0, 8192)
+	assert.Equal(t, 8192, ls.maxOutputTokens)
 }
 
-func TestEffectiveMaxTokens_Configured(t *testing.T) {
-	a := &Agent{configuredMaxTokens: 16384}
-	ls := newLoopState(50, 0)
-	assert.Equal(t, 16384, a.effectiveMaxTokens(ls))
+func TestEffectiveMaxTokens_CustomValue(t *testing.T) {
+	ls := newLoopState(50, 0, 16384)
+	assert.Equal(t, 16384, ls.maxOutputTokens)
 }
 
-func TestEffectiveMaxTokens_Escalated(t *testing.T) {
-	a := &Agent{configuredMaxTokens: 0}
-	ls := newLoopState(50, 0)
-	ls.tokensEscalated = true
-	assert.Equal(t, escalatedMaxOutputTokens, a.effectiveMaxTokens(ls))
+func TestEscalateMaxTokens(t *testing.T) {
+	ls := newLoopState(50, 0, 8192)
+	a := &Agent{}
+	a.escalateMaxTokens(ls)
+	assert.Equal(t, escalatedMaxOutputTokens, ls.maxOutputTokens)
 }
 
-func TestEffectiveMaxTokens_EscalatedOverridesConfig(t *testing.T) {
-	a := &Agent{configuredMaxTokens: 4096}
-	ls := newLoopState(50, 0)
-	ls.tokensEscalated = true
-	assert.Equal(t, escalatedMaxOutputTokens, a.effectiveMaxTokens(ls))
+func TestEscalateMaxTokens_OnlyOnce(t *testing.T) {
+	ls := newLoopState(50, 0, 8192)
+	a := &Agent{}
+	a.escalateMaxTokens(ls)
+	assert.Equal(t, escalatedMaxOutputTokens, ls.maxOutputTokens)
+	a.escalateMaxTokens(ls)
+	assert.Equal(t, escalatedMaxOutputTokens, ls.maxOutputTokens, "escalation should be idempotent")
 }

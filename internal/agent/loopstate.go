@@ -14,10 +14,7 @@ const maxOutputTokensRecoveryLimit = 3
 // stay below this threshold the loop exits with ExitDiminishingReturns.
 const diminishingThreshold = 500
 
-const (
-	defaultMaxOutputTokens   = 8192
-	escalatedMaxOutputTokens = 65536
-)
+const escalatedMaxOutputTokens = 65536
 
 type ContinueReason int
 
@@ -57,11 +54,11 @@ type loopState struct {
 	lastGlobalOutputTokens    int
 	lastContinueReason        ContinueReason
 	nudgeEmitted              bool
-	tokensEscalated           bool
+	maxOutputTokens           int
 }
 
-func newLoopState(maxTurns, turnCount int) *loopState {
-	return &loopState{maxTurns: maxTurns, turnCount: turnCount}
+func newLoopState(maxTurns, turnCount, maxOutputTokens int) *loopState {
+	return &loopState{maxTurns: maxTurns, turnCount: turnCount, maxOutputTokens: maxOutputTokens}
 }
 
 func (s *loopState) hasMoreTurns() bool {
