@@ -111,20 +111,10 @@ func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUs
 // then runs the barrier tool synchronously, then appends its future to
 // the executor's results list so Drain() surfaces it in dispatch order.
 //
-// The intended use is mid-stream write-shaped tools: when a tool block
-// finalizes that mutates state (Edit, Write, side-effecting Bash), the
-// caller invokes Barrier instead of Dispatch. Subsequent Dispatch calls
-// resume normal parallel execution after Barrier returns.
-//
 // Concurrency contract: the stream-event loop in agent.runLoop is the
 // sole caller of Dispatch and Barrier on any one executor instance, so
 // no two of these calls overlap. Barrier therefore does not need to
 // guard against new Dispatches arriving during its wg.Wait().
-//
-// Cancellation: if ctx is already done when Barrier is called, the
-// barrier tool is NOT executed; an error future is recorded so Drain
-// surfaces a result for it. This mirrors Dispatch's pre-flight ctx
-// check and keeps the cancellation contract uniform.
 func (e *streamingToolExecutor) Barrier(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
 	e.wg.Wait()
 	f := &toolFuture{

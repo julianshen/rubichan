@@ -71,6 +71,16 @@ func runnerFromTool(tool agentsdk.Tool) toolExecFn {
 	}
 }
 
+// newExecutorWithTools wires a streamingToolExecutor whose run dispatches
+// to one of the given fakes by tool name — the common test fixture for
+// scenarios that exercise multiple tools in one executor.
+func newExecutorWithTools(maxParallel int, byName map[string]agentsdk.Tool) *streamingToolExecutor {
+	run := func(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+		return runnerFromTool(byName[tc.Name])(ctx, tc)
+	}
+	return newStreamingToolExecutor(maxParallel, run)
+}
+
 func TestStreamingExecutorDispatchesSafeToolsInParallel(t *testing.T) {
 	t.Parallel()
 	// Two slow concurrency-safe tools. Sequential execution would take
@@ -108,11 +118,7 @@ func TestStreamingExecutorPreservesDispatchOrder(t *testing.T) {
 	// runner that dispatches to different fake tools based on tc.Name.
 	fast := &fakeConcurrencySafeTool{name: "fast", execDelay: 10 * time.Millisecond, returnText: "fast"}
 	slow := &fakeConcurrencySafeTool{name: "slow", execDelay: 80 * time.Millisecond, returnText: "slow"}
-	byName := map[string]agentsdk.Tool{"fast": fast, "slow": slow}
-	run := func(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-		return runnerFromTool(byName[tc.Name])(ctx, tc)
-	}
-	ex := newStreamingToolExecutor(2, run)
+	ex := newExecutorWithTools(2, map[string]agentsdk.Tool{"fast": fast, "slow": slow})
 	ctx := context.Background()
 
 	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "first", Name: "slow"})
@@ -930,11 +936,6 @@ func TestRunLoopStreamErrorSurfacesStreamedToolResults(t *testing.T) {
 	}
 }
 
-// TestStreamingExecutor_Barrier_WaitsForInFlight verifies that Barrier
-// blocks until every previously-Dispatched future has completed before
-// the barrier tool's run function is invoked. This is the core
-// write-barrier guarantee: an unsafe (write) tool dispatched mid-stream
-// must observe a quiesced executor before it runs.
 func TestStreamingExecutor_Barrier_WaitsForInFlight(t *testing.T) {
 	t.Parallel()
 	var inFlightFinished atomic.Bool
@@ -954,11 +955,7 @@ func TestStreamingExecutor_Barrier_WaitsForInFlight(t *testing.T) {
 			}
 		},
 	}
-	byName := map[string]agentsdk.Tool{"slow_read": slow, "write": barrierTool}
-	run := func(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-		return runnerFromTool(byName[tc.Name])(ctx, tc)
-	}
-	ex := newStreamingToolExecutor(4, run)
+	ex := newExecutorWithTools(4, map[string]agentsdk.Tool{"slow_read": slow, "write": barrierTool})
 	ctx := context.Background()
 
 	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "r1", Name: "slow_read"})
@@ -970,18 +967,11 @@ func TestStreamingExecutor_Barrier_WaitsForInFlight(t *testing.T) {
 	require.True(t, inFlightFinished.Load(), "barrier returned before in-flight tools finished")
 }
 
-// TestStreamingExecutor_Barrier_AppendedToFutures verifies that the
-// barrier's result is appended to the futures list and surfaces in
-// Drain() in dispatch order, just like a normal Dispatch.
 func TestStreamingExecutor_Barrier_AppendedToFutures(t *testing.T) {
 	t.Parallel()
 	read := &fakeConcurrencySafeTool{name: "read", execDelay: 5 * time.Millisecond, returnText: "r"}
 	write := &fakeConcurrencySafeTool{name: "write", execDelay: 5 * time.Millisecond, returnText: "w"}
-	byName := map[string]agentsdk.Tool{"read": read, "write": write}
-	run := func(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-		return runnerFromTool(byName[tc.Name])(ctx, tc)
-	}
-	ex := newStreamingToolExecutor(4, run)
+	ex := newExecutorWithTools(4, map[string]agentsdk.Tool{"read": read, "write": write})
 	ctx := context.Background()
 
 	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "r1", Name: "read"})
@@ -995,20 +985,12 @@ func TestStreamingExecutor_Barrier_AppendedToFutures(t *testing.T) {
 	require.Equal(t, "w", results[1].content)
 }
 
-// TestStreamingExecutor_Barrier_PreservesOrderInMixedSequence verifies
-// that a sequence [safe, safe, barrier, safe, safe] surfaces in Drain
-// in exactly that dispatch order, even when individual tool wall times
-// differ.
 func TestStreamingExecutor_Barrier_PreservesOrderInMixedSequence(t *testing.T) {
 	t.Parallel()
 	fast := &fakeConcurrencySafeTool{name: "fast", execDelay: 10 * time.Millisecond, returnText: "f"}
 	slow := &fakeConcurrencySafeTool{name: "slow", execDelay: 60 * time.Millisecond, returnText: "s"}
 	write := &fakeConcurrencySafeTool{name: "write", execDelay: 10 * time.Millisecond, returnText: "w"}
-	byName := map[string]agentsdk.Tool{"fast": fast, "slow": slow, "write": write}
-	run := func(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-		return runnerFromTool(byName[tc.Name])(ctx, tc)
-	}
-	ex := newStreamingToolExecutor(4, run)
+	ex := newExecutorWithTools(4, map[string]agentsdk.Tool{"fast": fast, "slow": slow, "write": write})
 	ctx := context.Background()
 
 	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "1", Name: "slow"})
@@ -1024,13 +1006,6 @@ func TestStreamingExecutor_Barrier_PreservesOrderInMixedSequence(t *testing.T) {
 	}
 }
 
-// TestStreamingExecutor_Barrier_ContextCancelled verifies behavior when
-// ctx is already cancelled at Barrier-call time. Mirrors Dispatch's
-// existing semantics (line 85 in stream_tool_exec.go): the tool is NOT
-// executed; an error result is recorded so Drain() can surface it.
-//
-// This keeps the cancellation contract uniform across Dispatch and
-// Barrier — callers don't have to learn two different rules.
 func TestStreamingExecutor_Barrier_ContextCancelled(t *testing.T) {
 	t.Parallel()
 	write := &fakeConcurrencySafeTool{name: "write", execDelay: 5 * time.Millisecond, returnText: "w"}
