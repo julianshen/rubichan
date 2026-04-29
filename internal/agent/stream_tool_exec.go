@@ -106,6 +106,44 @@ func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUs
 	}()
 }
 
+// Barrier serializes a single tool call against every prior in-flight
+// Dispatch. It waits for all currently-dispatched futures to complete,
+// then runs the barrier tool synchronously, then appends its future to
+// the executor's results list so Drain() surfaces it in dispatch order.
+//
+// The intended use is mid-stream write-shaped tools: when a tool block
+// finalizes that mutates state (Edit, Write, side-effecting Bash), the
+// caller invokes Barrier instead of Dispatch. Subsequent Dispatch calls
+// resume normal parallel execution after Barrier returns.
+//
+// Concurrency contract: the stream-event loop in agent.runLoop is the
+// sole caller of Dispatch and Barrier on any one executor instance, so
+// no two of these calls overlap. Barrier therefore does not need to
+// guard against new Dispatches arriving during its wg.Wait().
+//
+// Cancellation: if ctx is already done when Barrier is called, the
+// barrier tool is NOT executed; an error future is recorded so Drain
+// surfaces a result for it. This mirrors Dispatch's pre-flight ctx
+// check and keeps the cancellation contract uniform.
+func (e *streamingToolExecutor) Barrier(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+	e.wg.Wait()
+	f := &toolFuture{
+		toolUseID: tc.ID,
+		toolName:  tc.Name,
+		done:      make(chan struct{}),
+	}
+	if ctx.Err() != nil {
+		f.result = toolErrorResult(tc, "context cancelled before barrier dispatch")
+	} else {
+		f.result = e.run(ctx, tc)
+	}
+	close(f.done)
+	e.mu.Lock()
+	e.futures = append(e.futures, f)
+	e.mu.Unlock()
+	return f.result
+}
+
 // Drain waits for every dispatched future to complete and returns
 // their results in dispatch order. Safe to call only once per executor
 // instance; subsequent calls return an empty slice.
