@@ -128,3 +128,10 @@ func TestContinueReason_String(t *testing.T) {
 		assert.Equal(t, tt.want, tt.reason.String())
 	}
 }
+
+func TestSlotReservation_EscalationFlag(t *testing.T) {
+	ls := newLoopState(50, 0)
+	assert.False(t, ls.tokensEscalated)
+	ls.tokensEscalated = true
+	assert.True(t, ls.tokensEscalated)
+}
