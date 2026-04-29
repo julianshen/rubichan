@@ -409,6 +409,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	if a.summarizer != nil && !a.customStrategies {
 		a.context.SetStrategies([]CompactionStrategy{
 			NewToolResultClearingStrategy(),
+			NewHeadTailSnipStrategy(),
 			NewSummarizationStrategy(a.summarizer),
 			&truncateStrategy{},
 		})
