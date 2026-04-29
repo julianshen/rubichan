@@ -111,7 +111,8 @@ func retryDelay(attempt int) time.Duration {
 	for i := 1; i < attempt; i++ {
 		delay *= 2
 		if delay >= retryMaxDelay {
-			return retryMaxDelay
+			delay = retryMaxDelay
+			break
 		}
 	}
 	jitter := time.Duration(rand.Float64() * 0.25 * float64(delay))

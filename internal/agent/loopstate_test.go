@@ -93,6 +93,25 @@ func TestLoopState_CheckDiminishingReturns_ResetsOnSpike(t *testing.T) {
 	assert.False(t, ls.checkDiminishingReturns(2150))
 }
 
+func TestLoopState_CheckDiminishingReturns_NegativeDeltaClamped(t *testing.T) {
+	ls := newLoopState(50, 0)
+
+	ls.checkDiminishingReturns(1000)
+	assert.Equal(t, 1000, ls.lastGlobalOutputTokens)
+	assert.Equal(t, 1000, ls.lastDeltaTokens)
+
+	ls.checkDiminishingReturns(500)
+	assert.Equal(t, 0, ls.lastDeltaTokens, "negative delta should be clamped to 0")
+	assert.Equal(t, 500, ls.lastGlobalOutputTokens)
+}
+
+func TestLoopState_CheckDiminishingReturns_FirstCallZero(t *testing.T) {
+	ls := newLoopState(50, 0)
+	assert.False(t, ls.checkDiminishingReturns(0))
+	assert.Equal(t, 1, ls.continuationCount)
+	assert.Equal(t, 0, ls.lastDeltaTokens)
+}
+
 func TestContinueReason_String(t *testing.T) {
 	tests := []struct {
 		reason ContinueReason

@@ -10,7 +10,7 @@ const maxPromptTooLongRetries = 3
 const maxOutputTokensRecoveryLimit = 3
 
 // diminishingThreshold is the output-token delta below which a turn is
-// considered to have made negligible progress. When 3+ consecutive turns
+// considered to have made negligible progress. When 4 consecutive turns
 // stay below this threshold the loop exits with ExitDiminishingReturns.
 const diminishingThreshold = 500
 
@@ -51,6 +51,7 @@ type loopState struct {
 	lastDeltaTokens           int
 	lastGlobalOutputTokens    int
 	lastContinueReason        ContinueReason
+	nudgeEmitted              bool
 }
 
 func newLoopState(maxTurns, turnCount int) *loopState {
@@ -83,6 +84,9 @@ func (s *loopState) recordToolSignature(sig string, hasText bool) bool {
 
 func (s *loopState) checkDiminishingReturns(currentOutputTokens int) bool {
 	delta := currentOutputTokens - s.lastGlobalOutputTokens
+	if delta < 0 {
+		delta = 0
+	}
 	isDiminishing := s.continuationCount >= 3 &&
 		delta < diminishingThreshold &&
 		s.lastDeltaTokens < diminishingThreshold

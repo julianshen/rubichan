@@ -1310,6 +1310,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 	}
 	for ; ls.hasMoreTurns(); ls.turnCount++ {
+		if ls.turnCount > turnCount && ls.lastContinueReason != ContinueNextTurn {
+			a.logger.Warn("loop continue: reason=%s turn=%d/%d", ls.lastContinueReason, ls.turnCount, ls.maxTurns)
+		}
 		// Track turn number for checkpoint middleware.
 		a.turnNumber.Store(int32(ls.turnCount))
 
@@ -1790,8 +1793,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Drain any pending wake events from background subagents.
 		a.drainWakeEvents(ctx, ch)
 
-		if nudge := a.context.BudgetNudge(a.conversation); nudge != "" {
+		if nudge := a.context.BudgetNudge(a.conversation); nudge != "" && !ls.nudgeEmitted {
 			a.conversation.AddUser(nudge)
+			ls.nudgeEmitted = true
 		}
 
 		// Continue to the next turn after tool results.

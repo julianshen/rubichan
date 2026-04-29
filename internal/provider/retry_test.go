@@ -225,6 +225,21 @@ func TestRetryDelay_UsesJitter(t *testing.T) {
 	}
 }
 
+func TestRetryDelay_CappedAtMaxWithJitter(t *testing.T) {
+	oldBase, oldMax := retryBaseDelay, retryMaxDelay
+	retryBaseDelay = 100 * time.Millisecond
+	retryMaxDelay = 200 * time.Millisecond
+	t.Cleanup(func() {
+		retryBaseDelay, retryMaxDelay = oldBase, oldMax
+	})
+
+	for i := 0; i < 20; i++ {
+		d := retryDelay(5)
+		assert.GreaterOrEqual(t, d, retryMaxDelay, "delay should be at least maxDelay, got %v", d)
+		assert.LessOrEqual(t, d, retryMaxDelay+retryMaxDelay/4, "delay should not exceed maxDelay + 25%% jitter, got %v", d)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
