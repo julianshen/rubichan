@@ -71,6 +71,16 @@ func runnerFromTool(tool agentsdk.Tool) toolExecFn {
 	}
 }
 
+// newExecutorWithTools wires a streamingToolExecutor whose run dispatches
+// to one of the given fakes by tool name — the common test fixture for
+// scenarios that exercise multiple tools in one executor.
+func newExecutorWithTools(maxParallel int, byName map[string]agentsdk.Tool) *streamingToolExecutor {
+	run := func(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
+		return runnerFromTool(byName[tc.Name])(ctx, tc)
+	}
+	return newStreamingToolExecutor(maxParallel, run)
+}
+
 func TestStreamingExecutorDispatchesSafeToolsInParallel(t *testing.T) {
 	t.Parallel()
 	// Two slow concurrency-safe tools. Sequential execution would take
@@ -108,11 +118,7 @@ func TestStreamingExecutorPreservesDispatchOrder(t *testing.T) {
 	// runner that dispatches to different fake tools based on tc.Name.
 	fast := &fakeConcurrencySafeTool{name: "fast", execDelay: 10 * time.Millisecond, returnText: "fast"}
 	slow := &fakeConcurrencySafeTool{name: "slow", execDelay: 80 * time.Millisecond, returnText: "slow"}
-	byName := map[string]agentsdk.Tool{"fast": fast, "slow": slow}
-	run := func(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
-		return runnerFromTool(byName[tc.Name])(ctx, tc)
-	}
-	ex := newStreamingToolExecutor(2, run)
+	ex := newExecutorWithTools(2, map[string]agentsdk.Tool{"fast": fast, "slow": slow})
 	ctx := context.Background()
 
 	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "first", Name: "slow"})
@@ -928,4 +934,127 @@ func TestRunLoopStreamErrorSurfacesStreamedToolResults(t *testing.T) {
 	if ci >= ri {
 		t.Fatalf("tool_call for call-1 (evIdx=%d) must arrive before tool_result (evIdx=%d)", ci, ri)
 	}
+}
+
+func TestStreamingExecutor_Barrier_WaitsForInFlight(t *testing.T) {
+	t.Parallel()
+	var inFlightFinished atomic.Bool
+	slow := &fakeConcurrencySafeTool{
+		name:       "slow_read",
+		execDelay:  150 * time.Millisecond,
+		returnText: "ok",
+		onFinish:   func() { inFlightFinished.Store(true) },
+	}
+	barrierTool := &fakeConcurrencySafeTool{
+		name:       "write",
+		execDelay:  10 * time.Millisecond,
+		returnText: "wrote",
+		onStart: func() {
+			if !inFlightFinished.Load() {
+				panic("barrier tool started before in-flight Dispatch finished")
+			}
+		},
+	}
+	ex := newExecutorWithTools(4, map[string]agentsdk.Tool{"slow_read": slow, "write": barrierTool})
+	ctx := context.Background()
+
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "r1", Name: "slow_read"})
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "r2", Name: "slow_read"})
+	res := ex.Barrier(ctx, provider.ToolUseBlock{ID: "w1", Name: "write"})
+
+	require.Equal(t, "w1", res.toolUseID)
+	require.False(t, res.isError, "barrier result should not be an error")
+	require.True(t, inFlightFinished.Load(), "barrier returned before in-flight tools finished")
+}
+
+func TestStreamingExecutor_Barrier_AppendedToFutures(t *testing.T) {
+	t.Parallel()
+	read := &fakeConcurrencySafeTool{name: "read", execDelay: 5 * time.Millisecond, returnText: "r"}
+	write := &fakeConcurrencySafeTool{name: "write", execDelay: 5 * time.Millisecond, returnText: "w"}
+	ex := newExecutorWithTools(4, map[string]agentsdk.Tool{"read": read, "write": write})
+	ctx := context.Background()
+
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "r1", Name: "read"})
+	ex.Barrier(ctx, provider.ToolUseBlock{ID: "w1", Name: "write"})
+	results := ex.Drain()
+
+	require.Len(t, results, 2)
+	require.Equal(t, "r1", results[0].toolUseID)
+	require.Equal(t, "w1", results[1].toolUseID)
+	require.Equal(t, "r", results[0].content)
+	require.Equal(t, "w", results[1].content)
+}
+
+func TestStreamingExecutor_Barrier_PreservesOrderInMixedSequence(t *testing.T) {
+	t.Parallel()
+	fast := &fakeConcurrencySafeTool{name: "fast", execDelay: 10 * time.Millisecond, returnText: "f"}
+	slow := &fakeConcurrencySafeTool{name: "slow", execDelay: 60 * time.Millisecond, returnText: "s"}
+	write := &fakeConcurrencySafeTool{name: "write", execDelay: 10 * time.Millisecond, returnText: "w"}
+	ex := newExecutorWithTools(4, map[string]agentsdk.Tool{"fast": fast, "slow": slow, "write": write})
+	ctx := context.Background()
+
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "1", Name: "slow"})
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "2", Name: "fast"})
+	ex.Barrier(ctx, provider.ToolUseBlock{ID: "3", Name: "write"})
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "4", Name: "fast"})
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "5", Name: "slow"})
+	results := ex.Drain()
+
+	require.Len(t, results, 5)
+	for i, want := range []string{"1", "2", "3", "4", "5"} {
+		require.Equal(t, want, results[i].toolUseID, "result[%d]", i)
+	}
+}
+
+func TestStreamingExecutor_Barrier_ContextCancelled(t *testing.T) {
+	t.Parallel()
+	write := &fakeConcurrencySafeTool{name: "write", execDelay: 5 * time.Millisecond, returnText: "w"}
+	run := runnerFromTool(write)
+	ex := newStreamingToolExecutor(2, run)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res := ex.Barrier(ctx, provider.ToolUseBlock{ID: "w1", Name: "write"})
+
+	require.Equal(t, "w1", res.toolUseID)
+	require.True(t, res.isError, "Barrier with cancelled ctx should produce an error result")
+	require.Equal(t, int32(0), write.called.Load(), "tool should not have executed under cancelled ctx")
+
+	results := ex.Drain()
+	require.Len(t, results, 1, "barrier result must still appear in Drain")
+	require.Equal(t, "w1", results[0].toolUseID)
+}
+
+func TestStreamingExecutor_Barrier_FirstCallNoInFlight(t *testing.T) {
+	t.Parallel()
+	write := &fakeConcurrencySafeTool{name: "write", execDelay: 5 * time.Millisecond, returnText: "w"}
+	ex := newStreamingToolExecutor(2, runnerFromTool(write))
+
+	res := ex.Barrier(context.Background(), provider.ToolUseBlock{ID: "w1", Name: "write"})
+
+	require.Equal(t, "w1", res.toolUseID)
+	require.False(t, res.isError)
+	require.Equal(t, "w", res.content)
+
+	results := ex.Drain()
+	require.Len(t, results, 1)
+	require.Equal(t, "w1", results[0].toolUseID)
+}
+
+func TestStreamingExecutor_Barrier_ConsecutiveBarriers(t *testing.T) {
+	t.Parallel()
+	w1Tool := &fakeConcurrencySafeTool{name: "w1", execDelay: 5 * time.Millisecond, returnText: "first"}
+	w2Tool := &fakeConcurrencySafeTool{name: "w2", execDelay: 5 * time.Millisecond, returnText: "second"}
+	ex := newExecutorWithTools(2, map[string]agentsdk.Tool{"w1": w1Tool, "w2": w2Tool})
+	ctx := context.Background()
+
+	ex.Barrier(ctx, provider.ToolUseBlock{ID: "b1", Name: "w1"})
+	ex.Barrier(ctx, provider.ToolUseBlock{ID: "b2", Name: "w2"})
+
+	results := ex.Drain()
+	require.Len(t, results, 2)
+	require.Equal(t, "b1", results[0].toolUseID)
+	require.Equal(t, "b2", results[1].toolUseID)
+	require.Equal(t, "first", results[0].content)
+	require.Equal(t, "second", results[1].content)
 }
