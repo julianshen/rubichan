@@ -40,9 +40,27 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 5. **E** (generation counter) — prevents stale cleanup corruption
 6. **F** (model fallback) — resilience against provider overload
 
+## Completed (since index created)
+
+| # | Plan | PR | Description |
+|---|------|-----|-------------|
+| — | Retry jitter | #250 | 0-25% jitter in TurnRetry and DoWithRetry |
+| — | Diminishing returns | #251 | Exit when 4+ turns produce <500 output tokens |
+| — | Budget nudge | #252 | Inject budget awareness message at 70-95% usage |
+| — | ContinueReason | #253 | Structured enum for loop observability |
+| — | Review fixes | #254 | Nudge dedup, negative delta clamp, ContinueReason logging |
+| — | Slot reservation | #255 | 8k→64k max_output_tokens escalation |
+| — | Head/tail snip | #256 | Preserve first 1/3 + last 2/3 during compaction |
+| — | InputConcurrencySafe | #257 | Per-invocation concurrency safety check |
+
+## In Progress
+
+| # | Plan | File | Status |
+|---|------|------|--------|
+| 2.8 | Write-barrier streaming executor | `2026-05-01-write-barrier-streaming-executor.md` | Planned |
+
 ## Out of Scope (future plans)
 
 - Async memory/skill prefetch — requires deeper skill runtime changes
 - Stop hooks with continuation control — requires hook system redesign
-- Token budget diminishing-returns detection — requires budget tracker refactor
 - Streaming tombstone pattern — requires SDK message layer changes

@@ -1058,3 +1058,57 @@ func TestStreamingExecutor_Barrier_ConsecutiveBarriers(t *testing.T) {
 	require.Equal(t, "first", results[0].content)
 	require.Equal(t, "second", results[1].content)
 }
+
+func TestStreamingExecutor_SetBarrierBlocksSubsequentDispatch(t *testing.T) {
+	var callOrder []string
+	var mu sync.Mutex
+	run := func(_ context.Context, tc provider.ToolUseBlock) toolExecResult {
+		mu.Lock()
+		callOrder = append(callOrder, tc.ID)
+		mu.Unlock()
+		return toolExecResult{toolUseID: tc.ID, content: tc.Name}
+	}
+	ex := newStreamingToolExecutor(2, run)
+
+	// Dispatch a safe tool first
+	ok1 := ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r1", Name: "read"})
+	require.True(t, ok1, "first dispatch should succeed")
+
+	// Set barrier (simulating a write tool)
+	ex.SetBarrier()
+
+	// Subsequent dispatch should be rejected
+	ok2 := ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r2", Name: "read"})
+	require.False(t, ok2, "dispatch after barrier should be rejected")
+
+	results := ex.Drain()
+	require.Len(t, results, 1, "only first dispatch should execute")
+	require.Equal(t, "r1", results[0].toolUseID)
+}
+
+func TestStreamingExecutor_SetBarrierIdempotent(t *testing.T) {
+	ex := newStreamingToolExecutor(1, func(_ context.Context, tc provider.ToolUseBlock) toolExecResult {
+		return toolExecResult{toolUseID: tc.ID}
+	})
+
+	ex.SetBarrier()
+	ex.SetBarrier()
+	ex.SetBarrier()
+
+	ok := ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r1", Name: "read"})
+	require.False(t, ok, "dispatch should be rejected after barrier")
+}
+
+func TestStreamingExecutor_DispatchReturnValue(t *testing.T) {
+	ex := newStreamingToolExecutor(1, func(_ context.Context, tc provider.ToolUseBlock) toolExecResult {
+		return toolExecResult{toolUseID: tc.ID}
+	})
+
+	ok := ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r1", Name: "read"})
+	require.True(t, ok, "dispatch should return true when accepted")
+
+	ex.SetBarrier()
+
+	ok = ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r2", Name: "read"})
+	require.False(t, ok, "dispatch should return false when rejected by barrier")
+}
