@@ -1524,23 +1524,27 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				// the approval scan entirely — approval can be expensive
 				// when a security scanner is wired in.
 				if tool, ok := a.tools.Get(currentTool.Name); ok {
+					dispatched := false
 					if ic, icok := tool.(agentsdk.InputConcurrencySafeTool); icok {
 						if ic.IsConcurrencySafeForInput(currentTool.Input) {
 							approval := a.approvalResultForTool(*currentTool)
 							if approval == AutoApproved || approval == TrustRuleApproved {
-								execStream.Dispatch(ctx, *currentTool)
-								currentTool = nil
+								dispatched = execStream.Dispatch(ctx, *currentTool)
 							}
 						}
 					} else if cs, csok := tool.(agentsdk.ConcurrencySafeTool); csok && cs.IsConcurrencySafe() {
 						approval := a.approvalResultForTool(*currentTool)
 						if approval == AutoApproved || approval == TrustRuleApproved {
-							// Dispatch in background; executeTools
-							// emits the tool_call event when it sees
-							// the cached result.
-							execStream.Dispatch(ctx, *currentTool)
+							dispatched = execStream.Dispatch(ctx, *currentTool)
 						}
 					}
+					if dispatched {
+						currentTool = nil
+					}
+				}
+
+				if currentTool != nil {
+					execStream.SetBarrier()
 				}
 
 				currentTool = nil

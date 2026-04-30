@@ -39,11 +39,12 @@ type toolExecFn func(ctx context.Context, tc provider.ToolUseBlock) toolExecResu
 // streaming response, eliminating 1–3s of sequential wait time on
 // typical reason-then-read turns.
 type streamingToolExecutor struct {
-	sem     chan struct{}
-	run     toolExecFn
-	mu      sync.Mutex
-	futures []*toolFuture
-	wg      sync.WaitGroup
+	sem         chan struct{}
+	run         toolExecFn
+	mu          sync.Mutex
+	futures     []*toolFuture
+	wg          sync.WaitGroup
+	barrierSeen bool // set when an unsafe (write) tool is encountered; blocks subsequent Dispatch calls
 }
 
 // toolFuture holds the in-flight state of one dispatched tool call.
@@ -69,23 +70,32 @@ func newStreamingToolExecutor(maxParallel int, run toolExecFn) *streamingToolExe
 }
 
 // Dispatch starts execution of a concurrency-safe tool in the background.
+// If a barrier has already been seen in this response, the tool is NOT
+// dispatched — it will be executed later by executeTools. This prevents
+// read-after-write races when the model emits [write, read] in the same
+// response.
+//
 // If ctx is already cancelled, the future is completed immediately with
 // an error result — the tool is not executed. Dispatch is O(1); actual
 // execution runs in a background goroutine.
-func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUseBlock) {
+func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUseBlock) bool {
+	e.mu.Lock()
+	if e.barrierSeen {
+		e.mu.Unlock()
+		return false
+	}
 	f := &toolFuture{
 		toolUseID: tc.ID,
 		toolName:  tc.Name,
 		done:      make(chan struct{}),
 	}
-	e.mu.Lock()
 	e.futures = append(e.futures, f)
 	e.mu.Unlock()
 
 	if ctx.Err() != nil {
 		f.result = toolErrorResult(tc, "context cancelled before tool dispatch")
 		close(f.done)
-		return
+		return true
 	}
 
 	e.wg.Add(1)
@@ -104,6 +114,16 @@ func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUs
 		f.result = e.run(ctx, tc)
 		close(f.done)
 	}()
+	return true
+}
+
+// SetBarrier marks that an unsafe (write) tool has been encountered.
+// Subsequent Dispatch calls will return false, causing those tools to be
+// handled by the post-stream executeTools pipeline instead.
+func (e *streamingToolExecutor) SetBarrier() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.barrierSeen = true
 }
 
 // Barrier serializes a single tool call against every prior in-flight
