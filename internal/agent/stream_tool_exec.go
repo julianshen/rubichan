@@ -114,7 +114,11 @@ func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUs
 // Concurrency contract: the stream-event loop in agent.runLoop is the
 // sole caller of Dispatch and Barrier on any one executor instance, so
 // no two of these calls overlap. Barrier therefore does not need to
-// guard against new Dispatches arriving during its wg.Wait().
+// guard against new Dispatches arriving during its wg.Wait(). Violating
+// the contract — calling Dispatch concurrently with Barrier — would let
+// a new Dispatch escape the wg.Wait() snapshot (the barrier tool would
+// run alongside it instead of after it) and would race on the e.futures
+// append below.
 func (e *streamingToolExecutor) Barrier(ctx context.Context, tc provider.ToolUseBlock) toolExecResult {
 	e.wg.Wait()
 	f := &toolFuture{
