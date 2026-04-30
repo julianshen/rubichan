@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -266,6 +267,42 @@ func TestDoWithRetryConfig_Foreground_Retries(t *testing.T) {
 	_, err := DoWithRetryConfig(context.Background(), client, req, RetryConfig{Context: RetryForeground})
 	require.Error(t, err)
 	assert.EqualValues(t, 3, calls.Load(), "foreground should retry")
+}
+
+func TestDoWithRetryConfig_CustomMaxAttempts(t *testing.T) {
+	var calls atomic.Int32
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return nil, &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+		}),
+	}
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	_, err := DoWithRetryConfig(context.Background(), client, req, RetryConfig{MaxAttempts: 5})
+	require.Error(t, err)
+	assert.EqualValues(t, 5, calls.Load(), "custom max attempts should be respected")
+}
+
+func TestDoWithRetryConfig_CustomDelays(t *testing.T) {
+	var delays []time.Duration
+	var mu sync.Mutex
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return nil, &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+		}),
+	}
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	start := time.Now()
+	DoWithRetryConfig(context.Background(), client, req, RetryConfig{
+		MaxAttempts: 3,
+		BaseDelay:   50 * time.Millisecond,
+		MaxDelay:    100 * time.Millisecond,
+	})
+	elapsed := time.Since(start)
+	mu.Lock()
+	_ = delays
+	mu.Unlock()
+	assert.Less(t, elapsed, 500*time.Millisecond, "custom delays should be faster than default")
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

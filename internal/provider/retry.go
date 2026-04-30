@@ -148,12 +148,6 @@ func shouldRetryError(err error) bool {
 }
 
 func retryDelay(attempt int, baseDelay, maxDelay time.Duration) time.Duration {
-	if baseDelay <= 0 {
-		baseDelay = retryBaseDelay
-	}
-	if maxDelay <= 0 {
-		maxDelay = retryMaxDelay
-	}
 	delay := baseDelay
 	for i := 1; i < attempt; i++ {
 		delay *= 2
