@@ -1523,6 +1523,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				// marker check comes first so non-eligible tools skip
 				// the approval scan entirely — approval can be expensive
 				// when a security scanner is wired in.
+				isUnsafe := true
 				if tool, ok := a.tools.Get(currentTool.Name); ok {
 					dispatched := false
 					if ic, icok := tool.(agentsdk.InputConcurrencySafeTool); icok {
@@ -1531,19 +1532,21 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 							if approval == AutoApproved || approval == TrustRuleApproved {
 								dispatched = execStream.Dispatch(ctx, *currentTool)
 							}
+							isUnsafe = false
 						}
 					} else if cs, csok := tool.(agentsdk.ConcurrencySafeTool); csok && cs.IsConcurrencySafe() {
 						approval := a.approvalResultForTool(*currentTool)
 						if approval == AutoApproved || approval == TrustRuleApproved {
 							dispatched = execStream.Dispatch(ctx, *currentTool)
 						}
+						isUnsafe = false
 					}
 					if dispatched {
 						currentTool = nil
 					}
 				}
 
-				if currentTool != nil {
+				if currentTool != nil && isUnsafe {
 					execStream.SetBarrier()
 				}
 
