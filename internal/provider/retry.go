@@ -20,14 +20,55 @@ var (
 	retryMaxDelay  = 2 * time.Second
 )
 
+// RetryContext distinguishes foreground from background retry behavior.
+type RetryContext int
+
+const (
+	RetryForeground RetryContext = iota // full retries for user-facing ops
+	RetryBackground                     // fail fast for auxiliary ops
+)
+
+// RetryConfig configures HTTP-level retry behavior.
+type RetryConfig struct {
+	MaxAttempts int
+	BaseDelay   time.Duration
+	MaxDelay    time.Duration
+	Context     RetryContext
+}
+
+func (c RetryConfig) maxAttempts() int {
+	if c.MaxAttempts > 0 {
+		return c.MaxAttempts
+	}
+	if c.Context == RetryBackground {
+		return 1
+	}
+	return defaultMaxAttempts
+}
+
 // DoWithRetry executes an HTTP request with bounded exponential backoff for
 // transient API failures.
 func DoWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
+	return DoWithRetryConfig(ctx, client, req, RetryConfig{})
+}
+
+// DoWithRetryConfig executes an HTTP request with configurable retry behavior.
+func DoWithRetryConfig(ctx context.Context, client *http.Client, req *http.Request, cfg RetryConfig) (*http.Response, error) {
 	if client == nil {
 		return nil, fmt.Errorf("http client is nil")
 	}
 
-	for attempt := 1; attempt <= defaultMaxAttempts; attempt++ {
+	maxAttempts := cfg.maxAttempts()
+	baseDelay := cfg.BaseDelay
+	if baseDelay <= 0 {
+		baseDelay = retryBaseDelay
+	}
+	maxDelay := cfg.MaxDelay
+	if maxDelay <= 0 {
+		maxDelay = retryMaxDelay
+	}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attemptReq, err := cloneRequest(ctx, req)
 		if err != nil {
 			return nil, err
@@ -35,10 +76,10 @@ func DoWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*
 
 		resp, err := client.Do(attemptReq)
 		if err == nil {
-			if !shouldRetryStatus(resp.StatusCode) || attempt == defaultMaxAttempts {
+			if !shouldRetryStatus(resp.StatusCode) || attempt == maxAttempts {
 				return resp, nil
 			}
-			delay := retryDelay(attempt)
+			delay := retryDelay(attempt, baseDelay, maxDelay)
 			if ra, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
 				delay = ra
 			}
@@ -50,10 +91,10 @@ func DoWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*
 			continue
 		}
 
-		if !shouldRetryError(err) || attempt == defaultMaxAttempts {
+		if !shouldRetryError(err) || attempt == maxAttempts {
 			return nil, err
 		}
-		if waitErr := waitRetry(ctx, retryDelay(attempt)); waitErr != nil {
+		if waitErr := waitRetry(ctx, retryDelay(attempt, baseDelay, maxDelay)); waitErr != nil {
 			return nil, waitErr
 		}
 	}
@@ -106,12 +147,18 @@ func shouldRetryError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
-func retryDelay(attempt int) time.Duration {
-	delay := retryBaseDelay
+func retryDelay(attempt int, baseDelay, maxDelay time.Duration) time.Duration {
+	if baseDelay <= 0 {
+		baseDelay = retryBaseDelay
+	}
+	if maxDelay <= 0 {
+		maxDelay = retryMaxDelay
+	}
+	delay := baseDelay
 	for i := 1; i < attempt; i++ {
 		delay *= 2
-		if delay >= retryMaxDelay {
-			delay = retryMaxDelay
+		if delay >= maxDelay {
+			delay = maxDelay
 			break
 		}
 	}

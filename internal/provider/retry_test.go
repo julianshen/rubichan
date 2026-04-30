@@ -208,7 +208,7 @@ func TestRetryDelay_UsesJitter(t *testing.T) {
 
 	var delays []time.Duration
 	for i := 0; i < 20; i++ {
-		delays = append(delays, retryDelay(1))
+		delays = append(delays, retryDelay(1, retryBaseDelay, retryMaxDelay))
 	}
 	allSame := true
 	for i := 1; i < len(delays); i++ {
@@ -234,10 +234,38 @@ func TestRetryDelay_CappedAtMaxWithJitter(t *testing.T) {
 	})
 
 	for i := 0; i < 20; i++ {
-		d := retryDelay(5)
+		d := retryDelay(5, retryBaseDelay, retryMaxDelay)
 		assert.GreaterOrEqual(t, d, retryMaxDelay, "delay should be at least maxDelay, got %v", d)
 		assert.LessOrEqual(t, d, retryMaxDelay+retryMaxDelay/4, "delay should not exceed maxDelay + 25%% jitter, got %v", d)
 	}
+}
+
+func TestDoWithRetryConfig_Background_FailFast(t *testing.T) {
+	var calls atomic.Int32
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return nil, &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+		}),
+	}
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	_, err := DoWithRetryConfig(context.Background(), client, req, RetryConfig{Context: RetryBackground})
+	require.Error(t, err)
+	assert.EqualValues(t, 1, calls.Load(), "background should not retry")
+}
+
+func TestDoWithRetryConfig_Foreground_Retries(t *testing.T) {
+	var calls atomic.Int32
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			return nil, &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+		}),
+	}
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	_, err := DoWithRetryConfig(context.Background(), client, req, RetryConfig{Context: RetryForeground})
+	require.Error(t, err)
+	assert.EqualValues(t, 3, calls.Load(), "foreground should retry")
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
