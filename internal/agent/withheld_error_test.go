@@ -34,3 +34,24 @@ func TestWithheldErrorBuffer_Clear(t *testing.T) {
 	b.Clear()
 	assert.False(t, b.HasUnrecovered())
 }
+
+func TestWithheldErrorBuffer_MarkRecovered_WrongClass(t *testing.T) {
+	b := &withheldErrorBuffer{}
+	b.Add(errorclass.ClassPromptTooLong, fmt.Errorf("err"))
+	b.MarkRecovered(errorclass.ClassMaxOutputTokens)
+	assert.True(t, b.HasUnrecovered(), "MarkRecovered with wrong class should not clear the error")
+}
+
+func TestWithheldErrorBuffer_LastUnrecovered_Empty(t *testing.T) {
+	b := &withheldErrorBuffer{}
+	_, ok := b.LastUnrecovered()
+	assert.False(t, ok, "empty buffer should return false")
+}
+
+func TestWithheldErrorBuffer_LastUnrecovered_AfterRecovered(t *testing.T) {
+	b := &withheldErrorBuffer{}
+	b.Add(errorclass.ClassPromptTooLong, fmt.Errorf("err"))
+	b.MarkRecovered(errorclass.ClassPromptTooLong)
+	_, ok := b.LastUnrecovered()
+	assert.False(t, ok, "recovered error should return false")
+}

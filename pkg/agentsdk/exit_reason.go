@@ -52,7 +52,7 @@ const (
 	// compaction could not recover enough space to retry.
 	ExitContextOverflow
 
-	// ExitMaxOutputTokens: the model hit the output token limit and
+	// ExitMaxOutputTokens the model hit the output token limit and
 	// recovery attempts were exhausted.
 	ExitMaxOutputTokens
 

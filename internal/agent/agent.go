@@ -853,8 +853,8 @@ func (a *Agent) escalateMaxTokens(ls *loopState) {
 	ls.maxOutputTokens = escalatedMaxOutputTokens
 }
 
-// attemptRecovery tries to recover from a recoverable error.
-// Returns true if recovery succeeded and the turn should retry.
+// attemptRecovery retries a failed provider call for known-recoverable error classes.
+// A true return means the caller should decrement turnCount and re-enter the loop.
 func (a *Agent) attemptRecovery(ctx context.Context, ch chan<- TurnEvent, ls *loopState, class errorclass.ErrorClass, blocks []provider.ContentBlock) bool {
 	switch class {
 	case errorclass.ClassPromptTooLong:
@@ -1502,10 +1502,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					continue
 				}
 				// Recovery exhausted — surface the withheld error with class context
-				// so consumers can distinguish PTL from max_tokens without parsing strings.
+				// so consumers can distinguish prompt-too-long from max_tokens without parsing strings.
 				lastErr, ok := ls.withheldErrors.LastUnrecovered()
 				if ok {
 					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream (%s): %w", lastErr.Class, lastErr.Err)})
+				} else {
+					// Buffer was cleared or marked recovered unexpectedly — still emit the original error
+					// so the consumer always sees an error before done on failed recovery.
+					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream (%s): %w", class, err)})
 				}
 				ls.withheldErrors.Clear()
 				exitReason := agentsdk.ExitContextOverflow
