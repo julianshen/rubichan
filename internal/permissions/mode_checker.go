@@ -80,7 +80,8 @@ func (c *ModeAwareChecker) CheckApproval(tool string, input json.RawMessage) age
 	}
 }
 
-// Explain delegates to the underlying checker if it implements Explainer.
+// Explain forwards to the wrapped checker's Explainer so UI messages
+// show the original policy reason even when mode logic overrides the result.
 func (c *ModeAwareChecker) Explain(tool string, input json.RawMessage) string {
 	if c.explainer != nil {
 		return c.explainer.Explain(tool, input)

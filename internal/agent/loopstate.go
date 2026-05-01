@@ -19,11 +19,19 @@ const escalatedMaxOutputTokens = 65536
 type ContinueReason int
 
 const (
-	ContinueUnknown            ContinueReason = iota
-	ContinueNextTurn                          // normal tool-use continuation
-	ContinuePromptTooLongRetry                // reactive compact recovered context
-	ContinueMaxTokensRecovery                 // max_tokens continuation prompt
-	ContinueModelFallback                     // fell back to alternate model
+	ContinueUnknown ContinueReason = iota
+	// ContinueNextTurn means the model requested tool calls; the loop
+	// will execute them and start another turn with the results.
+	ContinueNextTurn
+	// ContinuePromptTooLongRetry means the context was compacted after
+	// a prompt-too-long error; the loop retries the same request.
+	ContinuePromptTooLongRetry
+	// ContinueMaxTokensRecovery means the model hit its output limit;
+	// the loop sends a continuation prompt to resume generation.
+	ContinueMaxTokensRecovery
+	// ContinueModelFallback means the primary model failed (overloaded
+	// or unavailable) and the loop retried with a fallback model.
+	ContinueModelFallback
 )
 
 func (r ContinueReason) String() string {
