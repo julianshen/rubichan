@@ -109,6 +109,30 @@ func autoDeny(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
 	return false, nil
 }
 
+// turnResult collects the outcome of draining a TurnEvent channel.
+type turnResult struct {
+	sawError   bool
+	exitReason agentsdk.TurnExitReason
+	events     map[string]int
+}
+
+// drainTurn reads all events from ch and returns a summary.
+// It tracks whether an error event was seen, the final exit reason,
+// and the count of each event type.
+func drainTurn(ch <-chan TurnEvent) turnResult {
+	r := turnResult{events: make(map[string]int)}
+	for evt := range ch {
+		r.events[evt.Type]++
+		if evt.Type == "error" {
+			r.sawError = true
+		}
+		if evt.Type == "done" {
+			r.exitReason = evt.ExitReason
+		}
+	}
+	return r
+}
+
 type countingApprovalChecker struct {
 	mu     sync.Mutex
 	calls  int
@@ -1095,23 +1119,10 @@ func TestRunLoop_PromptTooLong_ErrorWithheldDuringRecovery(t *testing.T) {
 	ch, err := agent.Turn(context.Background(), "hello")
 	require.NoError(t, err)
 
-	var sawError bool
-	var sawContextOverflow bool
-	var exitReason agentsdk.TurnExitReason
-	for evt := range ch {
-		if evt.Type == "error" {
-			sawError = true
-		}
-		if evt.Type == "context_overflow" {
-			sawContextOverflow = true
-		}
-		if evt.Type == "done" {
-			exitReason = evt.ExitReason
-		}
-	}
-	assert.False(t, sawError, "error should be withheld during successful recovery")
-	assert.True(t, sawContextOverflow, "should emit context_overflow event on recovery")
-	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
+	r := drainTurn(ch)
+	assert.False(t, r.sawError, "error should be withheld during successful recovery")
+	assert.GreaterOrEqual(t, r.events["context_overflow"], 1, "should emit context_overflow event on recovery")
+	assert.Equal(t, agentsdk.ExitCompleted, r.exitReason)
 }
 
 func TestRunLoop_PromptTooLong_ErrorSurfacedAfterExhaustion(t *testing.T) {
@@ -1127,18 +1138,9 @@ func TestRunLoop_PromptTooLong_ErrorSurfacedAfterExhaustion(t *testing.T) {
 	ch, err := agent.Turn(context.Background(), "hello")
 	require.NoError(t, err)
 
-	var sawError bool
-	var exitReason agentsdk.TurnExitReason
-	for evt := range ch {
-		if evt.Type == "error" {
-			sawError = true
-		}
-		if evt.Type == "done" {
-			exitReason = evt.ExitReason
-		}
-	}
-	assert.True(t, sawError, "error should be surfaced after recovery exhausts")
-	assert.Equal(t, agentsdk.ExitContextOverflow, exitReason)
+	r := drainTurn(ch)
+	assert.True(t, r.sawError, "error should be surfaced after recovery exhausts")
+	assert.Equal(t, agentsdk.ExitContextOverflow, r.exitReason)
 }
 
 func TestRunLoop_NonRecoverableError_EmittedImmediately(t *testing.T) {
@@ -1150,18 +1152,9 @@ func TestRunLoop_NonRecoverableError_EmittedImmediately(t *testing.T) {
 	ch, err := agent.Turn(context.Background(), "hello")
 	require.NoError(t, err)
 
-	var sawError bool
-	var exitReason agentsdk.TurnExitReason
-	for evt := range ch {
-		if evt.Type == "error" {
-			sawError = true
-		}
-		if evt.Type == "done" {
-			exitReason = evt.ExitReason
-		}
-	}
-	assert.True(t, sawError, "non-recoverable error should be emitted immediately")
-	assert.Equal(t, agentsdk.ExitProviderError, exitReason)
+	r := drainTurn(ch)
+	assert.True(t, r.sawError, "non-recoverable error should be emitted immediately")
+	assert.Equal(t, agentsdk.ExitProviderError, r.exitReason)
 }
 
 func TestRunLoop_PromptTooLong_ExhaustsRetries(t *testing.T) {
@@ -1281,23 +1274,10 @@ func TestRunLoop_MaxTokensProviderError_RecoversWithEscalation(t *testing.T) {
 	ch, err := agent.Turn(context.Background(), "hello")
 	require.NoError(t, err)
 
-	var sawError bool
-	var sawEscalation bool
-	var exitReason agentsdk.TurnExitReason
-	for evt := range ch {
-		if evt.Type == "error" {
-			sawError = true
-		}
-		if evt.Type == "max_tokens_escalation" {
-			sawEscalation = true
-		}
-		if evt.Type == "done" {
-			exitReason = evt.ExitReason
-		}
-	}
-	assert.False(t, sawError, "error should be withheld during escalation recovery")
-	assert.True(t, sawEscalation, "should emit escalation event")
-	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
+	r := drainTurn(ch)
+	assert.False(t, r.sawError, "error should be withheld during escalation recovery")
+	assert.GreaterOrEqual(t, r.events["max_tokens_escalation"], 1, "should emit escalation event")
+	assert.Equal(t, agentsdk.ExitCompleted, r.exitReason)
 	assert.Equal(t, 2, prov.callCount)
 }
 

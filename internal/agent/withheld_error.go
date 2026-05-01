@@ -4,55 +4,49 @@ import (
 	"github.com/julianshen/rubichan/internal/agent/errorclass"
 )
 
-// WithheldError tracks a single recoverable error that has been withheld
-// from consumers while recovery is attempted.
+// WithheldError tracks a recoverable error that is being withheld from
+// consumers while the loop attempts recovery. Only one error is withheld
+// at a time because recovery is synchronous and single-threaded.
 type WithheldError struct {
 	Class     errorclass.ErrorClass
 	Err       error
 	Recovered bool
 }
 
-// withheldErrorBuffer holds recoverable errors that are withheld from
-// consumers while the loop attempts recovery. It is NOT safe for concurrent
-// use; the runLoop goroutine is the sole accessor.
+// withheldErrorBuffer tracks at most one unrecovered error at a time.
+// The runLoop goroutine is the sole accessor, so no mutex is needed.
 type withheldErrorBuffer struct {
-	errors []WithheldError
+	err *WithheldError
 }
 
+// Add stores a new recoverable error, replacing any previous one.
+// Previous errors are discarded because recovery handles one at a time.
 func (b *withheldErrorBuffer) Add(class errorclass.ErrorClass, err error) {
-	b.errors = append(b.errors, WithheldError{Class: class, Err: err})
+	b.err = &WithheldError{Class: class, Err: err}
 }
 
+// HasUnrecovered reports whether a recoverable error is pending.
 func (b *withheldErrorBuffer) HasUnrecovered() bool {
-	for _, e := range b.errors {
-		if !e.Recovered {
-			return true
-		}
-	}
-	return false
+	return b.err != nil && !b.err.Recovered
 }
 
-// MarkRecovered marks the most recent unrecovered error of the given class
-// as recovered. Only the last matching error is marked.
-func (b *withheldErrorBuffer) MarkRecovered(class errorclass.ErrorClass) {
-	for i := len(b.errors) - 1; i >= 0; i-- {
-		if b.errors[i].Class == class && !b.errors[i].Recovered {
-			b.errors[i].Recovered = true
-			return
-		}
+// MarkRecovered clears the pending error so the loop can proceed cleanly.
+func (b *withheldErrorBuffer) MarkRecovered(errorclass.ErrorClass) {
+	if b.err != nil {
+		b.err.Recovered = true
 	}
 }
 
+// Clear discards the pending error. Called after the error is surfaced
+// to consumers so stale state doesn't leak across turns.
 func (b *withheldErrorBuffer) Clear() {
-	b.errors = nil
+	b.err = nil
 }
 
-// LastUnrecovered returns the most recent unrecovered error as a value copy.
+// LastUnrecovered returns the pending error if it hasn't been recovered.
 func (b *withheldErrorBuffer) LastUnrecovered() (WithheldError, bool) {
-	for i := len(b.errors) - 1; i >= 0; i-- {
-		if !b.errors[i].Recovered {
-			return b.errors[i], true
-		}
+	if b.err != nil && !b.err.Recovered {
+		return *b.err, true
 	}
 	return WithheldError{}, false
 }

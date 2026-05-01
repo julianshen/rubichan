@@ -1501,11 +1501,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					}
 					continue
 				}
-				// Recovery exhausted — surface the withheld error
+				// Recovery exhausted — surface the withheld error with class context
+				// so consumers can distinguish PTL from max_tokens without parsing strings.
 				lastErr, ok := ls.withheldErrors.LastUnrecovered()
 				if ok {
-					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", lastErr.Err)})
+					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream (%s): %w", lastErr.Class, lastErr.Err)})
 				}
+				ls.withheldErrors.Clear()
 				exitReason := agentsdk.ExitContextOverflow
 				if class == errorclass.ClassMaxOutputTokens {
 					exitReason = agentsdk.ExitMaxOutputTokens
