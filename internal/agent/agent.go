@@ -896,8 +896,10 @@ func (a *Agent) attemptMaxOutputTokensRecovery(ctx context.Context, ch chan<- Tu
 	}
 	if ls.maxTokensRecoveryAttempts < maxOutputTokensRecoveryLimit {
 		ls.maxTokensRecoveryAttempts++
-		a.conversation.AddAssistant(blocks)
-		a.persistMessage("assistant", blocks)
+		if len(blocks) > 0 {
+			a.conversation.AddAssistant(blocks)
+			a.persistMessage("assistant", blocks)
+		}
 		a.conversation.AddUser(fmt.Sprintf(
 			"[max_output_tokens recovery %d/%d] Continue your response from where you left off.",
 			ls.maxTokensRecoveryAttempts, maxOutputTokensRecoveryLimit))
@@ -1500,8 +1502,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 					continue
 				}
 				// Recovery exhausted — surface the withheld error
-				lastErr := ls.withheldErrors.LastUnrecovered()
-				if lastErr != nil {
+				lastErr, ok := ls.withheldErrors.LastUnrecovered()
+				if ok {
 					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", lastErr.Err)})
 				}
 				exitReason := agentsdk.ExitContextOverflow

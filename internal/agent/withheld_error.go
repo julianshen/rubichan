@@ -1,31 +1,29 @@
 package agent
 
 import (
-	"sync"
-
 	"github.com/julianshen/rubichan/internal/agent/errorclass"
 )
 
+// WithheldError tracks a single recoverable error that has been withheld
+// from consumers while recovery is attempted.
 type WithheldError struct {
 	Class     errorclass.ErrorClass
 	Err       error
 	Recovered bool
 }
 
+// withheldErrorBuffer holds recoverable errors that are withheld from
+// consumers while the loop attempts recovery. It is NOT safe for concurrent
+// use; the runLoop goroutine is the sole accessor.
 type withheldErrorBuffer struct {
-	mu     sync.Mutex
 	errors []WithheldError
 }
 
 func (b *withheldErrorBuffer) Add(class errorclass.ErrorClass, err error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.errors = append(b.errors, WithheldError{Class: class, Err: err})
 }
 
 func (b *withheldErrorBuffer) HasUnrecovered() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	for _, e := range b.errors {
 		if !e.Recovered {
 			return true
@@ -34,29 +32,27 @@ func (b *withheldErrorBuffer) HasUnrecovered() bool {
 	return false
 }
 
+// MarkRecovered marks the most recent unrecovered error of the given class
+// as recovered. Only the last matching error is marked.
 func (b *withheldErrorBuffer) MarkRecovered(class errorclass.ErrorClass) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for i := range b.errors {
+	for i := len(b.errors) - 1; i >= 0; i-- {
 		if b.errors[i].Class == class && !b.errors[i].Recovered {
 			b.errors[i].Recovered = true
+			return
 		}
 	}
 }
 
 func (b *withheldErrorBuffer) Clear() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.errors = nil
 }
 
-func (b *withheldErrorBuffer) LastUnrecovered() *WithheldError {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+// LastUnrecovered returns the most recent unrecovered error as a value copy.
+func (b *withheldErrorBuffer) LastUnrecovered() (WithheldError, bool) {
 	for i := len(b.errors) - 1; i >= 0; i-- {
 		if !b.errors[i].Recovered {
-			return &b.errors[i]
+			return b.errors[i], true
 		}
 	}
-	return nil
+	return WithheldError{}, false
 }

@@ -23,8 +23,8 @@ func TestWithheldErrorBuffer_LastUnrecovered(t *testing.T) {
 	b.Add(errorclass.ClassPromptTooLong, fmt.Errorf("first"))
 	b.Add(errorclass.ClassMaxOutputTokens, fmt.Errorf("second"))
 
-	last := b.LastUnrecovered()
-	require.NotNil(t, last)
+	last, ok := b.LastUnrecovered()
+	require.True(t, ok)
 	assert.Equal(t, errorclass.ClassMaxOutputTokens, last.Class)
 }
 
