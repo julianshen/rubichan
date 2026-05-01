@@ -71,10 +71,70 @@ func (r ApprovalResult) String() string {
 	}
 }
 
+// PermissionMode controls the default approval stance when no explicit
+// policy rule matches.
+type PermissionMode int
+
+const (
+	// ModePlan is the safest default: it auto-approves only read-only tools,
+	// forcing explicit approval for anything that could mutate state.
+	ModePlan PermissionMode = iota
+
+	// ModeAuto requires upfront trust rule configuration; it avoids prompting
+	// for tools the user has already vetted.
+	ModeAuto
+
+	// ModeFullAuto assumes all tools are safe unless explicitly denied —
+	// use only in trusted environments.
+	ModeFullAuto
+
+	// ModeBypass is for emergency recovery when the agent cannot proceed
+	// due to over-restrictive policies.
+	ModeBypass
+)
+
+// String returns a human-readable name for the permission mode.
+func (m PermissionMode) String() string {
+	switch m {
+	case ModePlan:
+		return "plan"
+	case ModeAuto:
+		return "auto"
+	case ModeFullAuto:
+		return "fullAuto"
+	case ModeBypass:
+		return "bypass"
+	default:
+		return "unknown"
+	}
+}
+
+// ParsePermissionMode parses a mode string. Unknown values default to ModePlan
+// to fail safely rather than crash on typos.
+func ParsePermissionMode(s string) PermissionMode {
+	switch s {
+	case "plan":
+		return ModePlan
+	case "auto":
+		return ModeAuto
+	case "fullAuto":
+		return ModeFullAuto
+	case "bypass":
+		return ModeBypass
+	default:
+		return ModePlan
+	}
+}
+
 // ApprovalChecker determines the approval status of a tool call based on
 // both the tool name and its input.
 type ApprovalChecker interface {
 	CheckApproval(tool string, input json.RawMessage) ApprovalResult
+}
+
+// Explainer provides human-readable explanations for approval decisions.
+type Explainer interface {
+	Explain(tool string, input json.RawMessage) string
 }
 
 // CompositeApprovalChecker chains multiple ApprovalCheckers. The first

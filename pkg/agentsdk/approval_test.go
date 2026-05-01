@@ -78,3 +78,36 @@ func (m *mockApprovalChecker) CheckApproval(tool string, _ json.RawMessage) Appr
 	}
 	return ApprovalRequired
 }
+
+func TestPermissionMode_String(t *testing.T) {
+	tests := []struct {
+		mode PermissionMode
+		want string
+	}{
+		{ModePlan, "plan"},
+		{ModeAuto, "auto"},
+		{ModeFullAuto, "fullAuto"},
+		{ModeBypass, "bypass"},
+		{PermissionMode(99), "unknown"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, tt.mode.String())
+	}
+}
+
+func TestParsePermissionMode(t *testing.T) {
+	tests := []struct {
+		input string
+		want  PermissionMode
+	}{
+		{"plan", ModePlan},
+		{"auto", ModeAuto},
+		{"fullAuto", ModeFullAuto},
+		{"bypass", ModeBypass},
+		{"unknown", ModePlan},
+		{"", ModePlan},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, ParsePermissionMode(tt.input))
+	}
+}
