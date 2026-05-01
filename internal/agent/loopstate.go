@@ -55,10 +55,16 @@ type loopState struct {
 	lastContinueReason        ContinueReason
 	nudgeEmitted              bool
 	maxOutputTokens           int
+	withheldErrors            *withheldErrorBuffer
 }
 
 func newLoopState(maxTurns, turnCount, maxOutputTokens int) *loopState {
-	return &loopState{maxTurns: maxTurns, turnCount: turnCount, maxOutputTokens: maxOutputTokens}
+	return &loopState{
+		maxTurns:        maxTurns,
+		turnCount:       turnCount,
+		maxOutputTokens: maxOutputTokens,
+		withheldErrors:  &withheldErrorBuffer{},
+	}
 }
 
 func (s *loopState) hasMoreTurns() bool {

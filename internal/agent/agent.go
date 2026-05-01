@@ -853,6 +853,63 @@ func (a *Agent) escalateMaxTokens(ls *loopState) {
 	ls.maxOutputTokens = escalatedMaxOutputTokens
 }
 
+// attemptRecovery retries a failed provider call for known-recoverable error classes.
+// A true return means the caller should decrement turnCount and re-enter the loop.
+func (a *Agent) attemptRecovery(ctx context.Context, ch chan<- TurnEvent, ls *loopState, class errorclass.ErrorClass, blocks []provider.ContentBlock) bool {
+	switch class {
+	case errorclass.ClassPromptTooLong:
+		return a.attemptPromptTooLongRecovery(ctx, ch, ls)
+	case errorclass.ClassMaxOutputTokens:
+		return a.attemptMaxOutputTokensRecovery(ctx, ch, ls, blocks)
+	default:
+		return false
+	}
+}
+
+func (a *Agent) attemptPromptTooLongRecovery(ctx context.Context, ch chan<- TurnEvent, ls *loopState) bool {
+	if ls.promptTooLongAttempts >= maxPromptTooLongRetries {
+		return false
+	}
+	compacted := reactiveCompact(ctx, a.context, a.conversation)
+	drained := false
+	if !compacted {
+		drained = a.conversation.DrainMessages(minDrainPairs)
+		if drained {
+			a.logger.Warn("forceCompact did not reduce; fell back to DrainMessages")
+		}
+	}
+	if compacted || drained {
+		ls.promptTooLongAttempts++
+		a.emit(ctx, ch, TurnEvent{Type: "context_overflow"})
+		a.saveSnapshotIfNeeded()
+		return true
+	}
+	return false
+}
+
+func (a *Agent) attemptMaxOutputTokensRecovery(ctx context.Context, ch chan<- TurnEvent, ls *loopState, blocks []provider.ContentBlock) bool {
+	if ls.maxOutputTokens < escalatedMaxOutputTokens {
+		a.logger.Warn("output token limit hit; escalating max_tokens from %d to %d", ls.maxOutputTokens, escalatedMaxOutputTokens)
+		a.escalateMaxTokens(ls)
+		a.emit(ctx, ch, TurnEvent{Type: "max_tokens_escalation"})
+		return true
+	}
+	if ls.maxTokensRecoveryAttempts < maxOutputTokensRecoveryLimit {
+		ls.maxTokensRecoveryAttempts++
+		if len(blocks) > 0 {
+			a.conversation.AddAssistant(blocks)
+			a.persistMessage("assistant", blocks)
+		}
+		a.conversation.AddUser(fmt.Sprintf(
+			"[max_output_tokens recovery %d/%d] Continue your response from where you left off.",
+			ls.maxTokensRecoveryAttempts, maxOutputTokensRecoveryLimit))
+		a.emit(ctx, ch, TurnEvent{Type: "max_tokens_recovery"})
+		a.saveSnapshotIfNeeded()
+		return true
+	}
+	return false
+}
+
 // saveSnapshotIfNeeded persists the current conversation state as a
 // resume snapshot if persistence is enabled.
 func (a *Agent) saveSnapshotIfNeeded() {
@@ -1432,25 +1489,34 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			class := errorclass.Classify(err)
 			a.logger.Warn("provider error classified as %s: %v", class, err)
 
-			if class == errorclass.ClassPromptTooLong {
-				compacted := reactiveCompact(ctx, a.context, a.conversation)
-				drained := false
-				if !compacted {
-					drained = a.conversation.DrainMessages(minDrainPairs)
-					if drained {
-						a.logger.Warn("forceCompact did not reduce; fell back to DrainMessages")
-					}
-				}
-				if ls.promptTooLongAttempts < maxPromptTooLongRetries && (compacted || drained) {
-					ls.promptTooLongAttempts++
-					a.emit(ctx, ch, TurnEvent{Type: "context_overflow"})
-					a.saveSnapshotIfNeeded()
+			if class == errorclass.ClassPromptTooLong || class == errorclass.ClassMaxOutputTokens {
+				ls.withheldErrors.Add(class, err)
+				if a.attemptRecovery(ctx, ch, ls, class, nil) {
+					ls.withheldErrors.MarkRecovered(class)
 					ls.turnCount--
-					ls.lastContinueReason = ContinuePromptTooLongRetry
+					if class == errorclass.ClassPromptTooLong {
+						ls.lastContinueReason = ContinuePromptTooLongRetry
+					} else {
+						ls.lastContinueReason = ContinueMaxTokensRecovery
+					}
 					continue
 				}
-				a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
-				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitContextOverflow))
+				// Recovery exhausted — surface the withheld error with class context
+				// so consumers can distinguish prompt-too-long from max_tokens without parsing strings.
+				lastErr, ok := ls.withheldErrors.LastUnrecovered()
+				if ok {
+					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream (%s): %w", lastErr.Class, lastErr.Err)})
+				} else {
+					// Buffer was cleared or marked recovered unexpectedly — still emit the original error
+					// so the consumer always sees an error before done on failed recovery.
+					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream (%s): %w", class, err)})
+				}
+				ls.withheldErrors.Clear()
+				exitReason := agentsdk.ExitContextOverflow
+				if class == errorclass.ClassMaxOutputTokens {
+					exitReason = agentsdk.ExitMaxOutputTokens
+				}
+				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
 				return
 			}
 

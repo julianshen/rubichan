@@ -109,6 +109,30 @@ func autoDeny(_ context.Context, _ string, _ json.RawMessage) (bool, error) {
 	return false, nil
 }
 
+// turnResult collects the outcome of draining a TurnEvent channel.
+type turnResult struct {
+	sawError   bool
+	exitReason agentsdk.TurnExitReason
+	events     map[string]int
+}
+
+// drainTurn reads all events from ch and returns a summary.
+// It tracks whether an error event was seen, the final exit reason,
+// and the count of each event type.
+func drainTurn(ch <-chan TurnEvent) turnResult {
+	r := turnResult{events: make(map[string]int)}
+	for evt := range ch {
+		r.events[evt.Type]++
+		if evt.Type == "error" {
+			r.sawError = true
+		}
+		if evt.Type == "done" {
+			r.exitReason = evt.ExitReason
+		}
+	}
+	return r
+}
+
 type countingApprovalChecker struct {
 	mu     sync.Mutex
 	calls  int
@@ -1082,6 +1106,57 @@ func TestRunLoop_PromptTooLong_RecoversViaDrain(t *testing.T) {
 	assert.Equal(t, 2, prov.callCount, "should retry after drain")
 }
 
+func TestRunLoop_PromptTooLong_ErrorWithheldDuringRecovery(t *testing.T) {
+	prov := &retryAfterErrorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+	for i := 0; i < 10; i++ {
+		agent.conversation.AddUser(fmt.Sprintf("prior message %d", i))
+		agent.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("response %d", i)}})
+	}
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	r := drainTurn(ch)
+	assert.False(t, r.sawError, "error should be withheld during successful recovery")
+	assert.GreaterOrEqual(t, r.events["context_overflow"], 1, "should emit context_overflow event on recovery")
+	assert.Equal(t, agentsdk.ExitCompleted, r.exitReason)
+}
+
+func TestRunLoop_PromptTooLong_ErrorSurfacedAfterExhaustion(t *testing.T) {
+	prov := &errorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+	for i := 0; i < 20; i++ {
+		agent.conversation.AddUser(fmt.Sprintf("prior message %d", i))
+		agent.conversation.AddAssistant([]provider.ContentBlock{{Type: "text", Text: fmt.Sprintf("response %d", i)}})
+	}
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	r := drainTurn(ch)
+	assert.True(t, r.sawError, "error should be surfaced after recovery exhausts")
+	assert.Equal(t, agentsdk.ExitContextOverflow, r.exitReason)
+}
+
+func TestRunLoop_NonRecoverableError_EmittedImmediately(t *testing.T) {
+	prov := &errorProvider{err: fmt.Errorf("some random provider failure")}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	r := drainTurn(ch)
+	assert.True(t, r.sawError, "non-recoverable error should be emitted immediately")
+	assert.Equal(t, agentsdk.ExitProviderError, r.exitReason)
+}
+
 func TestRunLoop_PromptTooLong_ExhaustsRetries(t *testing.T) {
 	prov := &errorProvider{err: fmt.Errorf("prompt is too long: 300000 tokens")}
 	reg := tools.NewRegistry()
@@ -1188,6 +1263,41 @@ func TestRunLoop_MaxTokens_StopsAfterMaxRecovery(t *testing.T) {
 	assert.Equal(t, 1, escalationEvents, "should escalate once")
 	assert.Equal(t, maxOutputTokensRecoveryLimit, recoveryEvents, "should attempt exactly maxOutputTokensRecoveryLimit recoveries after escalation")
 	assert.Equal(t, 1+maxOutputTokensRecoveryLimit+1, prov.callCount, "1 escalation + maxOutputTokensRecoveryLimit recovery + 1 final call")
+}
+
+func TestRunLoop_MaxTokensProviderError_RecoversWithEscalation(t *testing.T) {
+	prov := &maxTokensErrorProvider{maxCalls: 2}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	r := drainTurn(ch)
+	assert.False(t, r.sawError, "error should be withheld during escalation recovery")
+	assert.GreaterOrEqual(t, r.events["max_tokens_escalation"], 1, "should emit escalation event")
+	assert.Equal(t, agentsdk.ExitCompleted, r.exitReason)
+	assert.Equal(t, 2, prov.callCount)
+}
+
+// maxTokensErrorProvider returns max_output_tokens as a provider error on first call,
+// then succeeds on subsequent calls.
+type maxTokensErrorProvider struct {
+	callCount int
+	maxCalls  int
+}
+
+func (m *maxTokensErrorProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	m.callCount++
+	if m.callCount == 1 {
+		return nil, fmt.Errorf("max_output_tokens exceeded")
+	}
+	ch := make(chan provider.StreamEvent, 2)
+	ch <- provider.StreamEvent{Type: "text_delta", Text: "recovered"}
+	ch <- provider.StreamEvent{Type: "stop", StopReason: "end_turn", InputTokens: 1, OutputTokens: 1}
+	close(ch)
+	return ch, nil
 }
 
 func TestRunLoop_MaxTokens_WithToolCalls_DoesNotRetry(t *testing.T) {

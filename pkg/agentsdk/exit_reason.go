@@ -52,6 +52,10 @@ const (
 	// compaction could not recover enough space to retry.
 	ExitContextOverflow
 
+	// ExitMaxOutputTokens the model hit the output token limit and
+	// recovery attempts were exhausted.
+	ExitMaxOutputTokens
+
 	// ExitPanic: a panic was recovered in Turn's deferred handler.
 	ExitPanic
 
@@ -85,6 +89,8 @@ func (r TurnExitReason) String() string {
 		return "compaction_failed"
 	case ExitContextOverflow:
 		return "context_overflow"
+	case ExitMaxOutputTokens:
+		return "max_output_tokens"
 	case ExitPanic:
 		return "panic"
 	case ExitDiminishingReturns:
