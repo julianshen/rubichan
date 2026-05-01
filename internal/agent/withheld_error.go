@@ -19,37 +19,30 @@ type withheldErrorBuffer struct {
 	err *WithheldError
 }
 
-// Add replaces any previous error so recovery always targets the latest
-// failure — stale errors from earlier attempts must not shadow new ones.
+// Add stores a new recoverable error, replacing any previous one.
 func (b *withheldErrorBuffer) Add(class errorclass.ErrorClass, err error) {
 	b.err = &WithheldError{Class: class, Err: err}
 }
 
-// HasUnrecovered reports whether a recoverable error is still pending.
-// The loop uses this to decide whether to surface an error or attempt
-// another recovery round.
+// HasUnrecovered is true between Add and either MarkRecovered or Clear.
 func (b *withheldErrorBuffer) HasUnrecovered() bool {
 	return b.err != nil && !b.err.Recovered
 }
 
-// MarkRecovered acknowledges that the loop successfully recovered from
-// the given error class. The error stays in the buffer until Clear so
-// LastUnrecovered can still report it if a later check is needed.
+// MarkRecovered marks the pending error as recovered so HasUnrecovered
+// returns false. The error remains in the buffer until Clear is called.
 func (b *withheldErrorBuffer) MarkRecovered(class errorclass.ErrorClass) {
 	if b.err != nil && b.err.Class == class {
 		b.err.Recovered = true
 	}
 }
 
-// Clear resets the buffer before each new turn so a recovered error from
-// a previous turn is not mistakenly surfaced again.
+// Clear discards the pending error so stale state doesn't leak across turns.
 func (b *withheldErrorBuffer) Clear() {
 	b.err = nil
 }
 
-// LastUnrecovered surfaces the withheld error when recovery attempts are
-// exhausted. The caller emits this as the final error so the user sees
-// the root cause instead of a generic "retry exhausted" message.
+// LastUnrecovered returns the pending error for surfacing after recovery exhausts.
 func (b *withheldErrorBuffer) LastUnrecovered() (WithheldError, bool) {
 	if b.err != nil && !b.err.Recovered {
 		return *b.err, true
