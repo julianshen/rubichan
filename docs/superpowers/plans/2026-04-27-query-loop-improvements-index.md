@@ -53,11 +53,13 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | — | Head/tail snip | #256 | Preserve first 1/3 + last 2/3 during compaction |
 | — | InputConcurrencySafe | #257 | Per-invocation concurrency safety check |
 
-## In Progress
+## Completed (all query loop improvements done)
 
-| # | Plan | File | Status |
-|---|------|------|--------|
-| 2.8 | Write-barrier streaming executor | `2026-05-01-write-barrier-streaming-executor.md` | Planned |
+| # | Plan | PR | Description |
+|---|------|-----|-------------|
+| — | Write-barrier executor | #259 | Streaming executor with Barrier primitive |
+| — | Error withholding | #263 | Multi-stage recovery with withheld error buffer |
+| — | Permission modes | #264 | plan, auto, fullAuto, bypass modes |
 
 ## Out of Scope (future plans)
 
