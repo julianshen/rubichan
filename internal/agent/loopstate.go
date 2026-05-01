@@ -19,11 +19,29 @@ const escalatedMaxOutputTokens = 65536
 type ContinueReason int
 
 const (
-	ContinueUnknown            ContinueReason = iota
-	ContinueNextTurn                          // normal tool-use continuation
-	ContinuePromptTooLongRetry                // reactive compact recovered context
-	ContinueMaxTokensRecovery                 // max_tokens continuation prompt
-	ContinueModelFallback                     // fell back to alternate model
+	// ContinueUnknown is the zero value before the loop determines why
+	// the current turn ended. It should never appear in telemetry.
+	ContinueUnknown ContinueReason = iota
+	// ContinueNextTurn is the standard path: the model emitted tool calls
+	// and the loop must execute them, append results, and start a new turn.
+	// Distinguished from other reasons so telemetry can measure "normal"
+	// turn frequency versus recovery-driven turns.
+	ContinueNextTurn
+	// ContinuePromptTooLongRetry triggers reactive compaction, which mutates
+	// the conversation by replacing old messages with summaries. Tracked
+	// separately because compaction changes context quality and should be
+	// visible in metrics as a distinct cost center.
+	ContinuePromptTooLongRetry
+	// ContinueMaxTokensRecovery means the model stopped mid-generation due
+	// to the output token limit. The loop sends a continuation prompt to
+	// resume from where the model left off. Tracked separately because
+	// it indicates the response was truncated and may need user review.
+	ContinueMaxTokensRecovery
+	// ContinueModelFallback means the primary provider failed with a
+	// retryable error (overloaded, 529, etc.) and the loop fell back to
+	// an alternate model. Tracked separately for provider reliability
+	// metrics and to flag potential quality differences between models.
+	ContinueModelFallback
 )
 
 func (r ContinueReason) String() string {
