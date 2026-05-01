@@ -3030,7 +3030,9 @@ func buildHierarchicalChecker(cfg *config.Config, cfgPathOverride, cwd string) a
 	if len(policies) == 0 {
 		return nil
 	}
-	return permissions.NewHierarchicalChecker(policies)
+	checker := permissions.NewHierarchicalChecker(policies)
+	mode := agentsdk.ParsePermissionMode(cfg.Permissions.Mode)
+	return permissions.NewModeAwareChecker(mode, checker)
 }
 
 // splitTrustRules separates config trust rules into regex and glob rule slices.

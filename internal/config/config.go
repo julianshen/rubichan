@@ -149,6 +149,7 @@ type HookRuleConfig struct {
 
 // PermissionsConfig holds hierarchical permission policy settings.
 type PermissionsConfig struct {
+	Mode   string          `toml:"mode"` // plan, auto, fullAuto, or bypass. Unknown values default to plan.
 	Tools  PermToolPolicy  `toml:"tools"`
 	Shell  PermShellPolicy `toml:"shell"`
 	Files  PermFilePolicy  `toml:"files"`
