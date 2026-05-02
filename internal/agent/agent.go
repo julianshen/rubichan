@@ -350,6 +350,7 @@ type Agent struct {
 	rateLimiter         *SharedRateLimiter
 	capabilities        provider.ModelCapabilities
 	configuredMaxTokens int
+	resultBudget        int
 	progress            *ProgressTracker
 	acpServer           *acp.Server             // ACP server instance (if enabled)
 	acpRegistry         *acp.CapabilityRegistry // Capability registry for ACP
@@ -2156,6 +2157,19 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		}
 		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc, it.approvalResult)
+	}
+
+	// Apply aggregate result budget before emitting results.
+	enforcer := NewResultBudgetEnforcer(a.resultBudget, a.resultStore)
+	for i := range pendingTools {
+		r := results[i]
+		bounded, _ := enforcer.Enforce(pendingTools[i].Name, pendingTools[i].ID, agentsdk.ToolResult{
+			Content:        r.content,
+			DisplayContent: r.event.ToolResult.DisplayContent,
+			IsError:        r.isError,
+		})
+		r.content = bounded.Content
+		results[i] = r
 	}
 
 	// Emit all results and update conversation in original tool call order.
