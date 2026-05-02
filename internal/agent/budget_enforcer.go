@@ -140,22 +140,7 @@ func (be *ResultBudgetEnforcer) offload(toolName, toolUseID string, res agentsdk
 
 // truncate trims content to maxLen bytes, preserving head and tail with
 // a marker. Falls back to head-only if maxLen is too small.
-//
-// The marker itself is included in the maxLen budget. If maxLen is smaller
-// than the marker, the content is truncated to fit the marker.
 func (be *ResultBudgetEnforcer) truncate(content string, maxLen int) string {
-	if len(content) <= maxLen {
-		return content
-	}
 	marker := fmt.Sprintf("\n\n[... truncated: %d chars exceeded budget ...]\n\n", len(content))
-	markerLen := len(marker)
-	if maxLen <= markerLen {
-		// Budget too small for marker+content; return truncated marker.
-		return marker[:maxLen]
-	}
-	if maxLen <= markerLen+100 {
-		return content[:max(0, maxLen-markerLen)] + marker
-	}
-	half := (maxLen - markerLen) / 2
-	return content[:half] + marker + content[len(content)-half:]
+	return truncateHeadTail(content, maxLen, marker)
 }

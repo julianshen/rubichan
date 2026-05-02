@@ -17,8 +17,7 @@ type ToolBatch struct {
 }
 
 // partitionToolCalls groups adjacent tool calls into batches.
-// Consecutive concurrency-safe tools share a batch; the first unsafe
-// tool breaks the batch and starts a new sequential batch.
+// Preserves LLM call order; only affects parallelism vs sequentiality.
 func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 	if len(calls) == 0 {
 		return []ToolBatch{}
@@ -29,13 +28,7 @@ func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 
 	for _, tc := range calls {
 		tool, ok := lookup.Get(tc.Name)
-		if !ok {
-			// Unknown tools are treated as unsafe (fail-closed).
-			isSafe := false
-			_ = isSafe
-		}
-
-		isSafe := isConcurrencySafe(tool, tc.Input)
+		isSafe := ok && isConcurrencySafe(tool, tc.Input)
 
 		if len(current.Calls) == 0 {
 			current.IsConcurrent = isSafe

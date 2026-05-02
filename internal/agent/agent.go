@@ -2170,16 +2170,19 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	}
 
 	// Apply aggregate result budget before emitting results.
-	enforcer := NewResultBudgetEnforcer(a.resultBudget, a.resultStore)
-	for i := range pendingTools {
-		r := results[i]
-		bounded, _ := enforcer.Enforce(pendingTools[i].Name, pendingTools[i].ID, agentsdk.ToolResult{
-			Content:        r.content,
-			DisplayContent: r.event.ToolResult.DisplayContent,
-			IsError:        r.isError,
-		})
-		r.content = bounded.Content
-		results[i] = r
+	// Skip enforcement when budget is unlimited (<=0) to avoid allocation.
+	if a.resultBudget > 0 {
+		enforcer := NewResultBudgetEnforcer(a.resultBudget, a.resultStore)
+		for i := range pendingTools {
+			r := results[i]
+			bounded, _ := enforcer.Enforce(pendingTools[i].Name, pendingTools[i].ID, agentsdk.ToolResult{
+				Content:        r.content,
+				DisplayContent: r.event.ToolResult.DisplayContent,
+				IsError:        r.isError,
+			})
+			r.content = bounded.Content
+			results[i] = r
+		}
 	}
 
 	// Emit all results and update conversation in original tool call order.

@@ -19,12 +19,17 @@ var sharedHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
 }
 
+// failOpen returns a continue result and a wrapped error. Used for all
+// error paths in executeHTTPHook so a broken hook cannot block execution.
+func failOpen(err error) (HookResult, error) {
+	return HookResult{Continue: true}, err
+}
+
 // executeHTTPHook sends a POST request to the configured URL with the
 // event data as JSON. Returns the hook result parsed from the response.
 //
-// Fail-open design: all errors (network, marshal, bad response) log the
-// failure and return Continue=true so a broken hook cannot block execution.
-// Operators should monitor logs for hook failures.
+// Fail-open design: all errors return Continue=true so a broken hook
+// cannot block execution. Operators should monitor logs for hook failures.
 func executeHTTPHook(cfg UserHookConfig, data map[string]interface{}) (HookResult, error) {
 	payload := map[string]interface{}{
 		"event": cfg.Event,
@@ -32,7 +37,7 @@ func executeHTTPHook(cfg UserHookConfig, data map[string]interface{}) (HookResul
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return HookResult{Continue: true}, fmt.Errorf("marshal failed: %w", err)
+		return failOpen(fmt.Errorf("marshal failed: %w", err))
 	}
 
 	// Use context timeout only; http.Client.Timeout is redundant and can
@@ -42,19 +47,19 @@ func executeHTTPHook(cfg UserHookConfig, data map[string]interface{}) (HookResul
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
-		return HookResult{Continue: true}, fmt.Errorf("request build failed: %w", err)
+		return failOpen(fmt.Errorf("request build failed: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := sharedHTTPClient.Do(req)
 	if err != nil {
-		return HookResult{Continue: true}, fmt.Errorf("HTTP request failed: %w", err)
+		return failOpen(fmt.Errorf("HTTP request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxHookResponseSize))
 	if err != nil {
-		return HookResult{Continue: true}, fmt.Errorf("read body failed: %w", err)
+		return failOpen(fmt.Errorf("read body failed: %w", err))
 	}
 
 	var result HookResult

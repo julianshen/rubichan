@@ -1,32 +1,11 @@
 package permissions
 
 import (
-	"context"
-	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
-
-// safeToolAllowlist contains tools that are unconditionally safe and bypass
-// the LLM classifier. These are read-only or information-query tools.
-// Kept unexported to prevent external mutation; use isSafeTool().
-var safeToolAllowlist = map[string]struct{}{
-	"read_file": {}, "grep": {}, "glob": {}, "list_dir": {},
-	"code_search": {}, "view": {}, "ls": {}, "cat": {},
-	"find": {}, "search": {},
-	"git_status": {}, "git_diff": {}, "git_log": {}, "git_show": {},
-	"browser_snapshot": {}, "http_get": {}, "web_fetch": {},
-	"lsp_diagnostics": {}, "lsp_hover": {}, "lsp_definition": {},
-	"lsp_references": {},
-}
-
-// isSafeTool reports whether a tool is in the safe-tool allowlist.
-func isSafeTool(toolName string) bool {
-	_, ok := safeToolAllowlist[toolName]
-	return ok
-}
 
 // ClassifierDecision is the outcome of the LLM safety classifier.
 type ClassifierDecision int
@@ -77,7 +56,7 @@ func (c *YOLOClassifier) SetMaxConsecutiveDenials(n int) {
 // Classify evaluates a tool call and returns an approval decision.
 // Safe-tool allowlist bypasses classification entirely.
 func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{}) (agentsdk.ApprovalResult, error) {
-	if isSafeTool(toolName) {
+	if isReadOnlyTool(toolName) {
 		c.resetDenials()
 		return agentsdk.AutoApproved, nil
 	}
@@ -168,11 +147,14 @@ func (c *YOLOClassifier) stage2(toolName string, input map[string]interface{}) (
 	return agentsdk.ApprovalRequired, nil
 }
 
-// Ensure YOLOClassifier implements the interface needed for context.
-var _ = context.Background
-
+// stage2PromptFormat is the prompt template for detailed safety analysis.
+// Reserved for future use when stage2 is implemented with LLM reasoning.
+//
 //nolint:unused
-func formatStage2Prompt(toolName string, input map[string]interface{}) string {
-	return fmt.Sprintf("Analyze if this tool is safe to auto-approve.\nTool: %s\nInput: %v\n\nReply with:\n<thinking> reasoning </thinking>\n<decision> ALLOW or DENY </decision>",
-		toolName, input)
-}
+const stage2PromptFormat = `Analyze if this tool is safe to auto-approve.
+Tool: %s
+Input: %v
+
+Reply with:
+<thinking> reasoning </thinking>
+<decision> ALLOW or DENY </decision>`

@@ -7,19 +7,25 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
+// safeToolAllowlist contains tools that are unconditionally safe and bypass
+// the LLM classifier. These tools are read-only or information-query tools.
+// Kept unexported to prevent external mutation.
+var safeToolAllowlist = map[string]struct{}{
+	"read_file": {}, "grep": {}, "glob": {}, "list_dir": {},
+	"code_search": {}, "view": {}, "ls": {}, "cat": {},
+	"find": {}, "search": {},
+	"git_status": {}, "git_diff": {}, "git_log": {}, "git_show": {},
+	"browser_snapshot": {}, "http_get": {}, "web_fetch": {},
+	"lsp_diagnostics": {}, "lsp_hover": {}, "lsp_definition": {},
+	"lsp_references": {},
+}
+
 // isReadOnlyTool reports whether a tool is safe to auto-approve when no
 // explicit policy matches. These tools are read-only by convention; any
 // addition here must be vetted for side effects.
 func isReadOnlyTool(tool string) bool {
-	switch tool {
-	case "read_file", "grep", "glob", "list_dir", "code_search", "view",
-		"ls", "cat", "find", "search",
-		"git_status", "git_diff", "git_log", "git_show",
-		"browser_snapshot", "http_get", "web_fetch",
-		"lsp_diagnostics", "lsp_hover", "lsp_definition", "lsp_references":
-		return true
-	}
-	return false
+	_, ok := safeToolAllowlist[tool]
+	return ok
 }
 
 // ModeAwareChecker is a decorator: it only changes behavior when the wrapped

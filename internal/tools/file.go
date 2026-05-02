@@ -298,14 +298,17 @@ func hashContent(data []byte) uint64 {
 	return h.Sum64()
 }
 
-func (f *FileTool) writeFile(ctx context.Context, path, content string) (ToolResult, error) {
-	// Invalidate read cache for this path since content is changing.
+func (f *FileTool) invalidateReadCache(path string) {
 	f.readHashMu.Lock()
 	delete(f.readHashes, path)
 	f.readHashMu.Unlock()
 	if f.cache != nil {
 		f.cache.Invalidate(path)
 	}
+}
+
+func (f *FileTool) writeFile(ctx context.Context, path, content string) (ToolResult, error) {
+	f.invalidateReadCache(path)
 
 	// Check if the file already exists to determine create vs modify.
 	_, statErr := os.Stat(path)
@@ -351,13 +354,7 @@ func (f *FileTool) patchFile(ctx context.Context, path, oldString, newString str
 		return ToolResult{Content: "old_string must not be empty", IsError: true}, nil
 	}
 
-	// Invalidate read cache for this path since content is changing.
-	f.readHashMu.Lock()
-	delete(f.readHashes, path)
-	f.readHashMu.Unlock()
-	if f.cache != nil {
-		f.cache.Invalidate(path)
-	}
+	f.invalidateReadCache(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
