@@ -61,6 +61,16 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | — | Error withholding | #263 | Multi-stage recovery with withheld error buffer |
 | — | Permission modes | #264 | plan, auto, fullAuto, bypass modes |
 
+## Tool System Improvements (from ccgo/Claude Code research)
+
+| # | Plan | File | Priority | Description |
+|---|------|------|----------|-------------|
+| T1 | Tool Batching | `2026-05-02-tool-batching.md` | High | `partitionToolCalls` algorithm: group adjacent safe tools, parallelize safe batches, serialize unsafe |
+| T2 | Per-Tool Result Budgets | `2026-05-02-per-tool-result-budgets.md` | High | Per-tool `MaxResultChars()` + aggregate 200K/msg budget enforcement |
+| T3 | File Read Caching | `2026-05-02-file-read-caching.md` | High | `FileReadCache` with mtime/size invalidation, avoids redundant I/O |
+| T4 | Hook System Expansion | `2026-05-02-hook-system-expansion.md` | Medium | 27 lifecycle events, HTTP hooks, prompt hooks, fail-open design |
+| T5 | LLM Permission Classifier | `2026-05-02-llm-permission-classifier.md` | Medium | `YOLOClassifier` two-stage safety check for `ModeAuto` |
+
 ## Out of Scope (future plans)
 
 - Async memory/skill prefetch — requires deeper skill runtime changes
