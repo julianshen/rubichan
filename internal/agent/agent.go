@@ -1600,9 +1600,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				// the approval scan entirely — approval can be expensive
 				// when a security scanner is wired in.
 				isUnsafe := true
+				isWrite := false
 				if tool, ok := a.tools.Get(currentTool.Name); ok {
 					dispatched := false
 					if ic, icok := tool.(agentsdk.InputConcurrencySafeTool); icok {
+						isWrite = isWriteOperationForInput(ic, currentTool.Input)
 						if ic.IsConcurrencySafeForInput(currentTool.Input) {
 							approval := a.approvalResultForTool(*currentTool)
 							if approval == AutoApproved || approval == TrustRuleApproved {
@@ -1611,14 +1613,23 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 							isUnsafe = false
 						}
 					} else if cs, csok := tool.(agentsdk.ConcurrencySafeTool); csok && cs.IsConcurrencySafe() {
+						isWrite = isWriteOperation(tool, currentTool.Input)
 						approval := a.approvalResultForTool(*currentTool)
 						if approval == AutoApproved || approval == TrustRuleApproved {
 							dispatched = execStream.Dispatch(ctx, *currentTool)
 						}
 						isUnsafe = false
+					} else {
+						// Not concurrency-safe — still check write status for barrier.
+						isWrite = isWriteOperation(tool, currentTool.Input)
 					}
 					if dispatched {
 						currentTool = nil
+					}
+					// A write tool acts as an ordering barrier even when dispatched:
+					// subsequent safe tools must wait for it to complete.
+					if isWrite {
+						execStream.SetBarrier()
 					}
 				}
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -229,4 +230,36 @@ func isStreamingEligible(tool agentsdk.Tool, result ApprovalResult) bool {
 		return false
 	}
 	return result == AutoApproved || result == TrustRuleApproved
+}
+
+// isWriteOperation reports whether a tool call mutates external state.
+// Per-input sensitivity takes precedence over static declaration.
+// Unknown tools and tools without the marker interface return false
+// (fail-closed — treated as safe, not a barrier).
+func isWriteOperation(tool agentsdk.Tool, input json.RawMessage) bool {
+	if tool == nil {
+		return false
+	}
+	// Per-input write detection takes precedence over static declaration.
+	if iwt, ok := tool.(agentsdk.InputSensitiveWriteTool); ok {
+		return iwt.IsWriteOperationForInput(input)
+	}
+	// Fall back to static declaration.
+	if wt, ok := tool.(agentsdk.WriteTool); ok {
+		return wt.IsWriteOperation()
+	}
+	return false
+}
+
+// isWriteOperationForInput checks write status on an
+// InputConcurrencySafeTool that also implements InputSensitiveWriteTool.
+// This avoids re-asserting the interface in the hot path.
+func isWriteOperationForInput(ic agentsdk.InputConcurrencySafeTool, input json.RawMessage) bool {
+	if iwt, ok := ic.(agentsdk.InputSensitiveWriteTool); ok {
+		return iwt.IsWriteOperationForInput(input)
+	}
+	if wt, ok := ic.(agentsdk.WriteTool); ok {
+		return wt.IsWriteOperation()
+	}
+	return false
 }

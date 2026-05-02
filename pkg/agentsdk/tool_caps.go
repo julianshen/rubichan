@@ -72,3 +72,28 @@ type ConcurrencySafeTool interface {
 type InputConcurrencySafeTool interface {
 	IsConcurrencySafeForInput(input json.RawMessage) bool
 }
+
+// WriteTool is an optional extension interface. Tools that implement it
+// and return true from IsWriteOperation act as ordering barriers in the
+// streaming executor: all subsequent tools (even concurrency-safe ones)
+// are blocked until the write completes. This prevents read-after-write
+// races when the model emits [write, read] in the same response.
+//
+// Examples of write tools: write_file, patch_file, shell (mutating cmds).
+// Examples of non-write tools: read_file, grep, ls (pure reads).
+type WriteTool interface {
+	IsWriteOperation() bool
+}
+
+// InputSensitiveWriteTool is an optional extension that allows tools to
+// declare per-invocation write status based on the tool input. Tools like
+// shell can return true for mutating commands (rm, write, mkdir) and false
+// for read-only commands (cat, grep, ls).
+//
+// When both WriteTool and InputSensitiveWriteTool are implemented, the
+// agent calls IsWriteOperationForInput first. If it returns true, the tool
+// acts as a barrier. Otherwise the static IsWriteOperation() is used as
+// fallback.
+type InputSensitiveWriteTool interface {
+	IsWriteOperationForInput(input json.RawMessage) bool
+}

@@ -1112,3 +1112,231 @@ func TestStreamingExecutor_DispatchReturnValue(t *testing.T) {
 	ok = ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r2", Name: "read"})
 	require.False(t, ok, "dispatch should return false when rejected by barrier")
 }
+
+// fakeWriteTool implements WriteTool and ConcurrencySafeTool. It is
+// concurrency-safe but also a write operation, so it acts as a barrier.
+type fakeWriteTool struct {
+	fakeConcurrencySafeTool
+	write bool
+}
+
+func (t *fakeWriteTool) IsWriteOperation() bool { return t.write }
+
+// fakeInputSensitiveTool implements InputConcurrencySafeTool and
+// InputSensitiveWriteTool. Its safety and write status depend on input.
+type fakeInputSensitiveTool struct {
+	fakeConcurrencySafeTool
+	write bool
+}
+
+func (t *fakeInputSensitiveTool) IsConcurrencySafeForInput(_ json.RawMessage) bool { return true }
+func (t *fakeInputSensitiveTool) IsWriteOperationForInput(_ json.RawMessage) bool  { return t.write }
+
+// fakeInputSensitiveToolWithStaticWrite implements both InputSensitiveWriteTool
+// and WriteTool. Used to test precedence: per-input should override static.
+type fakeInputSensitiveToolWithStaticWrite struct {
+	fakeInputSensitiveTool
+}
+
+func (t *fakeInputSensitiveToolWithStaticWrite) IsWriteOperation() bool { return true }
+
+func TestIsWriteOperation(t *testing.T) {
+	t.Parallel()
+
+	// Tool without marker: not a write operation.
+	plain := &fakeConcurrencySafeTool{name: "read"}
+	if isWriteOperation(plain, nil) {
+		t.Error("plain tool without WriteTool marker should not be a write operation")
+	}
+
+	// Tool with WriteTool returning true.
+	write := &fakeWriteTool{fakeConcurrencySafeTool: fakeConcurrencySafeTool{name: "write"}, write: true}
+	if !isWriteOperation(write, nil) {
+		t.Error("WriteTool returning true should be a write operation")
+	}
+
+	// Input-sensitive: write=true takes precedence over static.
+	inputWrite := &fakeInputSensitiveTool{write: true}
+	inputWrite.name = "shell"
+	if !isWriteOperation(inputWrite, json.RawMessage(`{}`)) {
+		t.Error("InputSensitiveWriteTool returning true should be a write operation")
+	}
+
+	// Input-sensitive: write=false means not a write operation.
+	inputRead := &fakeInputSensitiveTool{write: false}
+	inputRead.name = "shell"
+	if isWriteOperation(inputRead, json.RawMessage(`{}`)) {
+		t.Error("InputSensitiveWriteTool returning false should not be a write operation")
+	}
+
+	// Input-sensitive fallback: per-input returns false, static WriteTool returns true.
+	// Per-input takes precedence, so result should be false (not a write).
+	inputReadStaticWrite := &fakeInputSensitiveToolWithStaticWrite{fakeInputSensitiveTool: fakeInputSensitiveTool{write: false}}
+	inputReadStaticWrite.name = "shell"
+	if isWriteOperation(inputReadStaticWrite, json.RawMessage(`{}`)) {
+		t.Error("InputSensitiveWriteTool(false) should override static WriteTool(true)")
+	}
+
+	// Tool with WriteTool returning false.
+	noWrite := &fakeWriteTool{fakeConcurrencySafeTool: fakeConcurrencySafeTool{name: "nowrite"}, write: false}
+	if isWriteOperation(noWrite, nil) {
+		t.Error("WriteTool returning false should not be a write operation")
+	}
+
+	// nil tool: not a write operation (fail-closed to safe).
+	if isWriteOperation(nil, nil) {
+		t.Error("nil tool should not be a write operation")
+	}
+}
+
+func TestStreamingExecutor_WriteToolSetsBarrier(t *testing.T) {
+	t.Parallel()
+	var callOrder []string
+	var mu sync.Mutex
+	run := func(_ context.Context, tc provider.ToolUseBlock) toolExecResult {
+		mu.Lock()
+		callOrder = append(callOrder, tc.ID)
+		mu.Unlock()
+		return toolExecResult{toolUseID: tc.ID, content: tc.Name}
+	}
+	ex := newStreamingToolExecutor(2, run)
+
+	// Simulate: read (safe, dispatched), write (barrier, not dispatched),
+	// read-after-write (safe but barrier seen, not dispatched).
+	ok1 := ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r1", Name: "read"})
+	require.True(t, ok1, "first read should dispatch")
+
+	// Write tool sets barrier.
+	ex.SetBarrier()
+
+	ok2 := ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "r2", Name: "read"})
+	require.False(t, ok2, "read after write barrier should be rejected")
+
+	results := ex.Drain()
+	require.Len(t, results, 1, "only first dispatch should execute")
+	require.Equal(t, "r1", results[0].toolUseID)
+}
+
+func TestStreamingExecutor_MultipleBarriersInSequence(t *testing.T) {
+	t.Parallel()
+	var callOrder []string
+	var mu sync.Mutex
+	run := func(_ context.Context, tc provider.ToolUseBlock) toolExecResult {
+		mu.Lock()
+		callOrder = append(callOrder, tc.ID)
+		mu.Unlock()
+		return toolExecResult{toolUseID: tc.ID, content: tc.Name}
+	}
+	ex := newStreamingToolExecutor(2, run)
+
+	// Dispatch two safe tools, then two barriers, then one safe.
+	ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "s1", Name: "read"})
+	ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "s2", Name: "read"})
+	ex.SetBarrier()
+	ex.SetBarrier() // idempotent
+	ok := ex.Dispatch(context.Background(), provider.ToolUseBlock{ID: "s3", Name: "read"})
+	require.False(t, ok, "safe tool after barrier should be rejected")
+
+	results := ex.Drain()
+	require.Len(t, results, 2)
+	require.Equal(t, "s1", results[0].toolUseID)
+	require.Equal(t, "s2", results[1].toolUseID)
+}
+
+func TestStreamingExecutor_BarrierWithNoQueuedTools(t *testing.T) {
+	t.Parallel()
+	write := &fakeConcurrencySafeTool{name: "write", execDelay: 5 * time.Millisecond, returnText: "w"}
+	ex := newExecutorWithTools(2, map[string]agentsdk.Tool{"write": write})
+	ctx := context.Background()
+
+	// Barrier with no prior dispatches.
+	res := ex.Barrier(ctx, provider.ToolUseBlock{ID: "w1", Name: "write"})
+	require.Equal(t, "w1", res.toolUseID)
+	require.False(t, res.isError)
+
+	results := ex.Drain()
+	require.Len(t, results, 1)
+	require.Equal(t, "w1", results[0].toolUseID)
+}
+
+// TestRunLoop_WriteToolSetsBarrierDuringStream proves that a write tool
+// in the model response sets the barrier, causing subsequent safe tools
+// to be queued for post-stream execution rather than dispatched during
+// the stream.
+func TestRunLoop_WriteToolSetsBarrierDuringStream(t *testing.T) {
+	t.Parallel()
+
+	readTool := &fakeConcurrencySafeTool{
+		name:       "fake_read",
+		execDelay:  1 * time.Millisecond,
+		returnText: "ok",
+	}
+	writeTool := &fakeWriteTool{fakeConcurrencySafeTool: fakeConcurrencySafeTool{name: "fake_write", execDelay: 1 * time.Millisecond, returnText: "wrote"}, write: true}
+	// Second read tool with a distinct name so we can count it separately.
+	read2Tool := &fakeConcurrencySafeTool{
+		name:       "fake_read2",
+		execDelay:  1 * time.Millisecond,
+		returnText: "ok2",
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(readTool))
+	require.NoError(t, reg.Register(writeTool))
+	require.NoError(t, reg.Register(read2Tool))
+
+	// Provider emits read, write, read — then stops.
+	// The write tool sets a barrier. We verify by driving the agent
+	// and checking that only the first read was dispatched during streaming.
+	prov := &dynamicMockProvider{
+		responses: [][]provider.StreamEvent{
+			{
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID: "r1", Name: "fake_read", Input: json.RawMessage(`{"p":1}`),
+				}},
+				{Type: agentsdk.EventContentBlockStop},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID: "w1", Name: "fake_write", Input: json.RawMessage(`{"p":2}`),
+				}},
+				{Type: agentsdk.EventContentBlockStop},
+				{Type: "tool_use", ToolUse: &provider.ToolUseBlock{
+					ID: "r2", Name: "fake_read2", Input: json.RawMessage(`{"p":3}`),
+				}},
+				{Type: agentsdk.EventContentBlockStop},
+				{Type: "stop"},
+			},
+			{
+				{Type: "text_delta", Text: "done"},
+				{Type: "stop"},
+			},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.Agent.MaxTurns = 5
+	a := New(prov, reg, autoApprove, cfg,
+		WithApprovalChecker(&countingApprovalChecker{result: AutoApproved}),
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	events, err := a.Turn(ctx, "read then write then read")
+	require.NoError(t, err)
+
+	var toolResults int
+	for ev := range events {
+		if ev.Type == "tool_result" {
+			toolResults++
+		}
+	}
+
+	// All three tools should have executed by turn end.
+	require.Equal(t, 3, toolResults, "expected 3 tool_result events")
+
+	// The first read should have been dispatched during streaming (count=1).
+	// The write should NOT have been dispatched during streaming (it's unsafe).
+	// The second read should NOT have been dispatched during streaming (barrier set).
+	// Since all three are different tool instances, each called=1.
+	require.Equal(t, int32(1), readTool.called.Load(), "only first read should dispatch during stream")
+	require.Equal(t, int32(1), writeTool.called.Load(), "write should execute once post-stream")
+	require.Equal(t, int32(1), read2Tool.called.Load(), "second read should execute once post-stream")
+}
