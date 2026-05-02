@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // maxHookResponseSize limits how much data we read from a hook response.
@@ -15,9 +14,8 @@ import (
 const maxHookResponseSize = 1 << 20 // 1 MiB
 
 // sharedHTTPClient is reused across hook calls for connection pooling.
-var sharedHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-}
+// No timeout here — per-request timeouts are set via context in executeHTTPHook.
+var sharedHTTPClient = &http.Client{}
 
 // failOpen returns a continue result and a wrapped error. Used for all
 // error paths in executeHTTPHook so a broken hook cannot block execution.

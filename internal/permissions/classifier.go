@@ -62,11 +62,7 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 	}
 
 	// Stage 1: Fast heuristic check (works even without provider).
-	decision, err := c.stage1(toolName, input)
-	if err != nil {
-		c.recordDenial()
-		return c.fallbackIfNeeded(agentsdk.ApprovalRequired)
-	}
+	decision := c.stage1(toolName, input)
 
 	var result agentsdk.ApprovalResult
 	switch decision {
@@ -80,8 +76,9 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 		if c.prov == nil {
 			result = agentsdk.ApprovalRequired
 		} else {
-			result, err = c.stage2(toolName, input)
-			if err != nil {
+			var stage2Err error
+			result, stage2Err = c.stage2(toolName, input)
+			if stage2Err != nil {
 				result = agentsdk.ApprovalRequired
 			}
 		}
@@ -127,16 +124,16 @@ func (c *YOLOClassifier) shouldFallback() bool {
 // When a provider is available, this would use a constrained completion
 // with a small token budget (fastMax). Without a provider, it falls back
 // to tool name substring heuristics.
-func (c *YOLOClassifier) stage1(toolName string, input map[string]interface{}) (ClassifierDecision, error) {
+func (c *YOLOClassifier) stage1(toolName string, input map[string]interface{}) ClassifierDecision {
 	_ = c.fastMax
 	_ = input
 
 	// Heuristic fallback: tools with dangerous keywords need stage 2.
 	if strings.Contains(toolName, "write") || strings.Contains(toolName, "edit") ||
 		strings.Contains(toolName, "delete") || strings.Contains(toolName, "shell") {
-		return DecisionUncertain, nil
+		return DecisionUncertain
 	}
-	return DecisionSafe, nil
+	return DecisionSafe
 }
 
 // stage2 performs detailed analysis for borderline cases.

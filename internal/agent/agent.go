@@ -2114,22 +2114,25 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			}
 		}
 
-		// Handler indexes directly into autoApproved by batch position.
+		// Build ID -> index map for O(1) lookup in the handler.
+		idToIndex := make(map[string]int, len(autoApproved))
+		for i, it := range autoApproved {
+			idToIndex[it.tc.ID] = i
+		}
+
+		// Handler looks up the original plannedToolCall by ID in O(1).
 		handler := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
-			// batchCalls and autoApproved are built in the same order,
-			// so we can find the original by scanning for the matching ID.
-			// This is O(n) per call worst-case, but n is small (typically < 10).
-			for _, it := range autoApproved {
-				if it.tc.ID == tc.ID {
-					res := a.executeSingleTool(ctx, ch, it.tc)
-					return toolexec.Result{
-						Content:        res.content,
-						DisplayContent: res.event.ToolResult.DisplayContent,
-						IsError:        res.isError,
-					}
-				}
+			idx, ok := idToIndex[tc.ID]
+			if !ok {
+				return toolexec.Result{Content: "tool not found in batch: " + tc.ID, IsError: true}
 			}
-			return toolexec.Result{Content: "tool not found in batch", IsError: true}
+			it := autoApproved[idx]
+			res := a.executeSingleTool(ctx, ch, it.tc)
+			return toolexec.Result{
+				Content:        res.content,
+				DisplayContent: res.event.ToolResult.DisplayContent,
+				IsError:        res.isError,
+			}
 		}
 
 		batchExec := toolexec.NewBatchExecutor(a.tools, handler, maxParallelTools)

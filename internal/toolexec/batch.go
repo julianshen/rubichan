@@ -51,18 +51,18 @@ func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 }
 
 // isConcurrencySafe reports whether a tool can run in parallel with other
-// tools. Unknown tools and tools without the marker interface return false
-// (fail-closed).
+// tools for the given input. Unknown tools and tools without the marker
+// interface return false (fail-closed).
 func isConcurrencySafe(tool agentsdk.Tool, input json.RawMessage) bool {
 	if tool == nil {
 		return false
 	}
-	// Check the cheaper static interface first to avoid JSON parsing
-	// for tools that don't need per-invocation discrimination.
+	// Per-input safety takes precedence over static safety.
+	if ics, ok := tool.(agentsdk.InputConcurrencySafeTool); ok {
+		return ics.IsConcurrencySafeForInput(input)
+	}
+	// Fall back to static declaration.
 	if cs, ok := tool.(agentsdk.ConcurrencySafeTool); ok {
-		if ics, ok := tool.(agentsdk.InputConcurrencySafeTool); ok {
-			return ics.IsConcurrencySafeForInput(input)
-		}
 		return cs.IsConcurrencySafe()
 	}
 	return false

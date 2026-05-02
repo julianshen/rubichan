@@ -58,63 +58,41 @@ func NewResultBudgetEnforcer(budget int, store *ResultStore) *ResultBudgetEnforc
 func (be *ResultBudgetEnforcer) Enforce(toolName, toolUseID string, res agentsdk.ToolResult) (agentsdk.ToolResult, error) {
 	size := len(res.Content)
 
-	// Check if this result alone exceeds the aggregate budget.
-	if size > be.budget {
-		// Single result exceeds entire budget — must offload or truncate.
+	// Check if adding this result would exceed the remaining budget.
+	remaining := be.budget - be.used
+	if remaining <= 0 {
+		// Budget exhausted — must offload or truncate to zero.
 		if be.store != nil {
 			return be.offload(toolName, toolUseID, res)
 		}
-		// No store: truncate in-place to budget size.
-		res.Content = be.truncate(res.Content, be.budget)
+		res.Content = be.truncate(res.Content, 0)
+		return res, nil
+	}
+
+	if size > remaining {
+		// Result exceeds remaining budget.
+		if be.store != nil {
+			return be.offload(toolName, toolUseID, res)
+		}
+		// No store: truncate to fit remaining budget.
+		res.Content = be.truncate(res.Content, remaining)
 		be.used += len(res.Content)
 		be.accepted = append(be.accepted, acceptedResult{toolName: toolName, toolUseID: toolUseID, size: len(res.Content)})
 		return res, nil
 	}
 
-	// Check if adding this result would exceed the aggregate budget.
-	if be.used+size > be.budget {
-		// Need to make room. Offload the largest previous results first.
-		be.makeRoom(size)
-	}
-
-	if be.used+size <= be.budget {
-		be.used += size
-		be.accepted = append(be.accepted, acceptedResult{toolName: toolName, toolUseID: toolUseID, size: size})
-		return res, nil
-	}
-
-	// Still doesn't fit after offloading — offload this result too.
-	if be.store != nil {
-		return be.offload(toolName, toolUseID, res)
-	}
-	res.Content = be.truncate(res.Content, be.budget-be.used)
-	be.used += len(res.Content)
-	be.accepted = append(be.accepted, acceptedResult{toolName: toolName, toolUseID: toolUseID, size: len(res.Content)})
+	// Result fits within remaining budget.
+	be.used += size
+	be.accepted = append(be.accepted, acceptedResult{toolName: toolName, toolUseID: toolUseID, size: size})
 	return res, nil
 }
 
-// makeRoom offloads previously accepted results until there's enough space.
-// Offloads largest results first (greedy) to minimize number of offloads.
+// makeRoom is no longer used — the simplified Enforce handles budget
+// exhaustion by checking remaining budget per result.
+// Kept for backward compatibility; will be removed in a follow-up.
 //
-// When no store is available, makeRoom cannot retroactively free space
-// from already-accepted results — it becomes a no-op and the caller
-// truncates the new result instead.
+//nolint:unused
 func (be *ResultBudgetEnforcer) makeRoom(needed int) {
-	if be.store == nil {
-		return
-	}
-	for be.used+needed > be.budget && len(be.accepted) > 0 {
-		maxIdx := 0
-		for i := 1; i < len(be.accepted); i++ {
-			if be.accepted[i].size > be.accepted[maxIdx].size {
-				maxIdx = i
-			}
-		}
-		largest := be.accepted[maxIdx]
-		be.used -= largest.size
-		be.accepted[maxIdx] = be.accepted[len(be.accepted)-1]
-		be.accepted = be.accepted[:len(be.accepted)-1]
-	}
 }
 
 // offload stores the result in ResultStore and replaces content with a
