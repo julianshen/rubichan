@@ -66,6 +66,18 @@ type SearchHinter interface {
 	SearchHint() string
 }
 
+// ResultBudgeted is an optional interface that tools can implement to
+// declare their preferred result size limit. When a tool's output exceeds
+// this limit, the agent applies head+tail truncation before the aggregate
+// per-message budget is enforced.
+type ResultBudgeted interface {
+	Tool
+	// MaxResultChars returns the maximum number of characters this tool's
+	// result should occupy in the conversation context. Zero or negative
+	// means no per-tool limit (only the aggregate message budget applies).
+	MaxResultChars() int
+}
+
 // ToolResult represents the result of executing a tool.
 type ToolResult struct {
 	Content        string // sent to LLM conversation history

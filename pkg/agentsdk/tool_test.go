@@ -98,3 +98,13 @@ func TestStreamingToolEmitsErrorEvent(t *testing.T) {
 	assert.True(t, events[0].IsError)
 	assert.Equal(t, "something went wrong", events[0].Content)
 }
+
+// budgetedTool verifies ResultBudgeted extends Tool.
+type budgetedTool struct{ mockTool }
+
+func (b *budgetedTool) MaxResultChars() int { return 50000 }
+
+func TestResultBudgetedInterface(t *testing.T) {
+	var _ Tool = (*budgetedTool)(nil)
+	var _ ResultBudgeted = (*budgetedTool)(nil)
+}
