@@ -1475,7 +1475,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
-		retryCfg := TurnRetryConfig{} // use defaults: 3 attempts, 2s base delay, 30s max delay
+		retryCfg := TurnRetryConfig{
+			Source: agentsdk.QuerySourceForeground, // user-facing query
+		}
 		// Providers that implement NonStreamer get a non-streaming
 		// fallback wired in automatically. TurnRetry only invokes it
 		// after all streaming attempts exhaust with retryable errors,

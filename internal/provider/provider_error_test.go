@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 func TestProviderError_Error(t *testing.T) {
@@ -124,6 +126,37 @@ func TestProviderError_ErrorsIs(t *testing.T) {
 	// but errors.As is the primary mechanism. Verify it doesn't panic.
 	if errors.Is(pe, fmt.Errorf("unrelated")) {
 		t.Error("should not match unrelated error")
+	}
+}
+
+func TestProviderError_IsRetryable_529SourceAware(t *testing.T) {
+	// 529 overloaded with foreground source: retryable
+	pe := &ProviderError{
+		Kind:       ErrServerError,
+		StatusCode: 529,
+		Source:     agentsdk.QuerySourceForeground,
+	}
+	if !pe.IsRetryable() {
+		t.Error("529 with foreground source should be retryable")
+	}
+
+	// 529 overloaded with background source: NOT retryable
+	pe.Source = agentsdk.QuerySourceBackground
+	if pe.IsRetryable() {
+		t.Error("529 with background source should NOT be retryable")
+	}
+
+	// 529 with hook source: NOT retryable
+	pe.Source = agentsdk.QuerySourceHook
+	if pe.IsRetryable() {
+		t.Error("529 with hook source should NOT be retryable")
+	}
+
+	// Non-529 server error: still retryable regardless of source
+	pe.StatusCode = 503
+	pe.Source = agentsdk.QuerySourceBackground
+	if !pe.IsRetryable() {
+		t.Error("503 should be retryable even for background")
 	}
 }
 

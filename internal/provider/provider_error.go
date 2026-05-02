@@ -3,6 +3,8 @@ package provider
 import (
 	"fmt"
 	"time"
+
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // ErrorKind classifies the category of a provider error.
@@ -83,6 +85,9 @@ type ProviderError struct {
 	// classified after the header was sent. Empty when the error originated
 	// before the request was built.
 	RequestID string
+	// Source classifies the origin of the request for retry behavior.
+	// Background tasks should not retry on 529 to avoid amplifying overload.
+	Source agentsdk.QuerySource
 }
 
 // Error implements the error interface.
@@ -103,9 +108,16 @@ func (e *ProviderError) ProviderErrorKind() string {
 // IsRetryable reports whether the error is transient and the request
 // should be retried. RateLimited, ServerError, and StreamError are
 // retryable by default. The Retryable field can override this.
+//
+// When the error is a 529 (overloaded) and the source is not foreground,
+// the error is NOT retryable to avoid amplifying capacity cascades.
 func (e *ProviderError) IsRetryable() bool {
 	if e.Retryable {
 		return true
+	}
+	// 529 overloaded: only foreground queries retry.
+	if e.StatusCode == 529 && !e.Source.ShouldRetryOn529() {
+		return false
 	}
 	switch e.Kind {
 	case ErrRateLimited, ErrServerError, ErrStreamError:

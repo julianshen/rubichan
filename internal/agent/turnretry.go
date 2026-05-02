@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // TurnRetryConfig configures turn-level retry behavior.
@@ -26,6 +27,9 @@ type TurnRetryConfig struct {
 	// end-to-end (proxies that strip or misframe chunks). Leave nil to
 	// keep the pure streaming behavior and surface the stream error.
 	NonStreamFallback NonStreamFunc
+	// Source classifies the origin of the request for retry behavior.
+	// Background tasks should not retry on 529 to avoid amplifying overload.
+	Source agentsdk.QuerySource
 }
 
 // NonStreamFunc builds a full response in a single non-streaming HTTP
