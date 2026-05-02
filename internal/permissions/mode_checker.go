@@ -26,16 +26,27 @@ func isReadOnlyTool(tool string) bool {
 // checker returns ApprovalRequired. Deny and explicit-approval results pass
 // through unchanged.
 type ModeAwareChecker struct {
-	mode      agentsdk.PermissionMode
-	checker   agentsdk.ApprovalChecker
-	explainer agentsdk.Explainer
+	mode       agentsdk.PermissionMode
+	checker    agentsdk.ApprovalChecker
+	explainer  agentsdk.Explainer
+	classifier *YOLOClassifier // nil when not in auto mode
+}
+
+// ModeAwareOption configures a ModeAwareChecker.
+type ModeAwareOption func(*ModeAwareChecker)
+
+// WithClassifier attaches a YOLOClassifier for ModeAuto decision support.
+func WithClassifier(classifier *YOLOClassifier) ModeAwareOption {
+	return func(c *ModeAwareChecker) {
+		c.classifier = classifier
+	}
 }
 
 // NewModeAwareChecker creates a ModeAwareChecker with the given mode and
 // underlying checker. Bypass mode disables all safety checks; the warning
 // gives operators an audit trail but callers must check the mode field if
 // they need to know bypass is active.
-func NewModeAwareChecker(mode agentsdk.PermissionMode, checker agentsdk.ApprovalChecker) *ModeAwareChecker {
+func NewModeAwareChecker(mode agentsdk.PermissionMode, checker agentsdk.ApprovalChecker, opts ...ModeAwareOption) *ModeAwareChecker {
 	if mode == agentsdk.ModeBypass {
 		log.Println("WARNING: permission mode is 'bypass' — all tools will be auto-approved. Use with caution.")
 	}
@@ -43,7 +54,11 @@ func NewModeAwareChecker(mode agentsdk.PermissionMode, checker agentsdk.Approval
 	if e, ok := checker.(agentsdk.Explainer); ok {
 		explainer = e
 	}
-	return &ModeAwareChecker{mode: mode, checker: checker, explainer: explainer}
+	c := &ModeAwareChecker{mode: mode, checker: checker, explainer: explainer}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // CheckApproval evaluates the underlying checker, then applies mode logic
@@ -73,6 +88,17 @@ func (c *ModeAwareChecker) CheckApproval(tool string, input json.RawMessage) age
 		// UX messaging, not policy logic.
 		if isReadOnlyTool(tool) {
 			return agentsdk.AutoApproved
+		}
+		// In ModeAuto, use the LLM classifier for additional safety.
+		if c.mode == agentsdk.ModeAuto && c.classifier != nil {
+			var parsedInput map[string]interface{}
+			if len(input) > 0 {
+				_ = json.Unmarshal(input, &parsedInput)
+			}
+			decision, err := c.classifier.Classify(tool, parsedInput)
+			if err == nil && decision == agentsdk.AutoApproved {
+				return agentsdk.AutoApproved
+			}
 		}
 		return agentsdk.ApprovalRequired
 	default:
