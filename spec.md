@@ -56,6 +56,11 @@
   - [ADR-008: Starlark as Skill Scripting Language](#adr-008-starlark-as-skill-scripting-language)
   - [ADR-009: Skill Permission Model](#adr-009-skill-permission-model)
   - [ADR-010: Xcode CLI as Built-in Skill with Platform Gating](#adr-010-xcode-cli-as-built-in-skill-with-platform-gating)
+  - [ADR-011: Tool Batching with Concurrency Safety](#adr-011-tool-batching-with-concurrency-safety)
+  - [ADR-012: Per-Tool Result Budgets](#adr-012-per-tool-result-budgets)
+  - [ADR-013: File Read Caching](#adr-013-file-read-caching)
+  - [ADR-014: Expanded Hook System](#adr-014-expanded-hook-system)
+  - [ADR-015: LLM Permission Classifier](#adr-015-llm-permission-classifier)
 - [9. Implementation Roadmap](#9-implementation-roadmap)
 - [10. Risk Assessment](#10-risk-assessment)
 - [Appendix A: CLI Command Reference](#appendix-a-cli-command-reference)
@@ -116,6 +121,10 @@ The agent includes first-class support for Apple platform development via Xcode 
 | FR-1.8 | Session persistence and conversation history with resume capability | P1 |
 | FR-1.9 | Multi-provider LLM support (Anthropic, OpenAI, Ollama) with streaming | P0 |
 | FR-1.10 | Context window management with automatic truncation and summarization | P0 |
+| FR-1.11 | Tool batching: parallel execution of safe tools, sequential for unsafe | P0 |
+| FR-1.12 | Tool result budgeting: per-tool size limits + aggregate per-message budget | P1 |
+| FR-1.13 | File read caching with mtime/size invalidation to avoid redundant I/O | P1 |
+| FR-1.14 | Permission modes: plan, auto, fullAuto, bypass with LLM safety classifier | P0 |
 
 #### FR-2: Headless Mode
 
@@ -213,6 +222,9 @@ The agent includes first-class support for Apple platform development via Xcode 
 | NFR-10 | Test coverage for core packages | > 80% |
 | NFR-11 | Skill load time (Starlark scripts) | < 50ms per skill |
 | NFR-12 | Skill load time (external process) | < 200ms per skill |
+| NFR-13 | Tool batch parallel execution overhead | < 5ms per batch |
+| NFR-14 | File read cache hit latency | < 1ms (no syscall on hot path) |
+| NFR-15 | Hook execution latency (command/HTTP) | < 100ms median |
 
 ---
 
@@ -537,6 +549,58 @@ Every tool implements a common `Tool` interface. Skill-registered tools are dyna
 | Swift PM | `swift package` wrapper | Built-in |
 | Code Signing | `security` + `codesign` (macOS) | Built-in |
 | *Skill-provided tools* | *Varies (Go, Starlark, external process)* | *Skill system* |
+
+#### Tool Execution Model
+
+Tools are executed through a **batching pipeline** that optimizes for both correctness and performance:
+
+1. **Partitioning:** Adjacent tool calls are grouped into batches based on concurrency safety. Consecutive `ConcurrencySafeTool` instances share a batch; the first unsafe tool breaks the batch.
+2. **Parallel Execution:** Safe batches run with semaphore-bound parallelism (default max 10 concurrent tools). Unsafe batches run sequentially to prevent read-after-write races.
+3. **Result Budgeting:** Each tool result is checked against a per-message aggregate budget (default 200K chars). Oversized results are offloaded to SQLite storage and replaced with compact references.
+4. **File Read Caching:** File reads are cached with mtime/size invalidation to avoid redundant I/O across turns. Writes automatically invalidate the cache.
+5. **Streaming Dispatch:** During the LLM's streaming response, concurrency-safe tools are dispatched as soon as their `tool_use` block finalizes, overlapping slow I/O with trailing response tokens.
+
+#### Tool Interfaces
+
+```go
+// Core tool interface — all tools implement this.
+type Tool interface {
+    Name() string
+    Description() string
+    InputSchema() json.RawMessage
+    Execute(ctx context.Context, input json.RawMessage) (ToolResult, error)
+}
+
+// StreamingTool emits real-time progress events during execution.
+type StreamingTool interface {
+    Tool
+    ExecuteStream(ctx context.Context, input json.RawMessage, emit ToolEventEmitter) (ToolResult, error)
+}
+
+// ConcurrencySafeTool marks tools that can run in parallel with other safe tools.
+type ConcurrencySafeTool interface {
+    Tool
+    IsConcurrencySafe() bool
+}
+
+// InputConcurrencySafeTool checks safety per-invocation based on parsed input.
+type InputConcurrencySafeTool interface {
+    Tool
+    IsConcurrencySafe(input map[string]interface{}) bool
+}
+
+// ResultBudgeted declares a per-tool result size limit.
+type ResultBudgeted interface {
+    Tool
+    MaxResultChars() int
+}
+
+// ResultCapped marks tools whose output should be head+tail truncated.
+type ResultCapped interface {
+    Tool
+    MaxResultBytes() int
+}
+```
 
 ### 3.5 LLM Provider Layer
 
@@ -929,7 +993,15 @@ type SandboxPolicy struct {
 
 ### 4.6 Skill Lifecycle Hooks
 
-Skills can hook into the agent loop at specific points:
+Skills can hook into the agent loop at specific points. The hook system supports three hook types:
+
+| Hook Type | Execution | Use Case |
+|-----------|-----------|----------|
+| **Command Hook** | Shell command with JSON stdin | External scripts, notifications, logging |
+| **HTTP Hook** | POST to URL with JSON body | Web service integration, telemetry, remote logging |
+| **Prompt Hook** | In-process find/replace transform | Modify system prompts or model output without external calls |
+
+**Fail-open design:** Hook failures (network errors, bad commands, timeouts) do not block agent execution. Broken hooks are logged but treated as no-ops.
 
 ```go
 type Hook struct {
@@ -946,9 +1018,21 @@ const (
     HookOnBeforePromptBuild                   // before system prompt assembled
     HookOnBeforeToolCall                      // before tool executes (can intercept/modify)
     HookOnAfterToolResult                     // after tool returns result (can transform)
+    HookOnAfterToolFailure                    // after tool execution fails
     HookOnAfterResponse                       // after LLM response complete
+    HookOnBeforeCompact                       // before context compaction
+    HookOnAfterCompact                        // after context compaction
     HookOnBeforeWikiSection                   // before wiki section generated
     HookOnSecurityScanComplete                // after security scan finishes
+    HookOnPermissionRequest                   // when user approval is requested
+    HookOnPermissionDenied                    // when a tool is denied
+    HookOnSubagentStart                       // when a subagent begins
+    HookOnSubagentStop                        // when a subagent completes
+    HookOnTaskCreated                         // when a task is created
+    HookOnTaskCompleted                       // when a task completes
+    HookOnConfigChange                        // when configuration changes
+    HookOnCwdChanged                          // when working directory changes
+    HookOnFileChanged                         // when a file is modified
 )
 
 type HookHandler func(ctx context.Context, event HookEvent) (*HookResult, error)
@@ -2549,6 +2633,104 @@ All providers accessed via raw `net/http` + `bufio.Scanner`. No vendor SDKs. ~30
 - iOS security rules (ATS, Keychain, pasteboard, etc.) are always available regardless of platform (they scan source code, not runtime behavior).
 - Future: a `fastlane` external skill could extend the built-in skill for CI/CD distribution workflows.
 
+### ADR-011: Tool Batching with Concurrency Safety
+
+**Status:** Accepted
+
+**Context:** The agent executes multiple tool calls per turn. Some tools are read-only (safe to run in parallel), while others have side effects (must run sequentially to prevent races). Running all tools sequentially wastes time; running all in parallel risks data corruption.
+
+**Decision:** Implement `partitionToolCalls` algorithm that groups adjacent concurrency-safe tools into batches. Safe batches run with semaphore-bound parallelism (default max 10); unsafe batches run sequentially. The barrier pattern ensures write tools serialize against all prior reads.
+
+**Rationale:**
+- **Performance:** Parallel file reads, greps, and searches overlap slow I/O, eliminating 1–3s of wait time per turn.
+- **Correctness:** Write tools (edit, write, shell) break the batch and force sequential execution, preventing read-after-write races.
+- **Fail-closed:** Tools that don't implement `ConcurrencySafeTool` are treated as unsafe by default.
+
+**Consequences:**
+- Tool interface gains optional `ConcurrencySafeTool` and `InputConcurrencySafeTool` markers.
+- Agent loop tracks batch boundaries and dispatches accordingly.
+- Streaming executor already implements barrier pattern; batching extends it to post-stream execution.
+
+---
+
+### ADR-012: Per-Tool Result Budgets
+
+**Status:** Accepted
+
+**Context:** Tool results can be arbitrarily large (e.g., `cat` on a 10MB log file). Sending oversized results to the LLM wastes context window and increases token costs. We need a mechanism to cap result sizes both per-tool and per-message.
+
+**Decision:** Add `ResultBudgeted` interface for per-tool limits and `ResultBudgetEnforcer` for aggregate per-message budget (default 200K chars). Oversized results are offloaded to SQLite storage and replaced with compact references.
+
+**Rationale:**
+- **Context protection:** Prevents a single tool from consuming the entire context window.
+- **Graceful degradation:** Offloaded results remain accessible via `read_result` tool; no data is lost.
+- **Fairness:** Aggregate budget ensures no single tool starves others in multi-tool turns.
+
+**Consequences:**
+- Tool implementations can declare `MaxResultChars()` for domain-appropriate limits.
+- ResultStore gains budget-aware eviction (largest-first greedy offload).
+- Agent loop integrates enforcer between tool execution and conversation append.
+
+---
+
+### ADR-013: File Read Caching
+
+**Status:** Accepted
+
+**Context:** The agent often reads the same files multiple times across turns (e.g., re-reading a config file after each edit). Redundant file I/O adds latency and syscall overhead.
+
+**Decision:** Implement `FileReadCache` keyed by absolute path, storing content with mtime/size metadata. Cache hits validate freshness via `os.Stat`; writes invalidate the cache entry.
+
+**Rationale:**
+- **Performance:** Eliminates redundant disk reads for files that haven't changed.
+- **Correctness:** mtime/size validation detects modifications; write tools invalidate to prevent stale data.
+- **Simplicity:** No TTL or LRU needed for typical sessions with < 1000 unique file reads.
+
+**Consequences:**
+- FileReadTool checks cache before reading; FileWriteTool/EditTool invalidate on success.
+- Cache is session-scoped (not persisted); memory usage bounded by session file count.
+- Future: could add LRU eviction if long-running sessions become common.
+
+---
+
+### ADR-014: Expanded Hook System
+
+**Status:** Accepted
+
+**Context:** The original hook system supported 12 shell-only events. Users need richer integration points: HTTP hooks for web services, prompt hooks for in-process transformation, and more lifecycle events.
+
+**Decision:** Expand to 22 lifecycle events, add HTTP hook type (POST JSON with fail-open design), and prompt hook type (find/replace transform). All hook errors are logged but never block execution.
+
+**Rationale:**
+- **Integration breadth:** HTTP hooks enable telemetry, remote logging, and external approval systems.
+- **Performance:** Prompt hooks avoid subprocess overhead for simple text transformations.
+- **Reliability:** Fail-open design ensures a broken hook cannot crash the agent.
+
+**Consequences:**
+- Hook configuration gains `url` field for HTTP hooks; `command` remains for shell hooks.
+- Shared `http.Client` with connection pooling prevents TCP overhead per hook call.
+- Response size limited to 1 MiB via `io.LimitReader` to prevent OOM.
+
+---
+
+### ADR-015: LLM Permission Classifier
+
+**Status:** Accepted
+
+**Context:** Auto-approval mode (`ModeAuto`) needs to distinguish safe operations from dangerous ones without prompting the user every time. A static allowlist is too coarse; some operations are safe in specific contexts.
+
+**Decision:** Implement `YOLOClassifier` — a two-stage LLM-based safety classifier. Stage 1 is a fast 64-token check for obvious cases; Stage 2 is detailed analysis for borderline cases. Safe-tool allowlist bypasses classification entirely. Consecutive denials trigger fallback to manual approval.
+
+**Rationale:**
+- **Precision:** LLM can evaluate context (e.g., "`rm -rf /tmp/test` is safe, `rm -rf /` is not") that static rules miss.
+- **Speed:** Stage 1 handles most cases; Stage 2 only for uncertain operations.
+- **Safety:** Consecutive denial tracking prevents classifier loops from silently blocking all operations.
+
+**Consequences:**
+- Classifier requires a provider instance (can reuse main LLM provider or a cheaper model).
+- Results are cached per (toolName, inputHash) to avoid redundant classification.
+- Mutex guards `consecutiveDenials` for thread safety in concurrent tool execution.
+
 ---
 
 ## 9. Implementation Roadmap
@@ -2605,7 +2787,7 @@ Goal: Fully functional skill runtime with all five skill types.
 | Starlark engine + SDK built-in functions | `internal/skills` | 5 days |
 | Starlark SDK: register_tool, register_hook, llm_complete | `internal/skills` | 3 days |
 | Permission model + sandbox + approval store | `internal/skills` | 3 days |
-| Lifecycle hook manager (9 hook phases) | `internal/skills` | 2 days |
+| Lifecycle hook manager (22 hook phases) | `internal/skills` | 2 days |
 | Tool Skill integration: dynamic tool registration | `internal/skills` | 2 days |
 | Prompt Skill integration: system prompt injection | `internal/skills` | 1 day |
 | Workflow Skill integration: multi-step orchestration | `internal/skills` | 3 days |
@@ -2613,10 +2795,22 @@ Goal: Fully functional skill runtime with all five skill types.
 | Transform Skill: output post-processing | `internal/skills` | 1 day |
 | Skill CLI: list, install, remove, create, info | `cmd/agent` | 2 days |
 | External process skill backend (go-plugin) | `internal/skills` | 3 days |
-| Built-in skills: core-tools, git, code-review, security-base | `internal/skills/builtin` | 3 days |
-| 3 example skills (kubernetes, ddd-expert, rfc-writer) | `examples/skills/` | 2 days |
 
-### Milestone 4: Wiki + Polish (Weeks 13–16)
+### Milestone 4: Tool System Improvements (Weeks 13–16)
+
+Goal: Production-grade tool execution with batching, budgets, caching, and expanded hooks.
+
+| Task | Package | Effort | Plan |
+|------|---------|--------|------|
+| Tool batching: `partitionToolCalls` + `BatchExecutor` | `internal/toolexec` | 3 days | [T1](docs/superpowers/plans/2026-05-02-tool-batching.md) |
+| Per-tool result budgets + aggregate enforcement | `internal/agent` | 3 days | [T2](docs/superpowers/plans/2026-05-02-per-tool-result-budgets.md) |
+| File read caching with mtime/size invalidation | `internal/tools` | 2 days | [T3](docs/superpowers/plans/2026-05-02-file-read-caching.md) |
+| Hook system expansion: 22 events, HTTP hooks, prompt hooks | `internal/hooks` | 4 days | [T4](docs/superpowers/plans/2026-05-02-hook-system-expansion.md) |
+| LLM permission classifier for auto-approval mode | `internal/permissions` | 4 days | [T5](docs/superpowers/plans/2026-05-02-llm-permission-classifier.md) |
+| Integration: wire all improvements into agent loop | `internal/agent` | 3 days | — |
+| Performance benchmarks: batching, caching, hook latency | `internal/bench` | 2 days | — |
+
+### Milestone 5: Wiki + Polish (Weeks 17–20)
 
 Goal: Wiki generation with skill contributions, production hardening.
 
