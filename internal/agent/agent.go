@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sourcegraph/conc/pool"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
@@ -2086,28 +2085,56 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		results[it.index] = a.approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
 	}
 
-	// Execute auto-approved tools in parallel (hooks + execution, no approval).
+	// Execute auto-approved tools with batching: adjacent concurrency-safe
+	// tools run in parallel; unsafe tools run sequentially.
 	if len(autoApproved) > 0 {
 		if ctx.Err() != nil {
 			return true
 		}
 
-		maxG := len(autoApproved)
-		if maxG > maxParallelTools {
-			maxG = maxParallelTools
+		// Build 1:1 mapping from batch index to plannedToolCall to avoid
+		// O(n²) ID searches in the handler and result mapping.
+		batchCalls := make([]toolexec.ToolCall, len(autoApproved))
+		for i, it := range autoApproved {
+			batchCalls[i] = toolexec.ToolCall{
+				ID:    it.tc.ID,
+				Name:  it.tc.Name,
+				Input: it.tc.Input,
+			}
 		}
-		p := pool.New().WithMaxGoroutines(maxG)
-		var mu sync.Mutex
 
-		for _, it := range autoApproved {
-			p.Go(func() {
-				res := a.executeSingleTool(ctx, ch, it.tc)
-				mu.Lock()
-				results[it.index] = res
-				mu.Unlock()
-			})
+		// Handler indexes directly into autoApproved by batch position.
+		handler := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+			// batchCalls and autoApproved are built in the same order,
+			// so we can find the original by scanning for the matching ID.
+			// This is O(n) per call worst-case, but n is small (typically < 10).
+			for _, it := range autoApproved {
+				if it.tc.ID == tc.ID {
+					res := a.executeSingleTool(ctx, ch, it.tc)
+					return toolexec.Result{
+						Content:        res.content,
+						DisplayContent: res.event.ToolResult.DisplayContent,
+						IsError:        res.isError,
+					}
+				}
+			}
+			return toolexec.Result{Content: "tool not found in batch", IsError: true}
 		}
-		p.Wait()
+
+		batchExec := toolexec.NewBatchExecutor(a.tools, handler, maxParallelTools)
+		batchResults := batchExec.Execute(ctx, batchCalls)
+
+		// Map batch results back to agent results by index (1:1 with autoApproved).
+		for i, it := range autoApproved {
+			br := batchResults[i]
+			results[it.index] = toolExecResult{
+				toolUseID: it.tc.ID,
+				content:   br.Content,
+				isError:   br.IsError,
+				event:     makeToolResultEvent(it.tc.ID, it.tc.Name, br.Content, br.DisplayContent, br.IsError),
+			}
+		}
+
 		if ctx.Err() != nil {
 			return true
 		}

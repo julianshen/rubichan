@@ -9,6 +9,7 @@ import (
 )
 
 // ToolBatch groups consecutive tool calls with the same concurrency safety.
+// Preserving the LLM's call order while allowing safe tools to run concurrently.
 type ToolBatch struct {
 	IsConcurrent bool
 	Calls        []ToolCall
@@ -22,7 +23,7 @@ func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 		return nil
 	}
 
-	var batches []ToolBatch
+	batches := make([]ToolBatch, 0, len(calls))
 	var current ToolBatch
 
 	for _, tc := range calls {
@@ -41,10 +42,8 @@ func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 		}
 
 		if current.IsConcurrent == isSafe {
-			// Same safety level — extend current batch.
 			current.Calls = append(current.Calls, tc)
 		} else {
-			// Safety changed — finalize current and start new.
 			batches = append(batches, current)
 			current = ToolBatch{IsConcurrent: isSafe, Calls: []ToolCall{tc}}
 		}
@@ -56,9 +55,9 @@ func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 	return batches
 }
 
-// isConcurrencySafe checks whether a tool is safe to run in parallel
-// with other tools. Falls back to false for unknown tools or tools
-// that don't implement the marker interface.
+// isConcurrencySafe reports whether a tool can run in parallel with other
+// tools. Unknown tools and tools without the marker interface return false
+// (fail-closed).
 //
 // The cheaper ConcurrencySafeTool check comes first to avoid JSON
 // parsing for tools that don't need per-invocation discrimination.
@@ -66,11 +65,7 @@ func isConcurrencySafe(tool agentsdk.Tool, input json.RawMessage) bool {
 	if tool == nil {
 		return false
 	}
-	// Fast path: static concurrency safety (no JSON parsing).
 	if cs, ok := tool.(agentsdk.ConcurrencySafeTool); ok {
-		// If the tool also implements InputConcurrencySafeTool, the
-		// per-invocation check takes precedence — but only after we
-		// know the tool participates in the concurrency safety protocol.
 		if ics, ok := tool.(agentsdk.InputConcurrencySafeTool); ok {
 			return ics.IsConcurrencySafeForInput(input)
 		}
@@ -79,8 +74,7 @@ func isConcurrencySafe(tool agentsdk.Tool, input json.RawMessage) bool {
 	return false
 }
 
-// defaultMaxParallel is the default concurrency limit for tool batch
-// execution. Matches Claude Code's MAX_TOOL_USE_CONCURRENCY=10.
+// defaultMaxParallel matches Claude Code's MAX_TOOL_USE_CONCURRENCY=10.
 const defaultMaxParallel = 10
 
 // BatchExecutor runs tool calls in batches, parallelizing safe batches
@@ -89,6 +83,7 @@ type BatchExecutor struct {
 	lookup      ToolLookup
 	handler     HandlerFunc
 	maxParallel int
+	sem         chan struct{}
 }
 
 // NewBatchExecutor creates a batch executor with the given lookup,
@@ -101,6 +96,7 @@ func NewBatchExecutor(lookup ToolLookup, handler HandlerFunc, maxParallel int) *
 		lookup:      lookup,
 		handler:     handler,
 		maxParallel: maxParallel,
+		sem:         make(chan struct{}, maxParallel),
 	}
 }
 
@@ -120,7 +116,6 @@ func (be *BatchExecutor) Execute(ctx context.Context, calls []ToolCall) []Result
 }
 
 func (be *BatchExecutor) executeConcurrently(ctx context.Context, calls []ToolCall) []Result {
-	sem := make(chan struct{}, be.maxParallel)
 	var wg sync.WaitGroup
 	results := make([]Result, len(calls))
 
@@ -133,12 +128,12 @@ func (be *BatchExecutor) executeConcurrently(ctx context.Context, calls []ToolCa
 				return
 			}
 			select {
-			case sem <- struct{}{}:
+			case be.sem <- struct{}{}:
 			case <-ctx.Done():
 				results[idx] = Result{Content: ctx.Err().Error(), IsError: true}
 				return
 			}
-			defer func() { <-sem }()
+			defer func() { <-be.sem }()
 			results[idx] = be.handler(ctx, call)
 		}(i, tc)
 	}
