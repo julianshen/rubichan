@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sourcegraph/conc/pool"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
@@ -351,6 +350,8 @@ type Agent struct {
 	rateLimiter         *SharedRateLimiter
 	capabilities        provider.ModelCapabilities
 	configuredMaxTokens int
+	resultBudget        int
+	fileCache           *tools.FileReadCache
 	progress            *ProgressTracker
 	acpServer           *acp.Server             // ACP server instance (if enabled)
 	acpRegistry         *acp.CapabilityRegistry // Capability registry for ACP
@@ -465,6 +466,15 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			a.logger.Warn("failed to register read_result tool: %v", err)
 		}
 	}
+
+	// Initialize file read cache and inject into file tool if present.
+	a.fileCache = tools.NewFileReadCache()
+	if ft, ok := a.tools.Get("file"); ok {
+		if fileTool, ok := ft.(*tools.FileTool); ok {
+			fileTool.SetCache(a.fileCache)
+		}
+	}
+
 	a.promptBuilder = NewPromptBuilder()
 
 	// Ensure a pipeline is always available. When no pipeline is provided
@@ -2086,28 +2096,59 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		results[it.index] = a.approvalToolErrorResult(it.tc, "Tool call denied by user (deny-always).", nil)
 	}
 
-	// Execute auto-approved tools in parallel (hooks + execution, no approval).
+	// Execute auto-approved tools with batching: adjacent concurrency-safe
+	// tools run in parallel; unsafe tools run sequentially.
 	if len(autoApproved) > 0 {
 		if ctx.Err() != nil {
 			return true
 		}
 
-		maxG := len(autoApproved)
-		if maxG > maxParallelTools {
-			maxG = maxParallelTools
+		// Build 1:1 mapping from batch index to plannedToolCall to avoid
+		// O(n²) ID searches in the handler and result mapping.
+		batchCalls := make([]toolexec.ToolCall, len(autoApproved))
+		for i, it := range autoApproved {
+			batchCalls[i] = toolexec.ToolCall{
+				ID:    it.tc.ID,
+				Name:  it.tc.Name,
+				Input: it.tc.Input,
+			}
 		}
-		p := pool.New().WithMaxGoroutines(maxG)
-		var mu sync.Mutex
 
-		for _, it := range autoApproved {
-			p.Go(func() {
-				res := a.executeSingleTool(ctx, ch, it.tc)
-				mu.Lock()
-				results[it.index] = res
-				mu.Unlock()
-			})
+		// Build ID -> index map for O(1) lookup in the handler.
+		idToIndex := make(map[string]int, len(autoApproved))
+		for i, it := range autoApproved {
+			idToIndex[it.tc.ID] = i
 		}
-		p.Wait()
+
+		// Handler looks up the original plannedToolCall by ID in O(1).
+		handler := func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+			idx, ok := idToIndex[tc.ID]
+			if !ok {
+				return toolexec.Result{Content: "tool not found in batch: " + tc.ID, IsError: true}
+			}
+			it := autoApproved[idx]
+			res := a.executeSingleTool(ctx, ch, it.tc)
+			return toolexec.Result{
+				Content:        res.content,
+				DisplayContent: res.event.ToolResult.DisplayContent,
+				IsError:        res.isError,
+			}
+		}
+
+		batchExec := toolexec.NewBatchExecutor(a.tools, handler, maxParallelTools)
+		batchResults := batchExec.Execute(ctx, batchCalls)
+
+		// Map batch results back to agent results by index (1:1 with autoApproved).
+		for i, it := range autoApproved {
+			br := batchResults[i]
+			results[it.index] = toolExecResult{
+				toolUseID: it.tc.ID,
+				content:   br.Content,
+				isError:   br.IsError,
+				event:     makeToolResultEvent(it.tc.ID, it.tc.Name, br.Content, br.DisplayContent, br.IsError),
+			}
+		}
+
 		if ctx.Err() != nil {
 			return true
 		}
@@ -2129,6 +2170,28 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		}
 		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc, it.approvalResult)
+	}
+
+	// Apply aggregate result budget before emitting results.
+	// Skip enforcement when budget is unlimited (<=0) to avoid allocation.
+	if a.resultBudget > 0 {
+		enforcer := NewResultBudgetEnforcer(a.resultBudget, a.resultStore)
+		for i := range pendingTools {
+			r := results[i]
+			bounded, err := enforcer.Enforce(pendingTools[i].Name, pendingTools[i].ID, agentsdk.ToolResult{
+				Content:        r.content,
+				DisplayContent: r.event.ToolResult.DisplayContent,
+				IsError:        r.isError,
+			})
+			if err != nil {
+				a.logger.Warn("result budget enforcement failed for %s: %v", pendingTools[i].Name, err)
+			}
+			// Rebuild the event with the (possibly truncated/offloaded) content
+			// so channel output matches conversation history.
+			r.content = bounded.Content
+			r.event = makeToolResultEvent(r.toolUseID, pendingTools[i].Name, bounded.Content, bounded.DisplayContent, bounded.IsError)
+			results[i] = r
+		}
 	}
 
 	// Emit all results and update conversation in original tool call order.

@@ -34,6 +34,7 @@ type FileTool struct {
 	lspNotifier LSPNotifier
 	readHashes  map[string]uint64 // path -> content hash from last read
 	readHashMu  sync.Mutex
+	cache       *FileReadCache
 }
 
 // NewFileTool creates a new FileTool that operates within the given root directory.
@@ -61,6 +62,11 @@ func (f *FileTool) SetDiffTracker(dt *DiffTracker) {
 // to collect diagnostics from the language server.
 func (f *FileTool) SetLSPNotifier(n LSPNotifier) {
 	f.lspNotifier = n
+}
+
+// SetCache attaches a FileReadCache to avoid redundant I/O.
+func (f *FileTool) SetCache(c *FileReadCache) {
+	f.cache = c
 }
 
 func (f *FileTool) Name() string {
@@ -241,9 +247,23 @@ func resolveNearestAncestor(path string) (string, error) {
 }
 
 func (f *FileTool) readFile(path string) (ToolResult, error) {
+	// Check cache first.
+	if f.cache != nil {
+		if content, hit := f.cache.Get(path); hit {
+			return ToolResult{Content: content}, nil
+		}
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ToolResult{Content: err.Error(), IsError: true}, nil
+	}
+
+	// Update cache with fresh content.
+	if f.cache != nil {
+		if info, err := os.Stat(path); err == nil {
+			f.cache.Put(path, info, string(data))
+		}
 	}
 
 	hash := hashContent(data)
@@ -278,11 +298,17 @@ func hashContent(data []byte) uint64 {
 	return h.Sum64()
 }
 
-func (f *FileTool) writeFile(ctx context.Context, path, content string) (ToolResult, error) {
-	// Invalidate read cache for this path since content is changing.
+func (f *FileTool) invalidateReadCache(path string) {
 	f.readHashMu.Lock()
 	delete(f.readHashes, path)
 	f.readHashMu.Unlock()
+	if f.cache != nil {
+		f.cache.Invalidate(path)
+	}
+}
+
+func (f *FileTool) writeFile(ctx context.Context, path, content string) (ToolResult, error) {
+	f.invalidateReadCache(path)
 
 	// Check if the file already exists to determine create vs modify.
 	_, statErr := os.Stat(path)
@@ -328,10 +354,7 @@ func (f *FileTool) patchFile(ctx context.Context, path, oldString, newString str
 		return ToolResult{Content: "old_string must not be empty", IsError: true}, nil
 	}
 
-	// Invalidate read cache for this path since content is changing.
-	f.readHashMu.Lock()
-	delete(f.readHashes, path)
-	f.readHashMu.Unlock()
+	f.invalidateReadCache(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
