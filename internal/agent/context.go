@@ -48,6 +48,7 @@ func NewContextManager(totalBudget, maxOutputTokens int) *ContextManager {
 		hardBlock:      0.98,
 		strategies: []CompactionStrategy{
 			NewToolResultClearingStrategy(),
+			&sessionMemoryStrategy{},
 			&truncateStrategy{},
 		},
 	}
