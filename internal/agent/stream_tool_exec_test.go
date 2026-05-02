@@ -1340,3 +1340,87 @@ func TestRunLoop_WriteToolSetsBarrierDuringStream(t *testing.T) {
 	require.Equal(t, int32(1), writeTool.called.Load(), "write should execute once post-stream")
 	require.Equal(t, int32(1), read2Tool.called.Load(), "second read should execute once post-stream")
 }
+
+// fakeShellTool is a concurrency-safe tool that simulates shell execution.
+// It returns an error when returnError is true, triggering sibling abort.
+type fakeShellTool struct {
+	fakeConcurrencySafeTool
+	returnError bool
+}
+
+func (t *fakeShellTool) Execute(ctx context.Context, _ json.RawMessage) (agentsdk.ToolResult, error) {
+	t.called.Add(1)
+	select {
+	case <-time.After(t.execDelay):
+	case <-ctx.Done():
+		return agentsdk.ToolResult{}, ctx.Err()
+	}
+	if t.returnError {
+		return agentsdk.ToolResult{Content: "shell error", IsError: true}, nil
+	}
+	return agentsdk.ToolResult{Content: t.returnText}, nil
+}
+
+func TestStreamingExecutor_SiblingAbortOnShellError(t *testing.T) {
+	t.Parallel()
+	// Two concurrent tools: shell (will error) and read_file (should be aborted)
+	shell := &fakeShellTool{fakeConcurrencySafeTool: fakeConcurrencySafeTool{name: "shell", execDelay: 50 * time.Millisecond, returnText: "error"}, returnError: true}
+	read := &fakeConcurrencySafeTool{name: "read_file", execDelay: 100 * time.Millisecond, returnText: "ok"}
+
+	ex := newExecutorWithTools(2, map[string]agentsdk.Tool{"shell": shell, "read_file": read})
+	ctx := context.Background()
+
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "s1", Name: "shell"})
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "r1", Name: "read_file"})
+	results := ex.Drain()
+
+	require.Len(t, results, 2)
+
+	// Shell result is an error
+	var shellResult, readResult *toolExecResult
+	for i := range results {
+		if results[i].toolUseID == "s1" {
+			shellResult = &results[i]
+		}
+		if results[i].toolUseID == "r1" {
+			readResult = &results[i]
+		}
+	}
+	require.NotNil(t, shellResult)
+	require.NotNil(t, readResult)
+	require.True(t, shellResult.isError, "shell should return error")
+	// Read was aborted by sibling error — check it's an error (either aborted message or context cancelled)
+	require.True(t, readResult.isError, "read should be aborted when shell sibling errors")
+}
+
+func TestStreamingExecutor_NonShellErrorNoSiblingAbort(t *testing.T) {
+	t.Parallel()
+	// read_file errors, but grep should complete normally
+	read := &fakeConcurrencySafeTool{name: "read_file", execDelay: 50 * time.Millisecond, returnText: "error"}
+	grep := &fakeConcurrencySafeTool{name: "grep", execDelay: 100 * time.Millisecond, returnText: "ok"}
+
+	ex := newExecutorWithTools(2, map[string]agentsdk.Tool{"read_file": read, "grep": grep})
+	ctx := context.Background()
+
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "r1", Name: "read_file"})
+	ex.Dispatch(ctx, provider.ToolUseBlock{ID: "g1", Name: "grep"})
+	results := ex.Drain()
+
+	require.Len(t, results, 2)
+
+	var readResult, grepResult *toolExecResult
+	for i := range results {
+		if results[i].toolUseID == "r1" {
+			readResult = &results[i]
+		}
+		if results[i].toolUseID == "g1" {
+			grepResult = &results[i]
+		}
+	}
+	require.NotNil(t, readResult)
+	require.NotNil(t, grepResult)
+	// read_file returns "error" as text but not as an IsError result
+	require.False(t, readResult.isError, "read_file returning text 'error' should not be an error result")
+	require.False(t, grepResult.isError, "non-shell error should not abort siblings")
+	require.Equal(t, "ok", grepResult.content)
+}

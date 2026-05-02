@@ -71,8 +71,34 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | T4 | Hook System Expansion | `2026-05-02-hook-system-expansion.md` | Medium | 27 lifecycle events, HTTP hooks, prompt hooks, fail-open design |
 | T5 | LLM Permission Classifier | `2026-05-02-llm-permission-classifier.md` | Medium | `YOLOClassifier` two-stage safety check for `ModeAuto` |
 
+## Phase 3: Agent Orchestration (from ccgo/Claude Code research)
+
+| # | Plan | File | Priority | Description |
+|---|------|------|----------|-------------|
+| G | Sibling Abort on Bash Errors | `2026-05-02-sibling-abort-on-shell-errors.md` | High | Cancel sibling concurrent tools when shell errors; prevents wasted work |
+| H | Session Memory Compaction | `2026-05-02-session-memory-compaction.md` | High | Smart compaction preserving API invariants (tool_use/tool_result pairs, thinking blocks) |
+| I | Query Source-Aware Retry | `2026-05-02-query-source-aware-retry.md` | High | Foreground retries on 529; background tasks fail fast to avoid amplifying overloads |
+| J | Agent Definitions | `2026-05-02-agent-definitions.md` | High | Formalize agent modes with tool filtering, custom models, custom prompts |
+| K | Subagent Spawning | `2026-05-02-subagent-spawning.md` | Medium | Sync/async/fork child agents with lifecycle tracking |
+| L | Stop Hooks | `2026-05-02-stop-hooks.md` | Medium | Three-phase hooks that can block continuation, inject messages, yield attachments |
+| M | Result Storage | `2026-05-02-result-storage.md` | Medium | Disk offload for oversized tool results (>50KB) with 200KB/msg budget |
+| N | Streaming Tombstone | `2026-05-02-streaming-tombstone.md` | Medium | Tombstone orphaned messages on model fallback to prevent context pollution |
+| O | Prefetch Handles | `2026-05-02-prefetch-handles.md` | Low | Async memory/skill loading while model runs |
+
+## Recommended Execution Order (Phase 3)
+
+1. **G** (sibling abort) — prevents wasted work, simple to implement
+2. **I** (source-aware retry) — prevents background tasks from amplifying overloads
+3. **J** (agent definitions) — structural foundation for K and L
+4. **H** (session memory compaction) — major reliability improvement for long conversations
+5. **K** (subagent spawning) — enables parallel work decomposition
+6. **L** (stop hooks) — extensibility and loop control
+7. **M** (result storage) — handles large tool outputs
+8. **N** (streaming tombstone) — clean model fallback
+9. **O** (prefetch handles) — performance optimization
+
 ## Out of Scope (future plans)
 
-- Async memory/skill prefetch — requires deeper skill runtime changes
-- Stop hooks with continuation control — requires hook system redesign
-- Streaming tombstone pattern — requires SDK message layer changes
+- Multi-agent coordination protocols
+- Distributed agent execution
+- Persistent agent state across restarts

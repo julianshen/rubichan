@@ -110,30 +110,68 @@ func (be *BatchExecutor) Execute(ctx context.Context, calls []ToolCall) []Result
 // executeConcurrently runs calls with bounded parallelism. At most
 // maxParallel goroutines execute handlers simultaneously; excess calls
 // block on the semaphore until a slot frees.
+//
+// When a shell tool errors, all siblings in the same batch are cancelled
+// via a child context to prevent wasted work on invalidated reads.
 func (be *BatchExecutor) executeConcurrently(ctx context.Context, calls []ToolCall) []Result {
 	var wg sync.WaitGroup
 	results := make([]Result, len(calls))
+
+	// Sibling abort: shell errors cancel all other tools in this batch.
+	siblingCtx, siblingCancel := context.WithCancel(ctx)
+	defer siblingCancel()
 
 	for i, tc := range calls {
 		wg.Add(1)
 		go func(idx int, call ToolCall) {
 			defer wg.Done()
-			if ctx.Err() != nil {
-				results[idx] = Result{Content: ctx.Err().Error(), IsError: true}
+			if siblingCtx.Err() != nil {
+				results[idx] = Result{Content: "aborted: sibling shell tool failed", IsError: true}
 				return
 			}
 			select {
 			case be.sem <- struct{}{}:
-			case <-ctx.Done():
-				results[idx] = Result{Content: ctx.Err().Error(), IsError: true}
+			case <-siblingCtx.Done():
+				results[idx] = Result{Content: "aborted: sibling shell tool failed", IsError: true}
 				return
 			}
 			defer func() { <-be.sem }()
-			results[idx] = be.handler(ctx, call)
+
+			// Shell errors invalidate filesystem assumptions for concurrent reads.
+			// When a shell tool errors, cancel siblings so they don't return stale
+			// or inconsistent data. Only shell errors trigger this — other tool
+			// failures are independent.
+			var toolCtx context.Context
+			if isShellTool(call.Name) {
+				// Shell tool: run with sibling context, trigger abort on error.
+				toolCtx = siblingCtx
+				results[idx] = be.handler(toolCtx, call)
+				if results[idx].IsError {
+					siblingCancel()
+				}
+			} else {
+				// Non-shell tool: run with a context that is cancelled if a
+				// sibling shell tool errors.
+				var toolCancel context.CancelFunc
+				toolCtx, toolCancel = context.WithCancel(siblingCtx)
+				defer toolCancel()
+				go func() {
+					<-siblingCtx.Done()
+					toolCancel()
+				}()
+				results[idx] = be.handler(toolCtx, call)
+			}
 		}(i, tc)
 	}
 	wg.Wait()
 	return results
+}
+
+// isShellTool reports whether a tool name identifies a shell/terminal
+// command executor. Shell errors trigger sibling abort in concurrent
+// batches because a failed command often invalidates subsequent reads.
+func isShellTool(name string) bool {
+	return name == "shell" || name == "bash" || name == "cmd" || name == "terminal"
 }
 
 func (be *BatchExecutor) executeSerially(ctx context.Context, calls []ToolCall) []Result {

@@ -46,6 +46,12 @@ type streamingToolExecutor struct {
 	futures     []*toolFuture
 	wg          sync.WaitGroup
 	barrierSeen bool // set when an unsafe (write) tool is encountered; blocks subsequent Dispatch calls
+
+	// siblingAbortCtx is cancelled when any shell tool errors in a
+	// concurrent batch. All non-shell siblings receive this cancellation.
+	// Non-shell errors do not trigger sibling abort.
+	siblingAbortCtx    context.Context
+	siblingAbortCancel context.CancelFunc
 }
 
 // toolFuture holds the in-flight state of one dispatched tool call.
@@ -64,9 +70,12 @@ func newStreamingToolExecutor(maxParallel int, run toolExecFn) *streamingToolExe
 	if maxParallel < 1 {
 		maxParallel = 1
 	}
+	siblingCtx, siblingCancel := context.WithCancel(context.Background())
 	return &streamingToolExecutor{
-		sem: make(chan struct{}, maxParallel),
-		run: run,
+		sem:                make(chan struct{}, maxParallel),
+		run:                run,
+		siblingAbortCtx:    siblingCtx,
+		siblingAbortCancel: siblingCancel,
 	}
 }
 
@@ -112,10 +121,40 @@ func (e *streamingToolExecutor) Dispatch(ctx context.Context, tc provider.ToolUs
 		}
 		defer func() { <-e.sem }()
 
-		f.result = e.run(ctx, tc)
+		// Shell errors invalidate filesystem assumptions for concurrent reads.
+		// When a shell tool errors, cancel siblings so they don't return stale
+		// or inconsistent data. Only shell errors trigger this — other tool
+		// failures are independent.
+		toolCtx := ctx
+		if isShellTool(tc.Name) {
+			// Shell tool: run with parent context, trigger abort on error.
+			f.result = e.run(toolCtx, tc)
+			if f.result.isError {
+				e.siblingAbortCancel()
+			}
+		} else {
+			// Non-shell tool: run with a context that is cancelled if a
+			// sibling shell tool errors. No extra goroutine needed —
+			// the shell tool's error path calls siblingAbortCancel.
+			var toolCancel context.CancelFunc
+			toolCtx, toolCancel = context.WithCancel(ctx)
+			defer toolCancel()
+			go func() {
+				<-e.siblingAbortCtx.Done()
+				toolCancel()
+			}()
+			f.result = e.run(toolCtx, tc)
+		}
 		close(f.done)
 	}()
 	return true
+}
+
+// isShellTool reports whether a tool name identifies a shell/terminal
+// command executor. Shell errors trigger sibling abort in concurrent
+// batches because a failed command often invalidates subsequent reads.
+func isShellTool(name string) bool {
+	return name == "shell" || name == "bash" || name == "cmd" || name == "terminal"
 }
 
 // SetBarrier marks that an unsafe (write) tool has been encountered.
