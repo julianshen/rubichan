@@ -9,7 +9,8 @@ import (
 )
 
 // ToolBatch groups consecutive tool calls with the same concurrency safety.
-// Preserving the LLM's call order while allowing safe tools to run concurrently.
+// The agent preserves the LLM's call order; batching only affects which
+// tools run in parallel versus sequentially.
 type ToolBatch struct {
 	IsConcurrent bool
 	Calls        []ToolCall
@@ -20,7 +21,7 @@ type ToolBatch struct {
 // tool breaks the batch and starts a new sequential batch.
 func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 	if len(calls) == 0 {
-		return nil
+		return []ToolBatch{}
 	}
 
 	batches := make([]ToolBatch, 0, len(calls))
@@ -30,7 +31,8 @@ func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 		tool, ok := lookup.Get(tc.Name)
 		if !ok {
 			// Unknown tools are treated as unsafe (fail-closed).
-			tool = nil
+			isSafe := false
+			_ = isSafe
 		}
 
 		isSafe := isConcurrencySafe(tool, tc.Input)
@@ -58,13 +60,12 @@ func partitionToolCalls(lookup ToolLookup, calls []ToolCall) []ToolBatch {
 // isConcurrencySafe reports whether a tool can run in parallel with other
 // tools. Unknown tools and tools without the marker interface return false
 // (fail-closed).
-//
-// The cheaper ConcurrencySafeTool check comes first to avoid JSON
-// parsing for tools that don't need per-invocation discrimination.
 func isConcurrencySafe(tool agentsdk.Tool, input json.RawMessage) bool {
 	if tool == nil {
 		return false
 	}
+	// Check the cheaper static interface first to avoid JSON parsing
+	// for tools that don't need per-invocation discrimination.
 	if cs, ok := tool.(agentsdk.ConcurrencySafeTool); ok {
 		if ics, ok := tool.(agentsdk.InputConcurrencySafeTool); ok {
 			return ics.IsConcurrencySafeForInput(input)
@@ -80,10 +81,9 @@ const defaultMaxParallel = 10
 // BatchExecutor runs tool calls in batches, parallelizing safe batches
 // and serializing unsafe batches.
 type BatchExecutor struct {
-	lookup      ToolLookup
-	handler     HandlerFunc
-	maxParallel int
-	sem         chan struct{}
+	lookup  ToolLookup
+	handler HandlerFunc
+	sem     chan struct{}
 }
 
 // NewBatchExecutor creates a batch executor with the given lookup,
@@ -93,10 +93,9 @@ func NewBatchExecutor(lookup ToolLookup, handler HandlerFunc, maxParallel int) *
 		maxParallel = defaultMaxParallel
 	}
 	return &BatchExecutor{
-		lookup:      lookup,
-		handler:     handler,
-		maxParallel: maxParallel,
-		sem:         make(chan struct{}, maxParallel),
+		lookup:  lookup,
+		handler: handler,
+		sem:     make(chan struct{}, maxParallel),
 	}
 }
 
@@ -115,6 +114,9 @@ func (be *BatchExecutor) Execute(ctx context.Context, calls []ToolCall) []Result
 	return results
 }
 
+// executeConcurrently runs calls with bounded parallelism. At most
+// maxParallel goroutines execute handlers simultaneously; excess calls
+// block on the semaphore until a slot frees.
 func (be *BatchExecutor) executeConcurrently(ctx context.Context, calls []ToolCall) []Result {
 	var wg sync.WaitGroup
 	results := make([]Result, len(calls))
@@ -141,6 +143,7 @@ func (be *BatchExecutor) executeConcurrently(ctx context.Context, calls []ToolCa
 	return results
 }
 
+// executeSerially runs calls one at a time in the caller's goroutine.
 func (be *BatchExecutor) executeSerially(ctx context.Context, calls []ToolCall) []Result {
 	results := make([]Result, 0, len(calls))
 	for _, tc := range calls {

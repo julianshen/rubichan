@@ -49,8 +49,8 @@ func TestPartitionToolCalls(t *testing.T) {
 func TestPartitionToolCalls_Empty(t *testing.T) {
 	lookup := &mockLookup{tools: map[string]agentsdk.Tool{}}
 	batches := partitionToolCalls(lookup, nil)
-	if batches != nil {
-		t.Error("expected nil for empty calls")
+	if len(batches) != 0 {
+		t.Errorf("expected empty batches, got %d", len(batches))
 	}
 }
 
