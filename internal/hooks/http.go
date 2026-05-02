@@ -1,0 +1,80 @@
+package hooks
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// maxHookResponseSize limits how much data we read from a hook response.
+// Prevents OOM from misconfigured or malicious hook servers.
+const maxHookResponseSize = 1 << 20 // 1 MiB
+
+// sharedHTTPClient is reused across hook calls for connection pooling.
+var sharedHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
+
+// executeHTTPHook sends a POST request to the configured URL with the
+// event data as JSON. Returns the hook result parsed from the response.
+//
+// Fail-open design: all errors (network, marshal, bad response) log the
+// failure and return Continue=true so a broken hook cannot block execution.
+// Operators should monitor logs for hook failures.
+func executeHTTPHook(cfg UserHookConfig, data map[string]interface{}) (HookResult, error) {
+	payload := map[string]interface{}{
+		"event": cfg.Event,
+		"data":  data,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return HookResult{Continue: true}, fmt.Errorf("marshal failed: %w", err)
+	}
+
+	// Use context timeout only; http.Client.Timeout is redundant and can
+	// cause confusing error types when both fire.
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(body))
+	if err != nil {
+		return HookResult{Continue: true}, fmt.Errorf("request build failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := sharedHTTPClient.Do(req)
+	if err != nil {
+		return HookResult{Continue: true}, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxHookResponseSize))
+	if err != nil {
+		return HookResult{Continue: true}, fmt.Errorf("read body failed: %w", err)
+	}
+
+	var result HookResult
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		// Non-JSON response: treat as no-op (continue).
+		return HookResult{Continue: true}, nil
+	}
+
+	// Explicit cancel takes precedence; everything else defaults to continue.
+	if result.Cancel {
+		return result, nil
+	}
+	return HookResult{Continue: true, Message: result.Message, UpdatedInput: result.UpdatedInput}, nil
+}
+
+// HookResult captures the response from a hook execution.
+type HookResult struct {
+	Continue       bool                   `json:"continue"`
+	Cancel         bool                   `json:"cancel"`
+	Message        string                 `json:"message"`
+	UpdatedInput   map[string]interface{} `json:"updated_input,omitempty"`
+	ModifiedOutput string                 `json:"modified_output,omitempty"`
+}
