@@ -357,6 +357,8 @@ type Agent struct {
 	acpRegistry         *acp.CapabilityRegistry // Capability registry for ACP
 	useACP              bool                    // Enable ACP server
 	latches             *sessionLatches         // one-way ratchets for session-stable capability values
+	agentDef            *agentsdk.AgentDefinition
+	agentRegistry       *AgentRegistry
 }
 
 const maxUIRequestInputBytes = 2048
@@ -380,6 +382,8 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		progress:            NewProgressTracker(),
 		capabilities:        agentsdk.DefaultCapabilities(),
 		latches:             newSessionLatches(),
+		agentDef:            &agentsdk.AgentDefinition{Name: "general-purpose", Tools: []string{"*"}},
+		agentRegistry:       NewAgentRegistry(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -1411,6 +1415,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// Select tools via DeferralManager to stay within budget.
 		allToolDefs := a.tools.SelectForContext(a.conversation.Messages())
+		// Apply agent definition tool filter before deferral.
+		allToolDefs = FilterTools(allToolDefs, a.agentDef, nil)
 		budget := a.context.Budget()
 		activeTools, _ := a.deferral.SelectForContext(allToolDefs, budget.EffectiveWindow())
 
