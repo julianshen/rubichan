@@ -19,18 +19,47 @@ const defaultTimeout = 30 * time.Second
 
 // Event name constants for user-facing hook event configuration.
 const (
-	EventPreTool       = "pre_tool"
-	EventPostTool      = "post_tool"
-	EventPreEdit       = "pre_edit"
-	EventPostEdit      = "post_edit"
-	EventPreShell      = "pre_shell"
-	EventPrePrompt     = "pre_prompt"
-	EventPostResponse  = "post_response"
-	EventSessionStart  = "session_start"
-	EventSetup         = "setup"
-	EventTaskCreated   = "task_created"
-	EventTaskCompleted = "task_completed"
+	EventPreTool           = "pre_tool"
+	EventPostTool          = "post_tool"
+	EventPostToolFailure   = "post_tool_failure"
+	EventPreEdit           = "pre_edit"
+	EventPostEdit          = "post_edit"
+	EventPreShell          = "pre_shell"
+	EventPrePrompt         = "pre_prompt"
+	EventPostResponse      = "post_response"
+	EventSessionStart      = "session_start"
+	EventSessionEnd        = "session_end"
+	EventSetup             = "setup"
+	EventTaskCreated       = "task_created"
+	EventTaskCompleted     = "task_completed"
+	EventPermissionRequest = "permission_request"
+	EventPermissionDenied  = "permission_denied"
+	EventPreCompact        = "pre_compact"
+	EventPostCompact       = "post_compact"
+	EventSubagentStart     = "subagent_start"
+	EventSubagentStop      = "subagent_stop"
+	EventNotification      = "notification"
+	EventConfigChange      = "config_change"
+	EventCwdChanged        = "cwd_changed"
+	EventFileChanged       = "file_changed"
 )
+
+// AllEvents returns the complete list of supported hook events.
+func AllEvents() []string {
+	return []string{
+		EventPreTool, EventPostTool, EventPostToolFailure,
+		EventPreEdit, EventPostEdit,
+		EventPreShell,
+		EventPrePrompt, EventPostResponse,
+		EventSessionStart, EventSessionEnd, EventSetup,
+		EventTaskCreated, EventTaskCompleted,
+		EventPermissionRequest, EventPermissionDenied,
+		EventPreCompact, EventPostCompact,
+		EventSubagentStart, EventSubagentStop,
+		EventNotification,
+		EventConfigChange, EventCwdChanged, EventFileChanged,
+	}
+}
 
 // ParseHookTimeout parses a duration string, returning defaultTimeout (30s)
 // if the string is empty or unparseable.
@@ -44,12 +73,14 @@ func ParseHookTimeout(s string) time.Duration {
 	return defaultTimeout
 }
 
-// UserHookConfig describes a single user-configured shell hook entry.
+// UserHookConfig describes a single user-configured hook entry.
+// Exactly one of Command or URL must be set.
 type UserHookConfig struct {
 	Event       string
 	Pattern     string
 	If          string
 	Command     string
+	URL         string
 	Description string
 	Timeout     time.Duration
 	Source      string
