@@ -64,15 +64,19 @@ func executeHTTPHook(cfg UserHookConfig, data map[string]interface{}) (HookResul
 
 	var result HookResult
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		// Non-JSON response: treat as no-op (continue).
-		return HookResult{Continue: true}, nil
+		// Non-JSON response: log the parse error and continue.
+		return failOpen(fmt.Errorf("unmarshal hook response: %w", err))
 	}
 
-	// Explicit cancel takes precedence; everything else defaults to continue.
 	if result.Cancel {
 		return result, nil
 	}
-	return HookResult{Continue: true, Message: result.Message, UpdatedInput: result.UpdatedInput}, nil
+	return HookResult{
+		Continue:       true,
+		Message:        result.Message,
+		UpdatedInput:   result.UpdatedInput,
+		ModifiedOutput: result.ModifiedOutput,
+	}, nil
 }
 
 // HookResult captures the response from a hook execution.

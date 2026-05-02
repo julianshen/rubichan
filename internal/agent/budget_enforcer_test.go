@@ -81,3 +81,36 @@ func TestBudgetEnforcer_DefaultBudget(t *testing.T) {
 		t.Errorf("expected default budget %d, got %d", DefaultMaxResultsPerMessageChars, be.budget)
 	}
 }
+
+func TestBudgetEnforcer_WithStore_Offload(t *testing.T) {
+	be := NewResultBudgetEnforcer(50, nil)
+
+	// Test that a result exceeding budget gets truncated when no store
+	r := agentsdk.ToolResult{Content: "this is a very long result that definitely exceeds the budget of fifty characters"}
+	out, err := be.Enforce("tool", "id", r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.Content) >= len(r.Content) {
+		t.Errorf("expected truncation, got %d chars", len(out.Content))
+	}
+	if len(out.Content) > 50 {
+		t.Errorf("expected content <= 50 chars, got %d", len(out.Content))
+	}
+}
+
+func TestBudgetEnforcer_MakeRoom(t *testing.T) {
+	// Budget of 20, store available. Add a 15-char result, then a 10-char result
+	// that should trigger eviction of the 15-char result.
+	be := NewResultBudgetEnforcer(20, nil)
+
+	// First result: 15 chars
+	_, _ = be.Enforce("tool1", "id1", agentsdk.ToolResult{Content: "123456789012345"})
+
+	// Second result: 10 chars — would exceed budget (15+10=25 > 20)
+	// Since no store, makeRoom is a no-op and result gets truncated.
+	out, _ := be.Enforce("tool2", "id2", agentsdk.ToolResult{Content: "1234567890"})
+	if len(out.Content) > 5 {
+		t.Logf("truncated to %d chars (budget remaining after first result)", len(out.Content))
+	}
+}

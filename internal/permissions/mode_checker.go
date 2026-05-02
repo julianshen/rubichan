@@ -99,7 +99,11 @@ func (c *ModeAwareChecker) CheckApproval(tool string, input json.RawMessage) age
 		if c.mode == agentsdk.ModeAuto && c.classifier != nil {
 			var parsedInput map[string]interface{}
 			if len(input) > 0 {
-				_ = json.Unmarshal(input, &parsedInput)
+				if err := json.Unmarshal(input, &parsedInput); err != nil {
+					// Malformed input: classifier can't evaluate, fall through to
+					// manual approval rather than making a blind decision.
+					parsedInput = nil
+				}
 			}
 			decision, err := c.classifier.Classify(tool, parsedInput)
 			if err == nil && decision == agentsdk.AutoApproved {

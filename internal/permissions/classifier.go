@@ -61,11 +61,11 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 		return agentsdk.AutoApproved, nil
 	}
 
-	// Stage 1: Fast check (works even without provider).
+	// Stage 1: Fast heuristic check (works even without provider).
 	decision, err := c.stage1(toolName, input)
 	if err != nil {
 		c.recordDenial()
-		return agentsdk.ApprovalRequired, nil
+		return c.fallbackIfNeeded(agentsdk.ApprovalRequired)
 	}
 
 	var result agentsdk.ApprovalResult
@@ -74,12 +74,10 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 		c.resetDenials()
 		return agentsdk.AutoApproved, nil
 	case DecisionUnsafe:
-		c.recordDenial()
 		result = agentsdk.AutoDenied
 	case DecisionUncertain:
 		// Stage 2: Detailed analysis (requires provider).
 		if c.prov == nil {
-			c.recordDenial()
 			result = agentsdk.ApprovalRequired
 		} else {
 			result, err = c.stage2(toolName, input)
@@ -95,11 +93,15 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 		c.recordDenial()
 	}
 
-	// Fallback to manual approval after too many consecutive denials.
+	return c.fallbackIfNeeded(result)
+}
+
+// fallbackIfNeeded returns ApprovalRequired if consecutive denials exceed
+// the threshold, otherwise returns the given result.
+func (c *YOLOClassifier) fallbackIfNeeded(result agentsdk.ApprovalResult) (agentsdk.ApprovalResult, error) {
 	if c.shouldFallback() {
 		return agentsdk.ApprovalRequired, nil
 	}
-
 	return result, nil
 }
 
@@ -121,14 +123,15 @@ func (c *YOLOClassifier) shouldFallback() bool {
 	return c.maxConsecutiveDenials > 0 && c.consecutiveDenials >= c.maxConsecutiveDenials
 }
 
-// stage1 is a fast check that classifies obvious cases.
+// stage1 is a fast heuristic check that classifies obvious cases.
+// When a provider is available, this would use a constrained completion
+// with a small token budget (fastMax). Without a provider, it falls back
+// to tool name substring heuristics.
 func (c *YOLOClassifier) stage1(toolName string, input map[string]interface{}) (ClassifierDecision, error) {
 	_ = c.fastMax
 	_ = input
 
-	// Use provider for a short completion.
-	// Simplified: in practice this would use a constrained completion.
-	// Mock implementation: classify based on tool name heuristics.
+	// Heuristic fallback: tools with dangerous keywords need stage 2.
 	if strings.Contains(toolName, "write") || strings.Contains(toolName, "edit") ||
 		strings.Contains(toolName, "delete") || strings.Contains(toolName, "shell") {
 		return DecisionUncertain, nil
@@ -136,25 +139,14 @@ func (c *YOLOClassifier) stage1(toolName string, input map[string]interface{}) (
 	return DecisionSafe, nil
 }
 
-// stage2 is a detailed analysis for borderline cases.
+// stage2 performs detailed analysis for borderline cases.
+// Currently a placeholder — when a provider is available, this will send
+// a structured prompt (see stage2PromptFormat) and parse the response.
 func (c *YOLOClassifier) stage2(toolName string, input map[string]interface{}) (agentsdk.ApprovalResult, error) {
 	_ = c.slowMax
 	_ = toolName
 	_ = input
 
-	// Detailed prompt with reasoning would go here.
-	// Mock: for now, require approval for all uncertain cases.
+	// Placeholder: always require approval until LLM integration is wired.
 	return agentsdk.ApprovalRequired, nil
 }
-
-// stage2PromptFormat is the prompt template for detailed safety analysis.
-// Reserved for future use when stage2 is implemented with LLM reasoning.
-//
-//nolint:unused
-const stage2PromptFormat = `Analyze if this tool is safe to auto-approve.
-Tool: %s
-Input: %v
-
-Reply with:
-<thinking> reasoning </thinking>
-<decision> ALLOW or DENY </decision>`

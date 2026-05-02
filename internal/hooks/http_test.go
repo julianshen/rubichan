@@ -55,11 +55,11 @@ func TestExecuteHTTPHook_NonJSONResponse(t *testing.T) {
 	}
 
 	result, err := executeHTTPHook(cfg, map[string]interface{}{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error for non-JSON response")
 	}
 	if !result.Continue {
-		t.Error("expected continue=true for non-JSON response")
+		t.Error("expected continue=true for non-JSON response (fail-open)")
 	}
 }
 

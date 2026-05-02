@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"context"
 	"testing"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
@@ -88,5 +89,26 @@ func TestYOLOClassifier_Stage1Heuristics(t *testing.T) {
 	result, _ = c.Classify("some_info_tool", nil)
 	if result != agentsdk.AutoApproved {
 		t.Errorf("expected AutoApproved for unknown safe tool, got %v", result)
+	}
+}
+
+// mockProvider is a minimal LLMProvider for testing stage2.
+type mockProvider struct{}
+
+func (m *mockProvider) Stream(ctx context.Context, req agentsdk.CompletionRequest) (<-chan agentsdk.StreamEvent, error) {
+	return nil, nil
+}
+
+func TestYOLOClassifier_Stage2_WithProvider(t *testing.T) {
+	// With a provider, stage2 is called for uncertain tools.
+	// Since stage2 is currently a placeholder, it returns ApprovalRequired.
+	c := NewYOLOClassifier(&mockProvider{}, 0, 0)
+
+	result, err := c.Classify("write_file", map[string]interface{}{"path": "test.go"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != agentsdk.ApprovalRequired {
+		t.Errorf("expected ApprovalRequired from placeholder stage2, got %v", result)
 	}
 }

@@ -28,7 +28,7 @@ type ResultBudgetEnforcer struct {
 	used   int
 	store  *ResultStore
 	// accepted tracks results that have been counted against the budget.
-	// Used for eviction when makeRoom needs to free space.
+	// Greedy eviction (makeRoom) needs per-result sizes to find the largest.
 	accepted []acceptedResult
 }
 
@@ -57,9 +57,6 @@ func NewResultBudgetEnforcer(budget int, store *ResultStore) *ResultBudgetEnforc
 // Returns the (possibly modified) result that should be added to the message.
 func (be *ResultBudgetEnforcer) Enforce(toolName, toolUseID string, res agentsdk.ToolResult) (agentsdk.ToolResult, error) {
 	size := len(res.Content)
-
-	// First, apply per-tool cap if the tool implements ResultBudgeted.
-	// (This would require the tool instance; for now we apply aggregate only.)
 
 	// Check if this result alone exceeds the aggregate budget.
 	if size > be.budget {
@@ -114,7 +111,6 @@ func (be *ResultBudgetEnforcer) makeRoom(needed int) {
 			}
 		}
 		largest := be.accepted[maxIdx]
-		_ = largest
 		be.used -= largest.size
 		be.accepted[maxIdx] = be.accepted[len(be.accepted)-1]
 		be.accepted = be.accepted[:len(be.accepted)-1]
@@ -130,7 +126,7 @@ func (be *ResultBudgetEnforcer) offload(toolName, toolUseID string, res agentsdk
 	ref, err := be.store.OffloadResult(toolName, toolUseID, res.Content)
 	if err != nil {
 		// Graceful degradation: return original if offload fails.
-		// Log the error so operators can detect store problems.
+		// The error is returned to the caller (agent.go logs it).
 		return res, fmt.Errorf("offload failed: %w", err)
 	}
 	res.Content = ref

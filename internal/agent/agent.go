@@ -2175,12 +2175,18 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		enforcer := NewResultBudgetEnforcer(a.resultBudget, a.resultStore)
 		for i := range pendingTools {
 			r := results[i]
-			bounded, _ := enforcer.Enforce(pendingTools[i].Name, pendingTools[i].ID, agentsdk.ToolResult{
+			bounded, err := enforcer.Enforce(pendingTools[i].Name, pendingTools[i].ID, agentsdk.ToolResult{
 				Content:        r.content,
 				DisplayContent: r.event.ToolResult.DisplayContent,
 				IsError:        r.isError,
 			})
+			if err != nil {
+				a.logger.Warn("result budget enforcement failed for %s: %v", pendingTools[i].Name, err)
+			}
+			// Rebuild the event with the (possibly truncated/offloaded) content
+			// so channel output matches conversation history.
 			r.content = bounded.Content
+			r.event = makeToolResultEvent(r.toolUseID, pendingTools[i].Name, bounded.Content, bounded.DisplayContent, bounded.IsError)
 			results[i] = r
 		}
 	}
