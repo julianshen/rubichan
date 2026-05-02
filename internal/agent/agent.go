@@ -351,6 +351,7 @@ type Agent struct {
 	capabilities        provider.ModelCapabilities
 	configuredMaxTokens int
 	resultBudget        int
+	fileCache           *tools.FileReadCache
 	progress            *ProgressTracker
 	acpServer           *acp.Server             // ACP server instance (if enabled)
 	acpRegistry         *acp.CapabilityRegistry // Capability registry for ACP
@@ -465,6 +466,15 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			a.logger.Warn("failed to register read_result tool: %v", err)
 		}
 	}
+
+	// Initialize file read cache and inject into file tool if present.
+	a.fileCache = tools.NewFileReadCache()
+	if ft, ok := a.tools.Get("file"); ok {
+		if fileTool, ok := ft.(*tools.FileTool); ok {
+			fileTool.SetCache(a.fileCache)
+		}
+	}
+
 	a.promptBuilder = NewPromptBuilder()
 
 	// Ensure a pipeline is always available. When no pipeline is provided
