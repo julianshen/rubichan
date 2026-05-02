@@ -136,7 +136,6 @@ func (be *BatchExecutor) executeConcurrently(ctx context.Context, calls []ToolCa
 	return results
 }
 
-// executeSerially runs calls one at a time in the caller's goroutine.
 func (be *BatchExecutor) executeSerially(ctx context.Context, calls []ToolCall) []Result {
 	results := make([]Result, 0, len(calls))
 	for _, tc := range calls {

@@ -121,9 +121,8 @@ func (c *YOLOClassifier) shouldFallback() bool {
 }
 
 // stage1 is a fast heuristic check that classifies obvious cases.
-// When a provider is available, this would use a constrained completion
-// with a small token budget (fastMax). Without a provider, it falls back
-// to tool name substring heuristics.
+// TODO: When a provider is available, use a constrained completion with
+// fastMax tokens instead of substring heuristics.
 func (c *YOLOClassifier) stage1(toolName string, input map[string]interface{}) ClassifierDecision {
 	_ = c.fastMax
 	_ = input
@@ -137,8 +136,8 @@ func (c *YOLOClassifier) stage1(toolName string, input map[string]interface{}) C
 }
 
 // stage2 performs detailed analysis for borderline cases.
-// Currently a placeholder — when a provider is available, this will send
-// a structured prompt (see stage2PromptFormat) and parse the response.
+// TODO: Implement LLM-based reasoning when a provider is available.
+// Currently a placeholder — always requires manual approval.
 func (c *YOLOClassifier) stage2(toolName string, input map[string]interface{}) (agentsdk.ApprovalResult, error) {
 	_ = c.slowMax
 	_ = toolName

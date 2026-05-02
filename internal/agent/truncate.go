@@ -25,8 +25,8 @@ func truncateHeadTail(content string, maxLen int, marker string) string {
 	return content[:half] + marker + content[len(content)-half:]
 }
 
-// truncateResultCap is a convenience wrapper for per-tool result caps.
-// Builds a marker that includes the original and cap sizes.
+// truncateResultCap builds a marker that includes the original and cap
+// sizes. The explicit size audit trail helps debug why a result was cut.
 func truncateResultCap(content string, maxBytes int) string {
 	marker := fmt.Sprintf("\n\n[... truncated: %d bytes exceeded %d byte cap ...]\n\n",
 		len(content), maxBytes)

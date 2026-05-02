@@ -9,6 +9,7 @@ type PromptHook struct {
 	Replace string
 }
 
+// Transform applies the find/replace to the input text.
 func (h PromptHook) Transform(text string) string {
 	return strings.ReplaceAll(text, h.Find, h.Replace)
 }
@@ -19,6 +20,7 @@ func (h PromptHook) Transform(text string) string {
 // on hot paths (per prompt build) to avoid GC pressure.
 type PromptHookChain []PromptHook
 
+// Transform applies all hooks in order.
 func (c PromptHookChain) Transform(text string) string {
 	for _, h := range c {
 		text = h.Transform(text)

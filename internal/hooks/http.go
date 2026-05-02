@@ -78,6 +78,9 @@ func executeHTTPHook(cfg UserHookConfig, data map[string]interface{}) (HookResul
 }
 
 // HookResult captures the response from a hook execution.
+//
+// Hooks can control execution via Cancel, return messages for logging,
+// mutate tool input via UpdatedInput, or modify output via ModifiedOutput.
 type HookResult struct {
 	Continue       bool                   `json:"continue"`
 	Cancel         bool                   `json:"cancel"`
