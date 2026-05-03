@@ -116,9 +116,6 @@ func (c *Conversation) Tombstone(startIdx, endIdx int, reason agentsdk.Tombstone
 	}
 
 	for i := startIdx; i < endIdx; i++ {
-		if c.isTombstoned(i) {
-			continue
-		}
 		c.messages[i].Content = []provider.ContentBlock{{
 			Type: "text",
 			Text: agentsdk.TombstoneMarker,
@@ -133,6 +130,7 @@ func (c *Conversation) Tombstone(startIdx, endIdx int, reason agentsdk.Tombstone
 // TombstoneSinceLastAssistant tombstones all messages since the last
 // complete assistant response. Used when model fallback occurs mid-stream.
 func (c *Conversation) TombstoneSinceLastAssistant(reason agentsdk.TombstoneReason) int {
+	// Find the last complete assistant message
 	lastAssistantIdx := -1
 	for i := len(c.messages) - 1; i >= 0; i-- {
 		if c.messages[i].Role == "assistant" && !c.isTombstoned(i) {
@@ -142,10 +140,12 @@ func (c *Conversation) TombstoneSinceLastAssistant(reason agentsdk.TombstoneReas
 	}
 
 	if lastAssistantIdx < 0 {
+		// No complete assistant message — tombstone everything
 		c.Tombstone(0, len(c.messages), reason)
 		return len(c.messages)
 	}
 
+	// Tombstone messages after the last assistant
 	startIdx := lastAssistantIdx + 1
 	c.Tombstone(startIdx, len(c.messages), reason)
 	return len(c.messages) - startIdx
@@ -158,5 +158,5 @@ func (c *Conversation) isTombstoned(idx int) bool {
 	if len(c.messages[idx].Content) == 0 {
 		return false
 	}
-	return agentsdk.IsTombstonedMessage(c.messages[idx])
+	return agentsdk.IsTombstoned(c.messages[idx].Content[0].Text)
 }

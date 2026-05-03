@@ -83,9 +83,9 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | J | Agent Definitions | `2026-05-02-agent-definitions.md` | High | ~~Formalize agent modes with tool filtering, custom models, custom prompts~~ ✅ Done |
 | K | Subagent Spawning | `2026-05-02-subagent-spawning.md` | Medium | ~~Sync/async/fork child agents with lifecycle tracking~~ ✅ Done |
 | L | Stop Hooks | `2026-05-02-stop-hooks.md` | Medium | ~~Three-phase hooks that can block continuation, inject messages, yield attachments~~ ✅ Done |
-| M | Result Storage | `2026-05-02-result-storage.md` | Medium | Disk offload for oversized tool results (>50KB) with 200KB/msg budget |
-| N | Streaming Tombstone | `2026-05-02-streaming-tombstone.md` | Medium | Tombstone orphaned messages on model fallback to prevent context pollution |
-| O | Prefetch Handles | `2026-05-02-prefetch-handles.md` | Low | Async memory/skill loading while model runs |
+| M | Result Storage | `2026-05-02-result-storage.md` | Medium | ~~Disk offload for oversized tool results (>50KB) with 200KB/msg budget~~ ✅ Done |
+| N | Streaming Tombstone | `2026-05-02-streaming-tombstone.md` | Medium | ~~Tombstone orphaned messages on model fallback to prevent context pollution~~ ✅ Done |
+| O | Prefetch Handles | `2026-05-02-prefetch-handles.md` | Low | ~~Async memory/skill loading while model runs~~ ✅ Done |
 
 ## Recommended Execution Order (Phase 3)
 
