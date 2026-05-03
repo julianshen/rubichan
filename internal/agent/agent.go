@@ -410,12 +410,15 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	a.staticPrompts = a.assembleSystemPromptSections(memories)
 	a.conversation = NewConversation(renderPromptSections(a.staticPrompts))
 	// If a summarizer was provided and the caller didn't set custom
-	// strategies, insert summarization between tool clearing and truncation.
+	// strategies, insert session memory compaction between tool clearing
+	// and truncation. SessionMemoryCompactor preserves API invariants
+	// (tool_use/tool_result pairs, thinking blocks) while the existing
+	// summarizationStrategy provides a simpler fallback.
 	if a.summarizer != nil && !a.customStrategies {
 		a.context.SetStrategies([]CompactionStrategy{
 			NewToolResultClearingStrategy(),
 			NewHeadTailSnipStrategy(),
-			NewSummarizationStrategy(a.summarizer),
+			NewSessionMemoryCompactionStrategy(a.summarizer),
 			&truncateStrategy{},
 		})
 	}

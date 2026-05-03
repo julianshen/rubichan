@@ -1658,9 +1658,9 @@ func TestSkillListerAdapterDeactivateNotActive(t *testing.T) {
 
 func TestParseInstallSource(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   installSource
+		name  string
+		input string
+		want  installSource
 	}{
 		{
 			name:  "git URL without ref",

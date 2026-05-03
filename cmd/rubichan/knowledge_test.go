@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAppendKnowledgeGraphOptionReturnsLongerSlice verifies that appendKnowledgeGraphOption

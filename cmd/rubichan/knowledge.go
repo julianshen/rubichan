@@ -308,7 +308,7 @@ func openGraph(ctx context.Context, workDir string) (kg.Graph, error) {
 
 	g, err := kg.Open(ctx, workDir,
 		kg.WithEmbedder(embedder),
-		kg.WithKnowledgeDir(workDir + "/.knowledge"),
+		kg.WithKnowledgeDir(workDir+"/.knowledge"),
 	)
 	if err != nil {
 		return nil, err

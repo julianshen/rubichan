@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
@@ -120,10 +122,17 @@ type SubagentConfig = agentsdk.SubagentConfig
 type SubagentResult = agentsdk.SubagentResult
 
 // SubagentRequest pairs a config with a prompt for parallel spawning.
-type SubagentRequest = agentsdk.SubagentRequest
+// Deprecated: use direct SubagentConfig with the spawner's Spawn method.
+type SubagentRequest struct {
+	Config SubagentConfig
+	Prompt string
+}
 
 // SubagentSpawner creates and runs child agents.
-type SubagentSpawner = agentsdk.SubagentSpawner
+type SubagentSpawner interface {
+	Spawn(ctx context.Context, cfg SubagentConfig, prompt string) (*SubagentResult, error)
+	SpawnParallel(ctx context.Context, requests []SubagentRequest, maxConcurrent int) ([]SubagentResult, error)
+}
 
 // --- Logger ---
 

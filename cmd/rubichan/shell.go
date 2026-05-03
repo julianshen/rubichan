@@ -371,4 +371,3 @@ func makeSlashCommandFunc(registry *commands.Registry) shell.SlashCommandFunc {
 		return result.Output, quit, nil
 	}
 }
-

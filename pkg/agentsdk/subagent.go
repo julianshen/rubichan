@@ -1,22 +1,45 @@
 package agentsdk
 
-import "context"
+// SubagentMode controls how the parent waits for the child.
+type SubagentMode string
 
-// SubagentConfig defines how a child agent is created.
+const (
+	// SubagentModeSync blocks until the child completes.
+	SubagentModeSync SubagentMode = "sync"
+	// SubagentModeAsync returns immediately with a progress channel.
+	SubagentModeAsync SubagentMode = "async"
+	// SubagentModeFork runs in process isolation.
+	SubagentModeFork SubagentMode = "fork"
+)
+
+// SubagentConfig describes a child agent to spawn.
 type SubagentConfig struct {
-	Name          string   // Identifier (e.g., "explorer")
-	SystemPrompt  string   // Additional system prompt (appended to base)
-	Tools         []string // Whitelist of tool names (nil = all parent tools)
-	MaxTurns      int      // Turn limit (0 = default 10)
-	MaxTokens     int      // Output token budget (0 = inherit)
-	ContextBudget int      // Context window override (0 = inherit parent)
-	Model         string   // Override model (empty = inherit parent)
-	Depth         int      // Current nesting level (0 = top-level)
-	MaxDepth      int      // Maximum nesting (0 = default 3)
-	InheritSkills *bool    // Nil/default = inherit currently active parent skills
-	ExtraSkills   []string
+	// Name is the agent identifier (e.g., "explorer").
+	Name string
+	// SystemPrompt is additional system prompt (appended to base).
+	SystemPrompt string
+	// Tools is a whitelist of tool names (nil = all parent tools).
+	Tools []string
+	// MaxTurns is the turn limit (0 = default 10).
+	MaxTurns int
+	// MaxTokens is the output token budget (0 = inherit).
+	MaxTokens int
+	// ContextBudget is the context window override (0 = inherit parent).
+	ContextBudget int
+	// Model overrides the parent model (empty = inherit parent).
+	Model string
+	// Depth is the current nesting level (0 = top-level).
+	Depth int
+	// MaxDepth is the maximum nesting (0 = default 3).
+	MaxDepth int
+	// InheritSkills: nil/default = inherit currently active parent skills.
+	InheritSkills *bool
+	// ExtraSkills are additional skills to include.
+	ExtraSkills []string
+	// DisableSkills are skills to exclude.
 	DisableSkills []string
-	Isolation     string // "", "worktree" — if "worktree", spawn in isolated worktree
+	// Isolation: "", "worktree" — if "worktree", spawn in isolated worktree.
+	Isolation string
 }
 
 // SubagentResult is returned when a child agent completes.
@@ -30,14 +53,12 @@ type SubagentResult struct {
 	Error        error    // Non-nil if the child failed
 }
 
-// SubagentRequest pairs a config with a prompt for parallel spawning.
-type SubagentRequest struct {
-	Config SubagentConfig
-	Prompt string
-}
-
-// SubagentSpawner creates and runs child agents.
-type SubagentSpawner interface {
-	Spawn(ctx context.Context, cfg SubagentConfig, prompt string) (*SubagentResult, error)
-	SpawnParallel(ctx context.Context, requests []SubagentRequest, maxConcurrent int) ([]SubagentResult, error)
+// SubagentStatus tracks child execution state.
+type SubagentStatus struct {
+	ID        string
+	AgentName string
+	Mode      SubagentMode
+	Done      bool
+	Error     error
+	Result    string
 }

@@ -50,8 +50,8 @@ func TestContextSelector(t *testing.T) {
 	m := &mockSelector{
 		results: []ScoredEntity{
 			{
-				Entity: &Entity{ID: "test-001", Title: "Test"},
-				Score: 0.95,
+				Entity:          &Entity{ID: "test-001", Title: "Test"},
+				Score:           0.95,
 				EstimatedTokens: 100,
 			},
 		},
