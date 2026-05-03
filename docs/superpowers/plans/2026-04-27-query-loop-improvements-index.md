@@ -60,6 +60,8 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | — | Write-barrier executor | #259 | Streaming executor with Barrier primitive |
 | — | Error withholding | #263 | Multi-stage recovery with withheld error buffer |
 | — | Permission modes | #264 | plan, auto, fullAuto, bypass modes |
+| — | Agent definitions | #3672856 | Formalize agent modes with tool filtering, custom models, custom prompts |
+| — | Subagent spawning | #3672856 | Sync/async/fork child agents with lifecycle tracking |
 
 ## Tool System Improvements (from ccgo/Claude Code research)
 
@@ -78,8 +80,8 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | G | Sibling Abort on Bash Errors | `2026-05-02-sibling-abort-on-shell-errors.md` | High | Cancel sibling concurrent tools when shell errors; prevents wasted work |
 | H | Session Memory Compaction | `2026-05-02-session-memory-compaction.md` | High | Smart compaction preserving API invariants (tool_use/tool_result pairs, thinking blocks) |
 | I | Query Source-Aware Retry | `2026-05-02-query-source-aware-retry.md` | High | Foreground retries on 529; background tasks fail fast to avoid amplifying overloads |
-| J | Agent Definitions | `2026-05-02-agent-definitions.md` | High | Formalize agent modes with tool filtering, custom models, custom prompts |
-| K | Subagent Spawning | `2026-05-02-subagent-spawning.md` | Medium | Sync/async/fork child agents with lifecycle tracking |
+| J | Agent Definitions | `2026-05-02-agent-definitions.md` | High | ~~Formalize agent modes with tool filtering, custom models, custom prompts~~ ✅ Done |
+| K | Subagent Spawning | `2026-05-02-subagent-spawning.md` | Medium | ~~Sync/async/fork child agents with lifecycle tracking~~ ✅ Done |
 | L | Stop Hooks | `2026-05-02-stop-hooks.md` | Medium | Three-phase hooks that can block continuation, inject messages, yield attachments |
 | M | Result Storage | `2026-05-02-result-storage.md` | Medium | Disk offload for oversized tool results (>50KB) with 200KB/msg budget |
 | N | Streaming Tombstone | `2026-05-02-streaming-tombstone.md` | Medium | Tombstone orphaned messages on model fallback to prevent context pollution |
