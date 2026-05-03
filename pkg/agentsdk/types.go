@@ -103,8 +103,9 @@ type CompletionRequest struct {
 
 // Message represents a single message in a conversation.
 type Message struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
+	Role     string         `json:"role"`
+	Content  []ContentBlock `json:"content"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // ContentBlock represents a block of content within a message.

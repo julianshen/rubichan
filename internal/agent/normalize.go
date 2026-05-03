@@ -1,11 +1,15 @@
 package agent
 
-import "github.com/julianshen/rubichan/internal/provider"
+import (
+	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/provider/normalize"
+)
 
 // normalizeMessages cleans up conversation messages before sending to the LLM.
-// It removes orphaned tool_use blocks (those without a matching tool_result)
-// and merges consecutive assistant messages.
+// It removes tombstoned messages, orphaned tool_use blocks (those without a
+// matching tool_result), and merges consecutive assistant messages.
 func normalizeMessages(messages []provider.Message) []provider.Message {
+	messages = normalize.FilterTombstoned(messages)
 	messages = removeOrphanedToolCalls(messages)
 	messages = mergeConsecutiveAssistant(messages)
 	return messages

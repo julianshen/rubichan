@@ -1,6 +1,9 @@
 package agent
 
-import "github.com/julianshen/rubichan/internal/provider"
+import (
+	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
+)
 
 // Conversation manages the message history for an agent session.
 type Conversation struct {
@@ -96,4 +99,64 @@ func (c *Conversation) DrainMessages(minPairsToKeep int) bool {
 // Clear removes all messages but preserves the system prompt.
 func (c *Conversation) Clear() {
 	c.messages = nil
+}
+
+// Tombstone replaces messages in the range [startIdx:endIdx] with
+// tombstone markers. The messages are preserved in the conversation
+// for history but skipped when building API requests.
+func (c *Conversation) Tombstone(startIdx, endIdx int, reason agentsdk.TombstoneReason) {
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	if endIdx > len(c.messages) {
+		endIdx = len(c.messages)
+	}
+	if startIdx >= endIdx {
+		return
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		if c.isTombstoned(i) {
+			continue
+		}
+		c.messages[i].Content = []provider.ContentBlock{{
+			Type: "text",
+			Text: agentsdk.TombstoneMarker,
+		}}
+		c.messages[i].Metadata = map[string]any{
+			"tombstoned": true,
+			"reason":     reason,
+		}
+	}
+}
+
+// TombstoneSinceLastAssistant tombstones all messages since the last
+// complete assistant response. Used when model fallback occurs mid-stream.
+func (c *Conversation) TombstoneSinceLastAssistant(reason agentsdk.TombstoneReason) int {
+	lastAssistantIdx := -1
+	for i := len(c.messages) - 1; i >= 0; i-- {
+		if c.messages[i].Role == "assistant" && !c.isTombstoned(i) {
+			lastAssistantIdx = i
+			break
+		}
+	}
+
+	if lastAssistantIdx < 0 {
+		c.Tombstone(0, len(c.messages), reason)
+		return len(c.messages)
+	}
+
+	startIdx := lastAssistantIdx + 1
+	c.Tombstone(startIdx, len(c.messages), reason)
+	return len(c.messages) - startIdx
+}
+
+func (c *Conversation) isTombstoned(idx int) bool {
+	if idx < 0 || idx >= len(c.messages) {
+		return false
+	}
+	if len(c.messages[idx].Content) == 0 {
+		return false
+	}
+	return agentsdk.IsTombstonedMessage(c.messages[idx])
 }

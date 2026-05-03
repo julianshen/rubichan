@@ -27,6 +27,7 @@ import (
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/persona"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/provider/normalize"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/text"
@@ -1554,9 +1555,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			if class == errorclass.ClassModelOverloaded && a.fallbackModel != "" {
 				a.logger.Warn("primary model overloaded; retrying with fallback model %s", a.fallbackModel)
 				a.emit(ctx, ch, TurnEvent{Type: "model_fallback", Model: a.fallbackModel})
+
+				// Tombstone orphaned messages from the failed attempt
+				tombstonedCount := a.conversation.TombstoneSinceLastAssistant(agentsdk.TombstoneReasonModelFallback)
+				if tombstonedCount > 0 {
+					a.logger.Warn("tombstoned %d orphaned messages before fallback", tombstonedCount)
+				}
+
 				fallbackReq := req
 				fallbackReq.Model = a.fallbackModel
-				fallbackReq.Messages = stripThinkingBlocks(req.Messages)
+				fallbackReq.Messages = normalize.FilterTombstoned(stripThinkingBlocks(req.Messages))
 				fallbackRetryCfg := TurnRetryConfig{}
 				if ns, ok := a.provider.(NonStreamer); ok {
 					fbReq := fallbackReq
