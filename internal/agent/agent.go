@@ -305,6 +305,15 @@ func WithACP() AgentOption {
 	}
 }
 
+// WithStopHookRegistry attaches a stop hook registry to the agent.
+// Stop hooks run after each turn and can block continuation, inject
+// messages, or yield errors.
+func WithStopHookRegistry(registry *hooks.StopHookRegistry) AgentOption {
+	return func(a *Agent) {
+		a.stopHookRegistry = registry
+	}
+}
+
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
 	provider            provider.LLMProvider
@@ -359,6 +368,7 @@ type Agent struct {
 	latches             *sessionLatches         // one-way ratchets for session-stable capability values
 	agentDef            *agentsdk.AgentDefinition
 	agentRegistry       *AgentRegistry
+	stopHookRegistry    *hooks.StopHookRegistry
 }
 
 const maxUIRequestInputBytes = 2048
@@ -1864,6 +1874,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			a.persistMessage("assistant", blocks)
 		}
 
+		if blocked := a.runStopHooks(ctx, ch, ls, blocks, pendingTools, exitReason, totalInputTokens, totalOutputTokens); blocked {
+			return
+		}
+
 		// If no pending tool calls, we're done. Drain any background
 		// dispatches so goroutines don't outlive the turn (should be
 		// empty in this branch, but Drain is cheap and safe).
@@ -1956,6 +1970,20 @@ func pendingToolSignature(pendingTools []provider.ToolUseBlock) string {
 	return b.String()
 }
 
+// toolUseBlockNames extracts tool names from a slice of ToolUseBlock.
+// Returns nil (not an empty slice) when there are no pending tools,
+// avoiding an unnecessary allocation on the common text-only path.
+func toolUseBlockNames(pendingTools []provider.ToolUseBlock) []string {
+	if len(pendingTools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(pendingTools))
+	for _, tc := range pendingTools {
+		names = append(names, tc.Name)
+	}
+	return names
+}
+
 // recordToolProgress classifies a tool call and records it in the progress
 // tracker. Called after each tool result is committed to the conversation.
 func (a *Agent) recordToolProgress(tc provider.ToolUseBlock, r toolExecResult) {
@@ -1990,6 +2018,50 @@ func (a *Agent) buildSkillTriggerContext(lastUserMessage string) skills.TriggerC
 
 // maxParallelTools is the upper bound on concurrent tool goroutines.
 const maxParallelTools = 8
+
+// runStopHooks executes stop hooks after a turn. Returns true if a hook
+// blocked continuation, in which case the caller should exit the loop.
+func (a *Agent) runStopHooks(
+	ctx context.Context,
+	ch chan<- TurnEvent,
+	ls *loopState,
+	blocks []provider.ContentBlock,
+	pendingTools []provider.ToolUseBlock,
+	exitReason agentsdk.TurnExitReason,
+	totalInputTokens, totalOutputTokens int,
+) bool {
+	if a.stopHookRegistry == nil {
+		return false
+	}
+
+	hookState := hooks.HookState{
+		TurnCount:    ls.turnCount,
+		ToolCalls:    toolUseBlockNames(pendingTools),
+		ResponseText: assistantText(blocks),
+		ExitReason:   exitReason,
+	}
+
+	hookResult := a.stopHookRegistry.RunStopHooks(ctx, hookState)
+
+	for _, err := range hookResult.BlockingErrors {
+		a.emit(ctx, ch, TurnEvent{
+			Type:  "error",
+			Error: fmt.Errorf("stop hook: %w", err),
+		})
+	}
+
+	for _, msg := range hookResult.Messages {
+		a.conversation.AddSystem(msg)
+	}
+
+	if hookResult.PreventContinuation {
+		a.emit(ctx, ch, TurnEvent{Type: "stop_hook_prevented"})
+		a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitStopHookPrevented))
+		return true
+	}
+
+	return false
+}
 
 // toolExecResult holds the result of a single tool execution for batching.
 type toolExecResult struct {

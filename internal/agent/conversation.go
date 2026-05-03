@@ -50,6 +50,18 @@ func (c *Conversation) AddToolResult(toolUseID, content string, isError bool) {
 	c.messages = append(c.messages, provider.NewToolResultMessage(toolUseID, content, isError))
 }
 
+// AddSystem appends a system message to the conversation.
+// Empty strings are ignored to avoid polluting the conversation.
+func (c *Conversation) AddSystem(text string) {
+	if text == "" {
+		return
+	}
+	c.messages = append(c.messages, provider.Message{
+		Role:    "system",
+		Content: []provider.ContentBlock{{Type: "text", Text: text}},
+	})
+}
+
 // LoadFromMessages replaces the current message history with the given messages.
 // The system prompt is preserved. This is used when resuming a saved session.
 func (c *Conversation) LoadFromMessages(msgs []provider.Message) {

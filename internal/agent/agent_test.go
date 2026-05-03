@@ -15,6 +15,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/store"
@@ -3774,6 +3775,212 @@ func TestTurnEmitsExitReasonCompleted(t *testing.T) {
 	if last.ExitReason != agentsdk.ExitCompleted {
 		t.Fatalf("want ExitCompleted, got %v", last.ExitReason)
 	}
+}
+
+func TestRunLoop_StopHookPreventsContinuation(t *testing.T) {
+	t.Parallel()
+	events := []provider.StreamEvent{
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop"},
+	}
+	mp := &mockProvider{events: events}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	stopRegistry := hooks.NewStopHookRegistry()
+	stopRegistry.Register(func(ctx context.Context, state hooks.HookState) (*hooks.StopHookResult, error) {
+		return &hooks.StopHookResult{PreventContinuation: true}, nil
+	})
+
+	ag := New(mp, reg, autoApprove, cfg, WithStopHookRegistry(stopRegistry))
+
+	ch, err := ag.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	var hasStopHookEvent bool
+	for evt := range ch {
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+		if evt.Type == "stop_hook_prevented" {
+			hasStopHookEvent = true
+		}
+	}
+
+	assert.True(t, hasStopHookEvent, "should emit stop_hook_prevented event")
+	assert.Equal(t, agentsdk.ExitStopHookPrevented, exitReason)
+}
+
+func TestRunLoop_StopHookBlockingErrors(t *testing.T) {
+	t.Parallel()
+	events := []provider.StreamEvent{
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop"},
+	}
+	mp := &mockProvider{events: events}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	stopRegistry := hooks.NewStopHookRegistry()
+	stopRegistry.Register(func(ctx context.Context, state hooks.HookState) (*hooks.StopHookResult, error) {
+		return nil, fmt.Errorf("hook error 1")
+	})
+	stopRegistry.Register(func(ctx context.Context, state hooks.HookState) (*hooks.StopHookResult, error) {
+		return nil, fmt.Errorf("hook error 2")
+	})
+
+	ag := New(mp, reg, autoApprove, cfg, WithStopHookRegistry(stopRegistry))
+
+	ch, err := ag.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var errorEvents []TurnEvent
+	var exitReason agentsdk.TurnExitReason
+	for evt := range ch {
+		if evt.Type == "error" {
+			errorEvents = append(errorEvents, evt)
+		}
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+	}
+
+	assert.Len(t, errorEvents, 2, "should emit 2 error events for blocking errors")
+	assert.Contains(t, errorEvents[0].Error.Error(), "hook error 1")
+	assert.Contains(t, errorEvents[1].Error.Error(), "hook error 2")
+	assert.Equal(t, agentsdk.ExitCompleted, exitReason, "should still complete normally")
+}
+
+func TestRunLoop_StopHookMessages(t *testing.T) {
+	t.Parallel()
+	events := []provider.StreamEvent{
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop"},
+	}
+	mp := &mockProvider{events: events}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	stopRegistry := hooks.NewStopHookRegistry()
+	stopRegistry.Register(func(ctx context.Context, state hooks.HookState) (*hooks.StopHookResult, error) {
+		return &hooks.StopHookResult{Messages: []string{"injected message"}}, nil
+	})
+
+	ag := New(mp, reg, autoApprove, cfg, WithStopHookRegistry(stopRegistry))
+
+	ch, err := ag.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	for range ch {
+	}
+
+	msgs := ag.conversation.Messages()
+	var foundInjected bool
+	for _, m := range msgs {
+		if m.Role == "system" && len(m.Content) > 0 && m.Content[0].Text == "injected message" {
+			foundInjected = true
+			break
+		}
+	}
+	assert.True(t, foundInjected, "injected message should be in conversation")
+}
+
+func TestRunLoop_StopHookNilRegistry(t *testing.T) {
+	t.Parallel()
+	events := []provider.StreamEvent{
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop"},
+	}
+	mp := &mockProvider{events: events}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	ag := New(mp, reg, autoApprove, cfg)
+
+	ch, err := ag.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	for evt := range ch {
+		if evt.Type == "done" {
+			exitReason = evt.ExitReason
+		}
+	}
+
+	assert.Equal(t, agentsdk.ExitCompleted, exitReason)
+}
+
+func TestRunLoop_StopHookWithPendingTools(t *testing.T) {
+	t.Parallel()
+	// Simulate a response with a tool call.
+	events := []provider.StreamEvent{
+		{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "read_file", Input: json.RawMessage(`{"path":"/tmp/test"}`)}},
+		{Type: "stop"},
+	}
+	mp := &mockProvider{events: events}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	var receivedToolCalls []string
+	stopRegistry := hooks.NewStopHookRegistry()
+	stopRegistry.Register(func(ctx context.Context, state hooks.HookState) (*hooks.StopHookResult, error) {
+		receivedToolCalls = state.ToolCalls
+		return &hooks.StopHookResult{}, nil
+	})
+
+	ag := New(mp, reg, autoApprove, cfg, WithStopHookRegistry(stopRegistry))
+
+	ch, err := ag.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	for range ch {
+	}
+
+	assert.Equal(t, []string{"read_file"}, receivedToolCalls, "hook should see pending tool calls")
+}
+
+func TestRunLoop_StopHookPreventsWithMessages(t *testing.T) {
+	t.Parallel()
+	events := []provider.StreamEvent{
+		{Type: "text_delta", Text: "hello"},
+		{Type: "stop"},
+	}
+	mp := &mockProvider{events: events}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+
+	stopRegistry := hooks.NewStopHookRegistry()
+	stopRegistry.Register(func(ctx context.Context, state hooks.HookState) (*hooks.StopHookResult, error) {
+		return &hooks.StopHookResult{
+			PreventContinuation: true,
+			Messages:            []string{"injected"},
+		}, nil
+	})
+
+	ag := New(mp, reg, autoApprove, cfg, WithStopHookRegistry(stopRegistry))
+
+	ch, err := ag.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+
+	var foundInjected bool
+	var foundPrevented bool
+	for evt := range ch {
+		if evt.Type == "stop_hook_prevented" {
+			foundPrevented = true
+		}
+	}
+
+	msgs := ag.conversation.Messages()
+	for _, m := range msgs {
+		if m.Role == "system" && len(m.Content) > 0 && m.Content[0].Text == "injected" {
+			foundInjected = true
+			break
+		}
+	}
+
+	assert.True(t, foundPrevented, "should emit stop_hook_prevented")
+	assert.True(t, foundInjected, "injected message should be in conversation even when prevented")
 }
 
 // TestTurnUnblocksWhenConsumerCancelsCtx verifies that a consumer

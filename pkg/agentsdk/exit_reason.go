@@ -62,6 +62,9 @@ const (
 	// ExitDiminishingReturns: output tokens per turn fell below the
 	// diminishing-returns threshold for multiple consecutive turns.
 	ExitDiminishingReturns
+
+	// ExitStopHookPrevented means a stop hook blocked continuation.
+	ExitStopHookPrevented
 )
 
 // String returns a stable lowercase identifier usable in logs and tests.
@@ -95,6 +98,8 @@ func (r TurnExitReason) String() string {
 		return "panic"
 	case ExitDiminishingReturns:
 		return "diminishing_returns"
+	case ExitStopHookPrevented:
+		return "stop_hook_prevented"
 	default:
 		return "unknown"
 	}
