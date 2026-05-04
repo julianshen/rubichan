@@ -31,7 +31,8 @@ func (m *Mailbox) EnsureDir() error {
 
 // InboxPath returns the file path for an agent's inbox.
 func (m *Mailbox) InboxPath(agentName string) string {
-	return filepath.Join(m.dir, agentName+".json")
+	// filepath.Base prevents directory traversal via agent names like "../../../etc/passwd".
+	return filepath.Join(m.dir, filepath.Base(agentName)+".json")
 }
 
 // Write appends a message to the agent's inbox.
@@ -57,7 +58,7 @@ func (m *Mailbox) Write(agentName string, msg agentsdk.MailboxMessage) error {
 	}
 
 	messages = append(messages, msg)
-	return m.writeLocked(agentName, messages)
+	return m.writeLocked(path, messages)
 }
 
 // Read returns all messages in the agent's inbox.
@@ -118,7 +119,7 @@ func (m *Mailbox) MarkRead(agentName string, index int) error {
 	}
 
 	messages[index].Read = true
-	return m.writeLocked(agentName, messages)
+	return m.writeLocked(m.InboxPath(agentName), messages)
 }
 
 // MarkAllRead marks all messages as read.
@@ -134,7 +135,7 @@ func (m *Mailbox) MarkAllRead(agentName string) error {
 	for i := range messages {
 		messages[i].Read = true
 	}
-	return m.writeLocked(agentName, messages)
+	return m.writeLocked(m.InboxPath(agentName), messages)
 }
 
 // Clear removes an agent's inbox file.
@@ -149,8 +150,7 @@ func (m *Mailbox) Clear(agentName string) error {
 	return nil
 }
 
-func (m *Mailbox) writeLocked(agentName string, messages []agentsdk.MailboxMessage) error {
-	path := m.InboxPath(agentName)
+func (m *Mailbox) writeLocked(path string, messages []agentsdk.MailboxMessage) error {
 	encoded, err := json.Marshal(messages)
 	if err != nil {
 		return fmt.Errorf("mailbox marshal: %w", err)
