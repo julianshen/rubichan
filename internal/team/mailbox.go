@@ -39,30 +39,25 @@ func (m *Mailbox) Write(agentName string, msg agentsdk.MailboxMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	path := m.InboxPath(agentName)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mailbox mkdir: %w", err)
-	}
-
-	var messages []agentsdk.MailboxMessage
-	data, err := os.ReadFile(path)
-	if err == nil && len(data) > 0 {
-		if unmarshalErr := json.Unmarshal(data, &messages); unmarshalErr != nil {
-			return fmt.Errorf("mailbox unmarshal: %w", unmarshalErr)
-		}
-	}
-
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now()
 	}
-	messages = append(messages, msg)
 
-	encoded, err := json.Marshal(messages)
-	if err != nil {
-		return fmt.Errorf("mailbox marshal: %w", err)
+	path := m.InboxPath(agentName)
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("mailbox read: %w", err)
 	}
 
-	return os.WriteFile(path, encoded, 0o644)
+	var messages []agentsdk.MailboxMessage
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &messages); err != nil {
+			return fmt.Errorf("mailbox unmarshal: %w", err)
+		}
+	}
+
+	messages = append(messages, msg)
+	return m.writeLocked(agentName, messages)
 }
 
 // Read returns all messages in the agent's inbox.
@@ -148,9 +143,8 @@ func (m *Mailbox) Clear(agentName string) error {
 	defer m.mu.Unlock()
 
 	path := m.InboxPath(agentName)
-	err := os.Remove(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("mailbox clear: %w", err)
 	}
 	return nil
 }
@@ -176,7 +170,8 @@ func FormatMessagesAsXML(messages []agentsdk.MailboxMessage) string {
 		if msg.Summary != "" {
 			summaryAttr = fmt.Sprintf(` summary="%s"`, html.EscapeString(msg.Summary))
 		}
-		sb.WriteString(fmt.Sprintf("<teammate_message teammate_id=\"%s\"%s%s>\n%s\n</teammate_message>\n", html.EscapeString(msg.From), colorAttr, summaryAttr, html.EscapeString(msg.Text)))
+		sb.WriteString(fmt.Sprintf("<teammate_message teammate_id=\"%s\"%s%s>\n%s\n</teammate_message>\n",
+			html.EscapeString(msg.From), colorAttr, summaryAttr, html.EscapeString(msg.Text)))
 	}
 	return sb.String()
 }
