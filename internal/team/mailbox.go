@@ -173,7 +173,7 @@ func FormatMessagesAsXML(messages []agentsdk.MailboxMessage) string {
 		if msg.Summary != "" {
 			summaryAttr = fmt.Sprintf(` summary="%s"`, msg.Summary)
 		}
-		sb.WriteString(fmt.Sprintf(`<teammate_message teammate_id="%s"%s%s>\n%s\n</teammate_message>\n`, msg.From, colorAttr, summaryAttr, msg.Text))
+		sb.WriteString(fmt.Sprintf("<teammate_message teammate_id=\"%s\"%s%s>\n%s\n</teammate_message>\n", msg.From, colorAttr, summaryAttr, msg.Text))
 	}
 	return sb.String()
 }
