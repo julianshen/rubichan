@@ -132,8 +132,9 @@ func hasToolResult(m agentsdk.Message) bool {
 	return false
 }
 
-// FilterTombstoned removes tombstoned messages from a slice.
-// Preserves non-tombstoned messages in order.
+// FilterTombstoned removes tombstoned messages from a slice. Tombstoned
+// messages are preserved in conversation history but must not reach the
+// LLM API; this function filters them out before building requests.
 func FilterTombstoned(messages []agentsdk.Message) []agentsdk.Message {
 	out := make([]agentsdk.Message, 0, len(messages))
 	for _, m := range messages {

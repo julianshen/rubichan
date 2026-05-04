@@ -191,7 +191,8 @@ func WithFallbackModel(model string) AgentOption {
 	return func(a *Agent) { a.fallbackModel = model }
 }
 
-// WithPrefetchManager attaches a prefetch manager for async memory/skill loading.
+// WithPrefetchManager returns an option that configures the agent to use
+// the given prefetch manager for async memory/skill loading.
 func WithPrefetchManager(pm *PrefetchManager) AgentOption {
 	return func(a *Agent) { a.prefetchMgr = pm }
 }
@@ -1571,10 +1572,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				a.logger.Warn("primary model overloaded; retrying with fallback model %s", a.fallbackModel)
 				a.emit(ctx, ch, TurnEvent{Type: "model_fallback", Model: a.fallbackModel})
 
-				// Tombstone orphaned messages from the failed attempt
+				// Tombstone partial messages from the failed attempt so they
+				// don't pollute the fallback model's context.
 				tombstonedCount := a.conversation.TombstoneSinceLastAssistant(agentsdk.TombstoneReasonModelFallback)
 				if tombstonedCount > 0 {
-					a.logger.Warn("tombstoned %d orphaned messages before fallback", tombstonedCount)
+					a.logger.Warn("tombstoned %d partial messages before fallback", tombstonedCount)
 				}
 
 				fallbackReq := req
@@ -1962,13 +1964,17 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			ls.nudgeEmitted = true
 		}
 
-		// Consume prefetch results after tool execution
+		// Consume prefetch results after tool execution. Prefetches are started
+		// before the LLM call and consumed here to overlap async work with the
+		// model's execution, reducing perceived latency for the next turn.
 		if memHandle != nil {
 			entities, err := memHandle.Consume(ctx)
 			if err != nil {
 				a.logger.Warn("memory prefetch failed: %v", err)
 			} else if len(entities) > 0 && a.knowledgeSelector != nil {
-				_ = a.knowledgeSelector.RecordUsage(ctx, entities)
+				if err := a.knowledgeSelector.RecordUsage(ctx, entities); err != nil {
+					a.logger.Warn("record knowledge usage failed: %v", err)
+				}
 			}
 		}
 

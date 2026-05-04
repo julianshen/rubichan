@@ -14,7 +14,9 @@ type PrefetchHandle[T any] struct {
 	Err    error
 }
 
-// Consume waits for and returns the prefetch result.
+// Consume blocks until the prefetch completes or the context is cancelled.
+// Returns the prefetched result or a zero value if the context is cancelled
+// before the async operation finishes.
 func (h *PrefetchHandle[T]) Consume(ctx context.Context) (T, error) {
 	select {
 	case <-ctx.Done():
@@ -32,6 +34,7 @@ type PrefetchManager struct {
 }
 
 // NewPrefetchManager creates a manager with the given dependencies.
+// Either dependency may be nil; the corresponding prefetch will be a no-op.
 func NewPrefetchManager(kg kg.ContextSelector, sr *skills.Runtime) *PrefetchManager {
 	return &PrefetchManager{
 		kgSelector:   kg,
@@ -40,6 +43,7 @@ func NewPrefetchManager(kg kg.ContextSelector, sr *skills.Runtime) *PrefetchMana
 }
 
 // StartMemoryPrefetch begins async loading of knowledge graph entities.
+// If kgSelector is nil, the handle completes immediately with no result.
 func (pm *PrefetchManager) StartMemoryPrefetch(ctx context.Context, query string, budget int) *PrefetchHandle[[]kg.ScoredEntity] {
 	handle := &PrefetchHandle[[]kg.ScoredEntity]{Done: make(chan struct{})}
 
@@ -58,6 +62,7 @@ func (pm *PrefetchManager) StartMemoryPrefetch(ctx context.Context, query string
 }
 
 // StartSkillPrefetch begins async evaluation of skill triggers.
+// If skillRuntime is nil, the handle completes immediately with no error.
 func (pm *PrefetchManager) StartSkillPrefetch(ctx context.Context, triggerCtx skills.TriggerContext) *PrefetchHandle[struct{}] {
 	handle := &PrefetchHandle[struct{}]{Done: make(chan struct{})}
 

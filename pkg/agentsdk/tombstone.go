@@ -1,14 +1,16 @@
 package agentsdk
 
-// TombstoneMarker is the text content of a tombstoned message.
-const TombstoneMarker = "[This message was tombstoned due to model fallback]"
+// TombstoneMarker is the text content of a tombstoned message. It replaces
+// the original content so the message is skipped when building API requests.
+const TombstoneMarker = "[This message was tombstoned]"
 
-// IsTombstoned checks if a message content is a tombstone marker.
+// IsTombstoned reports whether content equals the tombstone marker string.
 func IsTombstoned(content string) bool {
 	return content == TombstoneMarker
 }
 
-// IsTombstonedMessage checks if a message is tombstoned.
+// IsTombstonedMessage reports whether a message's first content block is
+// the tombstone marker. Messages with no content blocks are not tombstoned.
 func IsTombstonedMessage(m Message) bool {
 	if len(m.Content) == 0 {
 		return false

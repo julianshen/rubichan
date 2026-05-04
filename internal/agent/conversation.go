@@ -102,8 +102,9 @@ func (c *Conversation) Clear() {
 }
 
 // Tombstone replaces messages in the range [startIdx:endIdx] with
-// tombstone markers. The messages are preserved in the conversation
-// for history but skipped when building API requests.
+// tombstone markers. The message slots are retained in the slice
+// (preserving indices for history) but their content is replaced
+// with a marker and skipped when building API requests.
 func (c *Conversation) Tombstone(startIdx, endIdx int, reason agentsdk.TombstoneReason) {
 	if startIdx < 0 {
 		startIdx = 0
@@ -128,7 +129,9 @@ func (c *Conversation) Tombstone(startIdx, endIdx int, reason agentsdk.Tombstone
 }
 
 // TombstoneSinceLastAssistant tombstones all messages since the last
-// complete assistant response. Used when model fallback occurs mid-stream.
+// non-tombstoned assistant message. Used when model fallback occurs
+// mid-stream to prevent partial responses from polluting the fallback
+// model's context.
 func (c *Conversation) TombstoneSinceLastAssistant(reason agentsdk.TombstoneReason) int {
 	// Find the last complete assistant message
 	lastAssistantIdx := -1
@@ -151,6 +154,9 @@ func (c *Conversation) TombstoneSinceLastAssistant(reason agentsdk.TombstoneReas
 	return len(c.messages) - startIdx
 }
 
+// isTombstoned reports whether the message at idx is tombstoned.
+// Out-of-bounds and empty-content messages are conservatively treated
+// as not tombstoned to avoid false positives during filtering.
 func (c *Conversation) isTombstoned(idx int) bool {
 	if idx < 0 || idx >= len(c.messages) {
 		return false
@@ -158,5 +164,5 @@ func (c *Conversation) isTombstoned(idx int) bool {
 	if len(c.messages[idx].Content) == 0 {
 		return false
 	}
-	return agentsdk.IsTombstoned(c.messages[idx].Content[0].Text)
+	return agentsdk.IsTombstonedMessage(c.messages[idx])
 }
