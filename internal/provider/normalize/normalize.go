@@ -131,3 +131,15 @@ func hasToolResult(m agentsdk.Message) bool {
 	}
 	return false
 }
+
+// FilterTombstoned removes tombstoned messages from a slice.
+// Preserves non-tombstoned messages in order.
+func FilterTombstoned(messages []agentsdk.Message) []agentsdk.Message {
+	out := make([]agentsdk.Message, 0, len(messages))
+	for _, m := range messages {
+		if !agentsdk.IsTombstonedMessage(m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
