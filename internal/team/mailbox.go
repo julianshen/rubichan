@@ -3,6 +3,7 @@ package team
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,9 @@ func (m *Mailbox) Write(agentName string, msg agentsdk.MailboxMessage) error {
 	var messages []agentsdk.MailboxMessage
 	data, err := os.ReadFile(path)
 	if err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &messages)
+		if unmarshalErr := json.Unmarshal(data, &messages); unmarshalErr != nil {
+			return fmt.Errorf("mailbox unmarshal: %w", unmarshalErr)
+		}
 	}
 
 	if msg.Timestamp.IsZero() {
@@ -167,13 +170,13 @@ func FormatMessagesAsXML(messages []agentsdk.MailboxMessage) string {
 	for _, msg := range messages {
 		colorAttr := ""
 		if msg.Color != "" {
-			colorAttr = fmt.Sprintf(` color="%s"`, msg.Color)
+			colorAttr = fmt.Sprintf(` color="%s"`, html.EscapeString(msg.Color))
 		}
 		summaryAttr := ""
 		if msg.Summary != "" {
-			summaryAttr = fmt.Sprintf(` summary="%s"`, msg.Summary)
+			summaryAttr = fmt.Sprintf(` summary="%s"`, html.EscapeString(msg.Summary))
 		}
-		sb.WriteString(fmt.Sprintf("<teammate_message teammate_id=\"%s\"%s%s>\n%s\n</teammate_message>\n", msg.From, colorAttr, summaryAttr, msg.Text))
+		sb.WriteString(fmt.Sprintf("<teammate_message teammate_id=\"%s\"%s%s>\n%s\n</teammate_message>\n", html.EscapeString(msg.From), colorAttr, summaryAttr, html.EscapeString(msg.Text)))
 	}
 	return sb.String()
 }
