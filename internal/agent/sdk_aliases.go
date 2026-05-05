@@ -100,6 +100,12 @@ type ContextBudget = agentsdk.ContextBudget
 // CompactResult reports what happened during a compaction.
 type CompactResult = agentsdk.CompactResult
 
+// SnipResult is the outcome of a head-tail snip compaction.
+type SnipResult = agentsdk.SnipResult
+
+// Message is a single message in a conversation.
+type Message = agentsdk.Message
+
 // --- Summarizer ---
 
 // Summarizer condenses a sequence of messages into a short text summary.
