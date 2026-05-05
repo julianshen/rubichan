@@ -99,8 +99,54 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 8. **N** (streaming tombstone) — clean model fallback
 9. **O** (prefetch handles) — performance optimization
 
+## Phase 4: Multi-Agent Coordination & Memory (from ccgo/Claude Code research)
+
+| # | Plan | File | Priority | Description |
+|---|------|------|----------|-------------|
+| P1 | Mailbox + SendMessage | `2026-05-04-mailbox-sendmessage.md` | High | ~~File-based JSON mailbox for async A2A messaging between agents~~ ✅ Done |
+| P2 | Coordinator + TeamRegistry | `2026-05-04-coordinator-teamregistry.md` | High | Team lifecycle: spawn, send, broadcast, shutdown with color-coded IDs |
+| P3 | Token Budget Tracker | `2026-05-04-token-budget-tracker.md` | High | Cross-turn budget tracking with diminishing returns detection |
+| P4 | Snippet Compaction Boundary | `2026-05-04-snippet-compaction-boundary.md` | High | Boundary markers + token tracking for transparent compaction |
+| P5 | Session Memory File | `2026-05-04-session-memory-file.md` | Medium | Structured `session-notes.md` updated periodically by agent |
+| P6 | Classifier Improvements | `2026-05-04-two-stage-classifier-improvements.md` | Medium | Real stage1 heuristics + stage2 LLM reasoning + cache |
+| P7 | Tmux Display Layer | `2026-05-04-tmux-display-layer.md` | Low | Real-time multi-agent observability via tmux windows |
+| P8 | CollapseStore | `2026-05-04-collapse-store.md` | Medium | Staged archival of conversation history with commit/drain |
+| P9 | Auto-Dream Consolidation | `2026-05-04-auto-dream-consolidation.md` | Low | Cross-session memory consolidation via periodic "dream" passes |
+| P10 | Agent Summaries | `2026-05-04-agent-summaries.md` | Low | Periodic 3-5 word activity summaries for observability |
+
+## Dependency Graph (Phase 4)
+
+```
+P1: Mailbox + SendMessage          (no deps, structural)
+  ↓
+P2: Coordinator + TeamRegistry       (depends on P1)
+  ↓
+P7: Tmux Display Layer               (depends on P2)
+
+P3: Token Budget Tracker             (no deps, behavioral)
+P4: Snippet Compaction Boundary      (no deps, behavioral)
+P5: Session Memory File              (no deps, behavioral)
+P6: Classifier Improvements          (no deps, behavioral)
+P8: CollapseStore                    (no deps, behavioral)
+P9: Auto-Dream Consolidation         (no deps, behavioral)
+P10: Agent Summaries                 (no deps, behavioral)
+```
+
+## Recommended Execution Order (Phase 4)
+
+1. **P1** (mailbox) — foundation for all A2A communication
+2. **P2** (coordinator) — team lifecycle management, depends on P1
+3. **P3** (budget tracker) — prevents runaway costs, independent
+4. **P4** (snippet boundary) — compaction transparency, independent
+5. **P5** (session memory) — structured context, independent
+6. **P6** (classifier improvements) — safety, independent
+7. **P8** (collapse store) — archival strategy, independent
+8. **P7** (tmux display) — observability, depends on P2
+9. **P9** (auto-dream) — cross-session memory, independent
+10. **P10** (agent summaries) — activity tracking, independent
+
 ## Out of Scope (future plans)
 
-- Multi-agent coordination protocols
-- Distributed agent execution
-- Persistent agent state across restarts
+- Distributed agent execution across machines
+- Persistent agent state across restarts (beyond session store)
+- Agent marketplace / skill registry
