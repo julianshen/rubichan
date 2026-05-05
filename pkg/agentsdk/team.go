@@ -15,6 +15,22 @@ const (
 	MessageTypePlanApproval     MessageType = "plan_approval"
 )
 
+// SpawnRequest describes a teammate to spawn.
+type SpawnRequest struct {
+	AgentName string
+	AgentType string
+	Prompt    string
+	Tools     []string
+	Model     string
+}
+
+// TeammateID identifies a teammate in a team.
+type TeammateID struct {
+	AgentID   string
+	AgentName string
+	Color     string
+}
+
 // MailboxMessage is a single message in an agent's inbox.
 type MailboxMessage struct {
 	From      string                 `json:"from"`
