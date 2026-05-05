@@ -61,3 +61,16 @@ func TestCompactResultFields(t *testing.T) {
 	assert.Equal(t, 5000, r.AfterTokens)
 	assert.Equal(t, []string{"truncate"}, r.StrategiesRun)
 }
+
+func TestSnipResultFields(t *testing.T) {
+	sr := SnipResult{
+		Messages:     []Message{{Role: "user"}},
+		TokensFreed:  42,
+		BoundaryMsg:  &Message{Role: "system"},
+		SnippedUUIDs: []string{"a", "b"},
+	}
+	assert.Len(t, sr.Messages, 1)
+	assert.Equal(t, 42, sr.TokensFreed)
+	assert.NotNil(t, sr.BoundaryMsg)
+	assert.Equal(t, []string{"a", "b"}, sr.SnippedUUIDs)
+}

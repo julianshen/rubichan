@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
@@ -21,7 +22,7 @@ func TestHeadTailSnip_PreservesHeadAndTail(t *testing.T) {
 func TestHeadTailSnip_DoesNotOverShrink(t *testing.T) {
 	s := NewHeadTailSnipStrategy()
 	msgs := makeMessages(9)
-	result, err := s.Compact(context.Background(), msgs, estimateMessageTokens(msgs)+1000)
+	result, err := s.Compact(context.Background(), msgs, estimateTokens(msgs)+1000)
 	assert.NoError(t, err)
 	assert.Equal(t, msgs, result, "should not remove messages when within budget")
 }
@@ -61,6 +62,42 @@ func TestHeadTailSnip_SkipsToolUseBoundary(t *testing.T) {
 	}
 }
 
+func TestHeadTailSnip_BoundaryMarkerInserted(t *testing.T) {
+	s := NewHeadTailSnipStrategy()
+	msgs := makeMessages(9)
+	result, err := s.Compact(context.Background(), msgs, 1)
+	assert.NoError(t, err)
+
+	foundBoundary := false
+	for _, m := range result {
+		for _, b := range m.Content {
+			if b.Type == "text" && strings.Contains(b.Text, "[Context snipped:") {
+				foundBoundary = true
+			}
+		}
+	}
+	assert.True(t, foundBoundary, "should insert boundary marker")
+}
+
+func TestHeadTailSnip_TokensFreedTracked(t *testing.T) {
+	strategy := &headTailSnipStrategy{}
+	msgs := makeMessages(9)
+	result := strategy.Snip(msgs, 1)
+	assert.Greater(t, result.TokensFreed, 0, "should track tokens freed")
+	assert.NotEmpty(t, result.SnippedUUIDs, "should collect snipped UUIDs")
+	assert.NotNil(t, result.BoundaryMsg, "should have boundary message")
+}
+
+func TestInjectMessageIDTags(t *testing.T) {
+	msgs := []agentsdk.Message{
+		{Role: "user", Metadata: map[string]any{"uuid": "abc12345-def"}, Content: []agentsdk.ContentBlock{{Type: "text", Text: "hello"}}},
+		{Role: "assistant", Content: []agentsdk.ContentBlock{{Type: "text", Text: "hi"}}},
+	}
+	result := InjectMessageIDTags(msgs)
+	assert.True(t, strings.HasPrefix(result[0].Content[0].Text, "[id:abc12345]"))
+	assert.Equal(t, "hi", result[1].Content[0].Text)
+}
+
 func makeMessages(n int) []agentsdk.Message {
 	msgs := make([]agentsdk.Message, n)
 	for i := 0; i < n; i++ {
@@ -73,6 +110,7 @@ func makeMessages(n int) []agentsdk.Message {
 			Content: []agentsdk.ContentBlock{
 				{Type: "text", Text: string(rune('a' + i))},
 			},
+			Metadata: map[string]any{"uuid": string(rune('a' + i))},
 		}
 	}
 	return msgs

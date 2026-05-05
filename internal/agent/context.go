@@ -238,6 +238,17 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 		if tokensAfter < tokensBefore || countAfter < countBefore {
 			result.StrategiesRun = append(result.StrategiesRun, s.Name())
 		}
+		// If strategy supports Snip, capture the result for telemetry.
+		// Use msgs (post-Compact) rather than conv.messages (pre-Compact)
+		// to ensure SnipResult reflects the actual compacted state.
+		if snipper, ok := s.(interface {
+			Snip([]Message, int) SnipResult
+		}); ok {
+			snip := snipper.Snip(msgs, messageBudget)
+			if snip.BoundaryMsg != nil {
+				result.SnipResults = append(result.SnipResults, snip)
+			}
+		}
 		conv.messages = msgs
 	}
 
