@@ -75,21 +75,17 @@ func CheckTokenBudget(tracker *BudgetTracker, agentID string, budget int, global
 		}
 	}
 
-	if isDiminishing || tracker.ContinuationCount > 0 {
-		return TokenBudgetDecision{
-			Action: BudgetStop,
-			CompletionEvent: &CompletionEvent{
-				ContinuationCount:  tracker.ContinuationCount,
-				Pct:                pct,
-				TurnTokens:         globalTurnTokens,
-				Budget:             budget,
-				DiminishingReturns: isDiminishing,
-				DurationMs:         time.Since(tracker.StartedAt).Milliseconds(),
-			},
-		}
+	return TokenBudgetDecision{
+		Action: BudgetStop,
+		CompletionEvent: &CompletionEvent{
+			ContinuationCount:  tracker.ContinuationCount,
+			Pct:                pct,
+			TurnTokens:         globalTurnTokens,
+			Budget:             budget,
+			DiminishingReturns: isDiminishing,
+			DurationMs:         time.Since(tracker.StartedAt).Milliseconds(),
+		},
 	}
-
-	return TokenBudgetDecision{Action: BudgetStop}
 }
 
 func getBudgetContinuationMessage(pct, turnTokens, budget int) string {
