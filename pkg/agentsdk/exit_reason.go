@@ -65,6 +65,9 @@ const (
 
 	// ExitStopHookPrevented means a stop hook blocked continuation.
 	ExitStopHookPrevented
+
+	// ExitBudgetExceeded: token usage exceeded the configured budget threshold.
+	ExitBudgetExceeded
 )
 
 // String returns a stable lowercase identifier usable in logs and tests.
@@ -100,6 +103,8 @@ func (r TurnExitReason) String() string {
 		return "diminishing_returns"
 	case ExitStopHookPrevented:
 		return "stop_hook_prevented"
+	case ExitBudgetExceeded:
+		return "budget_exceeded"
 	default:
 		return "unknown"
 	}
