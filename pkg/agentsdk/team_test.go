@@ -30,3 +30,17 @@ func TestMessageTypeConstants(t *testing.T) {
 	require.Equal(t, MessageType("idle"), MessageTypeIdle)
 	require.Equal(t, MessageType("plan_approval"), MessageTypePlanApproval)
 }
+
+func TestSpawnRequestDefaults(t *testing.T) {
+	req := SpawnRequest{AgentName: "explore", Prompt: "list files"}
+	require.Equal(t, "explore", req.AgentName)
+	require.Equal(t, "list files", req.Prompt)
+	require.Empty(t, req.Tools)
+}
+
+func TestTeammateID(t *testing.T) {
+	id := TeammateID{AgentID: "tm-1-explore", AgentName: "explore", Color: "\033[34m"}
+	require.Equal(t, "tm-1-explore", id.AgentID)
+	require.Equal(t, "explore", id.AgentName)
+	require.Equal(t, "\033[34m", id.Color)
+}
