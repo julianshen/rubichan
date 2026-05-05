@@ -104,7 +104,7 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | # | Plan | File | Priority | Description |
 |---|------|------|----------|-------------|
 | P1 | Mailbox + SendMessage | `2026-05-04-mailbox-sendmessage.md` | High | ~~File-based JSON mailbox for async A2A messaging between agents~~ ✅ Done |
-| P2 | Coordinator + TeamRegistry | `2026-05-04-coordinator-teamregistry.md` | High | Team lifecycle: spawn, send, broadcast, shutdown with color-coded IDs |
+| P2 | Coordinator + TeamRegistry | `2026-05-04-coordinator-teamregistry.md` | High | ~~Team lifecycle: spawn, send, broadcast, shutdown with color-coded IDs~~ ✅ Done |
 | P3 | Token Budget Tracker | `2026-05-04-token-budget-tracker.md` | High | Cross-turn budget tracking with diminishing returns detection |
 | P4 | Snippet Compaction Boundary | `2026-05-04-snippet-compaction-boundary.md` | High | Boundary markers + token tracking for transparent compaction |
 | P5 | Session Memory File | `2026-05-04-session-memory-file.md` | Medium | Structured `session-notes.md` updated periodically by agent |
