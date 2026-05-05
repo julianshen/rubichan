@@ -1924,8 +1924,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// Check token budget before executing tools
 		ctxBudget := a.context.Budget()
-		window := ctxBudget.EffectiveWindow()
-		dec := CheckTokenBudget(ls.budgetTracker, "", &window, totalOutputTokens)
+		dec := CheckTokenBudget(ls.budgetTracker, "", ctxBudget.EffectiveWindow(), totalOutputTokens)
 		if dec.Action == BudgetStop {
 			reason := "completion threshold"
 			if dec.CompletionEvent != nil && dec.CompletionEvent.DiminishingReturns {

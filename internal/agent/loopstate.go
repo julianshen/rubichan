@@ -67,9 +67,6 @@ type loopState struct {
 	streamErr                 bool
 	promptTooLongAttempts     int
 	maxTokensRecoveryAttempts int
-	continuationCount         int
-	lastDeltaTokens           int
-	lastGlobalOutputTokens    int
 	lastContinueReason        ContinueReason
 	nudgeEmitted              bool
 	maxOutputTokens           int
@@ -92,8 +89,7 @@ func (s *loopState) hasMoreTurns() bool {
 }
 
 // resetPerTurn clears per-iteration state. Cross-turn fields
-// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts,
-// continuationCount, lastDeltaTokens, lastGlobalOutputTokens)
+// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts)
 // are intentionally preserved across sub-turns within a single Turn().
 func (s *loopState) resetPerTurn() {
 	s.streamErr = false
