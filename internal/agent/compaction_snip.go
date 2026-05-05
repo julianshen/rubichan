@@ -41,20 +41,16 @@ func (s *headTailSnipStrategy) Snip(messages []agentsdk.Message, budget int) age
 	}
 
 	// Don't split tool_use/tool_result pairs at either boundary.
-	// If a message at the cut boundary contains tool content, expand the cut
-	// to include the full pair.
-	for cutEnd < len(messages) && hasBlockType(messages[cutStart], agentsdk.BlockTypeToolUse, agentsdk.BlockTypeToolResult) {
+	// If a message at the cut boundary contains tool content, shift the boundary
+	// outward to include the full pair.
+	for cutStart > 0 && hasBlockType(messages[cutStart], agentsdk.BlockTypeToolUse, agentsdk.BlockTypeToolResult) {
 		cutStart--
-		if cutStart < 0 {
-			cutStart = 0
-			break
-		}
 		cutEnd--
 	}
 	for cutEnd < len(messages) && hasBlockType(messages[cutEnd], agentsdk.BlockTypeToolUse, agentsdk.BlockTypeToolResult) {
 		cutEnd++
 	}
-	if cutEnd >= len(messages) {
+	if cutEnd >= len(messages) || cutStart < 0 {
 		return agentsdk.SnipResult{Messages: messages}
 	}
 
