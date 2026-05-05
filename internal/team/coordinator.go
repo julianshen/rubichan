@@ -86,7 +86,9 @@ func (c *Coordinator) SpawnTeammate(ctx context.Context, req agentsdk.SpawnReque
 	}
 
 	if c.display != nil {
-		_, _ = c.display.AddAgent(tid.AgentID, req.AgentName, tid.Color)
+		if _, err := c.display.AddAgent(tid.AgentID, req.AgentName, tid.Color); err != nil {
+			// Display errors are non-fatal; the teammate is already spawned.
+		}
 	}
 
 	return &tid, nil
@@ -171,11 +173,15 @@ func (c *Coordinator) ShutdownAll(leaderName string) error {
 			return err
 		}
 		if c.display != nil {
-			_ = c.display.MarkDone(tid.AgentID)
+			if err := c.display.MarkDone(tid.AgentID); err != nil {
+				// Display errors are non-fatal; shutdown message was already sent.
+			}
 		}
 	}
 	if c.display != nil {
-		_ = c.display.Stop()
+		if err := c.display.Stop(); err != nil {
+			// Display stop errors are non-fatal.
+		}
 	}
 	return nil
 }

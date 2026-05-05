@@ -64,11 +64,11 @@ func AssignColor(name string) string {
 	return teammateColorPalette[idx]
 }
 
-var nextTeammateSeq uint64
+var nextTeammateSeq atomic.Uint64
 
 // NewTeammateID creates a new TeammateID with auto-generated ID and color.
 func NewTeammateID(agentName string) agentsdk.TeammateID {
-	seq := atomic.AddUint64(&nextTeammateSeq, 1)
+	seq := nextTeammateSeq.Add(1)
 	agentID := fmt.Sprintf("tm-%d-%s", seq, agentName)
 	return agentsdk.TeammateID{
 		AgentID:   agentID,
