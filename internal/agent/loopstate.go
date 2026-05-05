@@ -67,13 +67,11 @@ type loopState struct {
 	streamErr                 bool
 	promptTooLongAttempts     int
 	maxTokensRecoveryAttempts int
-	continuationCount         int
-	lastDeltaTokens           int
-	lastGlobalOutputTokens    int
 	lastContinueReason        ContinueReason
 	nudgeEmitted              bool
 	maxOutputTokens           int
 	withheldErrors            *withheldErrorBuffer
+	budgetTracker             *BudgetTracker
 }
 
 func newLoopState(maxTurns, turnCount, maxOutputTokens int) *loopState {
@@ -82,6 +80,7 @@ func newLoopState(maxTurns, turnCount, maxOutputTokens int) *loopState {
 		turnCount:       turnCount,
 		maxOutputTokens: maxOutputTokens,
 		withheldErrors:  &withheldErrorBuffer{},
+		budgetTracker:   NewBudgetTracker(),
 	}
 }
 
@@ -90,8 +89,7 @@ func (s *loopState) hasMoreTurns() bool {
 }
 
 // resetPerTurn clears per-iteration state. Cross-turn fields
-// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts,
-// continuationCount, lastDeltaTokens, lastGlobalOutputTokens)
+// (repeatedToolRounds, lastToolSignature, maxTokensRecoveryAttempts)
 // are intentionally preserved across sub-turns within a single Turn().
 func (s *loopState) resetPerTurn() {
 	s.streamErr = false
@@ -107,22 +105,4 @@ func (s *loopState) recordToolSignature(sig string, hasText bool) bool {
 		s.repeatedToolRounds = 1
 	}
 	return s.repeatedToolRounds >= maxRepeatedPendingToolRounds
-}
-
-func (s *loopState) checkDiminishingReturns(currentOutputTokens int) bool {
-	delta := currentOutputTokens - s.lastGlobalOutputTokens
-	if delta < 0 {
-		delta = 0
-	}
-	isDiminishing := s.continuationCount >= 3 &&
-		delta < diminishingThreshold &&
-		s.lastDeltaTokens < diminishingThreshold
-	s.lastDeltaTokens = delta
-	s.lastGlobalOutputTokens = currentOutputTokens
-	if delta >= diminishingThreshold {
-		s.continuationCount = 0
-	} else {
-		s.continuationCount++
-	}
-	return isDiminishing
 }

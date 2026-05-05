@@ -1922,12 +1922,31 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
-		if ls.checkDiminishingReturns(totalOutputTokens) {
-			a.logger.Warn("diminishing returns: %d consecutive turns with < %d output tokens", ls.continuationCount, diminishingThreshold)
+		// Check token budget before executing tools.
+		// EffectiveWindow is used as the budget limit; this monitors output tokens
+		// against the available context window and stops before overflow.
+		ctxBudget := a.context.Budget()
+		dec := CheckTokenBudget(ls.budgetTracker, "", ctxBudget.EffectiveWindow(), totalOutputTokens)
+		if dec.Action == BudgetStop {
+			reason := "completion threshold"
+			if dec.CompletionEvent.DiminishingReturns {
+				reason = "diminishing returns"
+			}
+			a.logger.Warn("token budget stop: %s (%d%%)", reason, dec.Pct)
 			a.executeTools(ctx, ch, pendingTools, streamedResults)
-			a.emit(ctx, ch, TurnEvent{Type: "diminishing_returns"})
-			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitDiminishingReturns))
+			a.emit(ctx, ch, TurnEvent{Type: "budget_stop"})
+			exitReason := agentsdk.ExitBudgetExceeded
+			if dec.CompletionEvent.DiminishingReturns {
+				exitReason = agentsdk.ExitDiminishingReturns
+			}
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
 			return
+		}
+
+		// Inject budget nudge if provided and not already emitted.
+		if dec.NudgeMessage != "" && !ls.nudgeEmitted {
+			a.conversation.AddUser(dec.NudgeMessage)
+			ls.nudgeEmitted = true
 		}
 
 		signature := pendingToolSignature(pendingTools)
