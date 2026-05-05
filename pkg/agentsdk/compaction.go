@@ -50,6 +50,14 @@ func (b *ContextBudget) UsedPercentage() float64 {
 	return float64(b.UsedTokens()) / float64(ew)
 }
 
+// SnipResult is the outcome of a head-tail snip compaction.
+type SnipResult struct {
+	Messages     []Message
+	TokensFreed  int
+	BoundaryMsg  *Message
+	SnippedUUIDs []string
+}
+
 // CompactResult reports what happened during a compaction.
 type CompactResult struct {
 	BeforeTokens   int
@@ -57,4 +65,5 @@ type CompactResult struct {
 	BeforeMsgCount int
 	AfterMsgCount  int
 	StrategiesRun  []string
+	SnipResults    []SnipResult
 }
