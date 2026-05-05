@@ -93,7 +93,7 @@ func (c *Coordinator) SpawnTeammate(ctx context.Context, req agentsdk.SpawnReque
 
 	// Display I/O outside lock to avoid blocking concurrent operations.
 	if display != nil {
-		_, _ = display.AddAgent(req.AgentName, req.AgentName, "")
+		_, _ = display.AddAgent(tid.AgentID, req.AgentName, tid.Color)
 	}
 
 	return &tid, nil
@@ -194,7 +194,7 @@ func (c *Coordinator) ShutdownAll(leaderName string) error {
 			return err
 		}
 		if c.display != nil {
-			_ = c.display.MarkDone(tid.AgentName)
+			_ = c.display.MarkDone(tid.AgentID)
 		}
 	}
 	if c.display != nil {

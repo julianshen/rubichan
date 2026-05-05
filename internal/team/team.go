@@ -60,10 +60,7 @@ var teammateColorPalette = []string{
 // AssignColor deterministically assigns a color to a name.
 func AssignColor(name string) string {
 	h := sha256.Sum256([]byte(name))
-	idx := 0
-	for _, b := range h {
-		idx = int(b) % len(teammateColorPalette)
-	}
+	idx := int(h[0]) % len(teammateColorPalette)
 	return teammateColorPalette[idx]
 }
 
