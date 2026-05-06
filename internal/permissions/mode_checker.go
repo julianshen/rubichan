@@ -106,8 +106,13 @@ func (c *ModeAwareChecker) CheckApproval(tool string, input json.RawMessage) age
 				}
 			}
 			decision, err := c.classifier.Classify(tool, parsedInput)
-			if err == nil && decision == agentsdk.AutoApproved {
-				return agentsdk.AutoApproved
+			if err == nil {
+				if decision == agentsdk.AutoApproved {
+					return agentsdk.AutoApproved
+				}
+				if decision == agentsdk.AutoDenied {
+					return agentsdk.AutoDenied
+				}
 			}
 		}
 		return agentsdk.ApprovalRequired
