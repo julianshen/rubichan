@@ -1990,13 +1990,16 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// Trigger session memory extraction after tool execution if enough
 		// tool calls have accumulated since the last update.
-		if a.sessionMemory != nil && a.sessionMemory.ShouldExtract(len(a.conversation.Messages())) {
-			go func() {
-				_, err := a.sessionMemory.Extract(ctx, a.conversation.Messages(), a.provider.Stream, a.conversation.SystemPrompt())
-				if err != nil {
-					a.logger.Warn("session memory extraction failed: %v", err)
-				}
-			}()
+		if a.sessionMemory != nil {
+			a.sessionMemory.RecordTurn()
+			if a.sessionMemory.ShouldExtract(len(a.conversation.Messages())) {
+				go func() {
+					_, err := a.sessionMemory.Extract(ctx, a.conversation.Messages(), a.provider.Stream, a.conversation.SystemPrompt())
+					if err != nil {
+						a.logger.Warn("session memory extraction failed: %v", err)
+					}
+				}()
+			}
 		}
 
 		if nudge := a.context.BudgetNudge(a.conversation); nudge != "" && !ls.nudgeEmitted {

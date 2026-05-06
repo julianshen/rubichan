@@ -63,14 +63,12 @@ _Step by step, what was attempted, done?_
 
 // SessionMemoryService maintains a session-notes.md file with structured state.
 type SessionMemoryService struct {
-	mu              sync.Mutex
-	config          SessionMemoryConfig
-	initialized     bool
-	inProgress      bool
-	lastMessageUUID string
-	turnsSinceLast  int
-	tokensAtLast    int
-	homeDir         string
+	mu             sync.Mutex
+	config         SessionMemoryConfig
+	initialized    bool
+	inProgress     bool
+	turnsSinceLast int
+	homeDir        string
 }
 
 // NewSessionMemoryService creates a service attached to homeDir.
@@ -81,14 +79,12 @@ func NewSessionMemoryService(homeDir string) *SessionMemoryService {
 	}
 }
 
-// Config returns a copy of the current config.
 func (s *SessionMemoryService) Config() SessionMemoryConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.config
 }
 
-// SetConfig replaces the config.
 func (s *SessionMemoryService) SetConfig(cfg SessionMemoryConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,22 +105,23 @@ func (s *SessionMemoryService) ReadCurrentMemory() (string, error) {
 	return string(data), nil
 }
 
-func (s *SessionMemoryService) writeInitialTemplate() error {
+func (s *SessionMemoryService) writeInitialTemplate() (string, error) {
 	if err := os.MkdirAll(s.homeDir, 0o755); err != nil {
-		return err
+		return "", err
 	}
-	return os.WriteFile(s.GetMemoryPath(), []byte(DefaultSessionMemoryTemplate), 0o600)
+	if err := os.WriteFile(s.GetMemoryPath(), []byte(DefaultSessionMemoryTemplate), 0o600); err != nil {
+		return "", err
+	}
+	return DefaultSessionMemoryTemplate, nil
 }
 
-// MarkInitialized marks the service as initialized.
-func (s *SessionMemoryService) MarkInitialized() {
+func (s *SessionMemoryService) markInitialized() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initialized = true
 }
 
-// IsInitialized reports whether the service has been initialized.
-func (s *SessionMemoryService) IsInitialized() bool {
+func (s *SessionMemoryService) isInitialized() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.initialized
@@ -136,12 +133,10 @@ func (s *SessionMemoryService) Reset() {
 	defer s.mu.Unlock()
 	s.initialized = false
 	s.inProgress = false
-	s.lastMessageUUID = ""
 	s.turnsSinceLast = 0
-	s.tokensAtLast = 0
 }
 
-// ShouldExtract returns true if enough tool calls have passed since last update.
+// ShouldExtract returns true if enough turns have passed since last update.
 func (s *SessionMemoryService) ShouldExtract(messageCount int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,8 +147,14 @@ func (s *SessionMemoryService) ShouldExtract(messageCount int) bool {
 	if s.inProgress {
 		return false
 	}
-	s.turnsSinceLast++
 	return s.turnsSinceLast >= s.config.ToolCallsBetweenUpdates
+}
+
+// RecordTurn increments the turn counter. Call after each tool execution.
+func (s *SessionMemoryService) RecordTurn() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.turnsSinceLast++
 }
 
 // Extract triggers a model call to update the session notes file.
@@ -177,24 +178,24 @@ func (s *SessionMemoryService) Extract(
 		s.mu.Unlock()
 	}()
 
-	s.MarkInitialized()
+	s.markInitialized()
 
 	notesPath := s.GetMemoryPath()
-	if _, err := os.Stat(notesPath); os.IsNotExist(err) {
-		if writeErr := s.writeInitialTemplate(); writeErr != nil {
-			return nil, fmt.Errorf("write initial template: %w", writeErr)
-		}
-	}
-
 	notes, err := s.ReadCurrentMemory()
 	if err != nil {
-		return nil, fmt.Errorf("read current memory: %w", err)
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read current memory: %w", err)
+		}
+		notes, err = s.writeInitialTemplate()
+		if err != nil {
+			return nil, fmt.Errorf("write initial template: %w", err)
+		}
 	}
 
 	prompt := BuildSessionMemoryUpdatePrompt(notes, notesPath)
 
 	stream, err := callModel(ctx, provider.CompletionRequest{
-		Messages:  append(messages, Message{Role: "user", Content: []agentsdk.ContentBlock{{Type: "text", Text: prompt}}}),
+		Messages:  append(messages, Message{Role: "user", Content: []agentsdk.ContentBlock{{Type: agentsdk.BlockTypeText, Text: prompt}}}),
 		System:    systemPrompt,
 		MaxTokens: 16384,
 	})
@@ -205,14 +206,14 @@ func (s *SessionMemoryService) Extract(
 	var assistantBlocks []agentsdk.ContentBlock
 	for evt := range stream {
 		switch evt.Type {
-		case "content_block_delta":
+		case agentsdk.EventTextDelta:
 			if evt.Text != "" {
-				assistantBlocks = append(assistantBlocks, agentsdk.ContentBlock{Type: "text", Text: evt.Text})
+				assistantBlocks = append(assistantBlocks, agentsdk.ContentBlock{Type: agentsdk.BlockTypeText, Text: evt.Text})
 			}
-		case "tool_use":
+		case agentsdk.EventToolUse:
 			if evt.ToolUse != nil {
 				assistantBlocks = append(assistantBlocks, agentsdk.ContentBlock{
-					Type:  "tool_use",
+					Type:  agentsdk.BlockTypeToolUse,
 					ID:    evt.ToolUse.ID,
 					Name:  evt.ToolUse.Name,
 					Input: evt.ToolUse.Input,
@@ -223,15 +224,9 @@ func (s *SessionMemoryService) Extract(
 
 	writtenPaths := extractWrittenPaths(assistantBlocks)
 
-	if len(messages) > 0 {
-		lastMsg := messages[len(messages)-1]
-		s.mu.Lock()
-		if id, ok := lastMsg.Metadata["uuid"].(string); ok {
-			s.lastMessageUUID = id
-		}
-		s.turnsSinceLast = 0
-		s.mu.Unlock()
-	}
+	s.mu.Lock()
+	s.turnsSinceLast = 0
+	s.mu.Unlock()
 
 	return writtenPaths, nil
 }
@@ -331,7 +326,7 @@ func CountToolCallsSince(messages []Message, sinceUUID string) int {
 		}
 		if msg.Role == "assistant" {
 			for _, block := range msg.Content {
-				if block.Type == "tool_use" {
+				if block.Type == agentsdk.BlockTypeToolUse {
 					n++
 				}
 			}
@@ -344,7 +339,7 @@ func extractWrittenPaths(blocks []agentsdk.ContentBlock) []string {
 	seen := make(map[string]bool)
 	var paths []string
 	for _, block := range blocks {
-		if block.Type != "tool_use" || (block.Name != "Edit" && block.Name != "Write") {
+		if block.Type != agentsdk.BlockTypeToolUse || (block.Name != "Edit" && block.Name != "Write") {
 			continue
 		}
 		var input map[string]interface{}

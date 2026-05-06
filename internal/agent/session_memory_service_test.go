@@ -24,7 +24,7 @@ func TestSessionMemoryService_GetMemoryPath(t *testing.T) {
 func TestSessionMemoryService_WriteAndRead(t *testing.T) {
 	dir := t.TempDir()
 	s := NewSessionMemoryService(dir)
-	err := s.writeInitialTemplate()
+	_, err := s.writeInitialTemplate()
 	require.NoError(t, err)
 	content, err := s.ReadCurrentMemory()
 	require.NoError(t, err)
@@ -35,14 +35,14 @@ func TestSessionMemoryService_WriteAndRead(t *testing.T) {
 func TestShouldExtract(t *testing.T) {
 	dir := t.TempDir()
 	s := NewSessionMemoryService(dir)
-	_ = s.writeInitialTemplate()
+	_, _ = s.writeInitialTemplate()
 
-	// First call: turnsSinceLast becomes 1, not enough
+	// turnsSinceLast starts at 0, not enough
 	assert.False(t, s.ShouldExtract(5))
-	// Simulate 2 more calls
-	s.mu.Lock()
-	s.turnsSinceLast = 2
-	s.mu.Unlock()
+	// Simulate 3 turns
+	s.RecordTurn()
+	s.RecordTurn()
+	s.RecordTurn()
 	assert.True(t, s.ShouldExtract(5))
 }
 
