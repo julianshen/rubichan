@@ -197,6 +197,11 @@ func WithPrefetchManager(pm *PrefetchManager) AgentOption {
 	return func(a *Agent) { a.prefetchMgr = pm }
 }
 
+// WithSessionMemory attaches a session memory service to the agent.
+func WithSessionMemory(sm *SessionMemoryService) AgentOption {
+	return func(a *Agent) { a.sessionMemory = sm }
+}
+
 // WorkingDir returns the agent's effective working directory.
 // The value is frozen at construction time and never changes.
 func (a *Agent) WorkingDir() string {
@@ -377,6 +382,7 @@ type Agent struct {
 	agentRegistry       *AgentRegistry
 	stopHookRegistry    *hooks.StopHookRegistry
 	prefetchMgr         *PrefetchManager
+	sessionMemory       *SessionMemoryService
 }
 
 const maxUIRequestInputBytes = 2048
@@ -413,6 +419,10 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	// Freeze working directory at construction time.
 	if a.workingDir == "" {
 		a.workingDir, _ = os.Getwd()
+	}
+	// Initialize session memory if not provided.
+	if a.sessionMemory == nil {
+		a.sessionMemory = NewSessionMemoryService(a.workingDir)
 	}
 	// Load cross-session memories into system prompt.
 	var memories []MemoryEntry
@@ -1977,6 +1987,21 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 
 		// Drain any pending wake events from background subagents.
 		a.drainWakeEvents(ctx, ch)
+
+		// Trigger session memory extraction after tool execution if enough
+		// tool calls have accumulated since the last update.
+		if a.sessionMemory != nil {
+			a.sessionMemory.RecordTurn()
+			if a.sessionMemory.ShouldExtract(len(a.conversation.Messages())) {
+				msgs := a.conversation.Messages()
+				go func(msgsCopy []Message) {
+					_, err := a.sessionMemory.Extract(ctx, msgsCopy, a.provider.Stream, a.conversation.SystemPrompt())
+					if err != nil {
+						a.logger.Warn("session memory extraction failed: %v", err)
+					}
+				}(msgs)
+			}
+		}
 
 		if nudge := a.context.BudgetNudge(a.conversation); nudge != "" && !ls.nudgeEmitted {
 			a.conversation.AddUser(nudge)
