@@ -178,8 +178,6 @@ func (s *SessionMemoryService) Extract(
 		s.mu.Unlock()
 	}()
 
-	s.markInitialized()
-
 	notesPath := s.GetMemoryPath()
 	notes, err := s.ReadCurrentMemory()
 	if err != nil {
@@ -219,6 +217,10 @@ func (s *SessionMemoryService) Extract(
 					Input: evt.ToolUse.Input,
 				})
 			}
+		case agentsdk.EventError:
+			if evt.Error != nil {
+				return nil, fmt.Errorf("session memory stream error: %w", evt.Error)
+			}
 		}
 	}
 
@@ -227,6 +229,7 @@ func (s *SessionMemoryService) Extract(
 	s.mu.Lock()
 	s.turnsSinceLast = 0
 	s.mu.Unlock()
+	s.markInitialized()
 
 	return writtenPaths, nil
 }

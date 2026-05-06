@@ -1993,12 +1993,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		if a.sessionMemory != nil {
 			a.sessionMemory.RecordTurn()
 			if a.sessionMemory.ShouldExtract(len(a.conversation.Messages())) {
-				go func() {
-					_, err := a.sessionMemory.Extract(ctx, a.conversation.Messages(), a.provider.Stream, a.conversation.SystemPrompt())
+				msgs := a.conversation.Messages()
+				go func(msgsCopy []Message) {
+					_, err := a.sessionMemory.Extract(ctx, msgsCopy, a.provider.Stream, a.conversation.SystemPrompt())
 					if err != nil {
 						a.logger.Warn("session memory extraction failed: %v", err)
 					}
-				}()
+				}(msgs)
 			}
 		}
 
