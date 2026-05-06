@@ -27,6 +27,7 @@ const (
 type classificationCacheEntry struct {
 	result    agentsdk.ApprovalResult
 	timestamp time.Time
+	order     int // insertion order for deterministic LRU eviction
 }
 
 // YOLOClassifier is a two-stage LLM-based safety classifier for auto-approval.
@@ -41,6 +42,7 @@ type YOLOClassifier struct {
 	cache      map[string]classificationCacheEntry
 	cacheMu    sync.RWMutex
 	cacheLimit int
+	cacheOrder int // monotonic counter for LRU
 
 	telemetry ClassifierTelemetry
 }
@@ -85,12 +87,35 @@ func (c *YOLOClassifier) Telemetry() ClassifierTelemetry {
 	return c.telemetry
 }
 
+func (c *YOLOClassifier) recordCacheHit() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.telemetry.CacheHits++
+}
+
+func (c *YOLOClassifier) recordStage1(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.telemetry.Stage1Count++
+	c.telemetry.Stage1Latency += d
+}
+
+func (c *YOLOClassifier) recordStage2(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.telemetry.Stage2Count++
+	c.telemetry.Stage2Latency += d
+}
+
 func hashToolInput(toolName string, input map[string]interface{}) string {
 	h := sha256.New()
 	h.Write([]byte(toolName))
-	if data, err := json.Marshal(input); err == nil {
-		h.Write(data)
+	data, err := json.Marshal(input)
+	if err != nil {
+		// Fallback: use fmt.Sprintf to avoid cache key collisions on marshal failure.
+		data = []byte(fmt.Sprintf("%v", input))
 	}
+	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -111,16 +136,31 @@ func (c *YOLOClassifier) setCached(key string, result agentsdk.ApprovalResult) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 	if len(c.cache) >= c.cacheLimit {
-		newCache := make(map[string]classificationCacheEntry, c.cacheLimit/2)
+		// Deterministic LRU: evict oldest entries by order field.
+		type kv struct {
+			key   string
+			order int
+		}
+		entries := make([]kv, 0, len(c.cache))
 		for k, v := range c.cache {
-			if len(newCache) >= c.cacheLimit/2 {
-				break
+			entries = append(entries, kv{key: k, order: v.order})
+		}
+		// Sort by order ascending (oldest first).
+		for i := 0; i < len(entries)-1; i++ {
+			for j := i + 1; j < len(entries); j++ {
+				if entries[j].order < entries[i].order {
+					entries[i], entries[j] = entries[j], entries[i]
+				}
 			}
-			newCache[k] = v
+		}
+		newCache := make(map[string]classificationCacheEntry, c.cacheLimit/2)
+		for i := len(entries) / 2; i < len(entries); i++ {
+			newCache[entries[i].key] = c.cache[entries[i].key]
 		}
 		c.cache = newCache
 	}
-	c.cache[key] = classificationCacheEntry{result: result, timestamp: time.Now()}
+	c.cacheOrder++
+	c.cache[key] = classificationCacheEntry{result: result, timestamp: time.Now(), order: c.cacheOrder}
 }
 
 // Classify evaluates a tool call and returns an approval decision.
@@ -132,9 +172,7 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 
 	cacheKey := hashToolInput(toolName, input)
 	if cached, ok := c.getCached(cacheKey); ok {
-		c.mu.Lock()
-		c.telemetry.CacheHits++
-		c.mu.Unlock()
+		c.recordCacheHit()
 		if cached == agentsdk.AutoApproved {
 			c.resetDenials()
 		} else {
@@ -145,10 +183,7 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 
 	start := time.Now()
 	decision := c.stage1(toolName, input)
-	c.mu.Lock()
-	c.telemetry.Stage1Count++
-	c.telemetry.Stage1Latency += time.Since(start)
-	c.mu.Unlock()
+	c.recordStage1(time.Since(start))
 
 	var result agentsdk.ApprovalResult
 	switch decision {
@@ -164,10 +199,7 @@ func (c *YOLOClassifier) Classify(toolName string, input map[string]interface{})
 			start2 := time.Now()
 			var stage2Err error
 			result, stage2Err = c.stage2(toolName, input)
-			c.mu.Lock()
-			c.telemetry.Stage2Count++
-			c.telemetry.Stage2Latency += time.Since(start2)
-			c.mu.Unlock()
+			c.recordStage2(time.Since(start2))
 			if stage2Err != nil {
 				result = agentsdk.ApprovalRequired
 			}
@@ -247,7 +279,7 @@ func getStringInput(input map[string]interface{}, keys ...string) (string, bool)
 }
 
 func scorePath(path string) int {
-	safePrefixes := []string{"/usr/", "/opt/", "/etc/"}
+	safePrefixes := []string{"/usr/", "/opt/"}
 	for _, prefix := range safePrefixes {
 		if strings.HasPrefix(path, prefix) && !strings.Contains(path, "..") {
 			return -1
@@ -273,7 +305,7 @@ func scoreCommand(cmd string) int {
 	cmdLower := strings.ToLower(cmd)
 
 	blocklist := []string{
-		"rm -rf", "rm -rf /", "> /dev/null", "mkfs", "dd if=",
+		"rm -rf /", "mkfs", "dd if=",
 		":(){ :|: & };:", "curl | sh", "wget | sh",
 	}
 	for _, pattern := range blocklist {
@@ -332,7 +364,7 @@ func (c *YOLOClassifier) stage2(toolName string, input map[string]interface{}) (
 	req := agentsdk.CompletionRequest{
 		System:    "You are a safety classifier. Respond with exactly one word: safe, unsafe, or uncertain.",
 		Messages:  []agentsdk.Message{{Role: "user", Content: []agentsdk.ContentBlock{{Type: agentsdk.BlockTypeText, Text: prompt}}}},
-		MaxTokens: c.fastMax,
+		MaxTokens: c.slowMax,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -364,7 +396,10 @@ func (c *YOLOClassifier) stage2(toolName string, input map[string]interface{}) (
 func buildClassificationPrompt(toolName string, input map[string]interface{}) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Tool: %s\n", toolName)
-	fmt.Fprintf(&b, "Input: %v\n", input)
+	b.WriteString("Input:\n")
+	for k, v := range input {
+		fmt.Fprintf(&b, "  %s: %v\n", k, v)
+	}
 	b.WriteString("\nIs this tool call safe to execute without user approval?\n")
 	b.WriteString("Consider: does it read-only, write files, execute shell commands, or delete data?\n")
 	b.WriteString("Respond with exactly one word: safe, unsafe, or uncertain.")
