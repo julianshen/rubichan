@@ -115,6 +115,30 @@ func WithSummarizer(s Summarizer) AgentOption {
 	}
 }
 
+// WithSummaryCallback sets a callback that receives periodic activity summaries.
+func WithSummaryCallback(cb agentsdk.SummaryCallback) AgentOption {
+	return func(a *Agent) {
+		a.summaryCallback = cb
+	}
+}
+
+// WithAutoDream attaches an auto-dream service for periodic memory consolidation.
+func WithAutoDream(svc *AutoDreamService) AgentOption {
+	return func(a *Agent) {
+		a.autoDreamSvc = svc
+	}
+}
+
+// WithCollapseStore attaches a collapse store for staged conversation archival.
+func WithCollapseStore(store *CollapseStore) AgentOption {
+	return func(a *Agent) {
+		a.collapseStore = store
+		if a.context != nil {
+			a.context.SetCollapseStore(store)
+		}
+	}
+}
+
 // WithMemoryStore attaches a memory store for cross-session learning.
 func WithMemoryStore(ms MemoryStore) AgentOption {
 	return func(a *Agent) {
@@ -383,6 +407,10 @@ type Agent struct {
 	stopHookRegistry    *hooks.StopHookRegistry
 	prefetchMgr         *PrefetchManager
 	sessionMemory       *SessionMemoryService
+	summaryCallback     agentsdk.SummaryCallback
+	summaryHandle       atomic.Pointer[SummaryHandle]
+	autoDreamSvc        *AutoDreamService
+	collapseStore       *CollapseStore
 }
 
 const maxUIRequestInputBytes = 2048
@@ -1001,10 +1029,33 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 		a.diffTracker.Reset()
 	}
 
+	// Start periodic summarization if callback is configured.
+	if a.summaryCallback != nil && a.summaryHandle.Load() == nil {
+		handle := StartAgentSummarization(
+			a.sessionID,
+			a.summarizeForSummary,
+			a.basePrompt,
+			func() []provider.Message {
+				return normalizeMessages(a.conversation.Messages())
+			},
+			a.summaryCallback,
+		)
+		if !a.summaryHandle.CompareAndSwap(nil, handle) {
+			// Lost race — another goroutine started first; stop ours.
+			handle.Stop()
+		}
+	}
+
 	ch := make(chan TurnEvent, 64)
 	go func() {
 		a.generation.Add(1)
-		defer a.turnMu.Unlock()
+		defer func() {
+			// Stop summarizer before releasing turnMu to prevent races.
+			if handle := a.summaryHandle.Swap(nil); handle != nil {
+				handle.Stop()
+			}
+			a.turnMu.Unlock()
+		}()
 		defer close(ch)
 		defer func() {
 			if r := recover(); r != nil {
@@ -2035,6 +2086,66 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 	// Reached max turns.
 	a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)})
 	a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitMaxTurns))
+
+	// Trigger auto-dream consolidation at session end if configured.
+	// Run async to avoid blocking turnMu on I/O.
+	go a.triggerAutoDream(context.Background())
+}
+
+// triggerAutoDream runs the auto-dream consolidation if conditions are met.
+func (a *Agent) triggerAutoDream(ctx context.Context) {
+	if a.autoDreamSvc == nil || !a.autoDreamSvc.IsGateOpen() {
+		return
+	}
+
+	lock := NewConsolidationLock(a.autoDreamSvc.memoryDir)
+	lastConsolidated, err := lock.ReadLastConsolidatedAt()
+	if err != nil {
+		a.logger.Warn("auto-dream: read last consolidated: %v", err)
+		return
+	}
+
+	transcriptDir := filepath.Join(a.workingDir, ".claude", "transcripts")
+	sessions, err := ListSessionsTouchedSince(transcriptDir, lastConsolidated)
+	if err != nil {
+		a.logger.Warn("auto-dream: list sessions: %v", err)
+		return
+	}
+
+	if !a.autoDreamSvc.ShouldRun(sessions, lastConsolidated, a.sessionID) {
+		return
+	}
+
+	params := agentsdk.DreamParams{
+		MemoryRoot:    a.autoDreamSvc.memoryDir,
+		TranscriptDir: transcriptDir,
+	}
+
+	err = a.autoDreamSvc.ExecuteDream(ctx, params, func(ctx context.Context, prompt string) (string, error) {
+		req := provider.CompletionRequest{
+			Model:     a.model,
+			System:    "You are a memory consolidation assistant.",
+			Messages:  []provider.Message{provider.NewUserMessage(prompt)},
+			MaxTokens: 4096,
+		}
+		stream, err := a.provider.Stream(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		var result strings.Builder
+		for event := range stream {
+			if event.Error != nil {
+				return "", fmt.Errorf("dream stream error: %w", event.Error)
+			}
+			if event.Type == agentsdk.EventTextDelta {
+				result.WriteString(event.Text)
+			}
+		}
+		return result.String(), nil
+	})
+	if err != nil {
+		a.logger.Warn("auto-dream: execute dream: %v", err)
+	}
 }
 
 const maxRepeatedPendingToolRounds = 3
@@ -2628,6 +2739,30 @@ func LoadBootstrapContext(bootstrapPath string) (*knowledgegraph.BootstrapMetada
 	}
 
 	return &metadata, nil
+}
+
+// summarizeForSummary is the model call adapter for the activity summarizer.
+func (a *Agent) summarizeForSummary(ctx context.Context, messages []provider.Message, systemPrompt string) (string, error) {
+	req := provider.CompletionRequest{
+		Model:     a.model,
+		System:    systemPrompt,
+		Messages:  messages,
+		MaxTokens: 64,
+	}
+	stream, err := a.provider.Stream(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	var result strings.Builder
+	for event := range stream {
+		if event.Error != nil {
+			return "", fmt.Errorf("summary stream error: %w", event.Error)
+		}
+		if event.Type == agentsdk.EventTextDelta {
+			result.WriteString(event.Text)
+		}
+	}
+	return result.String(), nil
 }
 
 // BuildBootstrapSystemPromptPrefix creates a system prompt prefix based on bootstrap context.

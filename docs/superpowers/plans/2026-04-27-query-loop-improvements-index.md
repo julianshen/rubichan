@@ -108,11 +108,11 @@ Plans D and E can be executed in any order. Plans B, C, F depend on A.
 | P3 | Token Budget Tracker | `2026-05-04-token-budget-tracker.md` | High | ~~Cross-turn budget tracking with diminishing returns detection~~ ✅ Done |
 | P4 | Snippet Compaction Boundary | `2026-05-04-snippet-compaction-boundary.md` | High | ~~Boundary markers + token tracking for transparent compaction~~ ✅ Done |
 | P5 | Session Memory File | `2026-05-04-session-memory-file.md` | Medium | ~~Structured `session-notes.md` updated periodically by agent~~ ✅ Done |
-| P6 | Classifier Improvements | `2026-05-04-two-stage-classifier-improvements.md` | Medium | Real stage1 heuristics + stage2 LLM reasoning + cache |
-| P7 | Tmux Display Layer | `2026-05-04-tmux-display-layer.md` | Low | Real-time multi-agent observability via tmux windows |
-| P8 | CollapseStore | `2026-05-04-collapse-store.md` | Medium | Staged archival of conversation history with commit/drain |
-| P9 | Auto-Dream Consolidation | `2026-05-04-auto-dream-consolidation.md` | Low | Cross-session memory consolidation via periodic "dream" passes |
-| P10 | Agent Summaries | `2026-05-04-agent-summaries.md` | Low | Periodic 3-5 word activity summaries for observability |
+| P6 | Classifier Improvements | `2026-05-04-two-stage-classifier-improvements.md` | Medium | ~~Real stage1 heuristics + stage2 LLM reasoning + cache~~ ✅ Done |
+| P7 | Tmux Display Layer | `2026-05-04-tmux-display-layer.md` | Low | ~~Real-time multi-agent observability via tmux windows~~ ✅ Done |
+| P8 | CollapseStore | `2026-05-04-collapse-store.md` | Medium | ~~Staged archival of conversation history with commit/drain~~ ✅ Done |
+| P9 | Auto-Dream Consolidation | `2026-05-04-auto-dream-consolidation.md` | Low | ~~Cross-session memory consolidation via periodic "dream" passes~~ ✅ Done |
+| P10 | Agent Summaries | `2026-05-04-agent-summaries.md` | Low | ~~Periodic 3-5 word activity summaries for observability~~ ✅ Done |
 
 ## Dependency Graph (Phase 4)
 
