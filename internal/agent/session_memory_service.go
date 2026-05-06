@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
@@ -152,6 +154,86 @@ func (s *SessionMemoryService) ShouldExtract(messageCount int) bool {
 	}
 	s.turnsSinceLast++
 	return s.turnsSinceLast >= s.config.ToolCallsBetweenUpdates
+}
+
+// Extract triggers a model call to update the session notes file.
+func (s *SessionMemoryService) Extract(
+	ctx context.Context,
+	messages []Message,
+	callModel func(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error),
+	systemPrompt string,
+) ([]string, error) {
+	s.mu.Lock()
+	if s.inProgress {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("session memory extraction already in progress")
+	}
+	s.inProgress = true
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.inProgress = false
+		s.mu.Unlock()
+	}()
+
+	s.MarkInitialized()
+
+	notesPath := s.GetMemoryPath()
+	if _, err := os.Stat(notesPath); os.IsNotExist(err) {
+		if writeErr := s.writeInitialTemplate(); writeErr != nil {
+			return nil, fmt.Errorf("write initial template: %w", writeErr)
+		}
+	}
+
+	notes, err := s.ReadCurrentMemory()
+	if err != nil {
+		return nil, fmt.Errorf("read current memory: %w", err)
+	}
+
+	prompt := BuildSessionMemoryUpdatePrompt(notes, notesPath)
+
+	stream, err := callModel(ctx, provider.CompletionRequest{
+		Messages:  append(messages, Message{Role: "user", Content: []agentsdk.ContentBlock{{Type: "text", Text: prompt}}}),
+		System:    systemPrompt,
+		MaxTokens: 16384,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("session memory model call: %w", err)
+	}
+
+	var assistantBlocks []agentsdk.ContentBlock
+	for evt := range stream {
+		switch evt.Type {
+		case "content_block_delta":
+			if evt.Text != "" {
+				assistantBlocks = append(assistantBlocks, agentsdk.ContentBlock{Type: "text", Text: evt.Text})
+			}
+		case "tool_use":
+			if evt.ToolUse != nil {
+				assistantBlocks = append(assistantBlocks, agentsdk.ContentBlock{
+					Type:  "tool_use",
+					ID:    evt.ToolUse.ID,
+					Name:  evt.ToolUse.Name,
+					Input: evt.ToolUse.Input,
+				})
+			}
+		}
+	}
+
+	writtenPaths := extractWrittenPaths(assistantBlocks)
+
+	if len(messages) > 0 {
+		lastMsg := messages[len(messages)-1]
+		s.mu.Lock()
+		if id, ok := lastMsg.Metadata["uuid"].(string); ok {
+			s.lastMessageUUID = id
+		}
+		s.turnsSinceLast = 0
+		s.mu.Unlock()
+	}
+
+	return writtenPaths, nil
 }
 
 // BuildSessionMemoryUpdatePrompt constructs the prompt for the model.
