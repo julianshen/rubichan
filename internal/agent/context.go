@@ -33,6 +33,7 @@ type ContextManager struct {
 	hardBlock           float64 // fraction of effective window to block new messages (default 0.98)
 	strategies          []CompactionStrategy
 	consecutiveFailures int // circuit breaker counter for repeated no-shrink Compact calls
+	collapseStore       *CollapseStore
 }
 
 // NewContextManager creates a new ContextManager with the given total budget
@@ -75,6 +76,11 @@ func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
 		return
 	}
 	cm.strategies = strategies
+}
+
+// SetCollapseStore attaches a collapse store for staged archival.
+func (cm *ContextManager) SetCollapseStore(store *CollapseStore) {
+	cm.collapseStore = store
 }
 
 // ShouldCompact returns true when the estimated token count exceeds the
@@ -131,6 +137,11 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) error
 		}
 		conv.messages = result
 		anyStrategySucceeded = true
+	}
+
+	// Apply collapse store projection after strategies run.
+	if cm.collapseStore != nil && cm.collapseStore.IsEnabled() && cm.collapseStore.HasCommits() {
+		conv.messages = cm.collapseStore.ProjectView(conv.messages)
 	}
 
 	afterTokens := estimateMessageTokens(conv.messages)
@@ -250,6 +261,11 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 			}
 		}
 		conv.messages = msgs
+	}
+
+	// Apply collapse store projection.
+	if cm.collapseStore != nil && cm.collapseStore.IsEnabled() && cm.collapseStore.HasCommits() {
+		conv.messages = cm.collapseStore.ProjectView(conv.messages)
 	}
 
 	result.AfterTokens = cm.EstimateTokens(conv)

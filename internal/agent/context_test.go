@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -381,6 +382,57 @@ func TestBudgetNudge_NudgeEmittedOnce(t *testing.T) {
 	ls.nudgeEmitted = true
 	shouldEmit = nudge != "" && !ls.nudgeEmitted
 	assert.False(t, shouldEmit, "second call should be suppressed")
+}
+
+func TestContextManagerWithCollapseStore(t *testing.T) {
+	cm := NewContextManager(100000, 4096)
+	store := NewCollapseStore(true)
+	cm.SetCollapseStore(store)
+
+	store.Stage(CollapseStagedSpan{
+		StartUUID: "msg-2",
+		EndUUID:   "msg-3",
+		Summary:   "archived",
+	})
+	store.Commit()
+
+	conv := NewConversation("system prompt")
+	conv.AddUser("hello")
+	conv.messages = append(conv.messages, provider.Message{
+		Metadata: map[string]any{"id": "msg-2"}, Role: "assistant",
+		Content: []provider.ContentBlock{{Type: "text", Text: "old"}},
+	})
+	conv.messages = append(conv.messages, provider.Message{
+		Metadata: map[string]any{"id": "msg-3"}, Role: "user",
+		Content: []provider.ContentBlock{{Type: "text", Text: "old2"}},
+	})
+	conv.messages = append(conv.messages, provider.Message{
+		Metadata: map[string]any{"id": "msg-4"}, Role: "assistant",
+		Content: []provider.ContentBlock{{Type: "text", Text: "new"}},
+	})
+
+	_ = cm.ForceCompact(context.Background(), conv)
+	foundSummary := false
+	for _, msg := range conv.messages {
+		for _, block := range msg.Content {
+			if block.Text == "archived" {
+				foundSummary = true
+			}
+		}
+	}
+	assert.True(t, foundSummary, "expected summary message in conversation")
+}
+
+func TestContextManagerCollapseStoreDisabled(t *testing.T) {
+	cm := NewContextManager(100000, 4096)
+	store := NewCollapseStore(false)
+	cm.SetCollapseStore(store)
+
+	conv := NewConversation("system prompt")
+	conv.AddUser("hello")
+	before := len(conv.messages)
+	_ = cm.ForceCompact(context.Background(), conv)
+	assert.Equal(t, before, len(conv.messages))
 }
 
 func TestVerdictContextBlockAllFailures(t *testing.T) {

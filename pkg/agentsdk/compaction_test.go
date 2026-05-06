@@ -74,3 +74,16 @@ func TestSnipResultFields(t *testing.T) {
 	assert.NotNil(t, sr.BoundaryMsg)
 	assert.Equal(t, []string{"a", "b"}, sr.SnippedUUIDs)
 }
+
+func TestCollapseStatsFields(t *testing.T) {
+	stats := CollapseStats{
+		TotalCommits:     5,
+		TotalTokensFreed: 1000,
+		StagedCount:      2,
+		IsEnabled:        true,
+	}
+	assert.Equal(t, 5, stats.TotalCommits)
+	assert.Equal(t, 1000, stats.TotalTokensFreed)
+	assert.Equal(t, 2, stats.StagedCount)
+	assert.True(t, stats.IsEnabled)
+}

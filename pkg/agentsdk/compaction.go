@@ -67,3 +67,11 @@ type CompactResult struct {
 	StrategiesRun  []string
 	SnipResults    []SnipResult
 }
+
+// CollapseStats reports the state of the collapse store for telemetry.
+type CollapseStats struct {
+	TotalCommits     int
+	TotalTokensFreed int
+	StagedCount      int
+	IsEnabled        bool
+}
