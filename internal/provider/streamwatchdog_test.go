@@ -1,7 +1,6 @@
 package provider_test
 
 import (
-	"errors"
 	"io"
 	"testing"
 	"time"
@@ -12,13 +11,14 @@ import (
 )
 
 func TestWatchBody_KillsStaleStream(t *testing.T) {
-	// Source writes one byte then hangs forever.
+	// Source writes one byte then blocks forever — simulates a stalled
+	// TCP connection. The watchdog is the only entity that closes the
+	// pipe, so the error is always the wrapped ProviderError.
 	pr, pw := io.Pipe()
 	go func() {
 		_, _ = pw.Write([]byte("x"))
-		// Never write again, never close — simulates a stalled TCP connection.
-		time.Sleep(2 * time.Second) // longer than the test's kill timer
-		pw.Close()
+		// Block forever. The watchdog will CloseWithError when it kills.
+		select {}
 	}()
 
 	cfg := provider.WatchdogConfig{
@@ -49,17 +49,15 @@ func TestWatchBody_KillsStaleStream(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 
-	// Next read blocks, then returns an error once the kill timer fires.
-	// The error may be the wrapped ProviderError or io.ErrClosedPipe depending
-	// on which side of the pipe notices the close first.
+	// Next read blocks until the kill timer fires, then returns
+	// the ProviderError wrapped by the watchdog.
 	_, err = watched.Read(buf)
 	require.Error(t, err)
 
 	var pe *provider.ProviderError
-	if errors.As(err, &pe) {
-		assert.Equal(t, provider.ErrStreamError, pe.Kind)
-		assert.True(t, pe.IsRetryable())
-	}
+	require.ErrorAs(t, err, &pe)
+	assert.Equal(t, provider.ErrStreamError, pe.Kind)
+	assert.True(t, pe.IsRetryable())
 
 	// Both callbacks should have fired.
 	select {

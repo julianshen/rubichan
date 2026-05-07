@@ -115,6 +115,9 @@ func WatchBody(body io.ReadCloser, cfg WatchdogConfig, onWarn, onKill func()) io
 					Kind:    ErrStreamError,
 					Message: "stream stalled: no data for " + cfg.killAfter().String(),
 				}
+				// Close the pipe writer with the stall error so the reader
+				// side receives it. Ignore the error — if the pipe is already
+				// closed (e.g., by the pump goroutine), there's nothing to do.
 				_ = pw.CloseWithError(stallErr)
 				return
 			}
