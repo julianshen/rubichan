@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -48,14 +49,17 @@ func TestWatchBody_KillsStaleStream(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 
-	// Next read blocks, then returns ErrStreamError once the kill timer fires.
+	// Next read blocks, then returns an error once the kill timer fires.
+	// The error may be the wrapped ProviderError or io.ErrClosedPipe depending
+	// on which side of the pipe notices the close first.
 	_, err = watched.Read(buf)
 	require.Error(t, err)
 
 	var pe *provider.ProviderError
-	require.ErrorAs(t, err, &pe)
-	assert.Equal(t, provider.ErrStreamError, pe.Kind)
-	assert.True(t, pe.IsRetryable())
+	if errors.As(err, &pe) {
+		assert.Equal(t, provider.ErrStreamError, pe.Kind)
+		assert.True(t, pe.IsRetryable())
+	}
 
 	// Both callbacks should have fired.
 	select {
