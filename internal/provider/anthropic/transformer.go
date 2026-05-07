@@ -6,6 +6,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/provider/normalize"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // API wire-format types for Anthropic v1 messages endpoint.
@@ -45,14 +46,20 @@ type apiTool struct {
 // apiContentBlock is the Anthropic-specific content block for serialization.
 // The Anthropic API uses "content" (not "text") for tool_result blocks.
 type apiContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   string          `json:"content,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	ID         string          `json:"id,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	ToolUseID  string          `json:"tool_use_id,omitempty"`
+	Content    string          `json:"content,omitempty"`
+	IsError    bool            `json:"is_error,omitempty"`
+	CacheEdits []apiCacheEdit  `json:"cache_edits,omitempty"`
+}
+
+type apiCacheEdit struct {
+	Type           string `json:"type"`            // "delete"
+	CacheReference string `json:"cache_reference"` // tool_use_id
 }
 
 // Transformer implements provider.MessageTransformer for the Anthropic API.
@@ -167,12 +174,13 @@ func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
 	var out []apiContentBlock
 	for _, b := range blocks {
 		cb := apiContentBlock{
-			Type:      b.Type,
-			ID:        b.ID,
-			Name:      b.Name,
-			Input:     b.Input,
-			ToolUseID: b.ToolUseID,
-			IsError:   b.IsError,
+			Type:       b.Type,
+			ID:         b.ID,
+			Name:       b.Name,
+			Input:      b.Input,
+			ToolUseID:  b.ToolUseID,
+			IsError:    b.IsError,
+			CacheEdits: convertCacheEdits(b.CacheEdits),
 		}
 		switch b.Type {
 		case "tool_result":
@@ -181,6 +189,20 @@ func convertContentBlocks(blocks []provider.ContentBlock) []apiContentBlock {
 			cb.Text = b.Text
 		}
 		out = append(out, cb)
+	}
+	return out
+}
+
+func convertCacheEdits(edits []agentsdk.CacheEdit) []apiCacheEdit {
+	if len(edits) == 0 {
+		return nil
+	}
+	var out []apiCacheEdit
+	for _, e := range edits {
+		out = append(out, apiCacheEdit{
+			Type:           string(e.Type),
+			CacheReference: e.CacheReference,
+		})
 	}
 	return out
 }
