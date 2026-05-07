@@ -139,6 +139,13 @@ func WithCollapseStore(store *CollapseStore) AgentOption {
 	}
 }
 
+// WithCacheBreakDetector attaches a cache break detector for diagnosing prompt cache misses.
+func WithCacheBreakDetector(d *CacheBreakDetector) AgentOption {
+	return func(a *Agent) {
+		a.cacheBreakDetector = d
+	}
+}
+
 // WithMemoryStore attaches a memory store for cross-session learning.
 func WithMemoryStore(ms MemoryStore) AgentOption {
 	return func(a *Agent) {
@@ -411,6 +418,7 @@ type Agent struct {
 	summaryHandle       atomic.Pointer[SummaryHandle]
 	autoDreamSvc        *AutoDreamService
 	collapseStore       *CollapseStore
+	cacheBreakDetector  *CacheBreakDetector
 }
 
 const maxUIRequestInputBytes = 2048
@@ -1528,6 +1536,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			systemPrompt = systemPrompt + "\n\n" + toolPrompt
 		}
 
+		// Snapshot cache-key state before model call for break detection.
+		if a.cacheBreakDetector != nil {
+			a.cacheBreakDetector.Snapshot(ls.turnCount, systemPrompt, activeTools, a.model, cacheBreakpoints)
+		}
+
 		// Measure component-level token usage before the LLM call.
 		// Skill prompt fragments are included in systemPrompt via PromptBuilder
 		// but tracked separately for budget visibility.
@@ -1771,6 +1784,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			// Accumulate token usage from every stream event.
 			totalInputTokens += event.InputTokens
 			totalOutputTokens += event.OutputTokens
+
+			// Detect prompt cache breaks on message_start.
+			if event.Type == agentsdk.EventMessageStart && a.cacheBreakDetector != nil {
+				if report := a.cacheBreakDetector.RecordUsage(ls.turnCount, event.CacheReadTokens); report != nil {
+					a.logger.Warn("cache break detected: %s", report.Diagnosis)
+				}
+			}
 
 			switch event.Type {
 			case "thinking_delta":
