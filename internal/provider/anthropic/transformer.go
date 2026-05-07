@@ -96,16 +96,18 @@ func (t *Transformer) ToProviderJSON(req provider.CompletionRequest) ([]byte, er
 	}
 
 	// Convert tools with optional schema caching.
+	// The cache stores the base apiTool (without cache_control) since
+	// cache_control is injected per-request based on tool ordering.
 	for _, tool := range req.Tools {
 		var at apiTool
 		if t.SchemaCache != nil {
 			if cached := t.SchemaCache.Get(tool); cached != nil {
-				// Cached JSON includes cache_control; unmarshal it.
 				if err := json.Unmarshal(cached, &at); err == nil {
 					apiReq.Tools = append(apiReq.Tools, at)
 					continue
 				}
-				// Unmarshal failed — fall through to build fresh.
+				// Unmarshal failed — invalidate stale/corrupted entry.
+				t.SchemaCache.Invalidate(tool.Name)
 			}
 		}
 		at = apiTool{

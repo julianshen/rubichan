@@ -42,7 +42,7 @@ func (c *ToolSchemaCache) Get(tool agentsdk.ToolDef) []byte {
 	if entry.key != schemaKey(tool) {
 		return nil // stale
 	}
-	return entry.rendered
+	return append([]byte(nil), entry.rendered...)
 }
 
 // Set stores a rendered schema for a tool.
@@ -83,5 +83,5 @@ func schemaKey(tool agentsdk.ToolDef) string {
 	h.Write([]byte(tool.Name))
 	h.Write([]byte(tool.Description))
 	h.Write(tool.InputSchema)
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
