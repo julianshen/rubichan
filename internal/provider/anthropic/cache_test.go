@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -212,4 +213,53 @@ func TestToolDefinitionCachingSingleTool(t *testing.T) {
 
 	// Single tool should have cache_control.
 	assert.Contains(t, string(tools[0]["cache_control"]), "ephemeral")
+}
+
+func TestTransformerWithSchemaCache(t *testing.T) {
+	cache := tools.NewToolSchemaCache()
+	tr := &Transformer{SchemaCache: cache}
+
+	req := provider.CompletionRequest{
+		Model: "claude-3",
+		Tools: []provider.ToolDef{
+			{Name: "file", Description: "Read", InputSchema: json.RawMessage(`{}`)},
+		},
+	}
+
+	// First call populates cache.
+	body1, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+
+	// Second call should use cache and produce identical output.
+	body2, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+	assert.Equal(t, string(body1), string(body2))
+
+	// Verify cache was populated.
+	require.NotNil(t, cache.Get(req.Tools[0]))
+}
+
+func TestTransformerSchemaCacheStale(t *testing.T) {
+	cache := tools.NewToolSchemaCache()
+	tr := &Transformer{SchemaCache: cache}
+
+	tool := provider.ToolDef{Name: "file", Description: "Read", InputSchema: json.RawMessage(`{}`)}
+	req := provider.CompletionRequest{
+		Model: "claude-3",
+		Tools: []provider.ToolDef{tool},
+	}
+
+	_, err := tr.ToProviderJSON(req)
+	require.NoError(t, err)
+
+	// Change tool definition — cache should be stale.
+	req.Tools[0].Description = "Read files and images"
+	_, err = tr.ToProviderJSON(req)
+	require.NoError(t, err)
+
+	// The stale entry was overwritten with the new description.
+	// Verify the cache now holds the NEW value, not the old one.
+	got := cache.Get(req.Tools[0])
+	require.NotNil(t, got)
+	require.Contains(t, string(got), "Read files and images")
 }
