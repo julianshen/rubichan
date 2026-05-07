@@ -110,34 +110,37 @@ type Message struct {
 
 // ContentBlock represents a block of content within a message.
 type ContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	ID         string          `json:"id,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	ToolUseID  string          `json:"tool_use_id,omitempty"`
+	IsError    bool            `json:"is_error,omitempty"`
+	CacheEdits []CacheEdit     `json:"cache_edits,omitempty"` // Anthropic cache_edits API
 }
 
 type contentBlockJSON struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	ID         string          `json:"id,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	ToolUseID  string          `json:"tool_use_id,omitempty"`
+	IsError    bool            `json:"is_error,omitempty"`
+	CacheEdits []CacheEdit     `json:"cache_edits,omitempty"`
 }
 
 func (c ContentBlock) MarshalJSON() ([]byte, error) {
 	return json.Marshal(contentBlockJSON{
-		Type:      c.Type,
-		Text:      c.Text,
-		ID:        c.ID,
-		Name:      c.Name,
-		Input:     marshalSafeRawJSON(c.Input),
-		ToolUseID: c.ToolUseID,
-		IsError:   c.IsError,
+		Type:       c.Type,
+		Text:       c.Text,
+		ID:         c.ID,
+		Name:       c.Name,
+		Input:      marshalSafeRawJSON(c.Input),
+		ToolUseID:  c.ToolUseID,
+		IsError:    c.IsError,
+		CacheEdits: c.CacheEdits,
 	})
 }
 
