@@ -130,8 +130,11 @@ func hashToolDefs(tools []agentsdk.ToolDef) string {
 	h := sha256.New()
 	for _, t := range tools {
 		h.Write([]byte(t.Name))
+		h.Write([]byte("\x00"))
 		h.Write([]byte(t.Description))
+		h.Write([]byte("\x00"))
 		h.Write(t.InputSchema)
+		h.Write([]byte("\x00"))
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
