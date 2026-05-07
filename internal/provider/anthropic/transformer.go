@@ -5,6 +5,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/provider/normalize"
+	"github.com/julianshen/rubichan/internal/tools"
 )
 
 // API wire-format types for Anthropic v1 messages endpoint.
@@ -55,7 +56,9 @@ type apiContentBlock struct {
 }
 
 // Transformer implements provider.MessageTransformer for the Anthropic API.
-type Transformer struct{}
+type Transformer struct {
+	SchemaCache *tools.ToolSchemaCache
+}
 
 // ToProviderJSON converts a CompletionRequest into the Anthropic v1 messages
 // JSON request body.
@@ -92,13 +95,31 @@ func (t *Transformer) ToProviderJSON(req provider.CompletionRequest) ([]byte, er
 		})
 	}
 
-	// Convert tools.
+	// Convert tools with optional schema caching.
 	for _, tool := range req.Tools {
-		apiReq.Tools = append(apiReq.Tools, apiTool{
+		var at apiTool
+		if t.SchemaCache != nil {
+			if cached := t.SchemaCache.Get(tool); cached != nil {
+				// Cached JSON includes cache_control; unmarshal it.
+				if err := json.Unmarshal(cached, &at); err == nil {
+					apiReq.Tools = append(apiReq.Tools, at)
+					continue
+				}
+				// Unmarshal failed — fall through to build fresh.
+			}
+		}
+		at = apiTool{
 			Name:        tool.Name,
 			Description: tool.Description,
 			InputSchema: tool.InputSchema,
-		})
+		}
+		if t.SchemaCache != nil {
+			rendered, err := json.Marshal(at)
+			if err == nil {
+				t.SchemaCache.Set(tool, rendered)
+			}
+		}
+		apiReq.Tools = append(apiReq.Tools, at)
 	}
 
 	// Mark last tool with cache_control for Anthropic prompt caching.
