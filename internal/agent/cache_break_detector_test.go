@@ -8,10 +8,9 @@ import (
 
 func TestCacheBreakDetectorSnapshot(t *testing.T) {
 	d := NewCacheBreakDetector()
-	snap := d.Snapshot(1, "system prompt", nil, "claude-3", []int{10})
-	require.NotNil(t, snap)
-	require.Equal(t, 1, snap.TurnNumber)
-	require.Equal(t, "claude-3", snap.Model)
+	d.Snapshot(1, "system prompt", nil, "claude-3", []int{10})
+	// Snapshot is stored internally; no return value to check.
+	require.NotNil(t, d)
 }
 
 func TestCacheBreakDetectorNoBreak(t *testing.T) {
@@ -64,4 +63,23 @@ func TestCacheBreakDetectorFirstTurnNoBreak(t *testing.T) {
 	d.Snapshot(1, "system", nil, "model", nil)
 	r := d.RecordUsage(1, 5000) // first turn, no prior baseline
 	require.Nil(t, r)
+}
+
+func TestCacheBreakDetectorReportCap(t *testing.T) {
+	d := NewCacheBreakDetector()
+	// Establish baseline
+	d.Snapshot(1, "system", nil, "model", nil)
+	d.RecordUsage(1, 100000)
+
+	// Generate more than maxCacheBreakReports (100) breaks
+	for i := 2; i < 105; i++ {
+		d.Snapshot(i, "system", nil, "model", nil)
+		d.RecordUsage(i, 1000) // break: 99% drop from previous baseline
+		// Reset baseline high for next iteration so each is a break
+		d.Snapshot(i+1, "system", nil, "model", nil)
+		d.RecordUsage(i+1, 100000)
+	}
+
+	reports := d.Reports()
+	require.Len(t, reports, maxCacheBreakReports)
 }

@@ -12,10 +12,11 @@ import (
 const (
 	cacheBreakThresholdPct    = 5.0  // % drop triggers diagnosis
 	cacheBreakThresholdTokens = 2000 // minimum token drop to trigger
+	maxCacheBreakReports      = 100  // cap report accumulation
 )
 
-// CacheStateSnapshot captures cache-key parameters before a model call.
-type CacheStateSnapshot struct {
+// CacheKeyFingerprint captures cache-key parameters before a model call.
+type CacheKeyFingerprint struct {
 	SystemPromptHash    string
 	ToolsHash           string
 	CacheControlHash    string
@@ -27,7 +28,7 @@ type CacheStateSnapshot struct {
 // CacheBreakDetector tracks prompt cache stability across turns.
 type CacheBreakDetector struct {
 	mu                  sync.Mutex
-	lastSnapshot        *CacheStateSnapshot
+	lastFingerprint     *CacheKeyFingerprint
 	lastCacheReadTokens int
 	reports             []agentsdk.CacheBreakReport
 }
@@ -38,20 +39,20 @@ func NewCacheBreakDetector() *CacheBreakDetector {
 }
 
 // Snapshot captures the current cache-key state before a model call.
-func (d *CacheBreakDetector) Snapshot(turnNumber int, systemPrompt string, tools []agentsdk.ToolDef, model string, cacheBreakpoints []int) *CacheStateSnapshot {
+func (d *CacheBreakDetector) Snapshot(turnNumber int, systemPrompt string, tools []agentsdk.ToolDef, model string, cacheBreakpoints []int) {
+	// Compute hashes outside the lock to minimize contention.
+	fingerprint := &CacheKeyFingerprint{
+		SystemPromptHash: hashString(systemPrompt),
+		ToolsHash:        hashToolDefs(tools),
+		CacheControlHash: hashInts(cacheBreakpoints),
+		Model:            model,
+		TurnNumber:       turnNumber,
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
-	snap := &CacheStateSnapshot{
-		SystemPromptHash:    hashString(systemPrompt),
-		ToolsHash:           hashToolDefs(tools),
-		CacheControlHash:    hashInts(cacheBreakpoints),
-		Model:               model,
-		TurnNumber:          turnNumber,
-		PrevCacheReadTokens: d.lastCacheReadTokens,
-	}
-	d.lastSnapshot = snap
-	return snap
+	fingerprint.PrevCacheReadTokens = d.lastCacheReadTokens
+	d.lastFingerprint = fingerprint
 }
 
 // RecordUsage compares actual cache read tokens against baseline and diagnoses breaks.
@@ -59,12 +60,12 @@ func (d *CacheBreakDetector) RecordUsage(turnNumber, cacheReadTokens int) *agent
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.lastSnapshot == nil {
+	if d.lastFingerprint == nil {
 		d.lastCacheReadTokens = cacheReadTokens
 		return nil
 	}
 
-	prev := d.lastSnapshot.PrevCacheReadTokens
+	prev := d.lastFingerprint.PrevCacheReadTokens
 	if prev <= 0 {
 		d.lastCacheReadTokens = cacheReadTokens
 		return nil
@@ -86,6 +87,9 @@ func (d *CacheBreakDetector) RecordUsage(turnNumber, cacheReadTokens int) *agent
 		Diagnosis:         d.diagnose(delta),
 		Timestamp:         timeNow(),
 	}
+	if len(d.reports) >= maxCacheBreakReports {
+		d.reports = d.reports[1:] // drop oldest
+	}
 	d.reports = append(d.reports, report)
 	d.lastCacheReadTokens = cacheReadTokens
 	return &report
@@ -93,11 +97,11 @@ func (d *CacheBreakDetector) RecordUsage(turnNumber, cacheReadTokens int) *agent
 
 // diagnose returns a human-readable explanation for the cache break.
 func (d *CacheBreakDetector) diagnose(delta int) string {
-	if d.lastSnapshot == nil {
-		return "unknown: no prior snapshot"
+	if d.lastFingerprint == nil {
+		return "unknown: no prior fingerprint"
 	}
 	return fmt.Sprintf("cache read dropped by %d tokens (%.1f%%); check system prompt, tools, or cache_control changes",
-		-delta, float64(-delta)/float64(d.lastSnapshot.PrevCacheReadTokens)*100)
+		-delta, float64(-delta)/float64(d.lastFingerprint.PrevCacheReadTokens)*100)
 }
 
 // Reports returns all detected cache break reports.
@@ -111,7 +115,7 @@ func (d *CacheBreakDetector) Reports() []agentsdk.CacheBreakReport {
 func (d *CacheBreakDetector) Reset() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.lastSnapshot = nil
+	d.lastFingerprint = nil
 	d.lastCacheReadTokens = 0
 	d.reports = d.reports[:0]
 }
