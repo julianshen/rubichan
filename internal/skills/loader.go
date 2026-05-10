@@ -1,10 +1,12 @@
 package skills
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/julianshen/rubichan/internal/config"
 )
@@ -118,7 +120,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	}
 
 	// 2. Project skills override configured skill roots.
-	projectSkills, err := scanDir(l.projectDir, SourceProject)
+	projectSkills, err := scanProjectOrUserDir(l.projectDir, SourceProject)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -127,7 +129,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	}
 
 	// 3. User skills override project skills.
-	userSkills, err := scanDir(l.userDir, SourceUser)
+	userSkills, err := scanProjectOrUserDir(l.userDir, SourceUser)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -220,6 +222,10 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	return result, warnings, nil
 }
 
+// wellKnownSkillSubdirs lists the subdirectories within a user or project
+// root that are searched for skills. This supports multiple tools' conventions.
+var wellKnownSkillSubdirs = []string{".rubichan/skills", ".kilo/skills", ".claude/skills", ".opencode/skills"}
+
 // scanDir walks a directory tree recursively looking for directories that
 // contain SKILL.yaml files (and SKILL.md instruction skills as a fallback).
 // If a directory contains a skill manifest, it is treated as a skill root and
@@ -269,32 +275,125 @@ func scanDir(dir string, source Source) ([]DiscoveredSkill, error) {
 			return fmt.Errorf("read skill manifest %q: %w", yamlPath, err)
 		}
 
-		// Fall back to SKILL.md (instruction skill).
+		// Fall back to SKILL.md (instruction skill with frontmatter).
 		mdPath := filepath.Join(path, "SKILL.md")
 		mdData, err := os.ReadFile(mdPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
+		if err == nil {
+			// Try parsing as instruction skill (with frontmatter) first.
+			manifest, body, parseErr := ParseInstructionSkill(mdData)
+			if parseErr == nil {
+				results = append(results, DiscoveredSkill{
+					Manifest:        manifest,
+					Dir:             path,
+					Source:          source,
+					RootDir:         dir,
+					InstructionBody: body,
+				})
+				return filepath.SkipDir
 			}
+			// Only fall back to pure markdown if there was no frontmatter at all.
+			// Malformed frontmatter (bad YAML, missing required fields, etc.) should
+			// surface as an error so authors know their SKILL.md is broken.
+			if errors.Is(parseErr, ErrNoFrontmatter) {
+				manifest, body, parseErr = ParsePureMarkdownSkill(filepath.Base(path), mdData)
+				if parseErr == nil {
+					results = append(results, DiscoveredSkill{
+						Manifest:        manifest,
+						Dir:             path,
+						Source:          source,
+						RootDir:         dir,
+						InstructionBody: body,
+					})
+					return filepath.SkipDir
+				}
+				return fmt.Errorf("parse skill %q: %w", filepath.Base(path), parseErr)
+			}
+			return fmt.Errorf("parse skill %q: %w", filepath.Base(path), parseErr)
+		}
+		if !os.IsNotExist(err) {
 			return fmt.Errorf("read instruction skill %q: %w", mdPath, err)
 		}
 
-		manifest, body, parseErr := ParseInstructionSkill(mdData)
-		if parseErr != nil {
-			return fmt.Errorf("parse instruction skill %q: %w", filepath.Base(path), parseErr)
+		// Fall back to any .md file (pure markdown skill).
+		entries, readErr := os.ReadDir(path)
+		if readErr != nil {
+			return fmt.Errorf("read skill dir %q: %w", path, readErr)
 		}
-		results = append(results, DiscoveredSkill{
-			Manifest:        manifest,
-			Dir:             path,
-			Source:          source,
-			RootDir:         dir,
-			InstructionBody: body,
-		})
-		return filepath.SkipDir
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasSuffix(name, ".md") {
+				mdData, readErr := os.ReadFile(filepath.Join(path, name))
+				if readErr != nil {
+					return fmt.Errorf("read markdown skill %q: %w", name, readErr)
+				}
+				skillName := strings.TrimSuffix(name, ".md")
+				manifest, body, parseErr := ParsePureMarkdownSkill(skillName, mdData)
+				if parseErr != nil {
+					return fmt.Errorf("parse markdown skill %q: %w", name, parseErr)
+				}
+				results = append(results, DiscoveredSkill{
+					Manifest:        manifest,
+					Dir:             path,
+					Source:          source,
+					RootDir:         dir,
+					InstructionBody: body,
+				})
+				return filepath.SkipDir
+			}
+		}
+
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("scan skills dir %q: %w", dir, err)
 	}
 
+	return results, nil
+}
+
+// scanProjectOrUserDir searches both the root directory and well-known
+// skill subdirectories (.rubichan/skills, .kilo/skills, .claude/skills, .opencode/skills)
+// for skills. This allows users to organize skills under any supported
+// tool's convention while maintaining backward compatibility.
+//
+// Within the same source level, skills are deduplicated by name with
+// earlier subdirectories taking precedence over later ones.
+func scanProjectOrUserDir(rootDir string, source Source) ([]DiscoveredSkill, error) {
+	byName := make(map[string]DiscoveredSkill)
+
+	// Search the root directory first (backward compatibility).
+	rootSkills, err := scanDir(rootDir, source)
+	if err != nil {
+		return nil, err
+	}
+	for _, ds := range rootSkills {
+		byName[ds.Manifest.Name] = ds
+	}
+
+	// Search well-known skill subdirectories.
+	// Earlier subdirs in wellKnownSkillSubdirs take precedence.
+	for _, subdir := range wellKnownSkillSubdirs {
+		skillDir := filepath.Join(rootDir, subdir)
+		if _, err := os.Stat(skillDir); os.IsNotExist(err) {
+			continue
+		}
+		subSkills, err := scanDir(skillDir, source)
+		if err != nil {
+			return nil, err
+		}
+		for _, ds := range subSkills {
+			if _, exists := byName[ds.Manifest.Name]; !exists {
+				byName[ds.Manifest.Name] = ds
+			}
+		}
+	}
+
+	results := make([]DiscoveredSkill, 0, len(byName))
+	for _, ds := range byName {
+		results = append(results, ds)
+	}
 	return results, nil
 }

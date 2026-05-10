@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -412,6 +413,64 @@ func parseInstructionSkill(data []byte, strict bool) (*SkillManifest, string, er
 	return m, string(body), nil
 }
 
+// ParsePureMarkdownSkill parses a plain markdown file (no frontmatter) into a
+// synthetic SkillManifest. The name parameter is derived from the filename.
+// The entire markdown body becomes the instruction body. This is the simplest
+// skill format — just a markdown file with instructions.
+func ParsePureMarkdownSkill(name string, data []byte) (*SkillManifest, string, error) {
+	if name == "" {
+		return nil, "", fmt.Errorf("pure markdown skill: name is required")
+	}
+
+	description := generateDescriptionFromMarkdown(string(data))
+
+	m := &SkillManifest{
+		Name:        name,
+		Version:     "1.0.0",
+		Description: description,
+		Types:       []SkillType{SkillTypePrompt},
+	}
+
+	if err := validateManifest(m); err != nil {
+		return nil, "", fmt.Errorf("pure markdown skill: %w", err)
+	}
+
+	return m, string(data), nil
+}
+
+const (
+	maxDescriptionLen = 80
+	ellipsis          = "..."
+)
+
+// generateDescriptionFromMarkdown extracts a short description from markdown content.
+// It prefers the first H1 heading, then the first line of text.
+func generateDescriptionFromMarkdown(content string) string {
+	start := 0
+	for {
+		end := strings.IndexByte(content[start:], '\n')
+		line := content[start:]
+		if end >= 0 {
+			line = content[start : start+end]
+		}
+		line = strings.TrimSpace(line)
+		if line != "" {
+			if strings.HasPrefix(line, "# ") {
+				return strings.TrimPrefix(line, "# ")
+			}
+			if len(line) > maxDescriptionLen {
+				return line[:maxDescriptionLen-len(ellipsis)] + ellipsis
+			}
+			return line
+		}
+		if end < 0 {
+			break
+		}
+		start += end + 1
+	}
+	return "Markdown skill"
+}
+
 // LintSkillDir performs author-facing validation for a skill directory.
 // It returns a slice of issues; an empty slice means the skill passed linting.
 func LintSkillDir(skillDir string) []string {
@@ -492,6 +551,10 @@ func loadManifestForLint(skillDir string) (*SkillManifest, string, string, error
 	return manifest, "instruction", body, nil
 }
 
+// ErrNoFrontmatter is returned by splitFrontmatter when the markdown content
+// does not start with a "---" frontmatter delimiter.
+var ErrNoFrontmatter = errors.New("missing frontmatter delimiter (---)")
+
 // splitFrontmatter extracts YAML frontmatter from markdown content.
 // The frontmatter must be delimited by "---" lines. The closing delimiter
 // must appear at the start of a line to avoid matching "---" as a substring
@@ -502,7 +565,7 @@ func splitFrontmatter(data []byte) ([]byte, []byte, error) {
 	// Must start with "---".
 	trimmed := bytes.TrimLeft(data, " \t")
 	if !bytes.HasPrefix(trimmed, sep) {
-		return nil, nil, fmt.Errorf("missing frontmatter delimiter (---)")
+		return nil, nil, ErrNoFrontmatter
 	}
 
 	// Find opening delimiter and skip to next line.

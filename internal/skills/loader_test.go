@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -486,6 +487,114 @@ func TestDiscoverMCPNameCollision(t *testing.T) {
 
 	// User skill should win — MCP auto-discovery skips if name already exists.
 	assert.Equal(t, SourceUser, discovered[0].Source)
+}
+
+func TestDiscoverWellKnownSubdirs(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	// Create skills in each well-known subdirectory.
+	for _, subdir := range []string{".rubichan/skills", ".kilo/skills", ".claude/skills", ".opencode/skills"} {
+		skillDir := filepath.Join(userDir, subdir)
+		require.NoError(t, os.MkdirAll(skillDir, 0o755))
+		name := strings.ReplaceAll(subdir, "/skills", "")
+		name = strings.ReplaceAll(name, ".", "")
+		writeSkillYAML(t, skillDir, name+"-skill", minimalManifestYAML(name+"-skill"))
+	}
+
+	loader := NewLoader(userDir, projectDir)
+	skills, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+
+	byName := indexByName(skills)
+	assert.Contains(t, byName, "rubichan-skill", "should discover .rubichan/skills/")
+	assert.Contains(t, byName, "kilo-skill", "should discover .kilo/skills/")
+	assert.Contains(t, byName, "claude-skill", "should discover .claude/skills/")
+	assert.Contains(t, byName, "opencode-skill", "should discover .opencode/skills/")
+}
+
+func TestDiscoverWellKnownSubdirsPrecedence(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	// Same skill name in both .rubichan/skills and .claude/skills.
+	rubichanDir := filepath.Join(userDir, ".rubichan", "skills")
+	require.NoError(t, os.MkdirAll(rubichanDir, 0o755))
+	writeSkillYAML(t, rubichanDir, "shared", `name: shared
+version: 2.0.0
+description: "Rubichan version"
+types:
+  - prompt
+`)
+
+	claudeDir := filepath.Join(userDir, ".claude", "skills")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+	writeSkillYAML(t, claudeDir, "shared", `name: shared
+version: 1.0.0
+description: "Claude version"
+types:
+  - prompt
+`)
+
+	loader := NewLoader(userDir, projectDir)
+	skills, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, skills, 1)
+
+	// .rubichan/skills should win (searched first).
+	assert.Equal(t, "2.0.0", skills[0].Manifest.Version)
+}
+
+func TestDiscoverPureMarkdownSkill(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	// Create a pure markdown skill (no frontmatter).
+	skillDir := filepath.Join(userDir, "commit-helper")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(skillDir, "SKILL.md"),
+		[]byte("# Commit Helper\n\nWrite good commit messages."),
+		0o644,
+	))
+
+	loader := NewLoader(userDir, projectDir)
+	skills, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, skills, 1)
+
+	assert.Equal(t, "commit-helper", skills[0].Manifest.Name)
+	assert.Equal(t, []SkillType{SkillTypePrompt}, skills[0].Manifest.Types)
+	assert.Equal(t, "Commit Helper", skills[0].Manifest.Description)
+	assert.Equal(t, "# Commit Helper\n\nWrite good commit messages.", skills[0].InstructionBody)
+}
+
+func TestDiscoverPureMarkdownSkillInSubdir(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	// Create a pure markdown skill in .kilo/skills/ subdirectory.
+	kiloDir := filepath.Join(userDir, ".kilo", "skills")
+	skillDir := filepath.Join(kiloDir, "my-prompt")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(skillDir, "prompt.md"),
+		[]byte("# My Prompt\n\nThis is a prompt-only skill."),
+		0o644,
+	))
+
+	loader := NewLoader(userDir, projectDir)
+	skills, warnings, err := loader.Discover(nil)
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, skills, 1)
+
+	assert.Equal(t, "prompt", skills[0].Manifest.Name)
+	assert.Equal(t, "My Prompt", skills[0].Manifest.Description)
+	assert.Equal(t, SourceUser, skills[0].Source)
 }
 
 // indexByName builds a map of DiscoveredSkill by manifest name for test convenience.
