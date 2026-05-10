@@ -95,6 +95,66 @@ func TestBrokeredToolInnerAccessor(t *testing.T) {
 	assert.Equal(t, inner, bt.Inner())
 }
 
+func TestCapabilityBrokerToolsAllow(t *testing.T) {
+	checker := &stubPermissionChecker{}
+	broker := NewCapabilityBroker("test-skill", checker, nil)
+	broker.SetToolsAllow([]string{"read", "write"})
+
+	// Allowed tools pass.
+	err := broker.CheckExecution(context.Background(), "read", nil)
+	assert.NoError(t, err)
+
+	err = broker.CheckExecution(context.Background(), "write", nil)
+	assert.NoError(t, err)
+
+	// Denied tools fail.
+	err = broker.CheckExecution(context.Background(), "delete", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tool \"delete\"")
+	assert.Contains(t, err.Error(), "not in allowlist")
+}
+
+func TestCapabilityBrokerToolsDeny(t *testing.T) {
+	checker := &stubPermissionChecker{}
+	broker := NewCapabilityBroker("test-skill", checker, nil)
+	broker.SetToolsDeny([]string{"delete"})
+
+	// Allowed tools pass.
+	err := broker.CheckExecution(context.Background(), "read", nil)
+	assert.NoError(t, err)
+
+	// Denied tool fails.
+	err = broker.CheckExecution(context.Background(), "delete", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tool \"delete\"")
+	assert.Contains(t, err.Error(), "in denylist")
+}
+
+func TestCapabilityBrokerToolsDenyPrecedence(t *testing.T) {
+	checker := &stubPermissionChecker{}
+	broker := NewCapabilityBroker("test-skill", checker, nil)
+	broker.SetToolsAllow([]string{"read", "write", "delete"})
+	broker.SetToolsDeny([]string{"delete"})
+
+	// "delete" is in allowlist but also in denylist → denied.
+	err := broker.CheckExecution(context.Background(), "delete", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tool \"delete\"")
+	assert.Contains(t, err.Error(), "in denylist")
+}
+
+func TestCapabilityBrokerToolsAllowCaseInsensitive(t *testing.T) {
+	checker := &stubPermissionChecker{}
+	broker := NewCapabilityBroker("test-skill", checker, nil)
+	broker.SetToolsAllow([]string{"READ", "Write"})
+
+	err := broker.CheckExecution(context.Background(), "read", nil)
+	assert.NoError(t, err)
+
+	err = broker.CheckExecution(context.Background(), "WRITE", nil)
+	assert.NoError(t, err)
+}
+
 // --- test helpers ---
 
 type stubPermissionChecker struct {

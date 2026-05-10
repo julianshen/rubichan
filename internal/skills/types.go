@@ -328,6 +328,108 @@ func estimateTokens(s string) int {
 	return (len(s) + 3) / 4 // round up
 }
 
+// SkillTokenBudget caps skill descriptions at a percentage of the context window.
+type SkillTokenBudget struct {
+	// MaxChars is the maximum total characters for all skill descriptions.
+	MaxChars int
+}
+
+// DefaultSkillTokenBudget returns a budget of ~1% of a 128K context window.
+func DefaultSkillTokenBudget() SkillTokenBudget {
+	return SkillTokenBudget{MaxChars: 8192} // 1% of 128K context
+}
+
+// BudgetSkillIndexes truncates skill descriptions to fit within the budget.
+// Bundled/built-in skills are not truncated. Non-bundled skills are truncated
+// proportionally to their original description length.
+func BudgetSkillIndexes(indexes []SkillIndex, budget SkillTokenBudget) []SkillIndex {
+	if budget.MaxChars <= 0 {
+		return indexes
+	}
+
+	// Separate bundled and non-bundled skills.
+	var bundled, nonBundled []SkillIndex
+	for _, idx := range indexes {
+		if idx.Source == SourceBuiltin {
+			bundled = append(bundled, idx)
+		} else {
+			nonBundled = append(nonBundled, idx)
+		}
+	}
+
+	if len(nonBundled) == 0 {
+		return indexes
+	}
+
+	// Calculate total description length for non-bundled skills.
+	totalLen := 0
+	for _, idx := range nonBundled {
+		totalLen += len(idx.Description)
+	}
+
+	// If within budget, return as-is.
+	if totalLen <= budget.MaxChars {
+		return indexes
+	}
+
+	// Allocate budget proportionally by original description length.
+	// First pass: compute target lengths.
+	targetLens := make([]int, len(nonBundled))
+	remainingBudget := budget.MaxChars
+	for i, idx := range nonBundled {
+		// Proportional allocation: (descLen / totalLen) * budget.
+		target := len(idx.Description) * budget.MaxChars / totalLen
+		// Ensure we don't exceed original length.
+		if target > len(idx.Description) {
+			target = len(idx.Description)
+		}
+		// Reserve 3 chars for "..." if truncation will occur.
+		if target < len(idx.Description) {
+			target -= 3
+		}
+		// Minimum meaningful description: 10 chars + "...".
+		if target < 10 {
+			target = 10
+		}
+		targetLens[i] = target
+		remainingBudget -= target + 3 // target + "..."
+	}
+
+	// Redistribute any remaining budget to skills that can use it.
+	for remainingBudget > 0 {
+		redistributed := false
+		for i, idx := range nonBundled {
+			currentMax := targetLens[i] + 3 // current allocation including "..."
+			if currentMax < len(idx.Description) {
+				// Can grow by 1 char.
+				targetLens[i]++
+				remainingBudget--
+				redistributed = true
+				if remainingBudget == 0 {
+					break
+				}
+			}
+		}
+		if !redistributed {
+			break // no more room to redistribute
+		}
+	}
+
+	// Build result with truncated descriptions.
+	result := make([]SkillIndex, 0, len(indexes))
+	result = append(result, bundled...)
+
+	for i, idx := range nonBundled {
+		truncated := idx
+		if len(truncated.Description) > targetLens[i]+3 {
+			truncated.Description = truncated.Description[:targetLens[i]] + "..."
+		}
+		result = append(result, truncated)
+	}
+
+	return result
+}
+
 // sourceBudgetPriority returns a priority value for context budget allocation.
 // Higher values mean higher priority (included first). This is different from
 // hook dispatch priority where lower = higher.

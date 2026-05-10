@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -22,9 +23,13 @@ type CapabilityBroker interface {
 // DefaultCapabilityBroker checks all declared permissions via the
 // skill's PermissionChecker before each tool execution.
 type DefaultCapabilityBroker struct {
-	skillName string
-	checker   PermissionChecker
-	perms     []Permission
+	skillName     string
+	checker       PermissionChecker
+	perms         []Permission
+	toolsAllow    []string
+	toolsDeny     []string
+	toolsAllowSet map[string]struct{}
+	toolsDenySet  map[string]struct{}
 }
 
 // NewCapabilityBroker creates a broker that enforces the given
@@ -39,9 +44,44 @@ func NewCapabilityBroker(skillName string, checker PermissionChecker, perms []Pe
 	}
 }
 
+// SetToolsAllow sets the list of allowed tool names. If non-empty,
+// only tools in this list are permitted.
+func (b *DefaultCapabilityBroker) SetToolsAllow(allow []string) {
+	b.toolsAllow = make([]string, len(allow))
+	copy(b.toolsAllow, allow)
+	b.toolsAllowSet = make(map[string]struct{}, len(allow))
+	for _, a := range allow {
+		b.toolsAllowSet[strings.ToLower(a)] = struct{}{}
+	}
+}
+
+// SetToolsDeny sets the list of denied tool names. If non-empty,
+// tools in this list are rejected.
+func (b *DefaultCapabilityBroker) SetToolsDeny(deny []string) {
+	b.toolsDeny = make([]string, len(deny))
+	copy(b.toolsDeny, deny)
+	b.toolsDenySet = make(map[string]struct{}, len(deny))
+	for _, d := range deny {
+		b.toolsDenySet[strings.ToLower(d)] = struct{}{}
+	}
+}
+
 // CheckExecution validates that all declared permissions are still
-// granted. This catches revocations that happen after activation.
+// granted and that the tool name passes allowlist/denylist checks.
 func (b *DefaultCapabilityBroker) CheckExecution(_ context.Context, toolName string, _ json.RawMessage) error {
+	// Check tool name against denylist first (deny wins).
+	if _, denied := b.toolsDenySet[strings.ToLower(toolName)]; denied {
+		return fmt.Errorf("skill %q tool %q: tool in denylist", b.skillName, toolName)
+	}
+
+	// Check tool name against allowlist.
+	if len(b.toolsAllowSet) > 0 {
+		if _, allowed := b.toolsAllowSet[strings.ToLower(toolName)]; !allowed {
+			return fmt.Errorf("skill %q tool %q: tool not in allowlist", b.skillName, toolName)
+		}
+	}
+
+	// Check declared permissions.
 	for _, perm := range b.perms {
 		if err := b.checker.CheckPermission(perm); err != nil {
 			return fmt.Errorf("skill %q tool %q: capability %s denied: %w", b.skillName, toolName, perm, err)

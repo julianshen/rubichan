@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/store"
@@ -1143,4 +1144,234 @@ func TestRuntimeActivateSkipsToolFailingAdmission(t *testing.T) {
 
 	// But the skill should still be active (it just has no tools).
 	assert.Equal(t, SkillStateActive, rt.skills["denied-tool-skill"].State)
+}
+
+// --- Prefetch tests ---
+
+func TestRuntimeStartPrefetch(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	// Create a skill that will match the trigger context.
+	skillDir := filepath.Join(userDir, "test-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	writeSkillYAML(t, skillDir, "test-skill", `name: test-skill
+version: 1.0.0
+description: "A test skill"
+types:
+  - prompt
+triggers:
+  files:
+    - "*.go"
+`)
+
+	loader := NewLoader(userDir, projectDir)
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	registry := tools.NewRegistry()
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &stubPermissionChecker{}
+	}
+
+	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
+
+	// Start prefetch with a trigger context that matches the skill.
+	ctx := TriggerContext{
+		ProjectFiles: []string{"main.go"},
+	}
+	rt.StartPrefetch(ctx)
+
+	// Wait for prefetch to complete.
+	require.Eventually(t, func() bool {
+		_, err := rt.ConsumePrefetch("test-skill")
+		return err == nil
+	}, time.Second, 10*time.Millisecond)
+
+	// The skill should now be active.
+	assert.Equal(t, SkillStateActive, rt.skills["test-skill"].State)
+}
+
+func TestRuntimeConsumePrefetchError(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	loader := NewLoader(userDir, projectDir)
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	registry := tools.NewRegistry()
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return nil, fmt.Errorf("backend creation failed")
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &stubPermissionChecker{}
+	}
+
+	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
+
+	// Manually create a prefetch that will fail.
+	ph := NewPrefetchHandle("nonexistent-skill")
+	rt.prefetches["nonexistent-skill"] = ph
+	go func() {
+		ph.Settle(nil, fmt.Errorf("activation failed"))
+	}()
+
+	// Wait for settlement.
+	require.Eventually(t, func() bool {
+		return ph.State() == PrefetchStateError
+	}, time.Second, 10*time.Millisecond)
+
+	// Consume should return the error.
+	sk, err := rt.ConsumePrefetch("nonexistent-skill")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "activation failed")
+	assert.Nil(t, sk)
+}
+
+func TestRuntimeCancelPrefetches(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	loader := NewLoader(userDir, projectDir)
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	registry := tools.NewRegistry()
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &stubPermissionChecker{}
+	}
+
+	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
+
+	// Create a prefetch handle.
+	ph := NewPrefetchHandle("test-skill")
+	rt.prefetches["test-skill"] = ph
+
+	// Cancel all prefetches.
+	rt.CancelPrefetches()
+
+	// The prefetch should be in error state.
+	assert.Equal(t, PrefetchStateError, ph.State())
+
+	// The prefetches map should be empty.
+	rt.mu.RLock()
+	assert.Empty(t, rt.prefetches)
+	rt.mu.RUnlock()
+}
+
+func TestRuntimeDeactivateCancelsPrefetch(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	// Create a skill.
+	skillDir := filepath.Join(userDir, "test-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	writeSkillYAML(t, skillDir, "test-skill", minimalManifestYAML("test-skill"))
+
+	loader := NewLoader(userDir, projectDir)
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	registry := tools.NewRegistry()
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &stubPermissionChecker{}
+	}
+
+	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("test-skill"))
+
+	// Create a pending prefetch for the same skill.
+	ph := NewPrefetchHandle("test-skill")
+	rt.prefetches["test-skill"] = ph
+
+	// Deactivate should cancel the prefetch.
+	require.NoError(t, rt.Deactivate("test-skill"))
+
+	// The prefetch should be in error state.
+	assert.Equal(t, PrefetchStateError, ph.State())
+}
+
+// --- BudgetSkillIndexes tests ---
+
+func TestBudgetSkillIndexesWithinBudget(t *testing.T) {
+	indexes := []SkillIndex{
+		{Name: "skill1", Description: "Short desc", Source: SourceUser},
+		{Name: "skill2", Description: "Also short", Source: SourceProject},
+	}
+
+	budget := SkillTokenBudget{MaxChars: 100}
+	result := BudgetSkillIndexes(indexes, budget)
+
+	// Should return unchanged.
+	assert.Equal(t, "Short desc", result[0].Description)
+	assert.Equal(t, "Also short", result[1].Description)
+}
+
+func TestBudgetSkillIndexesOverBudget(t *testing.T) {
+	indexes := []SkillIndex{
+		{Name: "builtin", Description: "Built-in skill with a very long description", Source: SourceBuiltin},
+		{Name: "user1", Description: "User skill one with a very long description that exceeds budget", Source: SourceUser},
+		{Name: "user2", Description: "User skill two with another very long description", Source: SourceUser},
+	}
+
+	budget := SkillTokenBudget{MaxChars: 50}
+	result := BudgetSkillIndexes(indexes, budget)
+
+	// Built-in skill should not be truncated.
+	assert.Equal(t, indexes[0].Description, result[0].Description)
+
+	// Non-bundled skills should be truncated.
+	totalLen := 0
+	for _, idx := range result[1:] {
+		totalLen += len(idx.Description)
+	}
+	assert.LessOrEqual(t, totalLen, budget.MaxChars)
+}
+
+func TestBudgetSkillIndexesEmptyBudget(t *testing.T) {
+	indexes := []SkillIndex{
+		{Name: "skill1", Description: "Short", Source: SourceUser},
+	}
+
+	budget := SkillTokenBudget{MaxChars: 0}
+	result := BudgetSkillIndexes(indexes, budget)
+
+	// Should return unchanged.
+	assert.Equal(t, indexes[0].Description, result[0].Description)
+}
+
+func TestBudgetSkillIndexesAllBundled(t *testing.T) {
+	indexes := []SkillIndex{
+		{Name: "builtin1", Description: "Very long description that would normally be truncated", Source: SourceBuiltin},
+		{Name: "builtin2", Description: "Another very long description", Source: SourceBuiltin},
+	}
+
+	budget := SkillTokenBudget{MaxChars: 10}
+	result := BudgetSkillIndexes(indexes, budget)
+
+	// All bundled skills should not be truncated.
+	assert.Equal(t, indexes[0].Description, result[0].Description)
+	assert.Equal(t, indexes[1].Description, result[1].Description)
+}
+
+func TestBudgetSkillIndexesNoNonBundled(t *testing.T) {
+	indexes := []SkillIndex{
+		{Name: "builtin", Description: "Built-in", Source: SourceBuiltin},
+	}
+
+	budget := SkillTokenBudget{MaxChars: 5}
+	result := BudgetSkillIndexes(indexes, budget)
+
+	// Should return unchanged since there are no non-bundled skills to truncate.
+	assert.Equal(t, "Built-in", result[0].Description)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/store"
@@ -64,6 +65,7 @@ type Runtime struct {
 	activationThreshold int
 	promptBudgetReport  []PromptFragment
 	toolAdmissionFunc   func(toolName string) bool
+	prefetches          map[string]*PrefetchHandle
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -92,6 +94,7 @@ func NewRuntime(
 		workflowRunner:      NewWorkflowRunner(),
 		securityAdapter:     NewSecurityRuleAdapter(),
 		activationThreshold: 1,
+		prefetches:          make(map[string]*PrefetchHandle),
 	}
 }
 
@@ -261,6 +264,10 @@ func (rt *Runtime) Activate(name string) error {
 	// permission enforcement applies uniformly — including process and
 	// MCP backends that don't self-enforce.
 	broker := NewCapabilityBroker(name, sb, permissions)
+	if sk.Manifest != nil {
+		broker.SetToolsAllow(sk.Manifest.ToolsAllow)
+		broker.SetToolsDeny(sk.Manifest.ToolsDeny)
+	}
 
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -456,6 +463,12 @@ func (rt *Runtime) Deactivate(name string) error {
 	var unloadErr error
 	if sk.Backend != nil {
 		unloadErr = sk.Backend.Unload()
+	}
+
+	// Cancel any pending prefetch for this skill.
+	if ph, ok := rt.prefetches[name]; ok {
+		ph.Cancel()
+		delete(rt.prefetches, name)
 	}
 
 	// Always transition to Inactive and clean up regardless of unload error.
@@ -657,4 +670,112 @@ func (rt *Runtime) GetPromptBudgetReport() []PromptFragment {
 	result := make([]PromptFragment, len(rt.promptBudgetReport))
 	copy(result, rt.promptBudgetReport)
 	return result
+}
+
+// StartPrefetch initiates async loading of skills that are likely to activate
+// based on the given trigger context. Skills with trigger scores above the
+// threshold are prefetched.
+func (rt *Runtime) StartPrefetch(ctx TriggerContext) {
+	// Build candidates under RLock to avoid blocking other readers.
+	rt.mu.RLock()
+	var candidates []DiscoveredSkill
+	for _, sk := range rt.skills {
+		candidates = append(candidates, DiscoveredSkill{
+			Manifest: sk.Manifest,
+			Dir:      sk.Dir,
+			Source:   sk.Source,
+			RootDir:  sk.Dir,
+		})
+	}
+	threshold := rt.activationThreshold
+	rt.mu.RUnlock()
+
+	reports := EvaluateTriggerReports(candidates, ctx, threshold)
+
+	// Acquire Lock only for mutating the prefetches map.
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	for _, report := range reports {
+		if !report.Activated {
+			continue
+		}
+		name := report.Skill.Manifest.Name
+
+		// Skip if already active or already prefetching.
+		if _, active := rt.active[name]; active {
+			continue
+		}
+		if _, prefetching := rt.prefetches[name]; prefetching {
+			continue
+		}
+
+		// Start prefetch.
+		ph := NewPrefetchHandle(name)
+		rt.prefetches[name] = ph
+
+		go func(skillName string, handle *PrefetchHandle) {
+			// Attempt activation; if successful, store the skill.
+			if err := rt.Activate(skillName); err != nil {
+				handle.Settle(nil, err)
+				return
+			}
+
+			// Poll briefly for the activated skill in case another goroutine
+			// is concurrently activating it. This avoids a race where Activate
+			// returns nil but the skill isn't yet in rt.active.
+			var sk *Skill
+			for i := 0; i < 10; i++ {
+				rt.mu.RLock()
+				sk = rt.active[skillName]
+				rt.mu.RUnlock()
+				if sk != nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			if sk == nil {
+				handle.Settle(nil, fmt.Errorf("skill %q not found after activation", skillName))
+				return
+			}
+
+			handle.Settle(sk, nil)
+		}(name, ph)
+	}
+}
+
+// ConsumePrefetch retrieves a prefetched skill by name. Returns (nil, nil) if
+// no prefetch exists for the skill. Returns (nil, error) if the prefetch
+// failed or was cancelled. Returns (*Skill, nil) on successful consumption.
+func (rt *Runtime) ConsumePrefetch(name string) (*Skill, error) {
+	rt.mu.Lock()
+	ph, ok := rt.prefetches[name]
+	rt.mu.Unlock()
+
+	if !ok {
+		return nil, nil
+	}
+
+	sk, err := ph.Consume()
+	if err != nil {
+		return nil, err
+	}
+
+	rt.mu.Lock()
+	delete(rt.prefetches, name)
+	rt.mu.Unlock()
+
+	return sk, nil
+}
+
+// CancelPrefetches cancels all active prefetches.
+func (rt *Runtime) CancelPrefetches() {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	for _, ph := range rt.prefetches {
+		ph.Cancel()
+	}
+	rt.prefetches = make(map[string]*PrefetchHandle)
 }
