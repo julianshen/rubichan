@@ -876,6 +876,28 @@ func (rt *Runtime) EventBus() *SkillEventBus {
 	return rt.eventBus
 }
 
+// GetWatchedDirs returns the directories that should be watched for skill changes.
+func (rt *Runtime) GetWatchedDirs() []string {
+	rt.mu.RLock()
+	defer rt.mu.RUnlock()
+
+	var dirs []string
+	if rt.loader != nil {
+		if d := rt.loader.userDir; d != "" {
+			dirs = append(dirs, d)
+		}
+		if d := rt.loader.projectDir; d != "" {
+			dirs = append(dirs, d)
+		}
+		for _, d := range rt.loader.skillDirs {
+			if d != "" {
+				dirs = append(dirs, d)
+			}
+		}
+	}
+	return dirs
+}
+
 // emitErrorEvent emits a SkillError event if the event bus is configured.
 func (rt *Runtime) emitErrorEvent(name string, err error) {
 	if rt.eventBus != nil {

@@ -1,0 +1,159 @@
+package skills
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+)
+
+// SkillWatcher watches skill directories for changes and triggers reloads.
+type SkillWatcher struct {
+	rt       *Runtime
+	watcher  *fsnotify.Watcher
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
+	debounce time.Duration
+	mu       sync.Mutex
+	pending  bool
+}
+
+// NewSkillWatcher creates a new watcher for the given runtime.
+func NewSkillWatcher(rt *Runtime) (*SkillWatcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
+	}
+
+	return &SkillWatcher{
+		rt:       rt,
+		watcher:  watcher,
+		stopCh:   make(chan struct{}),
+		debounce: 500 * time.Millisecond,
+	}, nil
+}
+
+// Start begins watching skill directories. It discovers all directories
+// that contain skills and adds them to the watcher.
+func (sw *SkillWatcher) Start() error {
+	dirs := sw.rt.GetWatchedDirs()
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		// Watch the root directory and well-known subdirs.
+		sw.addWatch(dir)
+		for _, subdir := range wellKnownSkillSubdirs {
+			sw.addWatch(filepath.Join(dir, subdir))
+		}
+	}
+
+	sw.wg.Add(1)
+	go sw.loop()
+	return nil
+}
+
+// Stop stops the watcher and cleans up resources.
+func (sw *SkillWatcher) Stop() {
+	sw.stopOnce.Do(func() {
+		close(sw.stopCh)
+		sw.watcher.Close()
+	})
+	sw.wg.Wait()
+}
+
+// addWatch adds a directory to the watcher if it exists.
+func (sw *SkillWatcher) addWatch(dir string) {
+	if err := sw.watcher.Add(dir); err != nil {
+		// Directory may not exist; that's ok.
+		return
+	}
+	log.Printf("[skill-watcher] watching %s", dir)
+}
+
+// loop processes fsnotify events with debouncing.
+func (sw *SkillWatcher) loop() {
+	defer sw.wg.Done()
+
+	debounceTimer := time.NewTimer(0)
+	<-debounceTimer.C // drain initial timer
+
+	for {
+		select {
+		case <-sw.stopCh:
+			debounceTimer.Stop()
+			return
+		case event, ok := <-sw.watcher.Events:
+			if !ok {
+				debounceTimer.Stop()
+				return
+			}
+			// Auto-add watches for newly created directories.
+			if event.Op&fsnotify.Create == fsnotify.Create {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && isSkillDir(event.Name) {
+					sw.addWatch(event.Name)
+				}
+			}
+			if sw.isSkillFile(event.Name) {
+				sw.mu.Lock()
+				if !sw.pending {
+					sw.pending = true
+					debounceTimer.Reset(sw.debounce)
+				}
+				sw.mu.Unlock()
+			}
+		case err, ok := <-sw.watcher.Errors:
+			if !ok {
+				debounceTimer.Stop()
+				return
+			}
+			log.Printf("[skill-watcher] error: %v", err)
+		case <-debounceTimer.C:
+			sw.mu.Lock()
+			pending := sw.pending
+			sw.pending = false
+			sw.mu.Unlock()
+			if pending {
+				sw.reload()
+			}
+		}
+	}
+}
+
+// isSkillFile checks if a path is a skill-related file or directory.
+func (sw *SkillWatcher) isSkillFile(path string) bool {
+	base := filepath.Base(path)
+	// Watch SKILL.yaml, SKILL.md, and .md files.
+	if base == "SKILL.yaml" || base == "SKILL.md" || strings.HasSuffix(base, ".md") {
+		return true
+	}
+	// Watch skill directories.
+	if isSkillDir(path) {
+		return true
+	}
+	return false
+}
+
+// isSkillDir checks if a path is within a skill directory.
+func isSkillDir(path string) bool {
+	return strings.Contains(path, ".kilo/skills") ||
+		strings.Contains(path, ".claude/skills") ||
+		strings.Contains(path, ".opencode/skills") ||
+		strings.Contains(path, ".rubichan/skills")
+}
+
+// reload triggers a skill rediscovery.
+func (sw *SkillWatcher) reload() {
+	log.Println("[skill-watcher] reloading skills...")
+	if err := sw.rt.Discover(nil); err != nil {
+		log.Printf("[skill-watcher] reload failed: %v", err)
+		return
+	}
+	log.Println("[skill-watcher] reload complete")
+}
