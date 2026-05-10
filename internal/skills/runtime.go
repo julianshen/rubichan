@@ -227,63 +227,18 @@ func (rt *Runtime) Activate(name string) error {
 	if !autoApproved {
 		for _, perm := range permissions {
 			if err := sb.CheckPermission(perm); err != nil {
-				rt.mu.Lock()
-				_ = sk.TransitionTo(SkillStateError)
-				_ = sk.TransitionTo(SkillStateInactive)
-				rt.mu.Unlock()
-				rt.emitErrorEvent(name, err)
-				return fmt.Errorf("activate skill %q: %w", name, err)
-			}
-
-			if !autoApproved {
-				for _, perm := range permissions {
-					if err := sb.CheckPermission(perm); err != nil {
-						rt.mu.Lock()
-						_ = sk.TransitionTo(SkillStateError)
-						_ = sk.TransitionTo(SkillStateInactive)
-						rt.mu.Unlock()
-						rt.emitErrorEvent(name, err)
-						return fmt.Errorf("activate skill %q: %w", name, err)
-					}
-				}
-			}
-
-			backend, err := backendFactory(manifest, skillDir)
-			if err != nil {
-				rt.mu.Lock()
-				_ = sk.TransitionTo(SkillStateError)
-				_ = sk.TransitionTo(SkillStateInactive)
-				rt.mu.Unlock()
-				rt.emitErrorEvent(name, err)
-				return fmt.Errorf("create backend for skill %q: %w", name, err)
-			}
-
-			if err := backend.Load(manifest, sb); err != nil {
-				rt.mu.Lock()
-				_ = sk.TransitionTo(SkillStateError)
-				_ = sk.TransitionTo(SkillStateInactive)
-				rt.mu.Unlock()
-				rt.emitErrorEvent(name, err)
-				return fmt.Errorf("load skill %q: %w", name, err)
+				return rt.failActivation(sk, name, err)
 			}
 		}
 	}
 
 	backend, err := backendFactory(manifest, skillDir)
 	if err != nil {
-		rt.mu.Lock()
-		_ = sk.TransitionTo(SkillStateError)
-		_ = sk.TransitionTo(SkillStateInactive)
-		rt.mu.Unlock()
-		return fmt.Errorf("create backend for skill %q: %w", name, err)
+		return rt.failActivation(sk, name, fmt.Errorf("create backend: %w", err))
 	}
 
 	if err := backend.Load(manifest, sb); err != nil {
-		rt.mu.Lock()
-		_ = sk.TransitionTo(SkillStateError)
-		_ = sk.TransitionTo(SkillStateInactive)
-		rt.mu.Unlock()
-		return fmt.Errorf("load skill %q: %w", name, err)
+		return rt.failActivation(sk, name, fmt.Errorf("load backend: %w", err))
 	}
 
 	// After a successful Load, any error must call backend.Unload() to release
@@ -896,6 +851,18 @@ func (rt *Runtime) GetWatchedDirs() []string {
 		}
 	}
 	return dirs
+}
+
+// failActivation handles the common error path during skill activation:
+// transitions the skill to Error then Inactive, emits an event, and returns
+// a wrapped error. The caller must NOT hold rt.mu.
+func (rt *Runtime) failActivation(sk *Skill, name string, err error) error {
+	rt.mu.Lock()
+	_ = sk.TransitionTo(SkillStateError)
+	_ = sk.TransitionTo(SkillStateInactive)
+	rt.mu.Unlock()
+	rt.emitErrorEvent(name, err)
+	return fmt.Errorf("activate skill %q: %w", name, err)
 }
 
 // emitErrorEvent emits a SkillError event if the event bus is configured.

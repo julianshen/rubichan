@@ -47,11 +47,8 @@ func (sw *SkillWatcher) Start() error {
 		if dir == "" {
 			continue
 		}
-		// Watch the root directory and well-known subdirs.
-		sw.addWatch(dir)
-		for _, subdir := range wellKnownSkillSubdirs {
-			sw.addWatch(filepath.Join(dir, subdir))
-		}
+		// Watch the root directory recursively.
+		sw.addWatch(dir, true)
 	}
 
 	sw.wg.Add(1)
@@ -69,12 +66,33 @@ func (sw *SkillWatcher) Stop() {
 }
 
 // addWatch adds a directory to the watcher if it exists.
-func (sw *SkillWatcher) addWatch(dir string) {
+// If recursive is true, it also watches all subdirectories.
+func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 	if err := sw.watcher.Add(dir); err != nil {
 		// Directory may not exist; that's ok.
 		return
 	}
 	log.Printf("[skill-watcher] watching %s", dir)
+
+	if !recursive {
+		return
+	}
+
+	// Recursively watch all subdirectories.
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || !d.IsDir() || path == dir {
+			if err != nil {
+				log.Printf("[skill-watcher] walk error in %s: %v", dir, err)
+			}
+			return nil
+		}
+		if err := sw.watcher.Add(path); err != nil {
+			log.Printf("[skill-watcher] failed to watch %s: %v", path, err)
+			return nil
+		}
+		log.Printf("[skill-watcher] watching %s", path)
+		return nil
+	})
 }
 
 // loop processes fsnotify events with debouncing.
@@ -97,7 +115,7 @@ func (sw *SkillWatcher) loop() {
 			// Auto-add watches for newly created directories.
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && isSkillDir(event.Name) {
-					sw.addWatch(event.Name)
+					sw.addWatch(event.Name, true)
 				}
 			}
 			if sw.isSkillFile(event.Name) {
@@ -142,10 +160,24 @@ func (sw *SkillWatcher) isSkillFile(path string) bool {
 
 // isSkillDir checks if a path is within a skill directory.
 func isSkillDir(path string) bool {
-	return strings.Contains(path, ".kilo/skills") ||
-		strings.Contains(path, ".claude/skills") ||
-		strings.Contains(path, ".opencode/skills") ||
-		strings.Contains(path, ".rubichan/skills")
+	// Use filepath separators to avoid false matches like "foo.kilo/skillsbar".
+	return containsPathSegment(path, ".kilo/skills") ||
+		containsPathSegment(path, ".claude/skills") ||
+		containsPathSegment(path, ".opencode/skills") ||
+		containsPathSegment(path, ".rubichan/skills")
+}
+
+// containsPathSegment checks if path contains the segment as a path component.
+func containsPathSegment(path, segment string) bool {
+	// Normalize to forward slashes for consistent matching.
+	normalized := filepath.ToSlash(path)
+	// Check for exact segment match bounded by path separators.
+	prefix := segment + "/"
+	if strings.HasPrefix(normalized, prefix) {
+		return true
+	}
+	infix := "/" + segment + "/"
+	return strings.Contains(normalized, infix)
 }
 
 // reload triggers a skill rediscovery.

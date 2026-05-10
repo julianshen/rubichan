@@ -71,13 +71,50 @@ func TestSkillWatcherReloadOnChange(t *testing.T) {
 		0o644,
 	))
 
-	// Manually trigger reload to verify the watcher mechanism works.
-	// fsnotify in temp dirs on macOS is unreliable in tests.
-	w.reload()
+	// Trigger reload via the event loop by writing a file in a watched dir.
+	testFile := filepath.Join(userDir, "trigger.md")
+	require.NoError(t, os.WriteFile(testFile, []byte("trigger"), 0o644))
 
-	// Verify new skill was discovered.
-	rt.mu.RLock()
-	_, ok := rt.skills["new-skill"]
-	rt.mu.RUnlock()
-	assert.True(t, ok, "new skill should be discovered after reload")
+	// Wait for debounce + reload with retry.
+	require.Eventually(t, func() bool {
+		rt.mu.RLock()
+		_, ok := rt.skills["new-skill"]
+		rt.mu.RUnlock()
+		return ok
+	}, 2*time.Second, 100*time.Millisecond, "new skill should be discovered after reload")
+}
+
+func TestSkillWatcherAutoAddWatch(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	loader := NewLoader(userDir, projectDir)
+	rt := NewRuntime(loader, nil, nil, nil, nil, nil)
+
+	w, err := NewSkillWatcher(rt)
+	require.NoError(t, err)
+	w.debounce = 100 * time.Millisecond
+	require.NoError(t, w.Start())
+	defer w.Stop()
+
+	// Create a new skill directory that matches isSkillDir pattern.
+	newSkillDir := filepath.Join(userDir, ".kilo", "skills", "auto-skill")
+	require.NoError(t, os.MkdirAll(newSkillDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(newSkillDir, "SKILL.yaml"),
+		[]byte("name: auto-skill\nversion: 1.0.0\ndescription: Auto discovered\ntypes:\n  - prompt\n"),
+		0o644,
+	))
+
+	// Trigger reload by touching a file in the watched userDir.
+	testFile := filepath.Join(userDir, "trigger.md")
+	require.NoError(t, os.WriteFile(testFile, []byte("trigger"), 0o644))
+
+	// Wait for debounce + reload with retry.
+	require.Eventually(t, func() bool {
+		rt.mu.RLock()
+		_, ok := rt.skills["auto-skill"]
+		rt.mu.RUnlock()
+		return ok
+	}, 2*time.Second, 100*time.Millisecond, "skill in auto-added watch dir should be discovered")
 }
