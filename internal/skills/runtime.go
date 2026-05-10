@@ -67,6 +67,7 @@ type Runtime struct {
 	toolAdmissionFunc   func(toolName string) bool
 	prefetches          map[string]*PrefetchHandle
 	forkedExecutor      *ForkedSkillExecutor
+	eventBus            *SkillEventBus
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -96,6 +97,7 @@ func NewRuntime(
 		securityAdapter:     NewSecurityRuleAdapter(),
 		activationThreshold: 1,
 		prefetches:          make(map[string]*PrefetchHandle),
+		eventBus:            NewSkillEventBus(),
 	}
 }
 
@@ -229,7 +231,40 @@ func (rt *Runtime) Activate(name string) error {
 				_ = sk.TransitionTo(SkillStateError)
 				_ = sk.TransitionTo(SkillStateInactive)
 				rt.mu.Unlock()
+				rt.emitErrorEvent(name, err)
 				return fmt.Errorf("activate skill %q: %w", name, err)
+			}
+
+			if !autoApproved {
+				for _, perm := range permissions {
+					if err := sb.CheckPermission(perm); err != nil {
+						rt.mu.Lock()
+						_ = sk.TransitionTo(SkillStateError)
+						_ = sk.TransitionTo(SkillStateInactive)
+						rt.mu.Unlock()
+						rt.emitErrorEvent(name, err)
+						return fmt.Errorf("activate skill %q: %w", name, err)
+					}
+				}
+			}
+
+			backend, err := backendFactory(manifest, skillDir)
+			if err != nil {
+				rt.mu.Lock()
+				_ = sk.TransitionTo(SkillStateError)
+				_ = sk.TransitionTo(SkillStateInactive)
+				rt.mu.Unlock()
+				rt.emitErrorEvent(name, err)
+				return fmt.Errorf("create backend for skill %q: %w", name, err)
+			}
+
+			if err := backend.Load(manifest, sb); err != nil {
+				rt.mu.Lock()
+				_ = sk.TransitionTo(SkillStateError)
+				_ = sk.TransitionTo(SkillStateInactive)
+				rt.mu.Unlock()
+				rt.emitErrorEvent(name, err)
+				return fmt.Errorf("load skill %q: %w", name, err)
 			}
 		}
 	}
@@ -399,6 +434,21 @@ func (rt *Runtime) Activate(name string) error {
 
 	rt.active[name] = sk
 	activated = true
+
+	// Emit activation and state change events.
+	if rt.eventBus != nil {
+		rt.eventBus.Publish(SkillEvent{
+			Type:      EventSkillStateChanged,
+			SkillName: name,
+			State:     SkillStateActive,
+		})
+		rt.eventBus.Publish(SkillEvent{
+			Type:      EventSkillActivated,
+			SkillName: name,
+			State:     SkillStateActive,
+		})
+	}
+
 	return nil
 }
 
@@ -476,6 +526,20 @@ func (rt *Runtime) Deactivate(name string) error {
 	_ = sk.TransitionTo(SkillStateInactive)
 	sk.Backend = nil
 	delete(rt.active, name)
+
+	// Emit deactivation and state change events.
+	if rt.eventBus != nil {
+		rt.eventBus.Publish(SkillEvent{
+			Type:      EventSkillStateChanged,
+			SkillName: name,
+			State:     SkillStateInactive,
+		})
+		rt.eventBus.Publish(SkillEvent{
+			Type:      EventSkillDeactivated,
+			SkillName: name,
+			State:     SkillStateInactive,
+		})
+	}
 
 	if unloadErr != nil {
 		return fmt.Errorf("unload skill %q: %w", name, unloadErr)
@@ -805,4 +869,21 @@ func (rt *Runtime) ExecuteForkedSkill(ctx context.Context, name string, prompt s
 	}
 
 	return executor.Execute(ctx, sk, prompt)
+}
+
+// EventBus returns the skill event bus for subscribing to lifecycle events.
+func (rt *Runtime) EventBus() *SkillEventBus {
+	return rt.eventBus
+}
+
+// emitErrorEvent emits a SkillError event if the event bus is configured.
+func (rt *Runtime) emitErrorEvent(name string, err error) {
+	if rt.eventBus != nil {
+		rt.eventBus.Publish(SkillEvent{
+			Type:      EventSkillError,
+			SkillName: name,
+			State:     SkillStateError,
+			Error:     err,
+		})
+	}
 }

@@ -1375,3 +1375,74 @@ func TestBudgetSkillIndexesNoNonBundled(t *testing.T) {
 	// Should return unchanged since there are no non-bundled skills to truncate.
 	assert.Equal(t, "Built-in", result[0].Description)
 }
+
+func TestRuntimeEventBusEmitsActivation(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	skillDir := filepath.Join(userDir, "test-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	writeSkillYAML(t, skillDir, "test-skill", minimalManifestYAML("test-skill"))
+
+	loader := NewLoader(userDir, projectDir)
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	registry := tools.NewRegistry()
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &stubPermissionChecker{}
+	}
+
+	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
+
+	var events []SkillEvent
+	rt.EventBus().Subscribe(func(evt SkillEvent) {
+		events = append(events, evt)
+	})
+
+	require.NoError(t, rt.Activate("test-skill"))
+	require.Len(t, events, 2)
+	assert.Equal(t, EventSkillStateChanged, events[0].Type)
+	assert.Equal(t, EventSkillActivated, events[1].Type)
+	assert.Equal(t, "test-skill", events[1].SkillName)
+	assert.Equal(t, SkillStateActive, events[1].State)
+}
+
+func TestRuntimeEventBusEmitsDeactivation(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	skillDir := filepath.Join(userDir, "test-skill")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	writeSkillYAML(t, skillDir, "test-skill", minimalManifestYAML("test-skill"))
+
+	loader := NewLoader(userDir, projectDir)
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	registry := tools.NewRegistry()
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		return &mockBackend{}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &stubPermissionChecker{}
+	}
+
+	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("test-skill"))
+
+	var events []SkillEvent
+	rt.EventBus().Subscribe(func(evt SkillEvent) {
+		events = append(events, evt)
+	})
+
+	require.NoError(t, rt.Deactivate("test-skill"))
+	require.Len(t, events, 2)
+	assert.Equal(t, EventSkillStateChanged, events[0].Type)
+	assert.Equal(t, EventSkillDeactivated, events[1].Type)
+	assert.Equal(t, "test-skill", events[1].SkillName)
+	assert.Equal(t, SkillStateInactive, events[1].State)
+}
