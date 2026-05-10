@@ -516,3 +516,44 @@ agents:
 	assert.Equal(t, []string{"shell", "file"}, manifest.Agents[0].Tools)
 	assert.Equal(t, 8, manifest.Agents[0].MaxTurns)
 }
+
+func TestParseManifestWithExecutionMode(t *testing.T) {
+	yaml := []byte(`
+name: forked-skill
+version: 1.0.0
+description: "Runs in sub-agent"
+types:
+  - prompt
+execution_mode: fork
+`)
+	m, err := ParseManifest(yaml)
+	require.NoError(t, err)
+	assert.Equal(t, ExecutionModeFork, m.ExecutionMode)
+}
+
+func TestParseManifestDefaultExecutionMode(t *testing.T) {
+	yaml := []byte(`
+name: inline-skill
+version: 1.0.0
+description: "Runs inline"
+types:
+  - prompt
+`)
+	m, err := ParseManifest(yaml)
+	require.NoError(t, err)
+	assert.Equal(t, ExecutionModeInline, m.ExecutionMode)
+}
+
+func TestParseManifestInvalidExecutionMode(t *testing.T) {
+	yaml := []byte(`
+name: bad-skill
+version: 1.0.0
+description: "Invalid mode"
+types:
+  - prompt
+execution_mode: invalid
+`)
+	_, err := ParseManifest(yaml)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "execution_mode")
+}

@@ -66,6 +66,7 @@ type Runtime struct {
 	promptBudgetReport  []PromptFragment
 	toolAdmissionFunc   func(toolName string) bool
 	prefetches          map[string]*PrefetchHandle
+	forkedExecutor      *ForkedSkillExecutor
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -778,4 +779,30 @@ func (rt *Runtime) CancelPrefetches() {
 		ph.Cancel()
 	}
 	rt.prefetches = make(map[string]*PrefetchHandle)
+}
+
+// SetForkedSkillExecutor configures the executor for forked skills.
+func (rt *Runtime) SetForkedSkillExecutor(executor *ForkedSkillExecutor) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.forkedExecutor = executor
+}
+
+// ExecuteForkedSkill runs a forked skill in an isolated sub-agent.
+// Returns (nil, false, nil) if the skill is not forked or no executor is configured.
+// Returns (nil, false, error) if the skill is not found.
+func (rt *Runtime) ExecuteForkedSkill(ctx context.Context, name string, prompt string) (*SubagentResult, bool, error) {
+	rt.mu.RLock()
+	sk, ok := rt.skills[name]
+	executor := rt.forkedExecutor
+	rt.mu.RUnlock()
+
+	if !ok || sk == nil || sk.Manifest == nil {
+		return nil, false, fmt.Errorf("skill %q not found", name)
+	}
+	if executor == nil {
+		return nil, false, fmt.Errorf("skill %q requires forked execution but no executor is configured", name)
+	}
+
+	return executor.Execute(ctx, sk, prompt)
 }

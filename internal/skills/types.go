@@ -430,6 +430,42 @@ func BudgetSkillIndexes(indexes []SkillIndex, budget SkillTokenBudget) []SkillIn
 	return result
 }
 
+// ExecutionMode determines how a skill is executed.
+type ExecutionMode string
+
+const (
+	// ExecutionModeInline runs the skill in the main agent context (default).
+	ExecutionModeInline ExecutionMode = "inline"
+	// ExecutionModeFork runs the skill in an isolated sub-agent.
+	ExecutionModeFork ExecutionMode = "fork"
+)
+
+// SubagentConfig configures a sub-agent spawn.
+type SubagentConfig struct {
+	Name          string
+	MaxTurns      int
+	MaxDepth      int
+	Depth         int
+	Model         string
+	SystemPrompt  string
+	Tools         []string
+	Isolation     string
+	ContextBudget int
+	InheritSkills bool
+	ExtraSkills   []string
+	DisableSkills []string
+}
+
+// SubagentResult is the output of a sub-agent execution.
+type SubagentResult struct {
+	Name         string
+	Output       string
+	Error        error
+	InputTokens  int
+	OutputTokens int
+	ToolsUsed    []string
+}
+
 // sourceBudgetPriority returns a priority value for context budget allocation.
 // Higher values mean higher priority (included first). This is different from
 // hook dispatch priority where lower = higher.

@@ -141,6 +141,7 @@ type SkillManifest struct {
 	Priority       int                  `yaml:"priority"`
 	ToolsAllow     []string             `yaml:"tools_allow"`
 	ToolsDeny      []string             `yaml:"tools_deny"`
+	ExecutionMode  ExecutionMode        `yaml:"execution_mode"`
 	References     []ReferenceDef       `yaml:"references"`
 	Implementation ImplementationConfig `yaml:"implementation"`
 	Prompt         PromptConfig         `yaml:"prompt"`
@@ -282,6 +283,23 @@ func validateManifest(m *SkillManifest) error {
 	for _, p := range m.Permissions {
 		if !validPermissions[p] {
 			return fmt.Errorf("manifest validation: unknown permission %q", p)
+		}
+	}
+
+	// Execution mode.
+	if m.ExecutionMode == "" {
+		m.ExecutionMode = ExecutionModeInline
+	}
+	if m.ExecutionMode != ExecutionModeInline && m.ExecutionMode != ExecutionModeFork {
+		return fmt.Errorf("manifest validation: unknown execution_mode %q (must be %q or %q)", m.ExecutionMode, ExecutionModeInline, ExecutionModeFork)
+	}
+	// Forked execution is only compatible with prompt and tool skills.
+	// Workflow, security-rule, and transform skills require inline execution.
+	if m.ExecutionMode == ExecutionModeFork {
+		for _, st := range m.Types {
+			if st != SkillTypePrompt && st != SkillTypeTool {
+				return fmt.Errorf("manifest validation: execution_mode %q is not compatible with skill type %q (only %q and %q support forked execution)", m.ExecutionMode, st, SkillTypePrompt, SkillTypeTool)
+			}
 		}
 	}
 
