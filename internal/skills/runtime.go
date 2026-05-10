@@ -115,13 +115,29 @@ func (rt *Runtime) Discover(explicit []string) error {
 
 	rt.discoveryWarnings = append(rt.discoveryWarnings[:0], warnings...)
 
+	// Track which skills are still present after discovery.
+	present := make(map[string]bool, len(discovered))
 	for _, ds := range discovered {
+		present[ds.Manifest.Name] = true
+		// Preserve active state for skills that are already active.
+		state := SkillStateInactive
+		if existing, ok := rt.skills[ds.Manifest.Name]; ok && existing.State == SkillStateActive {
+			state = SkillStateActive
+		}
 		rt.skills[ds.Manifest.Name] = &Skill{
 			Manifest:        ds.Manifest,
-			State:           SkillStateInactive,
+			State:           state,
 			Dir:             ds.Dir,
 			Source:          ds.Source,
 			InstructionBody: ds.InstructionBody,
+		}
+	}
+
+	// Remove skills that no longer exist on disk, but only if inactive.
+	// Active skills are kept to avoid disrupting running backends.
+	for name, sk := range rt.skills {
+		if !present[name] && sk.State != SkillStateActive {
+			delete(rt.skills, name)
 		}
 	}
 

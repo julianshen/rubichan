@@ -120,10 +120,8 @@ func (sw *SkillWatcher) loop() {
 			}
 			if sw.isSkillFile(event.Name) {
 				sw.mu.Lock()
-				if !sw.pending {
-					sw.pending = true
-					debounceTimer.Reset(sw.debounce)
-				}
+				sw.pending = true
+				debounceTimer.Reset(sw.debounce)
 				sw.mu.Unlock()
 			}
 		case err, ok := <-sw.watcher.Errors:
@@ -138,7 +136,22 @@ func (sw *SkillWatcher) loop() {
 			sw.pending = false
 			sw.mu.Unlock()
 			if pending {
-				sw.reload()
+				// Non-blocking check: if new events arrived during reload,
+				// reset the timer instead of reloading immediately.
+				select {
+				case event, ok := <-sw.watcher.Events:
+					if !ok {
+						return
+					}
+					if sw.isSkillFile(event.Name) {
+						sw.mu.Lock()
+						sw.pending = true
+						debounceTimer.Reset(sw.debounce)
+						sw.mu.Unlock()
+					}
+				default:
+					sw.reload()
+				}
 			}
 		}
 	}
@@ -161,23 +174,18 @@ func (sw *SkillWatcher) isSkillFile(path string) bool {
 // isSkillDir checks if a path is within a skill directory.
 func isSkillDir(path string) bool {
 	// Use filepath separators to avoid false matches like "foo.kilo/skillsbar".
-	return containsPathSegment(path, ".kilo/skills") ||
-		containsPathSegment(path, ".claude/skills") ||
-		containsPathSegment(path, ".opencode/skills") ||
-		containsPathSegment(path, ".rubichan/skills")
-}
-
-// containsPathSegment checks if path contains the segment as a path component.
-func containsPathSegment(path, segment string) bool {
-	// Normalize to forward slashes for consistent matching.
 	normalized := filepath.ToSlash(path)
-	// Check for exact segment match bounded by path separators.
-	prefix := segment + "/"
-	if strings.HasPrefix(normalized, prefix) {
-		return true
+	for _, subdir := range wellKnownSkillSubdirs {
+		prefix := subdir + "/"
+		if strings.HasPrefix(normalized, prefix) {
+			return true
+		}
+		infix := "/" + subdir + "/"
+		if strings.Contains(normalized, infix) {
+			return true
+		}
 	}
-	infix := "/" + segment + "/"
-	return strings.Contains(normalized, infix)
+	return false
 }
 
 // reload triggers a skill rediscovery.
