@@ -23,30 +23,22 @@ func TestRegisterPopulatesLoader(t *testing.T) {
 
 	ds := discovered[0]
 	assert.Equal(t, "ui-ux-pro-max", ds.Manifest.Name)
-	assert.Equal(t, skills.SourceBuiltin, ds.Source)
-	assert.NotEmpty(t, ds.InstructionBody)
-	assert.DirExists(t, ds.Dir)
-	assert.FileExists(t, filepath.Join(ds.Dir, "SKILL.md"))
-	assert.FileExists(t, filepath.Join(ds.Dir, "scripts", "search.py"))
-	assert.FileExists(t, filepath.Join(ds.Dir, "data", "styles.csv"))
-	assert.FileExists(t, filepath.Join(ds.Dir, "templates", "platforms", "codex.json"))
+	assert.Equal(t, skills.SourceBundled, ds.Source)
+	assert.Empty(t, ds.Dir)
+	assert.Empty(t, ds.InstructionBody)
 }
 
-func TestRegisterIsIdempotentForMaterializedCache(t *testing.T) {
+func TestRegisterIsIdempotent(t *testing.T) {
 	cacheRoot := t.TempDir()
 	loader := skills.NewLoader("", "")
 
 	require.NoError(t, Register(loader, cacheRoot))
-
-	scriptPath := filepath.Join(cacheRoot, "builtin-skills", "ui-ux-pro-max", "scripts", "search.py")
-	require.NoError(t, os.WriteFile(scriptPath, []byte("# sentinel\n"), 0o644))
-
 	require.NoError(t, Register(loader, cacheRoot))
 
-	data, err := os.ReadFile(scriptPath)
+	discovered, _, err := loader.Discover(nil)
 	require.NoError(t, err)
-	assert.Equal(t, "# sentinel\n", string(data))
-	assert.FileExists(t, filepath.Join(cacheRoot, "builtin-skills", "ui-ux-pro-max", ".version"))
+	require.Len(t, discovered, 1)
+	assert.Equal(t, "ui-ux-pro-max", discovered[0].Manifest.Name)
 }
 
 func TestRegisterReturnsErrorForInvalidCacheRoot(t *testing.T) {
@@ -54,7 +46,24 @@ func TestRegisterReturnsErrorForInvalidCacheRoot(t *testing.T) {
 	require.NoError(t, os.WriteFile(cacheRoot, []byte("x"), 0o644))
 
 	loader := skills.NewLoader("", "")
+	// With lazy materialization, registration itself does not touch cacheRoot.
 	err := Register(loader, cacheRoot)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "create builtin skill directory")
+	require.NoError(t, err)
+}
+
+func TestEmbedContentMaterialize(t *testing.T) {
+	ec := &skills.EmbedContent{
+		FS:     content,
+		Prefix: embeddedSkillRoot,
+	}
+
+	cacheDir := t.TempDir()
+	skillDir, err := ec.Materialize(cacheDir, "ui-ux-pro-max")
+	require.NoError(t, err)
+
+	assert.DirExists(t, skillDir)
+	assert.FileExists(t, filepath.Join(skillDir, "SKILL.md"))
+	assert.FileExists(t, filepath.Join(skillDir, "scripts", "search.py"))
+	assert.FileExists(t, filepath.Join(skillDir, "data", "styles.csv"))
+	assert.FileExists(t, filepath.Join(skillDir, "templates", "platforms", "codex.json"))
 }
