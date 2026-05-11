@@ -161,7 +161,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	// 4.1. Bundled skills override directory-discovered skills but not built-ins.
 	for name, bundle := range l.bundled {
 		// Skip if a built-in skill already has this name.
-		if _, exists := byName[name]; exists {
+		if _, exists := l.builtins[name]; exists {
 			continue
 		}
 		byName[name] = DiscoveredSkill{

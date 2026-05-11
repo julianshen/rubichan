@@ -116,6 +116,11 @@ func (sw *SkillWatcher) loop() {
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && isSkillDir(event.Name) {
 					sw.addWatch(event.Name, true)
+					sw.mu.Lock()
+					sw.pending = true
+					debounceTimer.Reset(sw.debounce)
+					sw.mu.Unlock()
+					continue
 				}
 			}
 			if sw.isSkillFile(event.Name) {
@@ -136,22 +141,7 @@ func (sw *SkillWatcher) loop() {
 			sw.pending = false
 			sw.mu.Unlock()
 			if pending {
-				// Non-blocking check: if new events arrived during reload,
-				// reset the timer instead of reloading immediately.
-				select {
-				case event, ok := <-sw.watcher.Events:
-					if !ok {
-						return
-					}
-					if sw.isSkillFile(event.Name) {
-						sw.mu.Lock()
-						sw.pending = true
-						debounceTimer.Reset(sw.debounce)
-						sw.mu.Unlock()
-					}
-				default:
-					sw.reload()
-				}
+				sw.reload()
 			}
 		}
 	}
@@ -160,12 +150,12 @@ func (sw *SkillWatcher) loop() {
 // isSkillFile checks if a path is a skill-related file or directory.
 func (sw *SkillWatcher) isSkillFile(path string) bool {
 	base := filepath.Base(path)
-	// Watch SKILL.yaml, SKILL.md, and .md files.
-	if base == "SKILL.yaml" || base == "SKILL.md" || strings.HasSuffix(base, ".md") {
+	// Watch manifest files unconditionally.
+	if base == "SKILL.yaml" || base == "SKILL.md" {
 		return true
 	}
-	// Watch skill directories.
-	if isSkillDir(path) {
+	// Watch .md files only when they live under a skill directory.
+	if strings.HasSuffix(base, ".md") && isSkillDir(path) {
 		return true
 	}
 	return false
@@ -174,14 +164,9 @@ func (sw *SkillWatcher) isSkillFile(path string) bool {
 // isSkillDir checks if a path is within a skill directory.
 func isSkillDir(path string) bool {
 	// Use filepath separators to avoid false matches like "foo.kilo/skillsbar".
-	normalized := filepath.ToSlash(path)
+	normalized := "/" + filepath.ToSlash(path) + "/"
 	for _, subdir := range wellKnownSkillSubdirs {
-		prefix := subdir + "/"
-		if strings.HasPrefix(normalized, prefix) {
-			return true
-		}
-		infix := "/" + subdir + "/"
-		if strings.Contains(normalized, infix) {
+		if strings.Contains(normalized, "/"+subdir+"/") {
 			return true
 		}
 	}

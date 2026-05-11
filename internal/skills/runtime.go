@@ -123,17 +123,22 @@ func (rt *Runtime) Discover(explicit []string) error {
 	present := make(map[string]bool, len(discovered))
 	for _, ds := range discovered {
 		present[ds.Manifest.Name] = true
-		// Preserve active state for skills that are already active.
-		state := SkillStateInactive
-		if existing, ok := rt.skills[ds.Manifest.Name]; ok && existing.State == SkillStateActive {
-			state = SkillStateActive
-		}
-		rt.skills[ds.Manifest.Name] = &Skill{
-			Manifest:        ds.Manifest,
-			State:           state,
-			Dir:             ds.Dir,
-			Source:          ds.Source,
-			InstructionBody: ds.InstructionBody,
+		if existing, ok := rt.skills[ds.Manifest.Name]; ok {
+			// Update existing skill metadata in-place to preserve Backend pointer
+			// and avoid diverging from rt.active.
+			existing.Manifest = ds.Manifest
+			existing.Dir = ds.Dir
+			existing.Source = ds.Source
+			existing.InstructionBody = ds.InstructionBody
+			// Keep existing.State (and Backend if active)
+		} else {
+			rt.skills[ds.Manifest.Name] = &Skill{
+				Manifest:        ds.Manifest,
+				State:           SkillStateInactive,
+				Dir:             ds.Dir,
+				Source:          ds.Source,
+				InstructionBody: ds.InstructionBody,
+			}
 		}
 	}
 
@@ -242,14 +247,15 @@ func (rt *Runtime) Activate(name string) error {
 	rt.mu.Unlock()
 
 	// If this is a bundled skill with content, materialize it first.
-	if sk.Source == SourceBundled && sk.Dir == "" {
+	if source == SourceBundled && skillDir == "" {
 		if bundle, ok := rt.loader.GetBundled(name); ok && bundle.Content != nil {
-			skillDir, matErr := bundle.Content.Materialize(rt.bundledCacheDir, name)
+			materializedDir, matErr := bundle.Content.Materialize(rt.bundledCacheDir, name)
 			if matErr != nil {
 				return rt.failActivation(sk, name, fmt.Errorf("materialize bundled skill: %w", matErr))
 			}
+			skillDir = materializedDir
 			rt.mu.Lock()
-			sk.Dir = skillDir
+			sk.Dir = materializedDir
 			rt.mu.Unlock()
 		}
 	}

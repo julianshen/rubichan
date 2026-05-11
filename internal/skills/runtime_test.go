@@ -1468,7 +1468,9 @@ func TestRuntimeActivateBundledSkill(t *testing.T) {
 	s, err := store.NewStore(":memory:")
 	require.NoError(t, err)
 	registry := tools.NewRegistry()
+	var capturedDir string
 	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		capturedDir = dir
 		return &mockBackend{}, nil
 	}
 	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
@@ -1489,6 +1491,7 @@ func TestRuntimeActivateBundledSkill(t *testing.T) {
 	require.NotNil(t, sk)
 	assert.NotEmpty(t, sk.Dir, "bundled skill should have a directory after materialization")
 	assert.DirExists(t, sk.Dir)
+	assert.Equal(t, sk.Dir, capturedDir, "backend factory should receive the materialized directory")
 
 	// Verify the file was written.
 	_, err = os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))

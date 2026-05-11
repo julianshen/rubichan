@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // BundledContent is the interface for skill content that can be materialized
@@ -133,12 +134,19 @@ func (fc *FileMapContent) Materialize(cacheDir, skillName string) (string, error
 // writeFileMap writes a map of file paths to content bytes into a skill
 // directory under cacheDir. Shared by InlineContent and FileMapContent.
 func writeFileMap(cacheDir, skillName string, files map[string][]byte) (string, error) {
+	if strings.Contains(skillName, "..") || strings.Contains(skillName, "/") || strings.Contains(skillName, "\\") {
+		return "", fmt.Errorf("invalid skill name: %q", skillName)
+	}
+
 	skillDir := filepath.Join(cacheDir, "bundled-skills", skillName)
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return "", fmt.Errorf("create bundled skill dir: %w", err)
 	}
 
 	for name, content := range files {
+		if strings.Contains(name, "..") {
+			return "", fmt.Errorf("invalid file path in bundle: %q", name)
+		}
 		path := filepath.Join(skillDir, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return "", fmt.Errorf("create dir for %s: %w", name, err)
