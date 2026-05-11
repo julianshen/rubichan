@@ -243,13 +243,7 @@ func (rt *Runtime) Activate(name string) error {
 
 	// If this is a bundled skill with content, materialize it first.
 	if sk.Source == SourceBundled && sk.Dir == "" {
-		var bundle *BundledSkill
-		if rt.loader != nil {
-			if b, ok := rt.loader.bundled[name]; ok {
-				bundle = &b
-			}
-		}
-		if bundle != nil && bundle.Content != nil {
+		if bundle, ok := rt.loader.GetBundled(name); ok && bundle.Content != nil {
 			skillDir, matErr := bundle.Content.Materialize(rt.bundledCacheDir, name)
 			if matErr != nil {
 				return rt.failActivation(sk, name, fmt.Errorf("materialize bundled skill: %w", matErr))

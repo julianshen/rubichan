@@ -86,6 +86,12 @@ func (l *Loader) RegisterBundled(bs BundledSkill) {
 	l.bundled[bs.Name] = bs
 }
 
+// GetBundled returns a bundled skill by name.
+func (l *Loader) GetBundled(name string) (BundledSkill, bool) {
+	bs, ok := l.bundled[name]
+	return bs, ok
+}
+
 // AddMCPServers registers MCP server configs for auto-discovery. Each server
 // becomes a synthetic skill with BackendMCP and SourceMCP.
 func (l *Loader) AddMCPServers(servers []config.MCPServerConfig) {
@@ -159,16 +165,8 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 			continue
 		}
 		byName[name] = DiscoveredSkill{
-			Manifest: &SkillManifest{
-				Name:        bundle.Name,
-				Version:     bundle.Version,
-				Description: bundle.Description,
-				Types:       bundle.Types,
-				Permissions: bundle.Permissions,
-				Triggers:    bundle.Triggers,
-				Prompt:      bundle.Prompt,
-			},
-			Source: SourceBundled,
+			Manifest: bundle.ToManifest(),
+			Source:   SourceBundled,
 		}
 	}
 

@@ -32,38 +32,38 @@ type BundledSkill struct {
 	Content     BundledContent
 }
 
+// ToManifest creates a SkillManifest from the bundled skill definition.
+func (bs BundledSkill) ToManifest() *SkillManifest {
+	return &SkillManifest{
+		Name:        bs.Name,
+		Version:     bs.Version,
+		Description: bs.Description,
+		Types:       bs.Types,
+		Permissions: bs.Permissions,
+		Triggers:    bs.Triggers,
+		Prompt:      bs.Prompt,
+	}
+}
+
 // InlineContent implements BundledContent using an in-memory map of filenames
-// to content strings. This is the simplest bundled content type, suitable for
-// small skills with a few files.
+// to content strings.
 type InlineContent struct {
 	Files map[string]string
 }
 
 // Materialize writes all files to a subdirectory under cacheDir.
 func (ic *InlineContent) Materialize(cacheDir, skillName string) (string, error) {
-	skillDir := filepath.Join(cacheDir, "bundled-skills", skillName)
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		return "", fmt.Errorf("create bundled skill dir: %w", err)
-	}
-
+	files := make(map[string][]byte, len(ic.Files))
 	for name, content := range ic.Files {
-		path := filepath.Join(skillDir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return "", fmt.Errorf("create dir for %s: %w", name, err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return "", fmt.Errorf("write bundled file %s: %w", name, err)
-		}
+		files[name] = []byte(content)
 	}
-
-	return skillDir, nil
+	return writeFileMap(cacheDir, skillName, files)
 }
 
-// EmbedContent implements BundledContent using an embedded fs.FS. This is
-// suitable for skills that ship with the binary via //go:embed directives.
+// EmbedContent implements BundledContent using an embedded fs.FS.
 type EmbedContent struct {
 	FS     fs.FS
-	Prefix string // Path prefix within the FS to the skill content
+	Prefix string
 }
 
 // Materialize walks the embedded FS and copies all files to cacheDir.
@@ -120,19 +120,25 @@ func (ec *EmbedContent) Materialize(cacheDir, skillName string) (string, error) 
 }
 
 // FileMapContent implements BundledContent using a map of filenames to byte
-// slices. Similar to InlineContent but for binary data.
+// slices.
 type FileMapContent struct {
 	Files map[string][]byte
 }
 
 // Materialize writes all files to a subdirectory under cacheDir.
 func (fc *FileMapContent) Materialize(cacheDir, skillName string) (string, error) {
+	return writeFileMap(cacheDir, skillName, fc.Files)
+}
+
+// writeFileMap writes a map of file paths to content bytes into a skill
+// directory under cacheDir. Shared by InlineContent and FileMapContent.
+func writeFileMap(cacheDir, skillName string, files map[string][]byte) (string, error) {
 	skillDir := filepath.Join(cacheDir, "bundled-skills", skillName)
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return "", fmt.Errorf("create bundled skill dir: %w", err)
 	}
 
-	for name, content := range fc.Files {
+	for name, content := range files {
 		path := filepath.Join(skillDir, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return "", fmt.Errorf("create dir for %s: %w", name, err)
