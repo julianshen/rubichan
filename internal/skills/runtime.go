@@ -101,7 +101,7 @@ func NewRuntime(
 		activationThreshold: 1,
 		prefetches:          make(map[string]*PrefetchHandle),
 		eventBus:            NewSkillEventBus(),
-		bundledCacheDir:     filepath.Join(os.TempDir(), "rubichan-bundled-skills"),
+		bundledCacheDir:     defaultBundledCacheDir(),
 	}
 }
 
@@ -863,6 +863,15 @@ func (rt *Runtime) ExecuteForkedSkill(ctx context.Context, name string, prompt s
 	}
 
 	return executor.Execute(ctx, sk, prompt)
+}
+
+// defaultBundledCacheDir returns a process-specific cache directory for bundled
+// skills, using the user's cache dir if available.
+func defaultBundledCacheDir() string {
+	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "rubichan", "bundled-skills")
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("rubichan-bundled-skills-%d", os.Getpid()))
 }
 
 // SetBundledCacheDir sets the directory where bundled skills are materialized.
