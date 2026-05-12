@@ -3,8 +3,6 @@ package skills
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -70,7 +68,6 @@ type Runtime struct {
 	prefetches          map[string]*PrefetchHandle
 	forkedExecutor      *ForkedSkillExecutor
 	eventBus            *SkillEventBus
-	bundledCacheDir     string
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -101,7 +98,6 @@ func NewRuntime(
 		activationThreshold: 1,
 		prefetches:          make(map[string]*PrefetchHandle),
 		eventBus:            NewSkillEventBus(),
-		bundledCacheDir:     defaultBundledCacheDir(),
 	}
 }
 
@@ -123,22 +119,17 @@ func (rt *Runtime) Discover(explicit []string) error {
 	present := make(map[string]bool, len(discovered))
 	for _, ds := range discovered {
 		present[ds.Manifest.Name] = true
-		if existing, ok := rt.skills[ds.Manifest.Name]; ok {
-			// Update existing skill metadata in-place to preserve Backend pointer
-			// and avoid diverging from rt.active.
-			existing.Manifest = ds.Manifest
-			existing.Dir = ds.Dir
-			existing.Source = ds.Source
-			existing.InstructionBody = ds.InstructionBody
-			// Keep existing.State (and Backend if active)
-		} else {
-			rt.skills[ds.Manifest.Name] = &Skill{
-				Manifest:        ds.Manifest,
-				State:           SkillStateInactive,
-				Dir:             ds.Dir,
-				Source:          ds.Source,
-				InstructionBody: ds.InstructionBody,
-			}
+		// Preserve active state for skills that are already active.
+		state := SkillStateInactive
+		if existing, ok := rt.skills[ds.Manifest.Name]; ok && existing.State == SkillStateActive {
+			state = SkillStateActive
+		}
+		rt.skills[ds.Manifest.Name] = &Skill{
+			Manifest:        ds.Manifest,
+			State:           state,
+			Dir:             ds.Dir,
+			Source:          ds.Source,
+			InstructionBody: ds.InstructionBody,
 		}
 	}
 
@@ -245,20 +236,6 @@ func (rt *Runtime) Activate(name string) error {
 	sandboxFactory := rt.sandboxFactory
 	backendFactory := rt.backendFactory
 	rt.mu.Unlock()
-
-	// If this is a bundled skill with content, materialize it first.
-	if source == SourceBundled && skillDir == "" {
-		if bundle, ok := rt.loader.GetBundled(name); ok && bundle.Content != nil {
-			materializedDir, matErr := bundle.Content.Materialize(rt.bundledCacheDir, name)
-			if matErr != nil {
-				return rt.failActivation(sk, name, fmt.Errorf("materialize bundled skill: %w", matErr))
-			}
-			skillDir = materializedDir
-			rt.mu.Lock()
-			sk.Dir = materializedDir
-			rt.mu.Unlock()
-		}
-	}
 
 	// Phase 2: Create sandbox and backend outside the lock (may involve I/O).
 	sb := sandboxFactory(name, permissions)
@@ -863,22 +840,6 @@ func (rt *Runtime) ExecuteForkedSkill(ctx context.Context, name string, prompt s
 	}
 
 	return executor.Execute(ctx, sk, prompt)
-}
-
-// defaultBundledCacheDir returns a process-specific cache directory for bundled
-// skills, using the user's cache dir if available.
-func defaultBundledCacheDir() string {
-	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
-		return filepath.Join(dir, "rubichan", "bundled-skills")
-	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("rubichan-bundled-skills-%d", os.Getpid()))
-}
-
-// SetBundledCacheDir sets the directory where bundled skills are materialized.
-func (rt *Runtime) SetBundledCacheDir(dir string) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.bundledCacheDir = dir
 }
 
 // EventBus returns the skill event bus for subscribing to lifecycle events.

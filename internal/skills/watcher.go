@@ -66,7 +66,7 @@ func (sw *SkillWatcher) Stop() {
 }
 
 // addWatch adds a directory to the watcher if it exists.
-// If recursive is true, it also watches subdirectories up to maxDepth.
+// If recursive is true, it also watches all subdirectories.
 func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 	if err := sw.watcher.Add(dir); err != nil {
 		// Directory may not exist; that's ok.
@@ -78,17 +78,13 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 		return
 	}
 
-	const maxDepth = 5
+	// Recursively watch all subdirectories.
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || !d.IsDir() || path == dir {
 			if err != nil {
 				log.Printf("[skill-watcher] walk error in %s: %v", dir, err)
 			}
 			return nil
-		}
-		depth := strings.Count(strings.TrimPrefix(path, dir), string(filepath.Separator))
-		if depth > maxDepth {
-			return filepath.SkipDir
 		}
 		if err := sw.watcher.Add(path); err != nil {
 			log.Printf("[skill-watcher] failed to watch %s: %v", path, err)
@@ -120,11 +116,6 @@ func (sw *SkillWatcher) loop() {
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && isSkillDir(event.Name) {
 					sw.addWatch(event.Name, true)
-					sw.mu.Lock()
-					sw.pending = true
-					debounceTimer.Reset(sw.debounce)
-					sw.mu.Unlock()
-					continue
 				}
 			}
 			if sw.isSkillFile(event.Name) {
@@ -145,27 +136,52 @@ func (sw *SkillWatcher) loop() {
 			sw.pending = false
 			sw.mu.Unlock()
 			if pending {
-				sw.reload()
+				// Non-blocking check: if new events arrived during reload,
+				// reset the timer instead of reloading immediately.
+				select {
+				case event, ok := <-sw.watcher.Events:
+					if !ok {
+						return
+					}
+					if sw.isSkillFile(event.Name) {
+						sw.mu.Lock()
+						sw.pending = true
+						debounceTimer.Reset(sw.debounce)
+						sw.mu.Unlock()
+					}
+				default:
+					sw.reload()
+				}
 			}
 		}
 	}
 }
 
+// isSkillFile checks if a path is a skill-related file or directory.
 func (sw *SkillWatcher) isSkillFile(path string) bool {
 	base := filepath.Base(path)
-	if base == "SKILL.yaml" || base == "SKILL.md" {
+	// Watch SKILL.yaml, SKILL.md, and .md files.
+	if base == "SKILL.yaml" || base == "SKILL.md" || strings.HasSuffix(base, ".md") {
 		return true
 	}
-	if strings.HasSuffix(base, ".md") && isSkillDir(path) {
+	// Watch skill directories.
+	if isSkillDir(path) {
 		return true
 	}
 	return false
 }
 
+// isSkillDir checks if a path is within a skill directory.
 func isSkillDir(path string) bool {
-	normalized := "/" + filepath.ToSlash(path) + "/"
+	// Use filepath separators to avoid false matches like "foo.kilo/skillsbar".
+	normalized := filepath.ToSlash(path)
 	for _, subdir := range wellKnownSkillSubdirs {
-		if strings.Contains(normalized, "/"+subdir+"/") {
+		prefix := subdir + "/"
+		if strings.HasPrefix(normalized, prefix) {
+			return true
+		}
+		infix := "/" + subdir + "/"
+		if strings.Contains(normalized, infix) {
 			return true
 		}
 	}
