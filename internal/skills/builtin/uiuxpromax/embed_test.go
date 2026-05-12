@@ -23,9 +23,10 @@ func TestRegisterPopulatesLoader(t *testing.T) {
 
 	ds := discovered[0]
 	assert.Equal(t, "ui-ux-pro-max", ds.Manifest.Name)
-	assert.Equal(t, skills.SourceBundled, ds.Source)
+	// Built-in overrides bundled, so source should be Builtin.
+	assert.Equal(t, skills.SourceBuiltin, ds.Source)
 	assert.Empty(t, ds.Dir)
-	assert.Empty(t, ds.InstructionBody)
+	assert.NotEmpty(t, ds.InstructionBody)
 }
 
 func TestRegisterIsIdempotent(t *testing.T) {

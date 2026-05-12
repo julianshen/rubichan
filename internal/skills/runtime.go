@@ -876,6 +876,8 @@ func defaultBundledCacheDir() string {
 
 // SetBundledCacheDir sets the directory where bundled skills are materialized.
 func (rt *Runtime) SetBundledCacheDir(dir string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	rt.bundledCacheDir = dir
 }
 

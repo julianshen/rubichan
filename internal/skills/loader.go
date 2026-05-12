@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/julianshen/rubichan/internal/config"
 )
@@ -52,6 +53,7 @@ type Loader struct {
 	skillDirs  []string
 	builtins   map[string]DiscoveredSkill
 	bundled    map[string]BundledSkill
+	bundledMu  sync.RWMutex
 	mcpServers []config.MCPServerConfig
 }
 
@@ -83,11 +85,15 @@ func (l *Loader) RegisterBuiltinDiscovered(ds DiscoveredSkill) {
 // RegisterBundled adds a bundled skill to the loader. Bundled skills are
 // materialized on demand and have priority between built-ins and MCP servers.
 func (l *Loader) RegisterBundled(bs BundledSkill) {
+	l.bundledMu.Lock()
+	defer l.bundledMu.Unlock()
 	l.bundled[bs.Name] = bs
 }
 
 // GetBundled returns a bundled skill by name.
 func (l *Loader) GetBundled(name string) (BundledSkill, bool) {
+	l.bundledMu.RLock()
+	defer l.bundledMu.RUnlock()
 	bs, ok := l.bundled[name]
 	return bs, ok
 }

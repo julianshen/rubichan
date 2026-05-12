@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type BundledContent interface {
@@ -58,22 +59,31 @@ func (ec *EmbedContent) Materialize(cacheDir, skillName string) (string, error) 
 		return "", fmt.Errorf("create bundled skill dir: %w", err)
 	}
 
+	// Clear any stale files from previous materialization.
+	if err := os.RemoveAll(skillDir); err != nil {
+		return "", fmt.Errorf("clear stale bundled skill dir: %w", err)
+	}
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		return "", fmt.Errorf("create bundled skill dir: %w", err)
+	}
+
 	err := fs.WalkDir(ec.FS, ec.Prefix, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			return fmt.Errorf("walk embedded %s: %w", path, walkErr)
 		}
 
-		rel, err := filepath.Rel(ec.Prefix, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
+		rel := strings.TrimPrefix(path, ec.Prefix)
+		rel = strings.TrimPrefix(rel, "/")
+		if rel == "" {
 			return nil
 		}
 
 		destPath := filepath.Join(skillDir, rel)
 		if d.IsDir() {
-			return os.MkdirAll(destPath, 0o755)
+			if err := os.MkdirAll(destPath, 0o755); err != nil {
+				return fmt.Errorf("create dir %s: %w", destPath, err)
+			}
+			return nil
 		}
 
 		src, err := ec.FS.Open(path)
@@ -83,7 +93,7 @@ func (ec *EmbedContent) Materialize(cacheDir, skillName string) (string, error) 
 		defer src.Close()
 
 		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			return err
+			return fmt.Errorf("create dir for %s: %w", destPath, err)
 		}
 
 		dst, err := os.Create(destPath)
@@ -118,6 +128,9 @@ func writeFileMap(cacheDir, skillName string, files map[string][]byte) (string, 
 	}
 
 	skillDir := filepath.Join(cacheDir, "bundled-skills", skillName)
+	if err := os.RemoveAll(skillDir); err != nil {
+		return "", fmt.Errorf("clear stale bundled skill dir: %w", err)
+	}
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return "", fmt.Errorf("create bundled skill dir: %w", err)
 	}
