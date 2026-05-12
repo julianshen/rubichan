@@ -28,7 +28,10 @@ require (
 	mvdan.cc/sh/v3 v3.13.0
 )
 
-require golang.org/x/tools v0.43.0 // indirect
+require (
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
+	golang.org/x/tools v0.43.0 // indirect
+)
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
