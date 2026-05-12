@@ -1446,3 +1446,54 @@ func TestRuntimeEventBusEmitsDeactivation(t *testing.T) {
 	assert.Equal(t, "test-skill", events[1].SkillName)
 	assert.Equal(t, SkillStateInactive, events[1].State)
 }
+
+func TestRuntimeActivateBundledSkill(t *testing.T) {
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	loader := NewLoader(userDir, projectDir)
+	loader.RegisterBundled(BundledSkill{
+		Name:        "bundled-test",
+		Version:     "1.0.0",
+		Description: "A bundled test skill",
+		Types:       []SkillType{SkillTypeTool},
+		Content: &InlineContent{
+			Files: map[string]string{
+				"SKILL.yaml": "name: bundled-test\nversion: 1.0.0\ndescription: A bundled test skill\ntypes:\n  - tool\nimplementation:\n  backend: starlark\n  entrypoint: main.star",
+				"SKILL.md":   "# Bundled Test\n\nThis skill was bundled.",
+			},
+		},
+	})
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	registry := tools.NewRegistry()
+	var capturedDir string
+	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		capturedDir = dir
+		return &mockBackend{}, nil
+	}
+	sandboxFactory := func(skillName string, declared []Permission) PermissionChecker {
+		return &stubPermissionChecker{}
+	}
+
+	cacheDir := t.TempDir()
+	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
+	rt.SetBundledCacheDir(cacheDir)
+	require.NoError(t, rt.Discover(nil))
+
+	require.NoError(t, rt.Activate("bundled-test"))
+
+	// Verify the skill was materialized.
+	rt.mu.RLock()
+	sk := rt.skills["bundled-test"]
+	rt.mu.RUnlock()
+	require.NotNil(t, sk)
+	assert.NotEmpty(t, sk.Dir, "bundled skill should have a directory after materialization")
+	assert.DirExists(t, sk.Dir)
+	assert.Equal(t, sk.Dir, capturedDir, "backend factory should receive the materialized directory")
+
+	// Verify the file was written.
+	_, err = os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))
+	require.NoError(t, err)
+}

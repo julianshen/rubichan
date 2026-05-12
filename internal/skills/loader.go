@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/julianshen/rubichan/internal/config"
 )
@@ -27,6 +28,8 @@ const (
 	SourceInline Source = "inline"
 	// SourceMCP is a skill auto-discovered from a configured MCP server.
 	SourceMCP Source = "mcp"
+	// SourceBundled is a skill registered as a lazy-loaded bundle.
+	SourceBundled Source = "bundled"
 )
 
 // DiscoveredSkill represents a skill that was found by the loader, together
@@ -49,6 +52,8 @@ type Loader struct {
 	projectDir string
 	skillDirs  []string
 	builtins   map[string]DiscoveredSkill
+	bundled    map[string]BundledSkill
+	bundledMu  sync.RWMutex
 	mcpServers []config.MCPServerConfig
 }
 
@@ -58,6 +63,7 @@ func NewLoader(userDir, projectDir string) *Loader {
 		userDir:    userDir,
 		projectDir: projectDir,
 		builtins:   make(map[string]DiscoveredSkill),
+		bundled:    make(map[string]BundledSkill),
 	}
 }
 
@@ -74,6 +80,22 @@ func (l *Loader) RegisterBuiltin(m *SkillManifest) {
 func (l *Loader) RegisterBuiltinDiscovered(ds DiscoveredSkill) {
 	ds.Source = SourceBuiltin
 	l.builtins[ds.Manifest.Name] = ds
+}
+
+// RegisterBundled adds a bundled skill to the loader. Bundled skills are
+// materialized on demand and have priority between built-ins and MCP servers.
+func (l *Loader) RegisterBundled(bs BundledSkill) {
+	l.bundledMu.Lock()
+	defer l.bundledMu.Unlock()
+	l.bundled[bs.Name] = bs
+}
+
+// GetBundled returns a bundled skill by name.
+func (l *Loader) GetBundled(name string) (BundledSkill, bool) {
+	l.bundledMu.RLock()
+	defer l.bundledMu.RUnlock()
+	bs, ok := l.bundled[name]
+	return bs, ok
 }
 
 // AddMCPServers registers MCP server configs for auto-discovery. Each server
@@ -140,6 +162,18 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	// 4. Built-in skills override everything from directories.
 	for name, ds := range l.builtins {
 		byName[name] = ds
+	}
+
+	// 4.1. Bundled skills override directory-discovered skills but not built-ins.
+	for name, bundle := range l.bundled {
+		// Skip if a built-in skill already has this name.
+		if _, exists := l.builtins[name]; exists {
+			continue
+		}
+		byName[name] = DiscoveredSkill{
+			Manifest: bundle.ToManifest(),
+			Source:   SourceBundled,
+		}
 	}
 
 	// 4.5. MCP servers from config become synthetic skills.

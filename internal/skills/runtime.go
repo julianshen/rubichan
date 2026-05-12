@@ -3,6 +3,8 @@ package skills
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -68,6 +70,7 @@ type Runtime struct {
 	prefetches          map[string]*PrefetchHandle
 	forkedExecutor      *ForkedSkillExecutor
 	eventBus            *SkillEventBus
+	bundledCacheDir     string
 }
 
 // NewRuntime creates a Runtime with the given dependencies. The autoApprove
@@ -98,6 +101,7 @@ func NewRuntime(
 		activationThreshold: 1,
 		prefetches:          make(map[string]*PrefetchHandle),
 		eventBus:            NewSkillEventBus(),
+		bundledCacheDir:     defaultBundledCacheDir(),
 	}
 }
 
@@ -236,6 +240,20 @@ func (rt *Runtime) Activate(name string) error {
 	sandboxFactory := rt.sandboxFactory
 	backendFactory := rt.backendFactory
 	rt.mu.Unlock()
+
+	// If this is a bundled skill with content, materialize it first.
+	if source == SourceBundled && skillDir == "" {
+		if bundle, ok := rt.loader.GetBundled(name); ok && bundle.Content != nil {
+			materializedDir, matErr := bundle.Content.Materialize(rt.bundledCacheDir, name)
+			if matErr != nil {
+				return rt.failActivation(sk, name, fmt.Errorf("materialize bundled skill: %w", matErr))
+			}
+			skillDir = materializedDir
+			rt.mu.Lock()
+			sk.Dir = materializedDir
+			rt.mu.Unlock()
+		}
+	}
 
 	// Phase 2: Create sandbox and backend outside the lock (may involve I/O).
 	sb := sandboxFactory(name, permissions)
@@ -867,6 +885,22 @@ func (rt *Runtime) GetWatchedDirs() []string {
 		}
 	}
 	return dirs
+}
+
+// defaultBundledCacheDir returns a process-specific cache directory for bundled
+// skills, using the user's cache dir if available.
+func defaultBundledCacheDir() string {
+	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "rubichan", "bundled-skills")
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("rubichan-bundled-skills-%d", os.Getpid()))
+}
+
+// SetBundledCacheDir sets the directory where bundled skills are materialized.
+func (rt *Runtime) SetBundledCacheDir(dir string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.bundledCacheDir = dir
 }
 
 // failActivation handles the common error path during skill activation:
