@@ -37,7 +37,10 @@ func NewSkillWatcher(rt *Runtime) (*SkillWatcher, error) {
 		stopCh:   make(chan struct{}),
 		debounce: 500 * time.Millisecond,
 	}
-	sw.wg.Add(1) // Pre-register so Stop() is safe before Start().
+	// Pre-register the goroutine so Stop() can be called safely even before
+	// Start(). Without this, calling Stop() before Start() would deadlock
+	// because wg.Wait() would wait forever for a Done() that never comes.
+	sw.wg.Add(1)
 	return sw, nil
 }
 
@@ -80,11 +83,10 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 	}
 
 	// Recursively watch all subdirectories.
-	if err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || !d.IsDir() || path == dir {
 			if err != nil {
 				log.Printf("[skill-watcher] walk error in %s: %v", dir, err)
-				return err
 			}
 			return nil
 		}
@@ -94,9 +96,7 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 		}
 		log.Printf("[skill-watcher] watching %s", path)
 		return nil
-	}); err != nil {
-		log.Printf("[skill-watcher] walk failed for %s: %v", dir, err)
-	}
+	})
 }
 
 // loop processes fsnotify events with debouncing.
