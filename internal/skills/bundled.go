@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 type BundledContent interface {
@@ -67,9 +66,11 @@ func (ec *EmbedContent) Materialize(cacheDir, skillName string) (string, error) 
 			return fmt.Errorf("walk embedded %s: %w", path, walkErr)
 		}
 
-		rel := strings.TrimPrefix(path, ec.Prefix)
-		rel = strings.TrimPrefix(rel, "/")
-		if rel == "" {
+		rel, err := filepath.Rel(ec.Prefix, path)
+		if err != nil {
+			return fmt.Errorf("rel path for %s: %w", path, err)
+		}
+		if rel == "." {
 			return nil
 		}
 
@@ -85,21 +86,28 @@ func (ec *EmbedContent) Materialize(cacheDir, skillName string) (string, error) 
 		if err != nil {
 			return fmt.Errorf("open embedded %s: %w", path, err)
 		}
-		defer src.Close()
 
 		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+			src.Close()
 			return fmt.Errorf("create dir for %s: %w", destPath, err)
 		}
 
 		dst, err := os.Create(destPath)
 		if err != nil {
+			src.Close()
 			return fmt.Errorf("create %s: %w", destPath, err)
 		}
-		defer dst.Close()
 
 		if _, err := io.Copy(dst, src); err != nil {
+			src.Close()
+			dst.Close()
 			return fmt.Errorf("copy %s: %w", path, err)
 		}
+		if err := dst.Close(); err != nil {
+			src.Close()
+			return fmt.Errorf("close %s: %w", destPath, err)
+		}
+		src.Close()
 		return nil
 	})
 	if err != nil {

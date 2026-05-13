@@ -31,12 +31,14 @@ func NewSkillWatcher(rt *Runtime) (*SkillWatcher, error) {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
 	}
 
-	return &SkillWatcher{
+	sw := &SkillWatcher{
 		rt:       rt,
 		watcher:  watcher,
 		stopCh:   make(chan struct{}),
 		debounce: 500 * time.Millisecond,
-	}, nil
+	}
+	sw.wg.Add(1) // Pre-register so Stop() is safe before Start().
+	return sw, nil
 }
 
 // Start begins watching skill directories. It discovers all directories
@@ -51,7 +53,6 @@ func (sw *SkillWatcher) Start() error {
 		sw.addWatch(dir, true)
 	}
 
-	sw.wg.Add(1)
 	go sw.loop()
 	return nil
 }
@@ -69,7 +70,7 @@ func (sw *SkillWatcher) Stop() {
 // If recursive is true, it also watches all subdirectories.
 func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 	if err := sw.watcher.Add(dir); err != nil {
-		// Directory may not exist; that's ok.
+		log.Printf("[skill-watcher] failed to watch %s: %v", dir, err)
 		return
 	}
 	log.Printf("[skill-watcher] watching %s", dir)
@@ -83,6 +84,7 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 		if err != nil || !d.IsDir() || path == dir {
 			if err != nil {
 				log.Printf("[skill-watcher] walk error in %s: %v", dir, err)
+				return err
 			}
 			return nil
 		}
@@ -116,7 +118,9 @@ func (sw *SkillWatcher) loop() {
 			}
 			// Auto-add watches for newly created directories.
 			if event.Op&fsnotify.Create == fsnotify.Create {
-				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && isSkillDir(event.Name) {
+				if info, err := os.Stat(event.Name); err != nil {
+					log.Printf("[skill-watcher] stat failed for %s: %v", event.Name, err)
+				} else if info.IsDir() && isSkillDir(event.Name) {
 					sw.addWatch(event.Name, true)
 				}
 			}
