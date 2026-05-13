@@ -15,6 +15,7 @@ func TestSkillWatcherNew(t *testing.T) {
 	w, err := NewSkillWatcher(rt)
 	require.NoError(t, err)
 	require.NotNil(t, w)
+	require.NoError(t, w.Start())
 	w.Stop()
 }
 
@@ -22,6 +23,7 @@ func TestSkillWatcherIsSkillFile(t *testing.T) {
 	rt := NewRuntime(nil, nil, nil, nil, nil, nil)
 	w, err := NewSkillWatcher(rt)
 	require.NoError(t, err)
+	require.NoError(t, w.Start())
 	defer w.Stop()
 
 	assert.True(t, w.isSkillFile("/path/to/SKILL.yaml"))

@@ -165,6 +165,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 	}
 
 	// 4.1. Bundled skills override directory-discovered skills but not built-ins.
+	l.bundledMu.RLock()
 	for name, bundle := range l.bundled {
 		// Skip if a built-in skill already has this name.
 		if _, exists := l.builtins[name]; exists {
@@ -175,6 +176,7 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 			Source:   SourceBundled,
 		}
 	}
+	l.bundledMu.RUnlock()
 
 	// 4.5. MCP servers from config become synthetic skills.
 	for _, srv := range l.mcpServers {

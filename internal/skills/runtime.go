@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -908,8 +909,12 @@ func (rt *Runtime) SetBundledCacheDir(dir string) {
 // a wrapped error. The caller must NOT hold rt.mu.
 func (rt *Runtime) failActivation(sk *Skill, name string, err error) error {
 	rt.mu.Lock()
-	_ = sk.TransitionTo(SkillStateError)
-	_ = sk.TransitionTo(SkillStateInactive)
+	if tErr := sk.TransitionTo(SkillStateError); tErr != nil {
+		log.Printf("[skill-runtime] failActivation: transition to Error failed for %q: %v", name, tErr)
+	}
+	if tErr := sk.TransitionTo(SkillStateInactive); tErr != nil {
+		log.Printf("[skill-runtime] failActivation: transition to Inactive failed for %q: %v", name, tErr)
+	}
 	rt.mu.Unlock()
 	rt.emitErrorEvent(name, err)
 	return fmt.Errorf("activate skill %q: %w", name, err)

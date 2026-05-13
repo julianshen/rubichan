@@ -42,7 +42,7 @@ func TestRegisterIsIdempotent(t *testing.T) {
 	assert.Equal(t, "ui-ux-pro-max", discovered[0].Manifest.Name)
 }
 
-func TestRegisterReturnsErrorForInvalidCacheRoot(t *testing.T) {
+func TestRegisterSucceedsWithNonDirectoryCacheRoot(t *testing.T) {
 	cacheRoot := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(cacheRoot, []byte("x"), 0o644))
 
