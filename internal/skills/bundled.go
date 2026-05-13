@@ -41,11 +41,7 @@ type InlineContent struct {
 }
 
 func (ic *InlineContent) Materialize(cacheDir, skillName string) (string, error) {
-	files := make(map[string][]byte, len(ic.Files))
-	for name, content := range ic.Files {
-		files[name] = []byte(content)
-	}
-	return writeFileMap(cacheDir, skillName, files)
+	return writeFileMap(cacheDir, skillName, ic.Files)
 }
 
 type EmbedContent struct {
@@ -54,12 +50,11 @@ type EmbedContent struct {
 }
 
 func (ec *EmbedContent) Materialize(cacheDir, skillName string) (string, error) {
-	skillDir := filepath.Join(cacheDir, "bundled-skills", skillName)
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		return "", fmt.Errorf("create bundled skill dir: %w", err)
+	if !filepath.IsLocal(skillName) {
+		return "", fmt.Errorf("invalid skill name: %q", skillName)
 	}
 
-	// Clear any stale files from previous materialization.
+	skillDir := filepath.Join(cacheDir, "bundled-skills", skillName)
 	if err := os.RemoveAll(skillDir); err != nil {
 		return "", fmt.Errorf("clear stale bundled skill dir: %w", err)
 	}
@@ -119,10 +114,14 @@ type FileMapContent struct {
 }
 
 func (fc *FileMapContent) Materialize(cacheDir, skillName string) (string, error) {
-	return writeFileMap(cacheDir, skillName, fc.Files)
+	files := make(map[string]string, len(fc.Files))
+	for name, content := range fc.Files {
+		files[name] = string(content)
+	}
+	return writeFileMap(cacheDir, skillName, files)
 }
 
-func writeFileMap(cacheDir, skillName string, files map[string][]byte) (string, error) {
+func writeFileMap(cacheDir, skillName string, files map[string]string) (string, error) {
 	if !filepath.IsLocal(skillName) {
 		return "", fmt.Errorf("invalid skill name: %q", skillName)
 	}
@@ -143,7 +142,7 @@ func writeFileMap(cacheDir, skillName string, files map[string][]byte) (string, 
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return "", fmt.Errorf("create dir for %s: %w", name, err)
 		}
-		if err := os.WriteFile(path, content, 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return "", fmt.Errorf("write bundled file %s: %w", name, err)
 		}
 	}

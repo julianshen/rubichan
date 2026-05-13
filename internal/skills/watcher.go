@@ -79,7 +79,7 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 	}
 
 	// Recursively watch all subdirectories.
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	if err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || !d.IsDir() || path == dir {
 			if err != nil {
 				log.Printf("[skill-watcher] walk error in %s: %v", dir, err)
@@ -92,7 +92,9 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 		}
 		log.Printf("[skill-watcher] watching %s", path)
 		return nil
-	})
+	}); err != nil {
+		log.Printf("[skill-watcher] walk failed for %s: %v", dir, err)
+	}
 }
 
 // loop processes fsnotify events with debouncing.
