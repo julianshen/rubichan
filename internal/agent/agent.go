@@ -1411,27 +1411,15 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 			skills.HookDataExitReason: reason.String(),
 		},
 	}
-	hookResult, err := a.skillRuntime.DispatchHook(event)
-	if err != nil {
+	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
 		a.logger.Warn("%s hook failed: %v", skills.HookOnAfterResponse, err)
 		return blocks
 	}
 
-	// For modifying phases, Dispatch chains each handler's Modified into
-	// event.Data. The final transformed text lives in event.Data.
-	// Also support the direct HookResult.Modified path for backward compat.
-	mutated := ""
-	if hookResult != nil && hookResult.Modified != nil {
-		if v, ok := hookResult.Modified[skills.HookDataResponse].(string); ok {
-			mutated = v
-		}
-	}
-	if mutated == "" {
-		if v, ok := event.Data[skills.HookDataResponse].(string); ok {
-			mutated = v
-		}
-	}
-	if mutated == "" || mutated == original {
+	// modifyingPhases chains each handler's Modified into event.Data, so the
+	// final transformed text lives in event.Data after Dispatch returns.
+	mutated, ok := event.Data[skills.HookDataResponse].(string)
+	if !ok || mutated == original {
 		return blocks
 	}
 	return replaceAssistantText(blocks, mutated)
@@ -2743,9 +2731,25 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		if err != nil {
 			a.logger.Warn("HookOnAfterToolResult failed for %s: %v", tc.Name, err)
 		} else if hookResult != nil && hookResult.Modified != nil {
-			if modifiedContent, ok := hookResult.Modified[skills.HookDataContent].(string); ok {
+			if modifiedContent, ok := hookResult.Modified["content"].(string); ok {
 				result.Content = modifiedContent
 			}
+		}
+	}
+
+	// Dispatch HookOnAfterToolFailure for error results.
+	if result.IsError && a.skillRuntime != nil {
+		if _, err := a.skillRuntime.DispatchHook(skills.HookEvent{
+			Phase: skills.HookOnAfterToolFailure,
+			Ctx:   ctx,
+			Data: map[string]any{
+				skills.HookDataToolName: tc.Name,
+				skills.HookDataInput:    tc.Input,
+				skills.HookDataContent:  result.Content,
+				skills.HookDataIsError:  true,
+			},
+		}); err != nil {
+			a.logger.Warn("HookOnAfterToolFailure failed for %s: %v", tc.Name, err)
 		}
 	}
 

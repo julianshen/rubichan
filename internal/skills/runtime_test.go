@@ -43,8 +43,6 @@ func (m *mockBackend) Commands() []commands.SlashCommand { return nil }
 
 func (m *mockBackend) Agents() []*AgentDefinition { return nil }
 
-func (m *mockBackend) Workflows() map[string]WorkflowHandler { return nil }
-
 func (m *mockBackend) Unload() error {
 	m.unloadCalled = true
 	return nil
@@ -623,8 +621,6 @@ func (m *mockBackendWithCommands) Commands() []commands.SlashCommand {
 	return m.cmds
 }
 
-func (m *mockBackendWithCommands) Workflows() map[string]WorkflowHandler { return nil }
-
 func TestRuntimeActivateRegistersCommands(t *testing.T) {
 	cmdReg := commands.NewRegistry()
 
@@ -813,8 +809,6 @@ type mockBackendWithAgents struct {
 func (m *mockBackendWithAgents) Agents() []*AgentDefinition {
 	return m.agentDefs
 }
-
-func (m *mockBackendWithAgents) Workflows() map[string]WorkflowHandler { return nil }
 
 func TestRuntimeActivateRegistersAgentDefs(t *testing.T) {
 	agentReg := newMockAgentDefRegistrar()
@@ -1453,46 +1447,69 @@ func TestRuntimeEventBusEmitsDeactivation(t *testing.T) {
 	assert.Equal(t, SkillStateInactive, events[1].State)
 }
 
-func TestRuntimeLifecycleHookDispatch(t *testing.T) {
-	tests := []struct {
-		name            string
-		phase           HookPhase
-		needsDeactivate bool
-	}{
-		{"Activate", HookOnActivate, false},
-		{"Deactivate", HookOnDeactivate, true},
+func TestRuntimeActivateDispatchesHookOnActivate(t *testing.T) {
+	hookCalled := false
+	hookData := make(map[string]any)
+
+	rt, _, _ := newTestRuntime(t, []string{"hook-activate-skill"}, nil)
+
+	// Override the backend factory to inject a hook that captures the event.
+	originalFactory := rt.backendFactory
+	rt.backendFactory = func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		mb := &mockBackend{
+			hooks: map[HookPhase]HookHandler{
+				HookOnActivate: func(event HookEvent) (HookResult, error) {
+					hookCalled = true
+					hookData = event.Data
+					return HookResult{}, nil
+				},
+			},
+		}
+		return mb, nil
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hookCalled := false
-			hookData := make(map[string]any)
+	_ = originalFactory
 
-			rt, _, _ := newTestRuntime(t, []string{"hook-" + tt.name + "-skill"}, nil)
-			rt.backendFactory = func(manifest SkillManifest, dir string) (SkillBackend, error) {
-				return &mockBackend{
-					hooks: map[HookPhase]HookHandler{
-						tt.phase: func(event HookEvent) (HookResult, error) {
-							hookCalled = true
-							hookData = event.Data
-							return HookResult{}, nil
-						},
-					},
-				}, nil
-			}
+	m := testManifest("hook-activate-skill")
+	rt.loader.RegisterBuiltin(m)
 
-			m := testManifest("hook-" + tt.name + "-skill")
-			rt.loader.RegisterBuiltin(m)
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("hook-activate-skill"))
 
-			require.NoError(t, rt.Discover(nil))
-			require.NoError(t, rt.Activate("hook-"+tt.name+"-skill"))
-			if tt.needsDeactivate {
-				require.NoError(t, rt.Deactivate("hook-"+tt.name+"-skill"))
-			}
+	assert.True(t, hookCalled, "HookOnActivate should have been dispatched")
+	assert.Equal(t, "hook-activate-skill", hookData["skill_name"])
+}
 
-			assert.True(t, hookCalled, "HookOn%s should have been dispatched", tt.name)
-			assert.Equal(t, "hook-"+tt.name+"-skill", hookData["skill_name"])
-		})
+func TestRuntimeDeactivateDispatchesHookOnDeactivate(t *testing.T) {
+	hookCalled := false
+	hookData := make(map[string]any)
+
+	rt, _, _ := newTestRuntime(t, []string{"hook-deactivate-skill"}, nil)
+
+	// Override the backend factory to inject a hook.
+	originalFactory := rt.backendFactory
+	rt.backendFactory = func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		mb := &mockBackend{
+			hooks: map[HookPhase]HookHandler{
+				HookOnDeactivate: func(event HookEvent) (HookResult, error) {
+					hookCalled = true
+					hookData = event.Data
+					return HookResult{}, nil
+				},
+			},
+		}
+		return mb, nil
 	}
+	_ = originalFactory
+
+	m := testManifest("hook-deactivate-skill")
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("hook-deactivate-skill"))
+	require.NoError(t, rt.Deactivate("hook-deactivate-skill"))
+
+	assert.True(t, hookCalled, "HookOnDeactivate should have been dispatched")
+	assert.Equal(t, "hook-deactivate-skill", hookData["skill_name"])
 }
 
 func TestRuntimeActivateBundledSkill(t *testing.T) {
