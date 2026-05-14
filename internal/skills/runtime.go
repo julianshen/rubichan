@@ -425,6 +425,17 @@ func (rt *Runtime) Activate(name string) error {
 	rt.active[name] = sk
 	activated = true
 
+	// Dispatch HookOnActivate after the skill is fully active.
+	// Fail-open: hook errors are logged but do not fail activation.
+	if _, err := rt.lifecycle.Dispatch(HookEvent{
+		Phase:     HookOnActivate,
+		SkillName: name,
+		Ctx:       context.Background(),
+		Data:      map[string]any{"skill_name": name},
+	}); err != nil {
+		log.Printf("[skill-runtime] HookOnActivate for %q failed: %v", name, err)
+	}
+
 	// Emit activation and state change events.
 	if rt.eventBus != nil {
 		rt.eventBus.Publish(SkillEvent{
@@ -482,6 +493,17 @@ func (rt *Runtime) Deactivate(name string) error {
 		for _, def := range manifestAgentDefinitions(sk.Manifest) {
 			_ = rt.agentDefRegistrar.Unregister(def.Name)
 		}
+	}
+
+	// Dispatch HookOnDeactivate before unregistering hooks.
+	// Fail-open: hook errors are logged but do not block deactivation.
+	if _, err := rt.lifecycle.Dispatch(HookEvent{
+		Phase:     HookOnDeactivate,
+		SkillName: name,
+		Ctx:       context.Background(),
+		Data:      map[string]any{"skill_name": name},
+	}); err != nil {
+		log.Printf("[skill-runtime] HookOnDeactivate for %q failed: %v", name, err)
 	}
 
 	// Unregister hooks.

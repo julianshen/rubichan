@@ -1447,27 +1447,117 @@ func TestRuntimeEventBusEmitsDeactivation(t *testing.T) {
 	assert.Equal(t, SkillStateInactive, events[1].State)
 }
 
-func TestRuntimeActivateBundledSkill(t *testing.T) {
-	userDir := t.TempDir()
-	projectDir := t.TempDir()
+func TestRuntimeActivateDispatchesHookOnActivate(t *testing.T) {
+	hookCalled := false
+	hookData := make(map[string]any)
 
-	loader := NewLoader(userDir, projectDir)
-	loader.RegisterBundled(BundledSkill{
-		Name:        "bundled-test",
+	rt, _, _ := newTestRuntime(t, []string{"hook-activate-skill"}, nil)
+
+	// Override the backend factory to inject a hook that captures the event.
+	originalFactory := rt.backendFactory
+	rt.backendFactory = func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		mb := &mockBackend{
+			hooks: map[HookPhase]HookHandler{
+				HookOnActivate: func(event HookEvent) (HookResult, error) {
+					hookCalled = true
+					hookData = event.Data
+					return HookResult{}, nil
+				},
+			},
+		}
+		return mb, nil
+	}
+	_ = originalFactory
+
+	m := testManifest("hook-activate-skill")
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("hook-activate-skill"))
+
+	assert.True(t, hookCalled, "HookOnActivate should have been dispatched")
+	assert.Equal(t, "hook-activate-skill", hookData["skill_name"])
+}
+
+func TestRuntimeDeactivateDispatchesHookOnDeactivate(t *testing.T) {
+	hookCalled := false
+	hookData := make(map[string]any)
+
+	rt, _, _ := newTestRuntime(t, []string{"hook-deactivate-skill"}, nil)
+
+	// Override the backend factory to inject a hook.
+	originalFactory := rt.backendFactory
+	rt.backendFactory = func(manifest SkillManifest, dir string) (SkillBackend, error) {
+		mb := &mockBackend{
+			hooks: map[HookPhase]HookHandler{
+				HookOnDeactivate: func(event HookEvent) (HookResult, error) {
+					hookCalled = true
+					hookData = event.Data
+					return HookResult{}, nil
+				},
+			},
+		}
+		return mb, nil
+	}
+	_ = originalFactory
+
+	m := testManifest("hook-deactivate-skill")
+	rt.loader.RegisterBuiltin(m)
+
+	require.NoError(t, rt.Discover(nil))
+	require.NoError(t, rt.Activate("hook-deactivate-skill"))
+	require.NoError(t, rt.Deactivate("hook-deactivate-skill"))
+
+	assert.True(t, hookCalled, "HookOnDeactivate should have been dispatched")
+	assert.Equal(t, "hook-deactivate-skill", hookData["skill_name"])
+}
+
+func TestRuntimeActivateBundledSkill(t *testing.T) {
+	rt, _, _ := newTestRuntime(t, []string{"bundled-skill"}, nil)
+
+	// Register a bundled skill with inline content.
+	rt.loader.RegisterBundled(BundledSkill{
+		Name:        "bundled-skill",
 		Version:     "1.0.0",
 		Description: "A bundled test skill",
 		Types:       []SkillType{SkillTypeTool},
 		Content: &InlineContent{
 			Files: map[string]string{
-				"SKILL.yaml": "name: bundled-test\nversion: 1.0.0\ndescription: A bundled test skill\ntypes:\n  - tool\nimplementation:\n  backend: starlark\n  entrypoint: main.star",
-				"SKILL.md":   "# Bundled Test\n\nThis skill was bundled.",
+				"SKILL.md": "# Bundled Skill\n",
 			},
 		},
 	})
 
+	// Discover should include the bundled skill.
+	err := rt.Discover(nil)
+	require.NoError(t, err)
+	assert.Contains(t, rt.skills, "bundled-skill")
+
+	// Activate should materialize the bundled content.
+	err = rt.Activate("bundled-skill")
+	require.NoError(t, err)
+
+	// Verify the skill directory was set.
+	rt.mu.RLock()
+	sk := rt.skills["bundled-skill"]
+	rt.mu.RUnlock()
+	require.NotNil(t, sk)
+	assert.NotEmpty(t, sk.Dir, "bundled skill should have a directory after materialization")
+	assert.DirExists(t, sk.Dir)
+
+	// Verify the file was written.
+	_, err = os.ReadFile(filepath.Join(sk.Dir, "SKILL.md"))
+	require.NoError(t, err)
+}
+
+func TestRuntimeActivateBundledSkillMaterializes(t *testing.T) {
 	s, err := store.NewStore(":memory:")
 	require.NoError(t, err)
+	t.Cleanup(func() { s.Close() })
+
 	registry := tools.NewRegistry()
+	loader := NewLoader("", "")
+
 	var capturedDir string
 	backendFactory := func(manifest SkillManifest, dir string) (SkillBackend, error) {
 		capturedDir = dir
@@ -1480,8 +1570,20 @@ func TestRuntimeActivateBundledSkill(t *testing.T) {
 	cacheDir := t.TempDir()
 	rt := NewRuntime(loader, s, registry, nil, backendFactory, sandboxFactory)
 	rt.SetBundledCacheDir(cacheDir)
-	require.NoError(t, rt.Discover(nil))
 
+	loader.RegisterBundled(BundledSkill{
+		Name:        "bundled-test",
+		Version:     "1.0.0",
+		Description: "Test bundled skill",
+		Types:       []SkillType{SkillTypeTool},
+		Content: &InlineContent{
+			Files: map[string]string{
+				"SKILL.md": "# Test\n",
+			},
+		},
+	})
+
+	require.NoError(t, rt.Discover(nil))
 	require.NoError(t, rt.Activate("bundled-test"))
 
 	// Verify the skill was materialized.

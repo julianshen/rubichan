@@ -72,6 +72,8 @@ const (
 	HookOnBeforeToolCall
 	// HookOnAfterToolResult is called after a tool execution returns a result.
 	HookOnAfterToolResult
+	// HookOnAfterToolFailure is called after a tool execution fails.
+	HookOnAfterToolFailure
 	// HookOnAfterResponse is called after the LLM generates a response.
 	HookOnAfterResponse
 	// HookOnBeforeWikiSection is called before a wiki section is generated.
@@ -105,6 +107,8 @@ func (h HookPhase) String() string {
 		return "OnBeforeToolCall"
 	case HookOnAfterToolResult:
 		return "OnAfterToolResult"
+	case HookOnAfterToolFailure:
+		return "OnAfterToolFailure"
 	case HookOnAfterResponse:
 		return "OnAfterResponse"
 	case HookOnBeforeWikiSection:
