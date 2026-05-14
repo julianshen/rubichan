@@ -166,17 +166,22 @@ func (l *Loader) Discover(explicit []string) ([]DiscoveredSkill, []string, error
 
 	// 4.1. Bundled skills override directory-discovered skills but not built-ins.
 	l.bundledMu.RLock()
-	for name, bundle := range l.bundled {
+	bundledCopy := make(map[string]BundledSkill, len(l.bundled))
+	for k, v := range l.bundled {
+		bundledCopy[k] = v
+	}
+	l.bundledMu.RUnlock()
+	for name, bundle := range bundledCopy {
 		// Skip if a built-in skill already has this name.
 		if _, exists := l.builtins[name]; exists {
 			continue
 		}
+		m := bundle.ToManifest()
 		byName[name] = DiscoveredSkill{
-			Manifest: bundle.ToManifest(),
+			Manifest: &m,
 			Source:   SourceBundled,
 		}
 	}
-	l.bundledMu.RUnlock()
 
 	// 4.5. MCP servers from config become synthetic skills.
 	for _, srv := range l.mcpServers {

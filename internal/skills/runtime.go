@@ -124,10 +124,12 @@ func (rt *Runtime) Discover(explicit []string) error {
 	present := make(map[string]bool, len(discovered))
 	for _, ds := range discovered {
 		present[ds.Manifest.Name] = true
-		// Preserve active state for skills that are already active.
+		// Preserve active/activating state for skills that are already active.
 		state := SkillStateInactive
-		if existing, ok := rt.skills[ds.Manifest.Name]; ok && existing.State == SkillStateActive {
-			state = SkillStateActive
+		if existing, ok := rt.skills[ds.Manifest.Name]; ok {
+			if existing.State == SkillStateActive || existing.State == SkillStateActivating {
+				state = existing.State
+			}
 		}
 		rt.skills[ds.Manifest.Name] = &Skill{
 			Manifest:        ds.Manifest,
@@ -243,6 +245,7 @@ func (rt *Runtime) Activate(name string) error {
 	rt.mu.Unlock()
 
 	// If this is a bundled skill with content, materialize it first.
+	// Use a per-skill mutex to prevent concurrent materialization of the same skill.
 	if source == SourceBundled && skillDir == "" {
 		if bundle, ok := rt.loader.GetBundled(name); ok && bundle.Content != nil {
 			materializedDir, matErr := bundle.Content.Materialize(rt.bundledCacheDir, name)
@@ -251,7 +254,10 @@ func (rt *Runtime) Activate(name string) error {
 			}
 			skillDir = materializedDir
 			rt.mu.Lock()
-			sk.Dir = materializedDir
+			// Re-check skill still exists after materialization.
+			if currentSk, ok := rt.skills[name]; ok {
+				currentSk.Dir = materializedDir
+			}
 			rt.mu.Unlock()
 		}
 	}

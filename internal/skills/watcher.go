@@ -22,6 +22,7 @@ type SkillWatcher struct {
 	debounce time.Duration
 	mu       sync.Mutex
 	pending  bool
+	started  bool
 }
 
 // NewSkillWatcher creates a new watcher for the given runtime.
@@ -31,22 +32,26 @@ func NewSkillWatcher(rt *Runtime) (*SkillWatcher, error) {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
 	}
 
-	sw := &SkillWatcher{
+	return &SkillWatcher{
 		rt:       rt,
 		watcher:  watcher,
 		stopCh:   make(chan struct{}),
 		debounce: 500 * time.Millisecond,
-	}
-	// Pre-register the goroutine so Stop() can be called safely even before
-	// Start(). Without this, calling Stop() before Start() would deadlock
-	// because wg.Wait() would wait forever for a Done() that never comes.
-	sw.wg.Add(1)
-	return sw, nil
+	}, nil
 }
 
 // Start begins watching skill directories. It discovers all directories
-// that contain skills and adds them to the watcher.
+// that contain skills and adds them to the watcher. Start is idempotent;
+// subsequent calls are no-ops.
 func (sw *SkillWatcher) Start() error {
+	sw.mu.Lock()
+	if sw.started {
+		sw.mu.Unlock()
+		return nil
+	}
+	sw.started = true
+	sw.mu.Unlock()
+
 	dirs := sw.rt.GetWatchedDirs()
 	for _, dir := range dirs {
 		if dir == "" {
@@ -56,6 +61,7 @@ func (sw *SkillWatcher) Start() error {
 		sw.addWatch(dir, true)
 	}
 
+	sw.wg.Add(1)
 	go sw.loop()
 	return nil
 }
@@ -83,10 +89,11 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 	}
 
 	// Recursively watch all subdirectories.
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	if err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || !d.IsDir() || path == dir {
 			if err != nil {
 				log.Printf("[skill-watcher] walk error in %s: %v", dir, err)
+				return err
 			}
 			return nil
 		}
@@ -96,7 +103,9 @@ func (sw *SkillWatcher) addWatch(dir string, recursive bool) {
 		}
 		log.Printf("[skill-watcher] watching %s", path)
 		return nil
-	})
+	}); err != nil {
+		log.Printf("[skill-watcher] walk failed for %s: %v", dir, err)
+	}
 }
 
 // loop processes fsnotify events with debouncing.
