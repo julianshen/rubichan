@@ -2737,22 +2737,6 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		}
 	}
 
-	// Dispatch HookOnAfterToolFailure for error results.
-	if result.IsError && a.skillRuntime != nil {
-		if _, err := a.skillRuntime.DispatchHook(skills.HookEvent{
-			Phase: skills.HookOnAfterToolFailure,
-			Ctx:   ctx,
-			Data: map[string]any{
-				skills.HookDataToolName: tc.Name,
-				skills.HookDataInput:    tc.Input,
-				skills.HookDataContent:  result.Content,
-				skills.HookDataIsError:  true,
-			},
-		}); err != nil {
-			a.logger.Warn("HookOnAfterToolFailure failed for %s: %v", tc.Name, err)
-		}
-	}
-
 	return toolExecResult{
 		toolUseID: tc.ID,
 		content:   result.Content,
