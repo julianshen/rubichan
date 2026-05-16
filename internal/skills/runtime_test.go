@@ -43,6 +43,8 @@ func (m *mockBackend) Commands() []commands.SlashCommand { return nil }
 
 func (m *mockBackend) Agents() []*AgentDefinition { return nil }
 
+func (m *mockBackend) Workflows() map[string]WorkflowHandler { return nil }
+
 func (m *mockBackend) Unload() error {
 	m.unloadCalled = true
 	return nil
@@ -621,6 +623,8 @@ func (m *mockBackendWithCommands) Commands() []commands.SlashCommand {
 	return m.cmds
 }
 
+func (m *mockBackendWithCommands) Workflows() map[string]WorkflowHandler { return nil }
+
 func TestRuntimeActivateRegistersCommands(t *testing.T) {
 	cmdReg := commands.NewRegistry()
 
@@ -809,6 +813,8 @@ type mockBackendWithAgents struct {
 func (m *mockBackendWithAgents) Agents() []*AgentDefinition {
 	return m.agentDefs
 }
+
+func (m *mockBackendWithAgents) Workflows() map[string]WorkflowHandler { return nil }
 
 func TestRuntimeActivateRegistersAgentDefs(t *testing.T) {
 	agentReg := newMockAgentDefRegistrar()

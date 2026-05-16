@@ -234,7 +234,13 @@ func (e *Engine) Agents() []*skills.AgentDefinition { return nil }
 
 // Workflows returns workflow handlers registered by this skill, keyed by name.
 // This is populated by register_workflow() calls in the Starlark code.
-func (e *Engine) Workflows() map[string]WorkflowHandler {
+func (e *Engine) Workflows() map[string]skills.WorkflowHandler {
+	return nil
+}
+
+// StarlarkWorkflows returns the raw Starlark workflow handlers (string-returning).
+// This is used by tests and the activation wiring path.
+func (e *Engine) StarlarkWorkflows() map[string]WorkflowHandler {
 	return e.workflows
 }
 

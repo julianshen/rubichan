@@ -58,6 +58,9 @@ func (b *GitBackend) Commands() []commands.SlashCommand { return nil }
 // Agents returns nil — git does not provide agent definitions.
 func (b *GitBackend) Agents() []*skills.AgentDefinition { return nil }
 
+// Workflows returns nil — git does not provide workflows.
+func (b *GitBackend) Workflows() map[string]skills.WorkflowHandler { return nil }
+
 // Unload is a no-op for the git skill.
 func (b *GitBackend) Unload() error {
 	return nil

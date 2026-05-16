@@ -154,6 +154,9 @@ func (b *ProcessBackend) Commands() []commands.SlashCommand { return nil }
 // Agents returns nil — process skills do not provide agent definitions.
 func (b *ProcessBackend) Agents() []*skills.AgentDefinition { return nil }
 
+// Workflows returns nil — process skills do not provide workflows.
+func (b *ProcessBackend) Workflows() map[string]skills.WorkflowHandler { return nil }
+
 // Unload implements skills.SkillBackend. Sends a "shutdown" request and
 // stops the child process.
 func (b *ProcessBackend) Unload() error {

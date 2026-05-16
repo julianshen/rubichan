@@ -54,6 +54,9 @@ func (b *WikiBackend) Commands() []commands.SlashCommand { return nil }
 // Agents returns nil — wiki does not provide agent definitions.
 func (b *WikiBackend) Agents() []*skills.AgentDefinition { return nil }
 
+// Workflows returns nil — wiki does not provide workflows.
+func (b *WikiBackend) Workflows() map[string]skills.WorkflowHandler { return nil }
+
 // Unload is a no-op for wiki.
 func (b *WikiBackend) Unload() error {
 	return nil

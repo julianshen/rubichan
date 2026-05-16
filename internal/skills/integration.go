@@ -263,6 +263,8 @@ func (pc *PromptCollector) RemoveBySkill(skillName string) {
 }
 
 // WorkflowHandler is the function signature for workflow implementations.
+// It returns a map of results (not a string). The string-return variant in
+// starlark/engine.go is converted to this type during activation wiring.
 type WorkflowHandler func(ctx context.Context, args map[string]any) (map[string]any, error)
 
 // WorkflowRunner stores and executes named workflow handlers registered by
