@@ -457,10 +457,10 @@ func (rt *Runtime) Activate(name string) error {
 // tools, unregisters hooks, calls backend.Unload, and clears the backend.
 func (rt *Runtime) Deactivate(name string) error {
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
 
 	sk, ok := rt.active[name]
 	if !ok {
+		rt.mu.Unlock()
 		return fmt.Errorf("skill %q is not active", name)
 	}
 
@@ -551,6 +551,19 @@ func (rt *Runtime) Deactivate(name string) error {
 			SkillName: name,
 			State:     SkillStateInactive,
 		})
+	}
+
+	rt.mu.Unlock()
+
+	// Dispatch HookOnDeactivate after releasing the lock to avoid blocking
+	// other runtime operations while hooks execute.
+	if _, err := rt.lifecycle.Dispatch(HookEvent{
+		Phase:     HookOnDeactivate,
+		SkillName: name,
+		Ctx:       context.Background(),
+		Data:      map[string]any{"skill_name": name},
+	}); err != nil {
+		log.Printf("[skill-runtime] HookOnDeactivate for %q failed: %v", name, err)
 	}
 
 	if unloadErr != nil {

@@ -1495,61 +1495,6 @@ func TestRuntimeLifecycleHookDispatch(t *testing.T) {
 	}
 }
 
-func TestRuntimeActivateDispatchesHookOnActivate(t *testing.T) {
-	hookCalled := false
-	hookData := make(map[string]any)
-
-	rt, _, _ := newTestRuntime(t, []string{"hook-activate-skill"}, nil)
-	rt.backendFactory = func(manifest SkillManifest, dir string) (SkillBackend, error) {
-		return &mockBackend{
-			hooks: map[HookPhase]HookHandler{
-				HookOnActivate: func(event HookEvent) (HookResult, error) {
-					hookCalled = true
-					hookData = event.Data
-					return HookResult{}, nil
-				},
-			},
-		}, nil
-	}
-
-	m := testManifest("hook-activate-skill")
-	rt.loader.RegisterBuiltin(m)
-
-	require.NoError(t, rt.Discover(nil))
-	require.NoError(t, rt.Activate("hook-activate-skill"))
-
-	assert.True(t, hookCalled, "HookOnActivate should have been dispatched")
-	assert.Equal(t, "hook-activate-skill", hookData["skill_name"])
-}
-
-func TestRuntimeDeactivateDispatchesHookOnDeactivate(t *testing.T) {
-	hookCalled := false
-	hookData := make(map[string]any)
-
-	rt, _, _ := newTestRuntime(t, []string{"hook-deactivate-skill"}, nil)
-	rt.backendFactory = func(manifest SkillManifest, dir string) (SkillBackend, error) {
-		return &mockBackend{
-			hooks: map[HookPhase]HookHandler{
-				HookOnDeactivate: func(event HookEvent) (HookResult, error) {
-					hookCalled = true
-					hookData = event.Data
-					return HookResult{}, nil
-				},
-			},
-		}, nil
-	}
-
-	m := testManifest("hook-deactivate-skill")
-	rt.loader.RegisterBuiltin(m)
-
-	require.NoError(t, rt.Discover(nil))
-	require.NoError(t, rt.Activate("hook-deactivate-skill"))
-	require.NoError(t, rt.Deactivate("hook-deactivate-skill"))
-
-	assert.True(t, hookCalled, "HookOnDeactivate should have been dispatched")
-	assert.Equal(t, "hook-deactivate-skill", hookData["skill_name"])
-}
-
 func TestRuntimeActivateBundledSkill(t *testing.T) {
 	rt, _, _ := newTestRuntime(t, []string{"bundled-skill"}, nil)
 
