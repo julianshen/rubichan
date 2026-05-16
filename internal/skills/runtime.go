@@ -296,6 +296,7 @@ func (rt *Runtime) Activate(name string) error {
 	}
 
 	rt.mu.Lock()
+	defer rt.mu.Unlock()
 
 	var registeredTools []tools.Tool
 	for _, tool := range backend.Tools() {
@@ -438,9 +439,7 @@ func (rt *Runtime) Activate(name string) error {
 		})
 	}
 
-	rt.mu.Unlock()
-
-	// Dispatch HookOnActivate after the skill is fully active and lock released.
+	// Dispatch HookOnActivate after the skill is fully active.
 	// Fail-open: hook errors are logged but do not fail activation.
 	if _, err := rt.lifecycle.Dispatch(HookEvent{
 		Phase:     HookOnActivate,
@@ -458,10 +457,10 @@ func (rt *Runtime) Activate(name string) error {
 // tools, unregisters hooks, calls backend.Unload, and clears the backend.
 func (rt *Runtime) Deactivate(name string) error {
 	rt.mu.Lock()
+	defer rt.mu.Unlock()
 
 	sk, ok := rt.active[name]
 	if !ok {
-		rt.mu.Unlock()
 		return fmt.Errorf("skill %q is not active", name)
 	}
 
@@ -495,6 +494,20 @@ func (rt *Runtime) Deactivate(name string) error {
 			_ = rt.agentDefRegistrar.Unregister(def.Name)
 		}
 	}
+
+	// Dispatch HookOnDeactivate before unregistering hooks so handlers can fire.
+	// Fail-open: hook errors are logged but do not block deactivation.
+	if _, err := rt.lifecycle.Dispatch(HookEvent{
+		Phase:     HookOnDeactivate,
+		SkillName: name,
+		Ctx:       context.Background(),
+		Data:      map[string]any{"skill_name": name},
+	}); err != nil {
+		log.Printf("[skill-runtime] HookOnDeactivate for %q failed: %v", name, err)
+	}
+
+	// Unregister hooks after dispatch so they don't fire again.
+	rt.lifecycle.Unregister(name)
 
 	// Clean up integration state for all skill types.
 	for _, st := range sk.Manifest.Types {
@@ -539,22 +552,6 @@ func (rt *Runtime) Deactivate(name string) error {
 			State:     SkillStateInactive,
 		})
 	}
-
-	// Dispatch HookOnDeactivate before unregistering hooks so handlers can fire.
-	// Fail-open: hook errors are logged but do not block deactivation.
-	if _, err := rt.lifecycle.Dispatch(HookEvent{
-		Phase:     HookOnDeactivate,
-		SkillName: name,
-		Ctx:       context.Background(),
-		Data:      map[string]any{"skill_name": name},
-	}); err != nil {
-		log.Printf("[skill-runtime] HookOnDeactivate for %q failed: %v", name, err)
-	}
-
-	// Unregister hooks after dispatch so they don't fire again.
-	rt.lifecycle.Unregister(name)
-
-	rt.mu.Unlock()
 
 	if unloadErr != nil {
 		return fmt.Errorf("unload skill %q: %w", name, unloadErr)
