@@ -2743,7 +2743,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		if err != nil {
 			a.logger.Warn("HookOnAfterToolResult failed for %s: %v", tc.Name, err)
 		} else if hookResult != nil && hookResult.Modified != nil {
-			if modifiedContent, ok := hookResult.Modified["content"].(string); ok {
+			if modifiedContent, ok := hookResult.Modified[skills.HookDataContent].(string); ok {
 				result.Content = modifiedContent
 			}
 		}
