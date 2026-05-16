@@ -1411,15 +1411,27 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 			skills.HookDataExitReason: reason.String(),
 		},
 	}
-	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
+	hookResult, err := a.skillRuntime.DispatchHook(event)
+	if err != nil {
 		a.logger.Warn("%s hook failed: %v", skills.HookOnAfterResponse, err)
 		return blocks
 	}
 
-	// modifyingPhases chains each handler's Modified into event.Data, so the
-	// final transformed text lives in event.Data after Dispatch returns.
-	mutated, ok := event.Data[skills.HookDataResponse].(string)
-	if !ok || mutated == original {
+	// For modifying phases, Dispatch chains each handler's Modified into
+	// event.Data. The final transformed text lives in event.Data.
+	// Also support the direct HookResult.Modified path for backward compat.
+	mutated := ""
+	if hookResult != nil && hookResult.Modified != nil {
+		if v, ok := hookResult.Modified[skills.HookDataResponse].(string); ok {
+			mutated = v
+		}
+	}
+	if mutated == "" {
+		if v, ok := event.Data[skills.HookDataResponse].(string); ok {
+			mutated = v
+		}
+	}
+	if mutated == "" || mutated == original {
 		return blocks
 	}
 	return replaceAssistantText(blocks, mutated)

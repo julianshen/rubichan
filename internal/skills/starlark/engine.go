@@ -232,10 +232,8 @@ func (e *Engine) Commands() []commands.SlashCommand { return nil }
 // Agents returns nil — Starlark skills do not provide agent definitions.
 func (e *Engine) Agents() []*skills.AgentDefinition { return nil }
 
-// Workflows implements skills.SkillBackend. It intentionally returns nil —
-// Starlark workflow handlers have a different signature (string-returning) than
-// the skills.WorkflowHandler type (map-returning). Callers that need the raw
-// Starlark handlers should use StarlarkWorkflows() instead.
+// Workflows returns workflow handlers registered by this skill, keyed by name.
+// This is populated by register_workflow() calls in the Starlark code.
 func (e *Engine) Workflows() map[string]skills.WorkflowHandler {
 	return nil
 }
