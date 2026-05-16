@@ -61,6 +61,9 @@ func (b *CoreToolsBackend) Commands() []commands.SlashCommand { return nil }
 // Agents returns nil — core-tools does not provide agent definitions.
 func (b *CoreToolsBackend) Agents() []*skills.AgentDefinition { return nil }
 
+// Workflows returns nil — core-tools does not provide workflows.
+func (b *CoreToolsBackend) Workflows() map[string]skills.WorkflowHandler { return nil }
+
 // Unload is a no-op for core-tools.
 func (b *CoreToolsBackend) Unload() error {
 	return nil

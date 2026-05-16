@@ -112,6 +112,9 @@ func (b *MCPBackend) Commands() []commands.SlashCommand { return nil }
 // Agents returns nil — MCP skills do not provide agent definitions.
 func (b *MCPBackend) Agents() []*skills.AgentDefinition { return nil }
 
+// Workflows returns nil — MCP skills do not provide workflows.
+func (b *MCPBackend) Workflows() map[string]skills.WorkflowHandler { return nil }
+
 // Unload disconnects from the MCP server.
 func (b *MCPBackend) Unload() error {
 	b.tools = nil

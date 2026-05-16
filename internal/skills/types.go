@@ -208,6 +208,12 @@ type SkillBackend interface {
 	// Agents returns agent definitions contributed by this backend.
 	Agents() []*AgentDefinition
 
+	// Workflows returns workflow handlers registered by this backend, keyed by name.
+	// Workflow skills register handlers via register_workflow() in Starlark or
+	// equivalent APIs in other backends. The runtime wires these into WorkflowRunner
+	// during activation.
+	Workflows() map[string]WorkflowHandler
+
 	// Unload releases resources held by this backend.
 	Unload() error
 }

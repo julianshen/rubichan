@@ -186,7 +186,7 @@ register_workflow("my-workflow", my_workflow)
 	err := engine.Load(manifest, &mockChecker{})
 	require.NoError(t, err)
 
-	workflows := engine.Workflows()
+	workflows := engine.StarlarkWorkflows()
 	require.Len(t, workflows, 1)
 
 	handler, ok := workflows["my-workflow"]

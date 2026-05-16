@@ -1411,15 +1411,27 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 			skills.HookDataExitReason: reason.String(),
 		},
 	}
-	if _, err := a.skillRuntime.DispatchHook(event); err != nil {
+	hookResult, err := a.skillRuntime.DispatchHook(event)
+	if err != nil {
 		a.logger.Warn("%s hook failed: %v", skills.HookOnAfterResponse, err)
 		return blocks
 	}
 
-	// modifyingPhases chains each handler's Modified into event.Data, so the
-	// final transformed text lives in event.Data after Dispatch returns.
-	mutated, ok := event.Data[skills.HookDataResponse].(string)
-	if !ok || mutated == original {
+	// For modifying phases, Dispatch chains each handler's Modified into
+	// event.Data. The final transformed text lives in event.Data.
+	// Also support the direct HookResult.Modified path for backward compat.
+	mutated := ""
+	if hookResult != nil && hookResult.Modified != nil {
+		if v, ok := hookResult.Modified[skills.HookDataResponse].(string); ok {
+			mutated = v
+		}
+	}
+	if mutated == "" {
+		if v, ok := event.Data[skills.HookDataResponse].(string); ok {
+			mutated = v
+		}
+	}
+	if mutated == "" || mutated == original {
 		return blocks
 	}
 	return replaceAssistantText(blocks, mutated)
@@ -2661,6 +2673,31 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 			}
 		}
 	}()
+
+	// Dispatch HookOnBeforeToolCall. If a hook cancels the call, return
+	// an error result immediately without executing the tool.
+	if a.skillRuntime != nil {
+		hookResult, err := a.skillRuntime.DispatchHook(skills.HookEvent{
+			Phase: skills.HookOnBeforeToolCall,
+			Ctx:   ctx,
+			Data: map[string]any{
+				skills.HookDataToolName: tc.Name,
+				skills.HookDataInput:    tc.Input,
+			},
+		})
+		if err != nil {
+			a.logger.Warn("HookOnBeforeToolCall failed for %s: %v", tc.Name, err)
+		} else if hookResult != nil && hookResult.Cancel {
+			cancelMsg := fmt.Sprintf("tool %q cancelled by skill hook", tc.Name)
+			return toolExecResult{
+				toolUseID: tc.ID,
+				content:   cancelMsg,
+				isError:   true,
+				event:     makeToolResultEvent(tc.ID, tc.Name, cancelMsg, "", true),
+			}
+		}
+	}
+
 	emit := func(ev tools.ToolEvent) {
 		a.emit(ctx, ch, TurnEvent{
 			Type: "tool_progress",
@@ -2690,6 +2727,28 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		})
 		result.Content = capped.Content
 	}
+
+	// Dispatch HookOnAfterToolResult to allow skills to modify the result.
+	if a.skillRuntime != nil {
+		hookResult, err := a.skillRuntime.DispatchHook(skills.HookEvent{
+			Phase: skills.HookOnAfterToolResult,
+			Ctx:   ctx,
+			Data: map[string]any{
+				skills.HookDataToolName: tc.Name,
+				skills.HookDataInput:    tc.Input,
+				skills.HookDataContent:  result.Content,
+				skills.HookDataIsError:  result.IsError,
+			},
+		})
+		if err != nil {
+			a.logger.Warn("HookOnAfterToolResult failed for %s: %v", tc.Name, err)
+		} else if hookResult != nil && hookResult.Modified != nil {
+			if modifiedContent, ok := hookResult.Modified[skills.HookDataContent].(string); ok {
+				result.Content = modifiedContent
+			}
+		}
+	}
+
 	return toolExecResult{
 		toolUseID: tc.ID,
 		content:   result.Content,
