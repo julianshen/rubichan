@@ -8,6 +8,7 @@ type MemoryStore interface {
 
 // MemoryEntry represents a single cross-session memory.
 type MemoryEntry struct {
-	Tag     string
-	Content string
+	Tag        string
+	Content    string
+	Normalized string // pre-computed lowercase(tag + " " + content) for relevance scoring
 }

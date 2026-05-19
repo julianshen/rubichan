@@ -8,10 +8,10 @@ import (
 
 func TestSelectRelevantMemories(t *testing.T) {
 	memories := []MemoryEntry{
-		{Tag: "react", Content: "Use functional components with hooks"},
-		{Tag: "go", Content: "Prefer interfaces for testability"},
-		{Tag: "css", Content: "Use CSS modules for scoping"},
-		{Tag: "react-testing", Content: "Use React Testing Library"},
+		{Tag: "react", Content: "Use functional components with hooks", Normalized: "react use functional components with hooks"},
+		{Tag: "go", Content: "Prefer interfaces for testability", Normalized: "go prefer interfaces for testability"},
+		{Tag: "css", Content: "Use CSS modules for scoping", Normalized: "css use css modules for scoping"},
+		{Tag: "react-testing", Content: "Use React Testing Library", Normalized: "react-testing use react testing library"},
 	}
 
 	t.Run("filters by keyword overlap", func(t *testing.T) {

@@ -76,11 +76,11 @@ func TestWithMemoryStoreLoadOnStart(t *testing.T) {
 	a := New(nil, reg, nil, cfg, WithMemoryStore(ms))
 	assert.NotNil(t, a)
 
-	// System prompt should contain the loaded memory
-	prompt := a.conversation.SystemPrompt()
-	assert.Contains(t, prompt, "Prior Session Insights")
-	assert.Contains(t, prompt, "pattern")
-	assert.Contains(t, prompt, "use interfaces")
+	// Memories are stored for per-turn relevance injection, not in static prompt.
+	assert.Len(t, a.allMemories, 1)
+	assert.Equal(t, "pattern", a.allMemories[0].Tag)
+	assert.Equal(t, "use interfaces", a.allMemories[0].Content)
+	assert.NotEmpty(t, a.allMemories[0].Normalized)
 }
 
 func TestWithMemoryStoreEmptyNoSection(t *testing.T) {
@@ -89,8 +89,7 @@ func TestWithMemoryStoreEmptyNoSection(t *testing.T) {
 	ms := &mockMemoryStore{loaded: nil}
 
 	a := New(nil, reg, nil, cfg, WithMemoryStore(ms))
-	prompt := a.conversation.SystemPrompt()
-	assert.NotContains(t, prompt, "Prior Session Insights")
+	assert.Empty(t, a.allMemories)
 }
 
 func TestSaveMemoriesNilStore(t *testing.T) {

@@ -6,9 +6,6 @@ import (
 	"strings"
 )
 
-// Token budget parsing patterns.
-// Shorthand (+500k) anchored to start/end to avoid false positives.
-// Verbose (use/spend 2M tokens) matches anywhere.
 var (
 	shorthandStartRe = regexp.MustCompile(`(?i)^\s*\+(\d+(?:\.\d+)?)\s*(k|m|b)\b`)
 	shorthandEndRe   = regexp.MustCompile(`(?i)\s\+(\d+(?:\.\d+)?)\s*(k|m|b)\s*[.!?]?\s*$`)
@@ -27,36 +24,34 @@ var multipliers = map[string]int{
 //   - Shorthand at end: "do this thing +500k"
 //   - Verbose anywhere: "use 2M tokens" or "spend 500k tokens"
 //
-// Returns the parsed token count and true if a directive was found.
-func ParseTokenBudget(text string) (int, bool) {
+// Returns the parsed token count, the cleaned text (with directive removed),
+// and true if a directive was found.
+func ParseTokenBudget(text string) (int, string, bool) {
+	// Fast path: no "+" in message — only verbose patterns possible.
+	if !strings.Contains(text, "+") {
+		if m := verboseRe.FindStringSubmatch(text); m != nil {
+			stripped := strings.TrimSpace(verboseRe.ReplaceAllString(text, ""))
+			return parseBudgetMatch(m[1], m[2]), stripped, true
+		}
+		return 0, text, false
+	}
+
 	// Try shorthand at start first (most specific).
 	if m := shorthandStartRe.FindStringSubmatch(text); m != nil {
-		return parseBudgetMatch(m[1], m[2]), true
+		stripped := strings.TrimSpace(shorthandStartRe.ReplaceAllString(text, ""))
+		return parseBudgetMatch(m[1], m[2]), stripped, true
 	}
 	// Try shorthand at end.
 	if m := shorthandEndRe.FindStringSubmatch(text); m != nil {
-		// Avoid double-counting when input is just "+500k" (already matched by start).
-		if !shorthandStartRe.MatchString(text) {
-			return parseBudgetMatch(m[1], m[2]), true
-		}
+		stripped := strings.TrimSpace(shorthandEndRe.ReplaceAllString(text, ""))
+		return parseBudgetMatch(m[1], m[2]), stripped, true
 	}
 	// Try verbose pattern.
 	if m := verboseRe.FindStringSubmatch(text); m != nil {
-		return parseBudgetMatch(m[1], m[2]), true
+		stripped := strings.TrimSpace(verboseRe.ReplaceAllString(text, ""))
+		return parseBudgetMatch(m[1], m[2]), stripped, true
 	}
-	return 0, false
-}
-
-// StripTokenBudget removes budget directives from the user message,
-// returning the cleaned text. Preserves surrounding content.
-func StripTokenBudget(text string) string {
-	// Remove shorthand at start.
-	text = shorthandStartRe.ReplaceAllString(text, "")
-	// Remove shorthand at end.
-	text = shorthandEndRe.ReplaceAllString(text, "")
-	// Remove verbose pattern.
-	text = verboseRe.ReplaceAllString(text, "")
-	return strings.TrimSpace(text)
+	return 0, text, false
 }
 
 func parseBudgetMatch(value, suffix string) int {

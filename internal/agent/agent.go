@@ -461,7 +461,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	if a.sessionMemory == nil {
 		a.sessionMemory = NewSessionMemoryService(a.workingDir)
 	}
-	// Load cross-session memories into system prompt.
+	// Load cross-session memories.
 	var memories []MemoryEntry
 	if a.memoryStore != nil {
 		wd := a.WorkingDir()
@@ -469,6 +469,10 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		if err != nil {
 			a.logger.Warn("failed to load memories: %v", err)
 		} else {
+			// Pre-compute normalized text for efficient relevance scoring.
+			for i := range loaded {
+				loaded[i].Normalized = strings.ToLower(loaded[i].Tag + " " + loaded[i].Content)
+			}
 			memories = loaded
 		}
 	}
@@ -702,18 +706,6 @@ func (a *Agent) assembleSystemPromptSections(memories []MemoryEntry) []PromptSec
 		sections = append(sections, PromptSection{
 			Name:      ep.Name,
 			Content:   ep.Content,
-			Cacheable: true,
-		})
-	}
-
-	if len(memories) > 0 {
-		var sb strings.Builder
-		for _, m := range memories {
-			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", m.Tag, m.Content))
-		}
-		sections = append(sections, PromptSection{
-			Name:      "Prior Session Insights",
-			Content:   sb.String(),
 			Cacheable: true,
 		})
 	}
@@ -1019,9 +1011,9 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 
 	// Check for token budget directives in the user message.
 	// Supports: "+500k do this", "do this +500k", "use 2M tokens".
-	if budget, ok := ParseTokenBudget(userMessage); ok {
+	if budget, stripped, ok := ParseTokenBudget(userMessage); ok {
 		a.context.SetBudget(budget)
-		userMessage = StripTokenBudget(userMessage)
+		userMessage = stripped
 	}
 
 	if a.conversation.Len() == 0 {

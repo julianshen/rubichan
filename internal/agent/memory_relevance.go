@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -18,14 +19,12 @@ func SelectRelevantMemories(memories []MemoryEntry, query string, maxResults int
 
 	queryWords := extractWords(query)
 	if len(queryWords) == 0 {
-		// No query words — return first maxResults memories.
 		if maxResults > 0 && maxResults < len(memories) {
 			return memories[:maxResults]
 		}
 		return memories
 	}
 
-	// Score each memory by word overlap with query.
 	type scored struct {
 		memory MemoryEntry
 		score  int
@@ -33,20 +32,16 @@ func SelectRelevantMemories(memories []MemoryEntry, query string, maxResults int
 	scoredMemories := make([]scored, 0, len(memories))
 
 	for _, m := range memories {
-		score := scoreRelevance(m, queryWords)
-		scoredMemories = append(scoredMemories, scored{memory: m, score: score})
+		scoredMemories = append(scoredMemories, scored{
+			memory: m,
+			score:  scoreRelevance(m.Normalized, queryWords),
+		})
 	}
 
-	// Sort by score descending (simple bubble sort for small N).
-	for i := 0; i < len(scoredMemories); i++ {
-		for j := i + 1; j < len(scoredMemories); j++ {
-			if scoredMemories[j].score > scoredMemories[i].score {
-				scoredMemories[i], scoredMemories[j] = scoredMemories[j], scoredMemories[i]
-			}
-		}
-	}
+	sort.Slice(scoredMemories, func(i, j int) bool {
+		return scoredMemories[i].score > scoredMemories[j].score
+	})
 
-	// Limit results.
 	if maxResults > 0 && maxResults < len(scoredMemories) {
 		scoredMemories = scoredMemories[:maxResults]
 	}
@@ -58,12 +53,11 @@ func SelectRelevantMemories(memories []MemoryEntry, query string, maxResults int
 	return result
 }
 
-// scoreRelevance counts how many query words appear in the memory's tag or content.
-func scoreRelevance(m MemoryEntry, queryWords []string) int {
-	text := strings.ToLower(m.Tag + " " + m.Content)
+// scoreRelevance counts how many query words appear in the normalized text.
+func scoreRelevance(normalized string, queryWords []string) int {
 	score := 0
 	for _, word := range queryWords {
-		if strings.Contains(text, word) {
+		if strings.Contains(normalized, word) {
 			score++
 		}
 	}
