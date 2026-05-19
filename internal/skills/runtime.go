@@ -440,6 +440,8 @@ func (rt *Runtime) Activate(name string) error {
 	}
 
 	// Dispatch HookOnActivate after the skill is fully active.
+	// Note: this runs inside the lock to ensure the skill remains active
+	// for the duration of the hook. Hook handlers must be non-blocking.
 	// Fail-open: hook errors are logged but do not fail activation.
 	if _, err := rt.lifecycle.Dispatch(HookEvent{
 		Phase:     HookOnActivate,
@@ -495,20 +497,6 @@ func (rt *Runtime) Deactivate(name string) error {
 		}
 	}
 
-	// Dispatch HookOnDeactivate before unregistering hooks so handlers can fire.
-	// Fail-open: hook errors are logged but do not block deactivation.
-	if _, err := rt.lifecycle.Dispatch(HookEvent{
-		Phase:     HookOnDeactivate,
-		SkillName: name,
-		Ctx:       context.Background(),
-		Data:      map[string]any{"skill_name": name},
-	}); err != nil {
-		log.Printf("[skill-runtime] HookOnDeactivate for %q failed: %v", name, err)
-	}
-
-	// Unregister hooks after dispatch so they don't fire again.
-	rt.lifecycle.Unregister(name)
-
 	// Clean up integration state for all skill types.
 	for _, st := range sk.Manifest.Types {
 		switch st {
@@ -553,10 +541,10 @@ func (rt *Runtime) Deactivate(name string) error {
 		})
 	}
 
-	rt.mu.Unlock()
-
-	// Dispatch HookOnDeactivate after releasing the lock to avoid blocking
-	// other runtime operations while hooks execute.
+	// Dispatch HookOnDeactivate before unregistering hooks so handlers can fire.
+	// Note: this runs inside the lock to ensure the skill remains active
+	// for the duration of the hook. Hook handlers must be non-blocking.
+	// Fail-open: hook errors are logged but do not block deactivation.
 	if _, err := rt.lifecycle.Dispatch(HookEvent{
 		Phase:     HookOnDeactivate,
 		SkillName: name,
@@ -565,6 +553,11 @@ func (rt *Runtime) Deactivate(name string) error {
 	}); err != nil {
 		log.Printf("[skill-runtime] HookOnDeactivate for %q failed: %v", name, err)
 	}
+
+	// Unregister hooks after dispatch so they don't fire again.
+	rt.lifecycle.Unregister(name)
+
+	rt.mu.Unlock()
 
 	if unloadErr != nil {
 		return fmt.Errorf("unload skill %q: %w", name, unloadErr)
