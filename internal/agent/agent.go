@@ -381,6 +381,7 @@ type Agent struct {
 	summarizer          Summarizer
 	scratchpad          *Scratchpad
 	memoryStore         MemoryStore
+	allMemories         []MemoryEntry // all loaded memories for relevance selection
 	knowledgeSelector   kg.ContextSelector
 	customStrategies    bool
 	resultStore         *ResultStore
@@ -471,6 +472,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			memories = loaded
 		}
 	}
+	a.allMemories = memories
 	a.staticPrompts = a.assembleSystemPromptSections(memories)
 	a.conversation = NewConversation(renderPromptSections(a.staticPrompts))
 	// If a summarizer was provided and the caller didn't set custom
@@ -1015,6 +1017,13 @@ func (a *Agent) Generation() int64 {
 func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent, error) {
 	a.turnMu.Lock()
 
+	// Check for token budget directives in the user message.
+	// Supports: "+500k do this", "do this +500k", "use 2M tokens".
+	if budget, ok := ParseTokenBudget(userMessage); ok {
+		a.context.SetBudget(budget)
+		userMessage = StripTokenBudget(userMessage)
+	}
+
 	if a.conversation.Len() == 0 {
 		a.dispatchHook(ctx, skills.HookOnConversationStart, map[string]any{
 			skills.HookDataUserMessage: userMessage,
@@ -1301,6 +1310,18 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 			// Record that these entities were selected and injected into the prompt.
 			// Errors are silently discarded to ensure metrics recording never blocks prompt building.
 			_ = a.knowledgeSelector.RecordUsage(ctx, entities)
+		}
+	}
+
+	// Relevant Memories — select cross-session memories related to the user query.
+	if len(a.allMemories) > 0 && lastUserMessage != "" {
+		relevant := SelectRelevantMemories(a.allMemories, lastUserMessage, 5)
+		if len(relevant) > 0 {
+			var sb strings.Builder
+			for _, m := range relevant {
+				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", m.Tag, m.Content))
+			}
+			pb.AddDynamicSection_UNCACHED("Relevant Memories", sb.String(), "selected per-query from cross-session memory store based on user message content")
 		}
 	}
 

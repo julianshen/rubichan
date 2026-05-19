@@ -3701,6 +3701,23 @@ func TestAgentContextBudget(t *testing.T) {
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, result.BeforeTokens, 0)
 	})
+
+	t.Run("token budget directive updates budget", func(t *testing.T) {
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+		_, err := a.Turn(context.Background(), "+500k analyze this code")
+		require.NoError(t, err)
+		budget := a.ContextBudget()
+		assert.Equal(t, 500_000, budget.Total)
+	})
+
+	t.Run("token budget directive is stripped from message", func(t *testing.T) {
+		a := New(mp, tools.NewRegistry(), autoApprove, cfg)
+		_, err := a.Turn(context.Background(), "+200k do this")
+		require.NoError(t, err)
+		msgs := a.conversation.Messages()
+		require.Len(t, msgs, 1)
+		assert.Equal(t, "do this", msgs[0].Content[0].Text)
+	})
 }
 
 func TestLoadBootstrapContext(t *testing.T) {

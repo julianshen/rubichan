@@ -15,6 +15,7 @@ import (
 
 // SessionMemoryConfig controls when and how session memory is extracted.
 type SessionMemoryConfig struct {
+	Enabled                 bool // Master switch for session memory extraction.
 	MinMessageTokensToInit  int
 	MinTokensBetweenUpdate  int
 	ToolCallsBetweenUpdates int
@@ -23,6 +24,7 @@ type SessionMemoryConfig struct {
 // DefaultSessionMemoryConfig returns the default configuration.
 func DefaultSessionMemoryConfig() SessionMemoryConfig {
 	return SessionMemoryConfig{
+		Enabled:                 true,
 		MinMessageTokensToInit:  10000,
 		MinTokensBetweenUpdate:  5000,
 		ToolCallsBetweenUpdates: 3,
@@ -136,11 +138,15 @@ func (s *SessionMemoryService) Reset() {
 	s.turnsSinceLast = 0
 }
 
-// ShouldExtract returns true if enough turns have passed since last update.
+// ShouldExtract returns true if extraction is enabled and enough turns have
+// passed since the last update.
 func (s *SessionMemoryService) ShouldExtract(messageCount int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if !s.config.Enabled {
+		return false
+	}
 	if messageCount < 3 {
 		return false
 	}

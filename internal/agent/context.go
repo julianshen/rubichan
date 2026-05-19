@@ -205,6 +205,12 @@ func (cm *ContextManager) MeasureUsage(conv *Conversation, systemPrompt, skillPr
 	cm.budget.Conversation = estimateMessageTokens(conv.messages)
 }
 
+// SetBudget updates the total token budget. This is used when the user
+// specifies a custom budget via message directives (e.g., "+500k").
+func (cm *ContextManager) SetBudget(total int) {
+	cm.budget.Total = total
+}
+
 // Budget returns a copy of the current budget for external inspection.
 func (cm *ContextManager) Budget() ContextBudget {
 	return cm.budget

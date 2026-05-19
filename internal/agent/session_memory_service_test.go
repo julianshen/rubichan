@@ -12,6 +12,7 @@ import (
 func TestSessionMemoryService_DefaultConfig(t *testing.T) {
 	s := NewSessionMemoryService("/tmp/test-session")
 	cfg := s.Config()
+	assert.True(t, cfg.Enabled)
 	assert.Equal(t, 3, cfg.ToolCallsBetweenUpdates)
 	assert.Equal(t, 10000, cfg.MinMessageTokensToInit)
 }
@@ -44,6 +45,22 @@ func TestShouldExtract(t *testing.T) {
 	s.RecordTurn()
 	s.RecordTurn()
 	assert.True(t, s.ShouldExtract(5))
+}
+
+func TestShouldExtract_Disabled(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSessionMemoryService(dir)
+	_, _ = s.writeInitialTemplate()
+
+	cfg := s.Config()
+	cfg.Enabled = false
+	s.SetConfig(cfg)
+
+	// Even with enough turns, extraction is disabled.
+	s.RecordTurn()
+	s.RecordTurn()
+	s.RecordTurn()
+	assert.False(t, s.ShouldExtract(5))
 }
 
 func TestTruncateSessionMemoryForCompact(t *testing.T) {
