@@ -542,8 +542,9 @@ func (rt *Runtime) Deactivate(name string) error {
 	}
 
 	// Dispatch HookOnDeactivate before unregistering hooks so handlers can fire.
-	// Note: this runs inside the lock to ensure the skill remains active
-	// for the duration of the hook. Hook handlers must be non-blocking.
+	// Note: the skill is already inactive at this point (transitioned, backend
+	// cleared, removed from active map), but hooks are still registered.
+	// Hook handlers must be non-blocking.
 	// Fail-open: hook errors are logged but do not block deactivation.
 	if _, err := rt.lifecycle.Dispatch(HookEvent{
 		Phase:     HookOnDeactivate,
