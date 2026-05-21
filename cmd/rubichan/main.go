@@ -743,6 +743,7 @@ func (*noopPromptBackend) Tools() []tools.Tool                            { retu
 func (*noopPromptBackend) Hooks() map[skills.HookPhase]skills.HookHandler { return nil }
 func (*noopPromptBackend) Commands() []commands.SlashCommand              { return nil }
 func (*noopPromptBackend) Agents() []*skills.AgentDefinition              { return nil }
+func (*noopPromptBackend) Workflows() map[string]skills.WorkflowHandler    { return nil }
 func (*noopPromptBackend) Unload() error                                  { return nil }
 
 // createSkillRuntime creates and configures a skill runtime with built-in

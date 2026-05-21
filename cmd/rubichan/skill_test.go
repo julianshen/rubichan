@@ -1597,6 +1597,7 @@ func (b *stubBackend) Tools() []tools.Tool                                      
 func (b *stubBackend) Commands() []commands.SlashCommand                             { return nil }
 func (b *stubBackend) Agents() []*skills.AgentDefinition                             { return nil }
 func (b *stubBackend) Hooks() map[skills.HookPhase]skills.HookHandler                { return nil }
+func (b *stubBackend) Workflows() map[string]skills.WorkflowHandler                  { return nil }
 
 // stubPermChecker satisfies PermissionChecker for adapter tests.
 type stubPermChecker struct{}
