@@ -420,6 +420,7 @@ type Agent struct {
 	autoDreamSvc        *AutoDreamService
 	collapseStore       *CollapseStore
 	cacheBreakDetector  *CacheBreakDetector
+	windowManager       *ContextWindowManager
 }
 
 const maxUIRequestInputBytes = 2048
@@ -479,6 +480,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	a.allMemories = memories
 	a.staticPrompts = a.assembleSystemPromptSections(memories)
 	a.conversation = NewConversation(renderPromptSections(a.staticPrompts))
+	a.windowManager = NewContextWindowManager(a.context)
 	// If a summarizer was provided and the caller didn't set custom
 	// strategies, insert session memory compaction between tool clearing
 	// and truncation. SessionMemoryCompactor preserves API invariants
@@ -743,7 +745,7 @@ func (ac *agentCompactor) ForceCompact(ctx context.Context) tools.CompactResult 
 func newContextManagerFromConfig(cfg *config.Config) *ContextManager {
 	cm := NewContextManager(cfg.Agent.ContextBudget, cfg.Agent.MaxOutputTokens)
 	if cfg.Agent.CompactTrigger > 0 || cfg.Agent.HardBlock > 0 {
-		cm.SetThresholds(cfg.Agent.CompactTrigger, cfg.Agent.HardBlock)
+		cm.SetThresholds(0, 0, cfg.Agent.CompactTrigger, cfg.Agent.HardBlock)
 	}
 	return cm
 }
@@ -1570,6 +1572,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Skill prompt fragments are included in systemPrompt via PromptBuilder
 		// but tracked separately for budget visibility.
 		a.context.MeasureUsage(a.conversation, systemPrompt, skillPromptText, activeTools)
+		budget = a.context.Budget()
+		a.windowManager.RecordUsage(budget.UsedTokens())
 
 		// If at hard block threshold, force compaction before proceeding.
 		if a.context.IsBlocked(a.conversation) {
@@ -2099,8 +2103,12 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 		}
 
-		if nudge := a.context.BudgetNudge(a.conversation); nudge != "" && !ls.nudgeEmitted {
-			a.conversation.AddUser(nudge)
+		// Re-measure after tool execution so the context window status reflects
+		// the current conversation state (tool results may have grown messages).
+		a.context.MeasureUsage(a.conversation, systemPrompt, skillPromptText, activeTools)
+		status := a.windowManager.Status()
+		if status.WarningLevel != WarningNone && !ls.nudgeEmitted {
+			a.conversation.AddUser(status.Advice)
 			ls.nudgeEmitted = true
 		}
 

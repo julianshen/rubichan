@@ -340,50 +340,6 @@ func TestVerdictContextBlockMultipleTools(t *testing.T) {
 	assert.Contains(t, result, "100%")    // file success rate
 }
 
-func TestContextManager_BudgetNudge_BelowThreshold(t *testing.T) {
-	cm := NewContextManager(100000, 0)
-	conv := NewConversation("system prompt")
-	assert.Empty(t, cm.BudgetNudge(conv), "should not nudge when usage is low")
-}
-
-func TestContextManager_BudgetNudge_InRange(t *testing.T) {
-	cm := NewContextManager(100, 0)
-	conv := NewConversation("short")
-	for i := 0; i < 4; i++ {
-		conv.AddUser(strings.Repeat("x", 20))
-	}
-	nudge := cm.BudgetNudge(conv)
-	assert.NotEmpty(t, nudge, "should nudge when usage is 70-95%%")
-	assert.Contains(t, nudge, "Context usage:")
-}
-
-func TestContextManager_BudgetNudge_AboveCompactTrigger(t *testing.T) {
-	cm := NewContextManager(100, 0)
-	conv := NewConversation("short")
-	for i := 0; i < 30; i++ {
-		conv.AddUser(strings.Repeat("x", 20))
-	}
-	nudge := cm.BudgetNudge(conv)
-	assert.Empty(t, nudge, "should not nudge when usage is above compact trigger (compact handles it)")
-}
-
-func TestBudgetNudge_NudgeEmittedOnce(t *testing.T) {
-	ls := newLoopState(50, 0, 8192)
-	cm := NewContextManager(100, 0)
-	conv := NewConversation("short")
-	for i := 0; i < 4; i++ {
-		conv.AddUser(strings.Repeat("x", 20))
-	}
-	nudge := cm.BudgetNudge(conv)
-	assert.NotEmpty(t, nudge)
-	shouldEmit := nudge != "" && !ls.nudgeEmitted
-	assert.True(t, shouldEmit, "first call should emit")
-
-	ls.nudgeEmitted = true
-	shouldEmit = nudge != "" && !ls.nudgeEmitted
-	assert.False(t, shouldEmit, "second call should be suppressed")
-}
-
 func TestContextManagerWithCollapseStore(t *testing.T) {
 	cm := NewContextManager(100000, 4096)
 	store := NewCollapseStore(true)

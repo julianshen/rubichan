@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/session"
@@ -28,9 +29,12 @@ const MaxConsecutiveCompactionFailures = 3
 // ContextManager tracks token usage and compacts conversation history
 // to stay within a configured budget using a chain of strategies.
 type ContextManager struct {
+	mu                  sync.RWMutex // protects budget and thresholds
 	budget              ContextBudget
 	compactTrigger      float64 // fraction of effective window to trigger compaction (default 0.95)
 	hardBlock           float64 // fraction of effective window to block new messages (default 0.98)
+	warnThreshold       float64 // fraction for WarningLow (default 0.70)
+	cautionThreshold    float64 // fraction for WarningMedium (default 0.80)
 	strategies          []CompactionStrategy
 	consecutiveFailures int // circuit breaker counter for repeated no-shrink Compact calls
 	collapseStore       *CollapseStore
@@ -45,8 +49,10 @@ func NewContextManager(totalBudget, maxOutputTokens int) *ContextManager {
 			Total:           totalBudget,
 			MaxOutputTokens: maxOutputTokens,
 		},
-		compactTrigger: 0.95,
-		hardBlock:      0.98,
+		compactTrigger:   0.95,
+		hardBlock:        0.98,
+		warnThreshold:    0.70,
+		cautionThreshold: 0.80,
 		strategies: []CompactionStrategy{
 			NewToolResultClearingStrategy(),
 			&truncateStrategy{},
@@ -54,9 +60,17 @@ func NewContextManager(totalBudget, maxOutputTokens int) *ContextManager {
 	}
 }
 
-// SetThresholds overrides the compaction trigger and hard block ratios.
+// SetThresholds overrides warning and compaction ratios.
 // Values must be between 0 and 1; invalid values are silently ignored.
-func (cm *ContextManager) SetThresholds(compactTrigger, hardBlock float64) {
+func (cm *ContextManager) SetThresholds(warnThreshold, cautionThreshold, compactTrigger, hardBlock float64) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if warnThreshold > 0 && warnThreshold <= 1 {
+		cm.warnThreshold = warnThreshold
+	}
+	if cautionThreshold > 0 && cautionThreshold <= 1 {
+		cm.cautionThreshold = cautionThreshold
+	}
 	if compactTrigger > 0 && compactTrigger <= 1 {
 		cm.compactTrigger = compactTrigger
 	}
@@ -65,9 +79,19 @@ func (cm *ContextManager) SetThresholds(compactTrigger, hardBlock float64) {
 	}
 }
 
+// Thresholds returns the current warning ratios: warnThreshold, cautionThreshold,
+// compactTrigger, and hardBlock.
+func (cm *ContextManager) Thresholds() (warnThreshold, cautionThreshold, compactTrigger, hardBlock float64) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.warnThreshold, cm.cautionThreshold, cm.compactTrigger, cm.hardBlock
+}
+
 // SetStrategies replaces the compaction strategy chain. An empty or nil
 // slice restores the default chain (tool clearing + truncation).
 func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
 	if len(strategies) == 0 {
 		cm.strategies = []CompactionStrategy{
 			NewToolResultClearingStrategy(),
@@ -80,14 +104,18 @@ func (cm *ContextManager) SetStrategies(strategies []CompactionStrategy) {
 
 // SetCollapseStore attaches a collapse store for staged archival.
 func (cm *ContextManager) SetCollapseStore(store *CollapseStore) {
+	cm.mu.Lock()
 	cm.collapseStore = store
+	cm.mu.Unlock()
 }
 
 // ShouldCompact returns true when the estimated token count exceeds the
 // proactive trigger threshold (default 95% of effective window), allowing
 // compaction to start before the conversation fully exhausts the context window.
 func (cm *ContextManager) ShouldCompact(conv *Conversation) bool {
+	cm.mu.RLock()
 	threshold := int(float64(cm.budget.EffectiveWindow()) * cm.compactTrigger)
+	cm.mu.RUnlock()
 	return cm.EstimateTokens(conv) > threshold
 }
 
@@ -95,7 +123,9 @@ func (cm *ContextManager) ShouldCompact(conv *Conversation) bool {
 // threshold (default 98% of effective window), indicating new messages should
 // not be added.
 func (cm *ContextManager) IsBlocked(conv *Conversation) bool {
+	cm.mu.RLock()
 	threshold := int(float64(cm.budget.EffectiveWindow()) * cm.hardBlock)
+	cm.mu.RUnlock()
 	return cm.EstimateTokens(conv) > threshold
 }
 
@@ -110,7 +140,9 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) error
 	}
 	// Subtract system prompt overhead so strategies only need to fit messages.
 	systemTokens := len(conv.SystemPrompt())/4 + 10
+	cm.mu.RLock()
 	messageBudget := cm.budget.EffectiveWindow() - systemTokens
+	cm.mu.RUnlock()
 	if messageBudget < 0 {
 		messageBudget = 0
 	}
@@ -149,6 +181,8 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) error
 
 	// Real progress requires BOTH a non-erroring strategy AND an actual
 	// token reduction. Silent no-op strategies must not reset the breaker.
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
 	if anyStrategySucceeded && shrank {
 		cm.consecutiveFailures = 0
 		return nil
@@ -193,27 +227,36 @@ func (cm *ContextManager) MeasureUsage(conv *Conversation, systemPrompt, skillPr
 	if skillPrompts != "" {
 		skillTokens = len(skillPrompts)/4 + 10
 	}
-	cm.budget.SkillPrompts = skillTokens
-	cm.budget.SystemPrompt = len(systemPrompt)/4 + 10 - skillTokens
 
 	toolTokens := 0
 	for _, td := range toolDefs {
 		toolTokens += len(td.Name)/4 + len(td.Description)/4 + len(td.InputSchema)/4 + 30
 	}
-	cm.budget.ToolDescriptions = toolTokens
 
-	cm.budget.Conversation = estimateMessageTokens(conv.messages)
+	convTokens := estimateMessageTokens(conv.messages)
+
+	cm.mu.Lock()
+	cm.budget.SkillPrompts = skillTokens
+	cm.budget.SystemPrompt = len(systemPrompt)/4 + 10 - skillTokens
+	cm.budget.ToolDescriptions = toolTokens
+	cm.budget.Conversation = convTokens
+	cm.mu.Unlock()
 }
 
 // SetBudget updates the total token budget. This is used when the user
 // specifies a custom budget via message directives (e.g., "+500k").
 func (cm *ContextManager) SetBudget(total int) {
+	cm.mu.Lock()
 	cm.budget.Total = total
+	cm.mu.Unlock()
 }
 
 // Budget returns a copy of the current budget for external inspection.
 func (cm *ContextManager) Budget() ContextBudget {
-	return cm.budget
+	cm.mu.RLock()
+	b := cm.budget
+	cm.mu.RUnlock()
+	return b
 }
 
 // ForceCompact runs the compaction strategy chain unconditionally,
@@ -231,7 +274,9 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 	}
 
 	systemTokens := len(conv.SystemPrompt())/4 + 10
+	cm.mu.RLock()
 	messageBudget := cm.budget.EffectiveWindow() - systemTokens
+	cm.mu.RUnlock()
 	if messageBudget < 0 {
 		messageBudget = 0
 	}
@@ -281,24 +326,10 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 
 // ExceedsBudget returns true if the estimated token count exceeds the effective window.
 func (cm *ContextManager) ExceedsBudget(conv *Conversation) bool {
-	return cm.EstimateTokens(conv) > cm.budget.EffectiveWindow()
-}
-
-// BudgetNudge returns a budget awareness message if context usage is
-// between 70% and the compact trigger threshold. Returns empty string
-// when no nudge is needed (below 70% or already compacting).
-func (cm *ContextManager) BudgetNudge(conv *Conversation) string {
-	used := cm.EstimateTokens(conv)
-	window := cm.budget.EffectiveWindow()
-	if window <= 0 {
-		return ""
-	}
-	pct := float64(used) / float64(window)
-	if pct < 0.70 || pct >= cm.compactTrigger {
-		return ""
-	}
-	return fmt.Sprintf("Context usage: %d%% (%d/%d tokens). You have budget remaining — keep working but be mindful of context length.",
-		int(pct*100), used, window)
+	cm.mu.RLock()
+	ew := cm.budget.EffectiveWindow()
+	cm.mu.RUnlock()
+	return cm.EstimateTokens(conv) > ew
 }
 
 // Truncate removes the oldest messages until the conversation is within budget.
