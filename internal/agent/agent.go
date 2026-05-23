@@ -1104,6 +1104,11 @@ func (a *Agent) ContextBudget() agentsdk.ContextBudget {
 	return a.context.Budget()
 }
 
+// ContextWindowStatus returns the current context window status for TUI display.
+func (a *Agent) ContextWindowStatus() ContextWindowStatus {
+	return a.windowManager.Status()
+}
+
 // ForceCompact triggers manual compaction and returns before/after metrics.
 // The error return is always nil currently — reserved for future strategy errors.
 func (a *Agent) ForceCompact(ctx context.Context) (agentsdk.CompactResult, error) {

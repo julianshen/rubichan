@@ -32,22 +32,23 @@ type statusSegment struct {
 // StatusBar displays model, token usage, turn count, estimated cost,
 // git branch, and turn elapsed time.
 type StatusBar struct {
-	mu            sync.Mutex
-	width         int
-	model         string
-	inputTokens   int
-	maxTokens     int
-	turn          int
-	maxTurns      int
-	cost          float64
-	errorCount    int
-	wikiStage     string
-	gitBranch     string
-	elapsed       time.Duration
-	skillSummary  string
-	subagentName  string
-	taskProgress  string
-	runningAgents []AgentStatus
+	mu             sync.Mutex
+	width          int
+	model          string
+	inputTokens    int
+	maxTokens      int
+	turn           int
+	maxTurns       int
+	cost           float64
+	errorCount     int
+	wikiStage      string
+	gitBranch      string
+	elapsed        time.Duration
+	skillSummary   string
+	subagentName   string
+	taskProgress   string
+	contextWarning string
+	runningAgents  []AgentStatus
 }
 
 // NewStatusBar creates a new StatusBar with the given terminal width.
@@ -106,6 +107,10 @@ func (s *StatusBar) ClearTaskProgress() { s.taskProgress = "" }
 // Pass empty string to clear.
 func (s *StatusBar) SetSubagent(name string) { s.subagentName = name }
 
+// SetContextWarning sets a context window warning message for display.
+// Pass empty string to clear.
+func (s *StatusBar) SetContextWarning(msg string) { s.contextWarning = msg }
+
 // SetRunningAgents updates the list of currently running agents for display.
 func (s *StatusBar) SetRunningAgents(agents []AgentStatus) {
 	s.mu.Lock()
@@ -137,6 +142,12 @@ func (s *StatusBar) View() string {
 	if s.errorCount > 0 {
 		badge := styleErrorBadge.Render(fmt.Sprintf("⚠ %d", s.errorCount))
 		segments = append(segments, statusSegment{badge, priorityAlways})
+	}
+	// Add context window warning when usage is elevated.
+	if s.contextWarning != "" {
+		segments = append(segments, statusSegment{
+			styleErrorBadge.Render(s.contextWarning), priorityHigh,
+		})
 	}
 	if s.gitBranch != "" {
 		segments = append(segments, statusSegment{

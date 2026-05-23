@@ -820,6 +820,14 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		}
 		m.statusBar.SetTokens(msg.InputTokens, contextBudget)
 		m.statusBar.SetTurn(m.turnCount, m.maxTurns)
+		if m.agent != nil {
+			cwStatus := m.agent.ContextWindowStatus()
+			if cwStatus.WarningLevel != agent.WarningNone {
+				m.statusBar.SetContextWarning(cwStatus.Advice)
+			} else {
+				m.statusBar.SetContextWarning("")
+			}
+		}
 		cost := EstimateCost(m.modelName, msg.InputTokens, msg.OutputTokens)
 		m.totalCost += cost
 		m.statusBar.SetCost(m.totalCost)
