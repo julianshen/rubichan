@@ -107,9 +107,14 @@ func (s *StatusBar) ClearTaskProgress() { s.taskProgress = "" }
 // Pass empty string to clear.
 func (s *StatusBar) SetSubagent(name string) { s.subagentName = name }
 
-// SetContextWarning sets a context window warning message for display.
-// Pass empty string to clear.
-func (s *StatusBar) SetContextWarning(msg string) { s.contextWarning = msg }
+// SetContextWarning sets a context window warning badge for display.
+// Pass empty string to clear. The badge should be short (e.g. "Ctx: 85%")
+// to fit in the compact status bar.
+func (s *StatusBar) SetContextWarning(msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.contextWarning = msg
+}
 
 // SetRunningAgents updates the list of currently running agents for display.
 func (s *StatusBar) SetRunningAgents(agents []AgentStatus) {

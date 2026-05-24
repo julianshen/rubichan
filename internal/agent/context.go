@@ -61,7 +61,9 @@ func NewContextManager(totalBudget, maxOutputTokens int) *ContextManager {
 }
 
 // SetThresholds overrides warning and compaction ratios.
-// Values must be between 0 and 1; invalid values are silently ignored.
+// Values must be between 0 and 1 and in ascending order:
+// warnThreshold <= cautionThreshold <= compactTrigger <= hardBlock.
+// Invalid or out-of-order values are silently ignored.
 func (cm *ContextManager) SetThresholds(warnThreshold, cautionThreshold, compactTrigger, hardBlock float64) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -77,6 +79,16 @@ func (cm *ContextManager) SetThresholds(warnThreshold, cautionThreshold, compact
 	if hardBlock > 0 && hardBlock <= 1 {
 		cm.hardBlock = hardBlock
 	}
+	// Enforce ascending order to prevent nonsensical level jumps.
+	if cm.warnThreshold > cm.cautionThreshold {
+		cm.warnThreshold, cm.cautionThreshold = cm.cautionThreshold, cm.warnThreshold
+	}
+	if cm.cautionThreshold > cm.compactTrigger {
+		cm.cautionThreshold, cm.compactTrigger = cm.compactTrigger, cm.cautionThreshold
+	}
+	if cm.compactTrigger > cm.hardBlock {
+		cm.compactTrigger, cm.hardBlock = cm.hardBlock, cm.compactTrigger
+	}
 }
 
 // Thresholds returns the current warning ratios: warnThreshold, cautionThreshold,
@@ -85,6 +97,14 @@ func (cm *ContextManager) Thresholds() (warnThreshold, cautionThreshold, compact
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.warnThreshold, cm.cautionThreshold, cm.compactTrigger, cm.hardBlock
+}
+
+// BudgetWithThresholds returns a copy of the current budget and all threshold
+// ratios under a single critical section, preventing torn reads.
+func (cm *ContextManager) BudgetWithThresholds() (ContextBudget, float64, float64, float64, float64) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.budget, cm.warnThreshold, cm.cautionThreshold, cm.compactTrigger, cm.hardBlock
 }
 
 // SetStrategies replaces the compaction strategy chain. An empty or nil

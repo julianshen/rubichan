@@ -3,7 +3,6 @@ package agent
 import (
 	"fmt"
 	"math"
-	"sync"
 )
 
 type ContextWindowStatus struct {
@@ -32,38 +31,25 @@ func (w WarningLevel) String() string {
 }
 
 type ContextWindowManager struct {
-	cm      *ContextManager
-	mu      sync.RWMutex
-	history []usageSample
-}
-
-type usageSample struct {
-	usedTokens int
+	cm *ContextManager
 }
 
 func NewContextWindowManager(cm *ContextManager) *ContextWindowManager {
 	if cm == nil {
 		panic("NewContextWindowManager: cm is nil")
 	}
-	return &ContextWindowManager{
-		cm:      cm,
-		history: make([]usageSample, 0, 100),
-	}
+	return &ContextWindowManager{cm: cm}
 }
 
 func (cwm *ContextWindowManager) RecordUsage(usedTokens int) {
-	cwm.mu.Lock()
-	cwm.history = append(cwm.history, usageSample{usedTokens: usedTokens})
-	if len(cwm.history) > 100 {
-		cwm.history = cwm.history[len(cwm.history)-100:]
-	}
-	cwm.mu.Unlock()
+	// No-op: history tracking removed as YAGNI. Re-add when a consumer exists.
+	_ = usedTokens
 }
 
 func (cwm *ContextWindowManager) Status() ContextWindowStatus {
-	budget := cwm.cm.Budget()
+	budget, warn, caution, trigger, hardBlock := cwm.cm.BudgetWithThresholds()
 	pct := budget.UsedPercentage()
-	level := cwm.warningLevelForPercentage(pct)
+	level := warningLevelForPercentage(pct, warn, caution, trigger, hardBlock)
 
 	return ContextWindowStatus{
 		ContextBudget: budget,
@@ -72,9 +58,7 @@ func (cwm *ContextWindowManager) Status() ContextWindowStatus {
 	}
 }
 
-func (cwm *ContextWindowManager) warningLevelForPercentage(pct float64) WarningLevel {
-	warn, caution, trigger, hardBlock := cwm.cm.Thresholds()
-
+func warningLevelForPercentage(pct, warn, caution, trigger, hardBlock float64) WarningLevel {
 	switch {
 	case pct >= hardBlock:
 		return WarningCritical

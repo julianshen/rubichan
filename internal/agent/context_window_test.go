@@ -102,6 +102,15 @@ func TestContextWindowManager_Status_WarningLevels(t *testing.T) {
 			wantLevel:  WarningCritical,
 			wantAdvice: true,
 		},
+		{
+			name: "over budget",
+			setup: func(cm *ContextManager) {
+				cm.SetBudget(1000)
+				cm.budget.SystemPrompt = 1200
+			},
+			wantLevel:  WarningCritical,
+			wantAdvice: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,27 +131,40 @@ func TestContextWindowManager_Status_WarningLevels(t *testing.T) {
 	}
 }
 
-func TestContextWindowManager_RecordUsage(t *testing.T) {
+func TestContextWindowManager_Status_CustomThresholds(t *testing.T) {
 	cm := NewContextManager(1000, 100)
 	cwm := NewContextWindowManager(cm)
+	cm.SetThresholds(0.50, 0.60, 0.90, 0.95)
+	cm.SetBudget(1000)
 
-	for i := 0; i < 10; i++ {
-		cwm.RecordUsage(i * 100)
-	}
+	// At custom warn threshold (0.50 = 450/900) -> Low
+	cm.budget.SystemPrompt = 450
+	cm.budget.Conversation = 0
+	assert.Equal(t, WarningLow, cwm.Status().WarningLevel)
 
-	cwm.mu.RLock()
-	assert.Len(t, cwm.history, 10)
-	assert.Equal(t, 900, cwm.history[9].usedTokens)
-	cwm.mu.RUnlock()
+	// Just below custom caution threshold -> Low
+	cm.budget.SystemPrompt = 539
+	assert.Equal(t, WarningLow, cwm.Status().WarningLevel)
 
-	// Test cap at 100 samples.
-	for i := 0; i < 200; i++ {
-		cwm.RecordUsage(i)
-	}
-	cwm.mu.RLock()
-	assert.Len(t, cwm.history, 100)
-	assert.Equal(t, 199, cwm.history[99].usedTokens) // most recent
-	cwm.mu.RUnlock()
+	// At custom caution threshold (0.60 = 540/900) -> Medium
+	cm.budget.SystemPrompt = 540
+	assert.Equal(t, WarningMedium, cwm.Status().WarningLevel)
+
+	// Just below custom trigger -> Medium
+	cm.budget.SystemPrompt = 809
+	assert.Equal(t, WarningMedium, cwm.Status().WarningLevel)
+
+	// At custom trigger (0.90 = 810/900) -> High
+	cm.budget.SystemPrompt = 810
+	assert.Equal(t, WarningHigh, cwm.Status().WarningLevel)
+
+	// Just below custom hardBlock -> High
+	cm.budget.SystemPrompt = 854
+	assert.Equal(t, WarningHigh, cwm.Status().WarningLevel)
+
+	// At custom hardBlock (0.95 = 855/900) -> Critical
+	cm.budget.SystemPrompt = 855
+	assert.Equal(t, WarningCritical, cwm.Status().WarningLevel)
 }
 
 func TestWarningLevel_String(t *testing.T) {
@@ -152,14 +174,25 @@ func TestWarningLevel_String(t *testing.T) {
 	assert.Equal(t, "high", WarningHigh.String())
 	assert.Equal(t, "critical", WarningCritical.String())
 	assert.Equal(t, "unknown", WarningLevel(99).String())
+	assert.Equal(t, "unknown", WarningLevel(-1).String())
 }
 
 func TestAdviceForLevel(t *testing.T) {
 	assert.Contains(t, adviceForLevel(WarningCritical, 0.99), "99%")
+	assert.Contains(t, adviceForLevel(WarningCritical, 0.99), "compacted aggressively")
 	assert.Contains(t, adviceForLevel(WarningHigh, 0.96), "96%")
+	assert.Contains(t, adviceForLevel(WarningHigh, 0.96), "auto-compaction")
 	assert.Contains(t, adviceForLevel(WarningMedium, 0.85), "85%")
+	assert.Contains(t, adviceForLevel(WarningMedium, 0.85), "approaching limit")
 	assert.Contains(t, adviceForLevel(WarningLow, 0.75), "75%")
+	assert.Contains(t, adviceForLevel(WarningLow, 0.75), "healthy but growing")
 	assert.Empty(t, adviceForLevel(WarningNone, 0.5))
+}
+
+func TestAdviceForLevel_Rounding(t *testing.T) {
+	assert.Contains(t, adviceForLevel(WarningHigh, 0.994), "99%")
+	assert.Contains(t, adviceForLevel(WarningCritical, 0.995), "100%")
+	assert.Contains(t, adviceForLevel(WarningCritical, 1.0), "100%")
 }
 
 func TestNewContextWindowManager_NilPanics(t *testing.T) {

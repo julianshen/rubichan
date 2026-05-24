@@ -823,7 +823,7 @@ func (m *Model) handleTurnEvent(msg TurnEventMsg) (tea.Model, tea.Cmd) {
 		if m.agent != nil {
 			cwStatus := m.agent.ContextWindowStatus()
 			if cwStatus.WarningLevel != agent.WarningNone {
-				m.statusBar.SetContextWarning(cwStatus.Advice)
+				m.statusBar.SetContextWarning(fmt.Sprintf("Ctx %s", cwStatus.WarningLevel))
 			} else {
 				m.statusBar.SetContextWarning("")
 			}
