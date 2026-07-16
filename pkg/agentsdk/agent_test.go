@@ -606,7 +606,7 @@ func TestAgentStreamingToolError(t *testing.T) {
 	}
 	require.Len(t, toolResults, 1)
 	assert.True(t, toolResults[0].ToolResult.IsError)
-	assert.Contains(t, toolResults[0].ToolResult.Content, "tool error")
+	assert.Contains(t, toolResults[0].ToolResult.Content, "tool execution error")
 }
 
 func TestAgentToolExecuteError(t *testing.T) {
@@ -629,7 +629,7 @@ func TestAgentToolExecuteError(t *testing.T) {
 	}
 	require.Len(t, toolResults, 1)
 	assert.True(t, toolResults[0].ToolResult.IsError)
-	assert.Contains(t, toolResults[0].ToolResult.Content, "tool error")
+	assert.Contains(t, toolResults[0].ToolResult.Content, "tool execution error")
 }
 
 func TestAgentApprovalCheckerApprovalFuncError(t *testing.T) {
