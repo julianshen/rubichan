@@ -2627,18 +2627,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		}
 	}
 
-	emit := func(ev tools.ToolEvent) {
-		a.emit(ctx, ch, TurnEvent{
-			Type: "tool_progress",
-			ToolProgress: &ToolProgressEvent{
-				ID:      tc.ID,
-				Name:    tc.Name,
-				Stage:   ev.Stage,
-				Content: ev.Content,
-				IsError: ev.IsError,
-			},
-		})
-	}
+	emit := agentsdk.MakeToolProgressEmitter(tc.ID, tc.Name, func(ev TurnEvent) { a.emit(ctx, ch, ev) })
 	result := a.pipeline.Execute(toolexec.WithToolEventEmitter(ctx, emit), toolexec.ToolCall{
 		ID: tc.ID, Name: tc.Name, Input: tc.Input,
 	})
@@ -2708,30 +2697,14 @@ func (a *Agent) drainWakeEvents(ctx context.Context, ch chan<- TurnEvent) {
 }
 
 func makeToolResultEvent(id, name, content, displayContent string, isError bool) TurnEvent {
-	return TurnEvent{
-		Type: "tool_result",
-		ToolResult: &ToolResultEvent{
-			ID:             id,
-			Name:           name,
-			Content:        content,
-			DisplayContent: displayContent,
-			IsError:        isError,
-		},
-	}
+	return agentsdk.MakeToolResultEvent(id, name, content, displayContent, isError)
 }
 
 // makeToolCallEvent builds a tool_call TurnEvent from a ToolUseBlock.
 // All "about to run this tool" emission sites go through here so the
-// wire shape stays uniform.
+// wire shape stays uniform. Delegates to the shared SDK constructor.
 func makeToolCallEvent(tc provider.ToolUseBlock) TurnEvent {
-	return TurnEvent{
-		Type: "tool_call",
-		ToolCall: &ToolCallEvent{
-			ID:    tc.ID,
-			Name:  tc.Name,
-			Input: tc.Input,
-		},
-	}
+	return agentsdk.MakeToolCallEvent(tc)
 }
 
 // LoadBootstrapContext reads and parses the bootstrap metadata file.
