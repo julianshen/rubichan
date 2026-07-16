@@ -1717,13 +1717,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 	processStream:
-		// Accumulate assistant content blocks and track tool calls
-		var blocks []provider.ContentBlock
-		var pendingTools []provider.ToolUseBlock
-		var currentTextBuf string
+		// Accumulate assistant content blocks and track tool calls via the
+		// shared StreamAccumulator (pkg/agentsdk).
 		ls.resetPerTurn()
-		var currentTool *provider.ToolUseBlock
-		var toolInputBuf string
 		var thinkingBuf string
 		var stopReason string
 
@@ -1734,83 +1730,58 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return a.executeSingleTool(sctx, ch, tc)
 		})
 
-		finalizeTool := func() {
-			if currentTool != nil {
-				if toolInputBuf != "" {
-					currentTool.Input = json.RawMessage(toolInputBuf)
-				}
-				pendingTools = append(pendingTools, *currentTool)
-				blocks = append(blocks, provider.ContentBlock{
-					Type:  "tool_use",
-					ID:    currentTool.ID,
-					Name:  currentTool.Name,
-					Input: currentTool.Input,
-				})
-
-				// Streaming dispatch: if the tool is concurrency-safe
-				// and auto-approved, start executing it now so it runs
-				// in parallel with the remaining model stream. The
-				// marker check comes first so non-eligible tools skip
-				// the approval scan entirely — approval can be expensive
-				// when a security scanner is wired in.
-				isUnsafe := true
-				isWrite := false
-				if tool, ok := a.tools.Get(currentTool.Name); ok {
-					dispatched := false
-					if ic, icok := tool.(agentsdk.InputConcurrencySafeTool); icok {
-						isWrite = isWriteOperationForInput(ic, currentTool.Input)
-						if ic.IsConcurrencySafeForInput(currentTool.Input) {
-							approval := a.approvalResultForTool(*currentTool)
-							if approval == AutoApproved || approval == TrustRuleApproved {
-								dispatched = execStream.Dispatch(ctx, *currentTool)
-							}
-							isUnsafe = false
-						}
-					} else if cs, csok := tool.(agentsdk.ConcurrencySafeTool); csok && cs.IsConcurrencySafe() {
-						isWrite = isWriteOperation(tool, currentTool.Input)
-						approval := a.approvalResultForTool(*currentTool)
-						if approval == AutoApproved || approval == TrustRuleApproved {
-							dispatched = execStream.Dispatch(ctx, *currentTool)
-						}
-						isUnsafe = false
-					} else {
-						// Not concurrency-safe — still check write status for barrier.
-						isWrite = isWriteOperation(tool, currentTool.Input)
-					}
-					if dispatched {
-						currentTool = nil
-					}
-					// A write tool acts as an ordering barrier even when dispatched:
-					// subsequent safe tools must wait for it to complete.
-					if isWrite {
-						execStream.SetBarrier()
-					}
-				}
-
-				if currentTool != nil && isUnsafe {
-					execStream.SetBarrier()
-				}
-
-				currentTool = nil
-				toolInputBuf = ""
+		acc := agentsdk.NewStreamAccumulator()
+		// Commit text only if it is not purely whitespace. This prevents
+		// whitespace-only responses from polluting the conversation. Note:
+		// LLMCompleter.Complete() also validates empty responses at its layer,
+		// failing fast with an error. The agent handles empty responses
+		// gracefully (adding a placeholder message below), allowing the turn
+		// to continue. This design enables callers of Complete() to fail fast
+		// (e.g., wiki diagram generation), while agent turns can recover with
+		// a placeholder message to keep conversation valid.
+		acc.KeepText = func(s string) bool { return !text.IsEmptyResponse(s) }
+		// Streaming dispatch: if the finalized tool is concurrency-safe
+		// and auto-approved, start executing it now so it runs in parallel
+		// with the remaining model stream. The marker check comes first so
+		// non-eligible tools skip the approval scan entirely — approval can
+		// be expensive when a security scanner is wired in.
+		acc.OnToolFinalized = func(tc provider.ToolUseBlock) {
+			tool, ok := a.tools.Get(tc.Name)
+			if !ok {
+				// Unknown tool — conservative ordering barrier.
+				execStream.SetBarrier()
+				return
 			}
-		}
-
-		// finalizeText commits accumulated text to the blocks list, but only if
-		// the text is not purely whitespace. This prevents whitespace-only responses
-		// from polluting the conversation. Note: LLMCompleter.Complete() also validates
-		// empty responses at its layer, failing fast with an error. The agent handles
-		// empty responses gracefully (falling through to line 1287 where a placeholder
-		// message is added), allowing the turn to continue. This design enables callers
-		// of Complete() to fail fast (e.g., wiki diagram generation), while agent turns
-		// can recover with a placeholder message to keep conversation valid.
-		finalizeText := func() {
-			if !text.IsEmptyResponse(currentTextBuf) {
-				blocks = append(blocks, provider.ContentBlock{
-					Type: "text",
-					Text: currentTextBuf,
-				})
-				currentTextBuf = ""
+			isUnsafe := true
+			isWrite := false
+			dispatched := false
+			if ic, icok := tool.(agentsdk.InputConcurrencySafeTool); icok {
+				isWrite = isWriteOperationForInput(ic, tc.Input)
+				if ic.IsConcurrencySafeForInput(tc.Input) {
+					approval := a.approvalResultForTool(tc)
+					if approval == AutoApproved || approval == TrustRuleApproved {
+						dispatched = execStream.Dispatch(ctx, tc)
+					}
+					isUnsafe = false
+				}
+			} else if cs, csok := tool.(agentsdk.ConcurrencySafeTool); csok && cs.IsConcurrencySafe() {
+				isWrite = isWriteOperation(tool, tc.Input)
+				approval := a.approvalResultForTool(tc)
+				if approval == AutoApproved || approval == TrustRuleApproved {
+					dispatched = execStream.Dispatch(ctx, tc)
+				}
+				isUnsafe = false
+			} else {
+				// Not concurrency-safe — still check write status for barrier.
+				isWrite = isWriteOperation(tool, tc.Input)
+			}
+			// A write tool acts as an ordering barrier even when dispatched:
+			// subsequent safe tools must wait for it to complete.
+			if isWrite {
+				execStream.SetBarrier()
+			}
+			if !dispatched && isUnsafe {
+				execStream.SetBarrier()
 			}
 		}
 
@@ -1832,43 +1803,32 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				a.emit(ctx, ch, TurnEvent{Type: "thinking_delta", Text: event.Text})
 
 			case "text_delta":
-				if currentTool != nil {
-					// Accumulating tool input JSON fragments
-					toolInputBuf += event.Text
-				} else {
-					// Regular text content
-					currentTextBuf += event.Text
+				// During tool accumulation, text deltas carry input JSON
+				// fragments; only regular text is emitted to the consumer.
+				if !acc.AddText(event.Text) {
 					a.emit(ctx, ch, TurnEvent{Type: "text_delta", Text: event.Text})
 				}
 
 			case "tool_use":
 				if event.ToolUse == nil {
-					// Finalize any in-progress tool to prevent input corruption.
-					finalizeText()
-					finalizeTool()
+					// Finalize any in-progress text/tool to prevent input corruption.
+					acc.Finish()
 					a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")})
 					continue
 				}
-				// Finalize any pending text block
-				finalizeText()
-				// Finalize any previous tool
-				finalizeTool()
-				// Start new tool accumulation. Input may be empty here
-				// if the provider will deliver it as subsequent
-				// text_delta events (legacy path) — otherwise the next
-				// content_block_stop or tool_use event triggers finalize.
-				currentTool = &provider.ToolUseBlock{
-					ID:    event.ToolUse.ID,
-					Name:  event.ToolUse.Name,
-					Input: append(json.RawMessage(nil), event.ToolUse.Input...),
-				}
+				// Finalizes any pending text and previous tool, then starts
+				// new tool accumulation. Input may be empty here if the
+				// provider will deliver it as subsequent text_delta events
+				// (legacy path) — otherwise the next content_block_stop or
+				// tool_use event triggers finalize.
+				acc.StartTool(*event.ToolUse)
 
 			case agentsdk.EventContentBlockStop:
 				// Finalize on block-end so single-tool responses
 				// dispatch mid-stream. Providers that don't emit this
 				// fall back to the "finalize on next tool_use or stream
 				// end" timing, which is the legacy multi-tool path.
-				finalizeTool()
+				acc.FinalizeTool()
 
 			case "error":
 				ls.streamErr = true
@@ -1888,9 +1848,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// pending tool calls; otherwise the truncated-tool detection below
 		// handles it.
 		if stopReason == agentsdk.StopReasonMaxTokens {
-			hasPendingTools := len(pendingTools) > 0 || currentTool != nil
+			hasPendingTools := len(acc.PendingTools()) > 0 || acc.HasPartialTool()
 			if hasPendingTools {
-				a.logger.Warn("response hit output token limit with %d pending tool calls; tool arguments may be truncated", len(pendingTools))
+				a.logger.Warn("response hit output token limit with %d pending tool calls; tool arguments may be truncated", len(acc.PendingTools()))
 			} else if ls.maxOutputTokens < escalatedMaxOutputTokens {
 				a.logger.Warn("output token limit hit; escalating max_tokens from %d to %d", ls.maxOutputTokens, escalatedMaxOutputTokens)
 				a.escalateMaxTokens(ls)
@@ -1900,8 +1860,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				continue
 			} else if ls.maxTokensRecoveryAttempts < maxOutputTokensRecoveryLimit {
 				ls.maxTokensRecoveryAttempts++
-				a.conversation.AddAssistant(blocks)
-				a.persistMessage("assistant", blocks)
+				a.conversation.AddAssistant(acc.Blocks())
+				a.persistMessage("assistant", acc.Blocks())
 				a.conversation.AddUser(fmt.Sprintf(
 					"[max_output_tokens recovery %d/%d] Continue your response from where you left off.",
 					ls.maxTokensRecoveryAttempts, maxOutputTokensRecoveryLimit))
@@ -1916,19 +1876,18 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		// Capture accumulated text before finalizing, for text-based tool extraction.
-		accumulatedText := currentTextBuf
+		accumulatedText := acc.CurrentText()
 
 		// Detect truncated tool calls: if the stream ended with a partially
 		// accumulated tool whose input JSON is invalid, discard it and warn.
-		if currentTool != nil && toolInputBuf != "" && !json.Valid([]byte(toolInputBuf)) {
+		if acc.DropInvalidPartialTool() {
 			a.emit(ctx, ch, TurnEvent{Type: "text_delta", Text: "\n⚠️ Tool call truncated by output limit.\n"})
-			currentTool = nil
-			toolInputBuf = ""
 		}
 
-		// Finalize any remaining text or tool
-		finalizeText()
-		finalizeTool()
+		// Finalize any remaining text or tool.
+		acc.Finish()
+		blocks := acc.Blocks()
+		pendingTools := acc.PendingTools()
 
 		// Prepend thinking block if the model produced extended thinking output.
 		if thinkingBuf != "" {
