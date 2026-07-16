@@ -259,14 +259,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 			return true
 		}
 
-		ch <- TurnEvent{
-			Type: "tool_call",
-			ToolCall: &ToolCallEvent{
-				ID:    tc.ID,
-				Name:  tc.Name,
-				Input: tc.Input,
-			},
-		}
+		ch <- MakeToolCallEvent(tc)
 
 		result := a.executeSingleTool(ctx, ch, tc)
 		a.conversation.AddToolResult(tc.ID, result.content, result.isError)
@@ -301,45 +294,14 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 		}
 	}
 
-	// Look up and execute the tool.
-	tool, ok := a.tools.Get(tc.Name)
-	if !ok {
-		return a.toolError(tc, fmt.Sprintf("unknown tool: %s", tc.Name))
-	}
-
-	// Use streaming execution if available.
-	if st, ok := tool.(StreamingTool); ok {
-		emit := func(ev ToolEvent) {
-			ch <- TurnEvent{
-				Type: "tool_progress",
-				ToolProgress: &ToolProgressEvent{
-					ID:      tc.ID,
-					Name:    tc.Name,
-					Stage:   ev.Stage,
-					Content: ev.Content,
-					IsError: ev.IsError,
-				},
-			}
-		}
-		res, err := st.ExecuteStream(ctx, tc.Input, emit)
-		if err != nil {
-			return a.toolError(tc, fmt.Sprintf("tool error: %v", err))
-		}
-		return toolResult{
-			content: res.Content,
-			isError: res.IsError,
-			event:   makeResultEvent(tc.ID, tc.Name, res),
-		}
-	}
-
-	res, err := tool.Execute(ctx, tc.Input)
-	if err != nil {
-		return a.toolError(tc, fmt.Sprintf("tool error: %v", err))
-	}
+	// Dispatch through the shared execution core: registry lookup with
+	// did-you-mean suggestions, streaming-aware execution, error wrapping.
+	emit := MakeToolProgressEmitter(tc.ID, tc.Name, func(ev TurnEvent) { ch <- ev })
+	out := ExecuteTool(ctx, a.tools, tc.Name, tc.Input, emit)
 	return toolResult{
-		content: res.Content,
-		isError: res.IsError,
-		event:   makeResultEvent(tc.ID, tc.Name, res),
+		content: out.Content,
+		isError: out.IsError,
+		event:   MakeToolResultEvent(tc.ID, tc.Name, out.Content, out.DisplayContent, out.IsError),
 	}
 }
 
@@ -347,28 +309,7 @@ func (a *Agent) toolError(tc ToolUseBlock, msg string) toolResult {
 	return toolResult{
 		content: msg,
 		isError: true,
-		event: TurnEvent{
-			Type: "tool_result",
-			ToolResult: &ToolResultEvent{
-				ID:      tc.ID,
-				Name:    tc.Name,
-				Content: msg,
-				IsError: true,
-			},
-		},
-	}
-}
-
-func makeResultEvent(id, name string, res ToolResult) TurnEvent {
-	return TurnEvent{
-		Type: "tool_result",
-		ToolResult: &ToolResultEvent{
-			ID:             id,
-			Name:           name,
-			Content:        res.Content,
-			DisplayContent: res.DisplayContent,
-			IsError:        res.IsError,
-		},
+		event:   MakeToolResultEvent(tc.ID, tc.Name, msg, "", true),
 	}
 }
 
