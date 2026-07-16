@@ -423,8 +423,6 @@ type Agent struct {
 	windowManager       *ContextWindowManager
 }
 
-const maxUIRequestInputBytes = 2048
-
 // New creates a new Agent with the given provider, tool registry, approval
 // function, and configuration. Optional AgentOption values can be provided
 // to attach a skill runtime.
@@ -2569,81 +2567,21 @@ func (a *Agent) executeSingleToolWithApproval(ctx context.Context, ch chan<- Tur
 	if approvalResult == AutoDenied {
 		return a.approvalToolErrorResult(tc, "Tool call denied by user (deny-always).", nil)
 	}
-	if a.uiRequestHandler == nil && a.approve == nil {
-		return a.approvalToolErrorResult(tc, "approval function not configured", nil)
-	}
 
-	approved, denyAlways, approvalErr := a.requestToolApproval(ctx, ch, tc)
-	if approvalErr != nil {
-		return a.approvalToolErrorResult(tc, "approval error", approvalErr)
+	// Ask the user via the shared approval flow. The checker is deliberately
+	// omitted: approvalResult was already computed by the caller (planToolCalls
+	// partitions on it), and re-consulting the checker here would double-run
+	// side-effecting checkers like SecurityAwareApprovalChecker's scan.
+	flow := &agentsdk.ApprovalFlow{
+		Approve:   a.approve,
+		UIHandler: a.uiRequestHandler,
+		Emit:      func(ev TurnEvent) { a.emit(ctx, ch, ev) },
 	}
-	if !approved {
-		if denyAlways {
-			return a.approvalToolErrorResult(tc, "Tool call denied by user (deny-always).", nil)
-		}
-		return a.approvalToolErrorResult(tc, "tool call denied by user", nil)
+	out := flow.Decide(ctx, tc)
+	if !out.Approved {
+		return a.approvalToolErrorResult(tc, out.Message, out.Err)
 	}
-
 	return a.executeSingleTool(ctx, ch, tc)
-}
-
-func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc provider.ToolUseBlock) (approved bool, denyAlways bool, err error) {
-	if a.uiRequestHandler != nil {
-		req := UIRequest{
-			ID:      tc.ID,
-			Kind:    UIKindApproval,
-			Title:   fmt.Sprintf("Approve %s tool call", tc.Name),
-			Message: "Review and choose how to proceed.",
-			Actions: []UIAction{
-				{ID: "allow", Label: "Allow", Default: true},
-				{ID: "deny", Label: "Deny", Style: "danger"},
-				{ID: "allow_always", Label: "Always Allow"},
-				{ID: "deny_always", Label: "Always Deny", Style: "danger"},
-			},
-			Metadata: map[string]string{
-				"tool":  tc.Name,
-				"input": truncateUIInput(tc.Input),
-			},
-		}
-		a.emit(ctx, ch, TurnEvent{Type: "ui_request", UIRequest: &req})
-		resp, reqErr := a.uiRequestHandler.Request(ctx, req)
-		if reqErr != nil {
-			return false, false, reqErr
-		}
-		if resp.RequestID != req.ID {
-			return false, false, fmt.Errorf("unexpected UI response id %q for request %q", resp.RequestID, req.ID)
-		}
-		a.emit(ctx, ch, TurnEvent{Type: "ui_response", UIResponse: &resp})
-		switch strings.ToLower(resp.ActionID) {
-		case "allow", "allow_always", "yes":
-			// "allow_always" cache persistence is handled by the UI adapter.
-			return true, false, nil
-		case "deny_always":
-			return false, true, nil
-		case "deny", "no":
-			return false, false, nil
-		default:
-			return false, false, fmt.Errorf("unsupported UI approval action %q", resp.ActionID)
-		}
-	}
-
-	if a.approve == nil {
-		return false, false, fmt.Errorf("approval function not configured")
-	}
-
-	approved, approvalErr := a.approve(ctx, tc.Name, tc.Input)
-	if approvalErr != nil {
-		return false, false, approvalErr
-	}
-	return approved, false, nil
-}
-
-func truncateUIInput(input json.RawMessage) string {
-	s := string(input)
-	if len(s) <= maxUIRequestInputBytes {
-		return s
-	}
-	return s[:maxUIRequestInputBytes] + "...(truncated)"
 }
 
 // executeSingleTool delegates tool execution to the pipeline.

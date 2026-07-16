@@ -1892,7 +1892,7 @@ func runInteractive() error {
 		if plainHost != nil {
 			approvalFunc = plainHost.MakeApprovalFunc()
 		} else {
-			// UIRequestHandler takes priority in agent.requestToolApproval.
+			// UIRequestHandler takes priority in the shared agentsdk.ApprovalFlow.
 			// Keep approvalFunc wired as a fallback for non-UI handler paths.
 			approvalFunc = model.MakeApprovalFunc()
 			opts = append(opts, agent.WithUIRequestHandler(model.MakeUIRequestHandler()))

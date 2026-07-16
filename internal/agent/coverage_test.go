@@ -153,24 +153,8 @@ func TestAgentCompactorForceCompact(t *testing.T) {
 	assert.Greater(t, result.BeforeMsgCount, 0)
 }
 
-// --- truncateUIInput ---
-
-func TestTruncateUIInputShort(t *testing.T) {
-	input := json.RawMessage(`{"path": "hello.go"}`)
-	result := truncateUIInput(input)
-	assert.Equal(t, string(input), result)
-}
-
-func TestTruncateUIInputLong(t *testing.T) {
-	// Create input longer than maxUIRequestInputBytes (2048)
-	longContent := strings.Repeat("x", 3000)
-	input := json.RawMessage(`{"data": "` + longContent + `"}`)
-	result := truncateUIInput(input)
-
-	assert.True(t, len(result) < len(string(input)), "result should be truncated")
-	assert.True(t, strings.HasSuffix(result, "...(truncated)"))
-	assert.Equal(t, maxUIRequestInputBytes+len("...(truncated)"), len(result))
-}
+// truncateUIInput coverage moved to pkg/agentsdk/approval_flow_test.go
+// alongside the shared ApprovalFlow.
 
 // --- hasTextContent ---
 
@@ -929,19 +913,19 @@ func TestResultStoreRetrieveEmptyBlob(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-// --- requestToolApproval: no approval function configured ---
+// --- executeSingleToolWithApproval: no approval function configured ---
 
-func TestRequestToolApprovalNilApprovalFunc(t *testing.T) {
+func TestExecuteSingleToolWithApprovalNilApprovalFunc(t *testing.T) {
 	a := &Agent{logger: agentsdk.DefaultLogger()}
 	// Both uiRequestHandler and approve are nil
 	ch := make(chan TurnEvent, 100)
 
-	_, _, err := a.requestToolApproval(context.Background(), ch, provider.ToolUseBlock{
+	res := a.executeSingleToolWithApproval(context.Background(), ch, provider.ToolUseBlock{
 		ID:   "tool-1",
 		Name: "file",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "approval function not configured")
+	}, ApprovalRequired)
+	assert.True(t, res.isError)
+	assert.Contains(t, res.content, "approval function not configured")
 }
 
 // --- ForkSession no store ---
