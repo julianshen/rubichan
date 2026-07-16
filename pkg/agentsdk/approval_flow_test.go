@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -223,4 +224,17 @@ func TestApprovalFlowTruncatesLargeUIInput(t *testing.T) {
 	input := captured.Metadata["input"]
 	assert.True(t, strings.HasSuffix(input, "...(truncated)"))
 	assert.Len(t, input, maxUIRequestInputBytes+len("...(truncated)"))
+}
+
+func TestTruncateUIInputNeverSplitsRunes(t *testing.T) {
+	// Place a 3-byte rune ("€") straddling the truncation boundary: naive
+	// byte slicing at maxUIRequestInputBytes would cut it mid-sequence and
+	// produce invalid UTF-8 in the preview.
+	prefix := strings.Repeat("a", maxUIRequestInputBytes-1)
+	input := json.RawMessage(prefix + "€xxxxx")
+
+	result := truncateUIInput(input)
+	assert.True(t, utf8.ValidString(result), "truncated preview must be valid UTF-8")
+	assert.True(t, strings.HasSuffix(result, "...(truncated)"))
+	assert.Equal(t, prefix+"...(truncated)", result, "partial rune must be dropped entirely")
 }

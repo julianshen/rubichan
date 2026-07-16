@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Shared user-facing messages for approval outcomes. Both agent loops embed
@@ -126,11 +127,17 @@ func (f *ApprovalFlow) emit(ev TurnEvent) {
 
 const maxUIRequestInputBytes = 2048
 
-// truncateUIInput bounds tool input shown in approval UI metadata.
+// truncateUIInput bounds tool input shown in approval UI metadata. The
+// length check happens on the raw bytes so oversize inputs are sliced
+// before the string conversion, and the cut backs up to a rune boundary
+// so truncation never produces invalid UTF-8 in the preview.
 func truncateUIInput(input json.RawMessage) string {
-	s := string(input)
-	if len(s) <= maxUIRequestInputBytes {
-		return s
+	if len(input) <= maxUIRequestInputBytes {
+		return string(input)
 	}
-	return s[:maxUIRequestInputBytes] + "...(truncated)"
+	cut := maxUIRequestInputBytes
+	for cut > 0 && !utf8.RuneStart(input[cut]) {
+		cut--
+	}
+	return string(input[:cut]) + "...(truncated)"
 }
