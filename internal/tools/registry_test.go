@@ -281,7 +281,7 @@ func TestRegistryDefaultAliases(t *testing.T) {
 	require.NoError(t, reg.Register(newMockTool("search", "search")))
 	require.NoError(t, reg.Register(newMockTool("process", "process")))
 
-	reg.RegisterDefaultAliases()
+	RegisterDefaultAliases(reg)
 
 	// Shell aliases resolve.
 	for _, alias := range []string{"shell_exec", "run_command", "bash", "exec"} {
@@ -312,7 +312,7 @@ func TestRegistryHallucinationAliases(t *testing.T) {
 	require.NoError(t, reg.Register(newMockTool("file", "file")))
 	require.NoError(t, reg.Register(newMockTool("process", "process")))
 
-	reg.RegisterDefaultAliases()
+	RegisterDefaultAliases(reg)
 
 	// Shell hallucination aliases — Qwen 3.5 and similar models.
 	for _, alias := range []string{"tool_shell", "execute_command"} {
@@ -353,4 +353,19 @@ func TestRegistryNames(t *testing.T) {
 	assert.Len(t, names, 2)
 	assert.Contains(t, names, "shell")
 	assert.Contains(t, names, "file")
+}
+
+func TestSelectForContextWiresRegistryThroughSelector(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(newMockTool("shell", "run commands")))
+	require.NoError(t, reg.Register(newMockTool("db_query", "query databases")))
+
+	// Empty conversation → safe baseline: core tools only.
+	defs := SelectForContext(reg, nil)
+	names := make([]string, 0, len(defs))
+	for _, d := range defs {
+		names = append(names, d.Name)
+	}
+	assert.Contains(t, names, "shell")
+	assert.NotContains(t, names, "db_query")
 }
