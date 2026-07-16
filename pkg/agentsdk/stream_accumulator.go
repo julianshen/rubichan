@@ -7,7 +7,7 @@ import "encoding/json"
 // loop and the internal agent loop share this accumulation logic; loop-
 // specific behavior plugs in via KeepText and OnToolFinalized.
 //
-// The zero value is not usable; construct with NewStreamAccumulator.
+// The zero value is ready to use.
 // It is not safe for concurrent use — a stream is consumed by one goroutine.
 type StreamAccumulator struct {
 	blocks       []ContentBlock
@@ -17,7 +17,7 @@ type StreamAccumulator struct {
 	toolInputBuf string
 
 	// KeepText decides whether accumulated text is committed as a content
-	// block when finalized. Defaults to keeping any non-empty string.
+	// block when finalized. Nil means keep any non-empty string.
 	KeepText func(string) bool
 
 	// OnToolFinalized fires after a tool_use block is committed to Blocks
@@ -27,9 +27,7 @@ type StreamAccumulator struct {
 
 // NewStreamAccumulator creates an empty accumulator.
 func NewStreamAccumulator() *StreamAccumulator {
-	return &StreamAccumulator{
-		KeepText: func(s string) bool { return s != "" },
-	}
+	return &StreamAccumulator{}
 }
 
 // AddText routes a text delta. During tool accumulation, text deltas carry
@@ -97,7 +95,11 @@ func (s *StreamAccumulator) FinalizeTool() {
 // streams after an intervening tool call, matching the loops' historical
 // behavior of clearing the buffer only on commit.
 func (s *StreamAccumulator) finalizeText() {
-	if s.KeepText(s.textBuf) {
+	keep := s.textBuf != ""
+	if s.KeepText != nil {
+		keep = s.KeepText(s.textBuf)
+	}
+	if keep {
 		s.blocks = append(s.blocks, ContentBlock{Type: "text", Text: s.textBuf})
 		s.textBuf = ""
 	}

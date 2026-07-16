@@ -240,3 +240,18 @@ func TestAccumulatorEmptyToolInputBufLeavesInputUntouched(t *testing.T) {
 	require.Len(t, tools, 1)
 	assert.JSONEq(t, `{"k":"v"}`, string(tools[0].Input))
 }
+
+func TestAccumulatorZeroValueUsable(t *testing.T) {
+	// The zero value must not panic: nil KeepText falls back to the
+	// default keep-any-non-empty policy.
+	var acc StreamAccumulator
+	acc.AddText("hello")
+	acc.StartTool(ToolUseBlock{ID: "t1", Name: "a", Input: json.RawMessage(`{}`)})
+	acc.Finish()
+
+	blocks := acc.Blocks()
+	require.Len(t, blocks, 2)
+	assert.Equal(t, "text", blocks[0].Type)
+	assert.Equal(t, "hello", blocks[0].Text)
+	assert.Len(t, acc.PendingTools(), 1)
+}
