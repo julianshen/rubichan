@@ -1860,8 +1860,14 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 				continue
 			} else if ls.maxTokensRecoveryAttempts < maxOutputTokensRecoveryLimit {
 				ls.maxTokensRecoveryAttempts++
-				a.conversation.AddAssistant(acc.Blocks())
-				a.persistMessage("assistant", acc.Blocks())
+				// Finalize buffered text so the truncated partial response is
+				// retained in history — the continuation prompt is meaningless
+				// if the model can't see what it already wrote. No partial tool
+				// can exist here: this branch requires hasPendingTools == false.
+				acc.Finish()
+				partialBlocks := acc.Blocks()
+				a.conversation.AddAssistant(partialBlocks)
+				a.persistMessage("assistant", partialBlocks)
 				a.conversation.AddUser(fmt.Sprintf(
 					"[max_output_tokens recovery %d/%d] Continue your response from where you left off.",
 					ls.maxTokensRecoveryAttempts, maxOutputTokensRecoveryLimit))

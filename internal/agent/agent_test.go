@@ -4077,3 +4077,38 @@ func TestTurnUnblocksWhenConsumerCancelsCtx(t *testing.T) {
 		t.Fatal("second Turn blocked on turnMu — first goroutine never released the lock (deadlock on blocked ch send)")
 	}
 }
+
+func TestRunLoop_MaxTokensRecovery_PersistsTruncatedText(t *testing.T) {
+	// Each recovery attempt must finalize and persist the truncated partial
+	// response before asking the model to continue — otherwise the model is
+	// told to "continue from where you left off" with no record of what it
+	// already wrote.
+	prov := &maxTokensProvider{maxCalls: 4}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	agent := New(prov, reg, autoApprove, cfg)
+
+	ch, err := agent.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	var assistantTexts []string
+	for _, msg := range agent.conversation.Messages() {
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, b := range msg.Content {
+			if b.Type == "text" {
+				assistantTexts = append(assistantTexts, b.Text)
+			}
+		}
+	}
+	joined := strings.Join(assistantTexts, "\n")
+	// Calls 2 and 3 hit the recovery branch (call 1 hits escalation, which
+	// intentionally discards and regenerates); their partial text must be in
+	// conversation history for the continuation to make sense.
+	assert.Contains(t, joined, "response_2", "recovery attempt 1 must persist truncated text")
+	assert.Contains(t, joined, "response_3", "recovery attempt 2 must persist truncated text")
+	assert.Contains(t, joined, "response_4", "final completed response persisted")
+}
