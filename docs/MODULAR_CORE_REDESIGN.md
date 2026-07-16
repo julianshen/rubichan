@@ -125,16 +125,21 @@ Capabilities that pi.dev deliberately keeps *outside* the core (todos, plan mode
 
 **The core knows about a handful of interfaces and nothing else.** Every subsystem that is a field today becomes a **module** registered at composition time.
 
-### 4.1 The extension seams (there should be ~6, not 35)
+### 4.1 The extension seams (there should be ~7, not 35)
 
 Most of today's 35 options collapse into a few well-named seams. The core defines the interface; modules implement it; the harness wires them.
 
+> **Placement constraint:** every seam interface below must be defined in `pkg/` (or use only stdlib types). `pkg/agentsdk` must keep **zero `internal/` imports** — Go's internal-visibility rule means any `internal/` import would make the SDK uncompilable for an external module. Modules *implement* the interfaces from `internal/`; the core only ever depends on the `pkg/` interface. This is the single hardest invariant to hold during Phase 1 (below) and the one that makes "embed the real agent elsewhere" actually work.
+
 1. **`LLMProvider`** — already exists. Providers are modules. *(No change.)*
 2. **`Tool` + `ToolRegistry`** — one interface, promoted to the public package; `internal/tools` implements/uses it instead of redefining it. Tools (incl. skills, MCP) are modules.
-3. **`Middleware` / hook seam** — a `before/after Turn` and `before/after Tool` interface. **Checkpointing, evaluator, security gating, user hooks, budget enforcement, diff tracking** all become middleware instead of fields. (`internal/hooks` already models this — generalize it.)
-4. **`ContextStrategy`** — pluggable context-window management. **Compaction strategies, memory injection, knowledge-graph selection, persona/prompt fragments, prefetch** become strategies the core calls at prompt-build and post-turn time, rather than ~15 dedicated fields.
+3. **`Middleware` (tool execution) + turn-level hooks** — two related but distinct seams:
+   - *Tool-execution middleware* — a `before/after Tool` pipeline. **This pattern already exists** as `toolexec.Middleware` (`internal/toolexec/middleware.go`, with `CheckpointMiddleware`, `ClassifierMiddleware`, `HookMiddleware`, `PostHookMiddleware`, `OutputManagerMiddleware`). Use it as the model: **checkpointing, evaluator/classifier, security gating, output offloading, diff tracking** are middlewares, not fields. Promote its `Middleware` type to `pkg/`.
+   - *Turn-level hooks* — `before/after Turn` events. Modeled by `internal/hooks` (user-configured shell/HTTP/prompt hooks) plus `internal/agent`'s stop-hook registry; generalize these into one event dispatcher.
+4. **`ContextStrategy`** — pluggable context-window management. **Compaction strategies, memory injection, knowledge-graph selection, persona/prompt fragments** become strategies the core calls *synchronously* at prompt-build and post-turn time, rather than ~15 dedicated fields. (**Prefetch is *not* here** — see #7; it is async.)
 5. **`EventSink` / observer** — the core already emits `TurnEvent`. Formalize it: TUI, headless formatter, wiki progress, ACP notifications, and session persistence are all just sinks. **`store`, `session`, `activity_summarizer`** attach here.
 6. **`Transport`** — direct (in-proc), JSON-stream (headless/CI), and RPC/stdio (ACP). This is how the *same* core serves every mode and every embedder. ACP becomes *a transport*, not a core field.
+7. **`BackgroundCoordinator` (async optimizations)** — `prefetch` (`internal/agent/prefetch.go`) is an **asynchronous** optimization: it spawns goroutines to load memory/skill context *in parallel with* the LLM call and consumes the result via a handle. It is a lifecycle/background concern, not a synchronous context strategy — grouping it under #4 would misrepresent its shape. Model it as a background coordinator that a `ContextStrategy` may *consume from*, keeping the sync/async boundary explicit. Auto-dream and other fire-and-forget work attach here too.
 
 Rule of thumb after the redesign: **adding a capability adds a module, never a core struct field.**
 
@@ -152,16 +157,16 @@ This respects `CLAUDE.md`: **separate structural from behavioral changes, struct
 The `Tool` interface is already shared via alias — good. The remaining fork is the **concrete `Registry`** (`internal/tools.Registry` vs `pkg/agentsdk.Registry`). Pick one canonical registry (promote `internal/tools.Registry` to the public package, or make the SDK re-export it) and delete the other. One tool interface, one registry. *Low risk, removes a maintenance fork.*
 
 **Phase 1 — One loop (the pivotal step).**
-Make `internal/agent` build on the `pkg` core loop instead of reimplementing `runLoop`/`executeTools`/approval. Either (a) move the real loop into `pkg` and have the SDK use it directly, or (b) express the SDK as the core and `internal/agent` as core + modules. End state: **exactly one** agent loop. Delete `pkg/agentsdk/agent.go`'s parallel copy or promote it — do not keep both. This is what makes the "embed the *real* agent in another app" story true.
+Make `internal/agent` build on the `pkg` core loop instead of reimplementing `runLoop`/`executeTools`/approval. Either (a) move the real loop into `pkg` and have the SDK use it directly, or (b) express the SDK as the core and `internal/agent` as core + modules. End state: **exactly one** agent loop. Delete `pkg/agentsdk/agent.go`'s parallel copy or promote it — do not keep both. This is what makes the "embed the *real* agent in another app" story true. **Watch the invariant:** the promoted core must keep zero `internal/` imports (see §4.1 placement constraint) — this is the step where an accidental `internal/skills` or `internal/toolexec` import would silently break external embedding, so gate it in CI.
 
 **Phase 2 — Extract feature modules out of the god struct (structural, one subsystem per PR).**
-For each of checkpoint → knowledge graph → persona/prompt-fragments → memory/session-memory → auto-dream → prefetch → ACP: introduce the seam interface (Middleware / ContextStrategy / Transport), move the subsystem behind it, replace the `With…` field option with a `Use(module)` registration. Struct shrinks one subsystem at a time; tests stay green.
+For each subsystem, introduce the right seam interface and move it behind it, replacing the `With…` field option with a `Use(module)` registration: checkpoint/evaluator/security → *tool-execution middleware* (`toolexec.Middleware`); knowledge-graph/memory/persona/prompt-fragments/compaction → *`ContextStrategy`*; prefetch/auto-dream → *`BackgroundCoordinator`* (async); ACP → *`Transport`*. Struct shrinks one subsystem at a time; tests stay green.
 
 **Phase 3 — Adapters over the core.**
 Reduce `cmd/rubichan/main.go` to composition only: build core, register modules, pick an adapter. Move mode wiring into `internal/modes/*` (or `pkg` for reusable ones). Target: `main.go` under a few hundred lines.
 
 **Phase 4 — Publish the module API.**
-Document the ~6 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
+Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
 
 Each phase is independently shippable and leaves the product fully working.
 
@@ -170,7 +175,7 @@ Each phase is independently shippable and leaves the product fully working.
 ## 6. Risks & trade-offs
 
 - **Refactor scope is large.** Mitigation: the phased, structural-first plan above — behavior-preserving steps, existing tests as the guardrail, `>90%` coverage rule enforced per PR. Do **not** attempt a big-bang rewrite.
-- **Over-abstraction (YAGNI).** Six seams is the budget; resist inventing a plugin manager for things that have one implementation. A module seam earns its place only when there are ≥2 implementations or a real external embedder.
+- **Over-abstraction (YAGNI).** Seven seams is the budget; resist inventing a plugin manager for things that have one implementation. A module seam earns its place only when there are ≥2 implementations or a real external embedder.
 - **Interface churn at the ContextStrategy seam.** Compaction/memory/knowledge are genuinely entangled with the loop; expect to iterate on that interface. Land it last (Phase 2 tail) once the cheaper wins are in.
 - **Tool-count question is separate.** Whether Rubichan should follow pi and push some of its ~36 tools out to CLIs/skills (progressive disclosure, smaller context tax) is a *product* decision, not required by this refactor. Worth a follow-up, but out of scope here.
 - **ACP positioning.** CLAUDE.md frames ACP as the backbone. This proposal keeps ACP first-class but reframes it as **a transport** over the shared core rather than a field baked into the agent — which actually strengthens the "standardized backbone for any client" story.
@@ -183,7 +188,7 @@ Each phase is independently shippable and leaves the product fully working.
 
 **Yes.** The intended architecture (ADR-002: shared, UI-free core; features injected via interfaces) is already the stated design, and the good bones are present — event-driven core, UI only at the edge, interface-based providers and tools, a standalone ACP package, and even a public SDK skeleton. What has happened in practice is **drift**: the core grew into a 60-field god object, and the SDK forked into a second, weaker implementation.
 
-The redesign is therefore **consolidation, not invention**: unify the duplicated loop/tool/registry, define ~6 module seams, and move today's 35 baked-in options out to modules — turning "everything compiled together" into "a tiny core plus the modules this deployment chose." That is precisely pi.dev's "small core with programmable edges," and it makes embedding Rubichan in another app a matter of picking modules and a transport instead of inheriting the TUI.
+The redesign is therefore **consolidation, not invention**: unify the duplicated loop/tool/registry, define ~7 module seams, and move today's 35 baked-in options out to modules — turning "everything compiled together" into "a tiny core plus the modules this deployment chose." That is precisely pi.dev's "small core with programmable edges," and it makes embedding Rubichan in another app a matter of picking modules and a transport instead of inheriting the TUI.
 
 ---
 
