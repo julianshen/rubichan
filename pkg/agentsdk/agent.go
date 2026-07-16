@@ -198,45 +198,14 @@ type streamResult struct {
 }
 
 // consumeStream reads the provider stream, accumulating content blocks and
-// tool calls.
+// tool calls via StreamAccumulator.
 func (a *Agent) consumeStream(
 	ctx context.Context,
 	ch chan<- TurnEvent,
 	stream <-chan StreamEvent,
 	totalInput, totalOutput *int,
 ) streamResult {
-	var blocks []ContentBlock
-	var pendingTools []ToolUseBlock
-	var currentTextBuf string
-	var currentTool *ToolUseBlock
-	var toolInputBuf string
-
-	finalizeTool := func() {
-		if currentTool != nil {
-			if toolInputBuf != "" {
-				currentTool.Input = json.RawMessage(toolInputBuf)
-			}
-			pendingTools = append(pendingTools, *currentTool)
-			blocks = append(blocks, ContentBlock{
-				Type:  "tool_use",
-				ID:    currentTool.ID,
-				Name:  currentTool.Name,
-				Input: currentTool.Input,
-			})
-			currentTool = nil
-			toolInputBuf = ""
-		}
-	}
-
-	finalizeText := func() {
-		if currentTextBuf != "" {
-			blocks = append(blocks, ContentBlock{
-				Type: "text",
-				Text: currentTextBuf,
-			})
-			currentTextBuf = ""
-		}
-	}
+	acc := NewStreamAccumulator()
 
 	var hadError bool
 	for event := range stream {
@@ -249,42 +218,27 @@ func (a *Agent) consumeStream(
 		case EventTextDelta:
 			// During tool accumulation, text deltas carry JSON input
 			// for the tool call, not user-visible text.
-			if currentTool != nil {
-				toolInputBuf += event.Text
-			} else {
-				currentTextBuf += event.Text
+			if !acc.AddText(event.Text) {
 				ch <- TurnEvent{Type: EventTextDelta, Text: event.Text}
 			}
 		case EventInputJsonDelta:
-			if currentTool != nil {
-				toolInputBuf += event.Text
+			if acc.AddToolInput(event.Text) {
 				ch <- TurnEvent{Type: EventInputJsonDelta, Text: event.Text}
 			}
 		case EventToolUse:
 			if event.ToolUse == nil {
-				finalizeText()
-				finalizeTool()
+				acc.Finish()
 				ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider sent tool_use event with nil ToolUse")}
 				hadError = true
 				continue
 			}
-			finalizeText()
-			finalizeTool()
-			currentTool = &ToolUseBlock{
-				ID:    event.ToolUse.ID,
-				Name:  event.ToolUse.Name,
-				Input: append(json.RawMessage(nil), event.ToolUse.Input...),
-			}
+			acc.StartTool(*event.ToolUse)
 		case EventError:
 			a.logger.Error("stream error: %v", event.Error)
 			ch <- TurnEvent{Type: "error", Error: event.Error}
 			// Discard all accumulated state to avoid processing
 			// data from a corrupt/partial stream.
-			currentTool = nil
-			toolInputBuf = ""
-			currentTextBuf = ""
-			blocks = nil
-			pendingTools = nil
+			acc.Reset()
 			hadError = true
 		case EventStop:
 			// handled after loop
@@ -292,13 +246,12 @@ func (a *Agent) consumeStream(
 	}
 
 	if !hadError {
-		finalizeText()
-		finalizeTool()
+		acc.Finish()
 	}
 
 	return streamResult{
-		blocks:       blocks,
-		pendingTools: pendingTools,
+		blocks:       acc.Blocks(),
+		pendingTools: acc.PendingTools(),
 		cancelled:    ctx.Err() != nil,
 		hadError:     hadError,
 	}
