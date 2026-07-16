@@ -1536,7 +1536,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		systemPrompt, cacheBreakpoints, skillPromptText := a.buildSystemPromptWithFragments(ctx, lastUserMessage)
 
 		// Select tools via DeferralManager to stay within budget.
-		allToolDefs := a.tools.SelectForContext(a.conversation.Messages())
+		allToolDefs := tools.SelectForContext(a.tools, a.conversation.Messages())
 		// Apply agent definition tool filter before deferral.
 		allToolDefs = FilterTools(allToolDefs, a.agentDef, nil)
 		budget := a.context.Budget()
