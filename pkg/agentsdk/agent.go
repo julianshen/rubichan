@@ -284,7 +284,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 			Checker:   a.approvalChecker,
 			Approve:   a.approve,
 			UIHandler: a.uiRequestHandler,
-			Emit:      func(ev TurnEvent) { ch <- ev },
+			Emit:      func(ev TurnEvent) { sendEvent(ctx, ch, ev) },
 		}
 		if out := flow.Decide(ctx, tc); !out.Approved {
 			if out.Err != nil {
@@ -296,7 +296,7 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 
 	// Dispatch through the shared execution core: registry lookup with
 	// did-you-mean suggestions, streaming-aware execution, error wrapping.
-	emit := MakeToolProgressEmitter(tc.ID, tc.Name, func(ev TurnEvent) { ch <- ev })
+	emit := MakeToolProgressEmitter(tc.ID, tc.Name, func(ev TurnEvent) { sendEvent(ctx, ch, ev) })
 	out := ExecuteTool(ctx, a.tools, tc.Name, tc.Input, emit)
 	return toolResult{
 		content: out.Content,

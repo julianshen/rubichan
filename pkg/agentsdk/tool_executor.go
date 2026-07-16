@@ -37,7 +37,11 @@ func ExecuteTool(ctx context.Context, lookup ToolLookup, name string, input json
 		msg := fmt.Sprintf("unknown tool: %s", name)
 		// Try to suggest the closest matching tool name.
 		if namer, ok := lookup.(ToolNamer); ok {
-			names := namer.Names()
+			// Copy before sorting: Names() is a public interface method and
+			// nothing guarantees the returned slice isn't shared or cached
+			// by the implementer, so sorting in place could race or corrupt
+			// that state.
+			names := append([]string(nil), namer.Names()...)
 			sort.Strings(names)
 			if suggestion := SuggestToolName(name, names); suggestion != "" {
 				msg = fmt.Sprintf("unknown tool: %s. Did you mean %q? Available tools: %s",
@@ -95,6 +99,23 @@ func MakeToolResultEvent(id, name, content, displayContent string, isError bool)
 			DisplayContent: displayContent,
 			IsError:        isError,
 		},
+	}
+}
+
+// sendEvent delivers ev to ch, but gives up if ctx is cancelled first. A
+// plain `ch <- ev` would block forever if the turn's consumer stopped
+// reading (e.g. gave up on a cancelled turn) while a long-running tool or
+// a pending approval was still trying to emit — leaking the goroutine and,
+// for the internal agent, its turn-serializing mutex along with it.
+func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) {
+	select {
+	case ch <- ev:
+		return
+	default:
+	}
+	select {
+	case ch <- ev:
+	case <-ctx.Done():
 	}
 }
 
