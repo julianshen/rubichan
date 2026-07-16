@@ -2,7 +2,6 @@ package agentsdk
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -66,8 +65,6 @@ type Agent struct {
 	logger           Logger
 	turnMu           sync.Mutex
 }
-
-const maxUIRequestInputBytes = 2048
 
 // NewAgent creates a new Agent with the given LLM provider and options.
 // Panics if provider is nil.
@@ -411,14 +408,6 @@ func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc
 		return false, fmt.Errorf("approval function not configured")
 	}
 	return a.approve(ctx, tc.Name, tc.Input)
-}
-
-func truncateUIInput(input json.RawMessage) string {
-	s := string(input)
-	if len(s) <= maxUIRequestInputBytes {
-		return s
-	}
-	return s[:maxUIRequestInputBytes] + "...(truncated)"
 }
 
 func (a *Agent) toolError(tc ToolUseBlock, msg string) toolResult {
