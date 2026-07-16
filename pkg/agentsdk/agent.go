@@ -235,7 +235,7 @@ func (a *Agent) consumeStream(
 			acc.StartTool(*event.ToolUse)
 		case EventError:
 			a.logger.Error("stream error: %v", event.Error)
-			ch <- TurnEvent{Type: "error", Error: event.Error}
+			ch <- TurnEvent{Type: "error", Error: fmt.Errorf("provider stream event: %w", event.Error)}
 			// Discard all accumulated state to avoid processing
 			// data from a corrupt/partial stream.
 			acc.Reset()
