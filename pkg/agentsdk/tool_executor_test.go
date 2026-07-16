@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,4 +140,33 @@ func TestMakeToolProgressEmitter(t *testing.T) {
 	assert.Equal(t, EventDelta, got[0].ToolProgress.Stage)
 	assert.Equal(t, "line", got[0].ToolProgress.Content)
 	assert.True(t, got[0].ToolProgress.IsError)
+}
+
+func TestSendEventReturnsOnContextCancelWhenChannelFull(t *testing.T) {
+	ch := make(chan TurnEvent) // unbuffered, no reader
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		sendEvent(ctx, ch, TurnEvent{Type: "tool_progress"})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("sendEvent blocked despite cancelled context — goroutine/turnMu leak")
+	}
+}
+
+func TestSendEventDeliversWhenReaderPresent(t *testing.T) {
+	ch := make(chan TurnEvent, 1)
+	sendEvent(context.Background(), ch, TurnEvent{Type: "tool_progress"})
+	select {
+	case ev := <-ch:
+		assert.Equal(t, "tool_progress", ev.Type)
+	default:
+		t.Fatal("expected event to be delivered")
+	}
 }
