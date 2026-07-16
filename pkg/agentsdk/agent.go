@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 )
 
@@ -89,7 +88,6 @@ func NewAgent(provider LLMProvider, opts ...Option) *Agent {
 
 // ErrEmptyMessage is returned by Turn when the user message is empty.
 var ErrEmptyMessage = errors.New("agentsdk: empty user message")
-var errUIDenyAlways = errors.New("agentsdk: ui deny-always")
 
 // Turn initiates a new agent turn with the given user message. It returns a
 // channel of TurnEvent that streams events as the agent processes the turn.
@@ -285,40 +283,21 @@ type toolResult struct {
 }
 
 func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc ToolUseBlock) toolResult {
-	// Check approval if checker is configured.
-	if a.approvalChecker != nil {
-		result := a.approvalChecker.CheckApproval(tc.Name, tc.Input)
-		if result == AutoDenied {
-			return a.toolError(tc, "Tool call denied by user (deny-always).")
+	// Run the shared approval flow when any approval mechanism is
+	// configured. With nothing configured the SDK executes directly —
+	// approval is opt-in for embedders.
+	if a.approvalChecker != nil || a.approve != nil || a.uiRequestHandler != nil {
+		flow := &ApprovalFlow{
+			Checker:   a.approvalChecker,
+			Approve:   a.approve,
+			UIHandler: a.uiRequestHandler,
+			Emit:      func(ev TurnEvent) { ch <- ev },
 		}
-		if result == ApprovalRequired {
-			if a.uiRequestHandler == nil && a.approve == nil {
-				return a.toolError(tc, "approval function not configured")
+		if out := flow.Decide(ctx, tc); !out.Approved {
+			if out.Err != nil {
+				a.logger.Error("approval failure for tool %s: %v", tc.Name, out.Err)
 			}
-			approved, err := a.requestToolApproval(ctx, ch, tc)
-			if err != nil {
-				if errors.Is(err, errUIDenyAlways) {
-					return a.toolError(tc, "Tool call denied by user (deny-always).")
-				}
-				a.logger.Error("approval failure for tool %s: %v", tc.Name, err)
-				return a.toolError(tc, "approval error")
-			}
-			if !approved {
-				return a.toolError(tc, "tool call denied by user")
-			}
-		}
-	} else if a.approve != nil || a.uiRequestHandler != nil {
-		// No checker — always ask for approval.
-		approved, err := a.requestToolApproval(ctx, ch, tc)
-		if err != nil {
-			if errors.Is(err, errUIDenyAlways) {
-				return a.toolError(tc, "Tool call denied by user (deny-always).")
-			}
-			a.logger.Error("approval failure for tool %s: %v", tc.Name, err)
-			return a.toolError(tc, "approval error")
-		}
-		if !approved {
-			return a.toolError(tc, "tool call denied by user")
+			return a.toolError(tc, out.Message)
 		}
 	}
 
@@ -362,52 +341,6 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 		isError: res.IsError,
 		event:   makeResultEvent(tc.ID, tc.Name, res),
 	}
-}
-
-func (a *Agent) requestToolApproval(ctx context.Context, ch chan<- TurnEvent, tc ToolUseBlock) (bool, error) {
-	if a.uiRequestHandler != nil {
-		req := UIRequest{
-			ID:      tc.ID,
-			Kind:    UIKindApproval,
-			Title:   fmt.Sprintf("Approve %s tool call", tc.Name),
-			Message: "Review and choose how to proceed.",
-			Actions: []UIAction{
-				{ID: "allow", Label: "Allow", Default: true},
-				{ID: "deny", Label: "Deny", Style: "danger"},
-				{ID: "allow_always", Label: "Always Allow"},
-				{ID: "deny_always", Label: "Always Deny", Style: "danger"},
-			},
-			Metadata: map[string]string{
-				"tool":  tc.Name,
-				"input": truncateUIInput(tc.Input),
-			},
-		}
-		ch <- TurnEvent{Type: "ui_request", UIRequest: &req}
-		resp, err := a.uiRequestHandler.Request(ctx, req)
-		if err != nil {
-			return false, err
-		}
-		if resp.RequestID != req.ID {
-			return false, fmt.Errorf("unexpected UI response id %q for request %q", resp.RequestID, req.ID)
-		}
-		ch <- TurnEvent{Type: "ui_response", UIResponse: &resp}
-
-		switch strings.ToLower(resp.ActionID) {
-		case "allow", "allow_always", "yes":
-			return true, nil
-		case "deny_always":
-			return false, errUIDenyAlways
-		case "deny", "no":
-			return false, nil
-		default:
-			return false, fmt.Errorf("unsupported UI approval action %q", resp.ActionID)
-		}
-	}
-
-	if a.approve == nil {
-		return false, fmt.Errorf("approval function not configured")
-	}
-	return a.approve(ctx, tc.Name, tc.Input)
 }
 
 func (a *Agent) toolError(tc ToolUseBlock, msg string) toolResult {
