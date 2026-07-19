@@ -197,7 +197,22 @@ func TestToolEventEmitterFromContextNilWhenAbsent(t *testing.T) {
 	assert.Nil(t, ToolEventEmitterFromContext(context.Background()))
 }
 
-func TestWithToolEventEmitterNilEmitNoop(t *testing.T) {
-	ctx := WithToolEventEmitter(context.Background(), nil)
-	assert.Nil(t, ToolEventEmitterFromContext(ctx))
+func TestWithToolEventEmitterNilReturnsOriginalContext(t *testing.T) {
+	ctx := context.Background()
+	out := WithToolEventEmitter(ctx, nil)
+	assert.Equal(t, ctx, out, "nil emitter should return the original context unchanged")
+}
+
+func TestWithToolEventEmitterRoundTrip(t *testing.T) {
+	var called bool
+	emit := ToolEventEmitter(func(ev ToolEvent) {
+		called = true
+	})
+
+	ctx := WithToolEventEmitter(context.Background(), emit)
+	got := ToolEventEmitterFromContext(ctx)
+
+	require.NotNil(t, got)
+	got(ToolEvent{Stage: EventDelta, Content: "test"})
+	assert.True(t, called)
 }
