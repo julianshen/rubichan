@@ -81,12 +81,22 @@ func (p *Pipeline) ExecuteStream(ctx context.Context, tc ToolCall) <-chan Pipeli
 	ch := make(chan PipelineEvent, 32)
 	go func() {
 		defer close(ch)
+		// Sends select on ctx.Done() so a cancelled turn whose consumer has
+		// stopped reading cannot wedge this goroutine on a full buffer. The
+		// tool itself still runs to completion (Execute is synchronous); only
+		// the delivery of its progress/final events is abandoned on cancel.
 		emit := func(ev ToolEvent) {
-			ch <- PipelineEvent{Type: PipelineProgress, Event: &ev}
+			select {
+			case ch <- PipelineEvent{Type: PipelineProgress, Event: &ev}:
+			case <-ctx.Done():
+			}
 		}
 		emitCtx := WithToolEventEmitter(ctx, emit)
 		result := p.Execute(emitCtx, tc)
-		ch <- PipelineEvent{Type: PipelineFinal, Result: &result}
+		select {
+		case ch <- PipelineEvent{Type: PipelineFinal, Result: &result}:
+		case <-ctx.Done():
+		}
 	}()
 	return ch
 }
