@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -215,4 +216,32 @@ func TestWithToolEventEmitterRoundTrip(t *testing.T) {
 	require.NotNil(t, got)
 	got(ToolEvent{Stage: EventDelta, Content: "test"})
 	assert.True(t, called)
+}
+
+func TestPipelineExecuteStreamDoesNotLeakOnCancelledContext(t *testing.T) {
+	// A cancelled context plus an unread channel must not wedge the
+	// ExecuteStream goroutine: the base handler emits far more progress
+	// events than the channel buffer (32) holds, and nobody drains ch.
+	// Without ctx-aware sends the goroutine blocks forever at ~event 33.
+	baseReturned := make(chan struct{})
+	base := func(ctx context.Context, tc ToolCall) Result {
+		emit := ToolEventEmitterFromContext(ctx)
+		for i := 0; i < 100; i++ {
+			emit(ToolEvent{Stage: EventDelta, Content: "x"})
+		}
+		close(baseReturned)
+		return Result{Content: "done"}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before execution; consumer never reads ch
+
+	p := NewPipeline(base)
+	_ = p.ExecuteStream(ctx, ToolCall{ID: "c", Name: "t"})
+
+	select {
+	case <-baseReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ExecuteStream goroutine blocked on a full channel despite cancelled context")
+	}
 }
