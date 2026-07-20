@@ -320,17 +320,6 @@ func TestWithBootstrapContextNonNil(t *testing.T) {
 	assert.Contains(t, prompt, "testapp")
 }
 
-// --- WithPipeline ---
-
-func TestWithPipelineNil(t *testing.T) {
-	cfg := config.DefaultConfig()
-	mp := &mockProvider{}
-	// WithPipeline(nil) is overridden by New's default pipeline setup,
-	// so just verify the agent is created successfully.
-	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithPipeline(nil))
-	assert.NotNil(t, a)
-}
-
 // --- WithUserHooks ---
 
 func TestWithUserHooks(t *testing.T) {

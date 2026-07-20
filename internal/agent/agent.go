@@ -289,18 +289,12 @@ type ToolMiddlewares struct {
 }
 
 // WithToolMiddlewares registers slot middlewares for the agent-owned
-// pipeline composition. This replaces wholesale pipeline injection
-// (WithPipeline), which silently dropped the agent's core middlewares.
+// pipeline composition. This replaces the removed wholesale pipeline
+// injection (WithPipeline), which silently dropped the agent's core
+// middlewares whenever the root's copy of the chain drifted.
 func WithToolMiddlewares(set ToolMiddlewares) AgentOption {
 	return func(a *Agent) {
 		a.toolMiddlewares = set
-	}
-}
-
-// WithPipeline attaches a tool execution pipeline to the agent.
-func WithPipeline(p *toolexec.Pipeline) AgentOption {
-	return func(a *Agent) {
-		a.pipeline = p
 	}
 }
 
@@ -585,8 +579,8 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	// composition roots contribute only slot middlewares via
 	// WithToolMiddlewares, spliced in at fixed points (spec order:
 	// BeforeHooks → Hook → AfterHooks → Checkpoint → PostHook → Verdict →
-	// Output). WithPipeline, when set, still overrides wholesale.
-	if a.pipeline == nil {
+	// Output).
+	{
 		var middlewares []toolexec.Middleware
 
 		// Root slot: validation/classification/permission middlewares run
