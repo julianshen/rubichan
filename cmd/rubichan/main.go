@@ -1168,12 +1168,14 @@ func securityScanCompleteHook(rt *skills.Runtime) func(context.Context, *securit
 	}
 }
 
-// pipelineComponents holds the pipeline and its key components for
-// integration with the approval system.
+// pipelineComponents holds the composition root's slot middlewares and
+// the key components for integration with the approval system. The agent
+// owns the core pipeline chain (hooks, checkpoint, verdict, output) and
+// splices these middlewares in via agent.WithToolMiddlewares.
 type pipelineComponents struct {
-	Pipeline   *toolexec.Pipeline
-	Classifier *toolexec.Classifier
-	RuleEngine *toolexec.RuleEngine
+	Middlewares agent.ToolMiddlewares
+	Classifier  *toolexec.Classifier
+	RuleEngine  *toolexec.RuleEngine
 }
 
 // buildPipeline constructs a tool execution pipeline from config rules,
@@ -1212,19 +1214,22 @@ func buildPipeline(registry *tools.Registry, cfg *config.Config, cwd string, rt 
 	allRules := toolexec.MergeRules(userRules, projectRules)
 	ruleEngine := toolexec.NewRuleEngine(allRules)
 	shellValidator := toolexec.NewShellValidator(ruleEngine, cwd)
-	hookAdapter := &toolexec.SkillHookAdapter{Runtime: rt}
 
-	p := toolexec.NewPipeline(
-		toolexec.RegistryExecutor(registry),
-		toolexec.SchemaValidationMiddleware(registry),
-		toolexec.ClassifierMiddleware(classifier),
-		toolexec.RuleEngineMiddleware(ruleEngine),
-		toolexec.HookMiddleware(hookAdapter),
-		toolexec.ShellSafetyMiddleware(shellValidator),
-		toolexec.PostHookMiddleware(hookAdapter),
-		toolexec.OutputManagerMiddleware(&toolexec.ResultStoreAdapter{Offloader: nil}),
-	)
-	return pipelineComponents{Pipeline: p, Classifier: classifier, RuleEngine: ruleEngine}
+	// Hook, checkpoint, post-hook, verdict, and output middlewares are
+	// composed by the agent itself — supplying them here would either
+	// duplicate them or (as happened before this seam existed) silently
+	// drop the ones needing agent state, leaving /undo without captures.
+	mws := agent.ToolMiddlewares{
+		BeforeHooks: []toolexec.Middleware{
+			toolexec.SchemaValidationMiddleware(registry),
+			toolexec.ClassifierMiddleware(classifier),
+			toolexec.RuleEngineMiddleware(ruleEngine),
+		},
+		AfterHooks: []toolexec.Middleware{
+			toolexec.ShellSafetyMiddleware(shellValidator),
+		},
+	}
+	return pipelineComponents{Middlewares: mws, Classifier: classifier, RuleEngine: ruleEngine}
 }
 
 // ruleEngineChecker adapts the toolexec.RuleEngine to the agent.ApprovalChecker
@@ -1883,10 +1888,10 @@ func runInteractive() error {
 		}
 	}
 
-	// Build tool execution pipeline first so its rule engine can feed
-	// the approval system.
+	// Build tool execution slot middlewares first so the rule engine can
+	// feed the approval system. The agent composes the full pipeline.
 	pc := buildPipeline(registry, cfg, cwd, rt)
-	opts = append(opts, agent.WithPipeline(pc.Pipeline))
+	opts = append(opts, agent.WithToolMiddlewares(pc.Middlewares))
 
 	if !autoApprove {
 		if plainHost != nil {
@@ -2305,9 +2310,9 @@ func runHeadless() error {
 		opts = append(opts, agent.WithWakeManager(headlessWakeManager))
 	}
 
-	// Build tool execution pipeline.
+	// Build tool execution slot middlewares; the agent composes the pipeline.
 	hpc := buildPipeline(registry, cfg, cwd, rt)
-	opts = append(opts, agent.WithPipeline(hpc.Pipeline))
+	opts = append(opts, agent.WithToolMiddlewares(hpc.Middlewares))
 
 	// Create shared rate limiter for throttling LLM API requests.
 	var headlessRateLimiter *agent.SharedRateLimiter

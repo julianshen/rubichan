@@ -1164,7 +1164,7 @@ func TestBuildPipeline_NilRuntime(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	pc := buildPipeline(registry, cfg, t.TempDir(), nil)
-	assert.NotNil(t, pc.Pipeline)
+	assert.NotEmpty(t, pc.Middlewares.BeforeHooks)
 	assert.NotNil(t, pc.Classifier)
 	assert.NotNil(t, pc.RuleEngine)
 }
@@ -1178,7 +1178,7 @@ func TestBuildPipeline_WithToolRules(t *testing.T) {
 	}
 
 	pc := buildPipeline(registry, cfg, t.TempDir(), nil)
-	assert.NotNil(t, pc.Pipeline)
+	assert.NotEmpty(t, pc.Middlewares.BeforeHooks)
 }
 
 // ---------------------------------------------------------------------------
@@ -2283,7 +2283,7 @@ func TestBuildPipeline_AllFieldsPopulated(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	pc := buildPipeline(registry, cfg, t.TempDir(), nil)
-	assert.NotNil(t, pc.Pipeline)
+	assert.NotEmpty(t, pc.Middlewares.BeforeHooks)
 	assert.NotNil(t, pc.Classifier)
 	assert.NotNil(t, pc.RuleEngine)
 }
@@ -2306,7 +2306,7 @@ func TestBuildPipeline_WithSecurityYAML(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	pc := buildPipeline(registry, cfg, dir, nil)
-	assert.NotNil(t, pc.Pipeline)
+	assert.NotEmpty(t, pc.Middlewares.BeforeHooks)
 }
 
 // ---------------------------------------------------------------------------
@@ -2327,7 +2327,7 @@ func TestBuildPipeline_WithLocalSecurityYAML(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	pc := buildPipeline(registry, cfg, dir, nil)
-	assert.NotNil(t, pc.Pipeline)
+	assert.NotEmpty(t, pc.Middlewares.BeforeHooks)
 }
 
 // ---------------------------------------------------------------------------
