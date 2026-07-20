@@ -245,3 +245,30 @@ func TestPipelineExecuteStreamDoesNotLeakOnCancelledContext(t *testing.T) {
 		t.Fatal("ExecuteStream goroutine blocked on a full channel despite cancelled context")
 	}
 }
+
+func TestPipelineExecuteStreamDeliversFinalWhenBufferHasRoom(t *testing.T) {
+	// Even with an already-cancelled context, a consumer that is still
+	// draining must receive the PipelineFinal event when the buffered send
+	// would not block. A plain select{ch<-; ctx.Done()} drops it ~50% of
+	// the time (Go picks a ready arm at random); the non-blocking fast path
+	// must make delivery deterministic. Many iterations turn the racy
+	// regression into a certain failure.
+	base := func(ctx context.Context, tc ToolCall) Result {
+		return Result{Content: "final"}
+	}
+	p := NewPipeline(base)
+
+	for i := 0; i < 300; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		ch := p.ExecuteStream(ctx, ToolCall{ID: "c", Name: "t"})
+
+		var sawFinal bool
+		for ev := range ch {
+			if ev.Type == PipelineFinal {
+				sawFinal = true
+			}
+		}
+		require.Truef(t, sawFinal, "PipelineFinal dropped on cancelled-but-draining stream (iteration %d)", i)
+	}
+}
