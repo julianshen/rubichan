@@ -271,6 +271,32 @@ func (a *Agent) ACPServer() *acp.Server {
 	return a.acpServer
 }
 
+// ToolMiddlewares carries composition-root-supplied tool-execution
+// middlewares for the two extension slots in the agent's pipeline. The
+// agent owns the core chain — skill hooks, checkpoint capture, verdict
+// evaluation, output offloading — and splices these in at fixed points:
+//
+//	BeforeHooks… → Hook → AfterHooks… → Checkpoint → PostHook → Verdict → Output
+//
+// BeforeHooks run outermost (schema validation, classification,
+// permission rules); AfterHooks run after before-tool-call hooks but
+// before checkpoint capture (shell safety). Composition lives here, not
+// in the root, because core middlewares need agent state (the turn
+// counter, the result store) that does not exist when the root wires up.
+type ToolMiddlewares struct {
+	BeforeHooks []toolexec.Middleware
+	AfterHooks  []toolexec.Middleware
+}
+
+// WithToolMiddlewares registers slot middlewares for the agent-owned
+// pipeline composition. This replaces wholesale pipeline injection
+// (WithPipeline), which silently dropped the agent's core middlewares.
+func WithToolMiddlewares(set ToolMiddlewares) AgentOption {
+	return func(a *Agent) {
+		a.toolMiddlewares = set
+	}
+}
+
 // WithPipeline attaches a tool execution pipeline to the agent.
 func WithPipeline(p *toolexec.Pipeline) AgentOption {
 	return func(a *Agent) {
@@ -396,6 +422,7 @@ type Agent struct {
 	logger              Logger
 	mode                string
 	checkpointMgr       *checkpoint.Manager
+	toolMiddlewares     ToolMiddlewares
 	userHookRunner      *hooks.UserHookRunner
 	turnNumber          atomic.Int32
 	generation          atomic.Int64
@@ -554,19 +581,27 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 
 	a.promptBuilder = NewPromptBuilder()
 
-	// Ensure a pipeline is always available. When no pipeline is provided
-	// via WithPipeline, create a default one with hook and output middlewares
-	// matching the behavior of the former legacy execution path.
+	// Compose the tool-execution pipeline. The agent owns the core chain;
+	// composition roots contribute only slot middlewares via
+	// WithToolMiddlewares, spliced in at fixed points (spec order:
+	// BeforeHooks → Hook → AfterHooks → Checkpoint → PostHook → Verdict →
+	// Output). WithPipeline, when set, still overrides wholesale.
 	if a.pipeline == nil {
 		var middlewares []toolexec.Middleware
+
+		// Root slot: validation/classification/permission middlewares run
+		// outermost so blocked calls never reach hooks or capture.
+		middlewares = append(middlewares, a.toolMiddlewares.BeforeHooks...)
 
 		// Hook middleware for before-tool-call dispatch.
 		hookAdapter := &toolexec.SkillHookAdapter{Runtime: a.skillRuntime}
 		middlewares = append(middlewares, toolexec.HookMiddleware(hookAdapter))
 
+		// Root slot: safety middlewares (e.g. shell safety) run after
+		// before-tool hooks, before checkpoint capture.
+		middlewares = append(middlewares, a.toolMiddlewares.AfterHooks...)
+
 		// Checkpoint middleware captures file state before write/patch operations.
-		// TODO: Reposition after ShellSafety when Classifier/RuleEngine/ShellSafety
-		// middlewares are wired in (spec: Hook→...→ShellSafety→Checkpoint→PostHook).
 		if a.checkpointMgr != nil {
 			middlewares = append(middlewares, toolexec.CheckpointMiddleware(a.checkpointMgr, func() int {
 				return int(a.turnNumber.Load())
