@@ -81,22 +81,32 @@ func (p *Pipeline) ExecuteStream(ctx context.Context, tc ToolCall) <-chan Pipeli
 	ch := make(chan PipelineEvent, 32)
 	go func() {
 		defer close(ch)
-		// Sends select on ctx.Done() so a cancelled turn whose consumer has
-		// stopped reading cannot wedge this goroutine on a full buffer. The
-		// tool itself still runs to completion (Execute is synchronous); only
-		// the delivery of its progress/final events is abandoned on cancel.
-		emit := func(ev ToolEvent) {
+		// send tries a non-blocking send first so an event is always
+		// delivered whenever the buffer has room — even under a cancelled
+		// context, where a bare select{ch<-; ctx.Done()} would drop it at
+		// random (Go picks a ready arm nondeterministically). Only when the
+		// send would actually block do we fall back to the cancellation arm,
+		// which keeps a cancelled turn whose consumer stopped reading from
+		// wedging this goroutine on a full buffer. The tool itself still runs
+		// to completion (Execute is synchronous); only event delivery past a
+		// full buffer is abandoned on cancel. Mirrors sendEvent.
+		send := func(ev PipelineEvent) {
 			select {
-			case ch <- PipelineEvent{Type: PipelineProgress, Event: &ev}:
+			case ch <- ev:
+				return
+			default:
+			}
+			select {
+			case ch <- ev:
 			case <-ctx.Done():
 			}
 		}
+		emit := func(ev ToolEvent) {
+			send(PipelineEvent{Type: PipelineProgress, Event: &ev})
+		}
 		emitCtx := WithToolEventEmitter(ctx, emit)
 		result := p.Execute(emitCtx, tc)
-		select {
-		case ch <- PipelineEvent{Type: PipelineFinal, Result: &result}:
-		case <-ctx.Done():
-		}
+		send(PipelineEvent{Type: PipelineFinal, Result: &result})
 	}()
 	return ch
 }
