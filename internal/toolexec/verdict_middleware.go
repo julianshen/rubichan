@@ -7,6 +7,10 @@ import (
 	"github.com/julianshen/rubichan/internal/evaluator"
 )
 
+// readResultToolName is the canonical name of the offload-retrieval tool
+// (tools.NewReadResultTool); its pages are exempt from re-offloading.
+const readResultToolName = "read_result"
+
 // VerdictMiddleware appends an evaluation Verdict to the tool result Content
 // for any tool whose name is in watchTools. This makes the verdict visible to the LLM
 // in the conversation history without separate injection logic in the agent loop.
@@ -64,7 +68,11 @@ func VerdictOffloadStage(pipeline *evaluator.CheckerPipeline, shouldEvaluate fun
 			// Offload oversized content (same semantics as
 			// OutputManagerMiddleware: errors skip offloading, and an
 			// offloader failure preserves the original content).
-			if offloader != nil && !result.IsError {
+			// read_result is exempt: its output IS retrieved offloaded
+			// content, so re-offloading a page above the threshold would
+			// hand the model another reference stub instead of the content
+			// it explicitly asked for — nested refs it can never resolve.
+			if offloader != nil && !result.IsError && tc.Name != readResultToolName {
 				if ref, err := offloader.OffloadResult(tc.Name, tc.ID, result.Content); err == nil {
 					result.Content = ref
 				}

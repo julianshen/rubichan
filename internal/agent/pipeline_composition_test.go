@@ -313,3 +313,53 @@ func TestAliasFileCallsCaptureCheckpoints(t *testing.T) {
 	require.False(t, result.IsError, "alias execution should succeed: %s", result.Content)
 	require.NotEmpty(t, mgr.List(), "alias file write must capture a checkpoint for undo")
 }
+
+// oversizedNamedTool is a stub tool with an arbitrary name returning a
+// fixed oversized payload.
+type oversizedNamedTool struct {
+	name    string
+	payload string
+}
+
+func (t oversizedNamedTool) Name() string        { return t.name }
+func (t oversizedNamedTool) Description() string { return "stub " + t.name }
+func (t oversizedNamedTool) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (t oversizedNamedTool) Execute(context.Context, json.RawMessage) (tools.ToolResult, error) {
+	return tools.ToolResult{Content: t.payload}, nil
+}
+
+// TestReadResultPagesAreNeverReOffloaded pins the offload exemption for
+// read_result: its output IS retrieved offloaded content, so re-offloading
+// a page above the threshold (low configured threshold, or a large limit)
+// would hand the model another stub instead of the content it explicitly
+// asked for — nested refs it can never resolve.
+func TestReadResultPagesAreNeverReOffloaded(t *testing.T) {
+	st, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	payload := strings.Repeat("retrieved content ", 20) // ~360 bytes, over the 64-byte threshold
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(oversizedNamedTool{name: "read_result", payload: payload}))
+	require.NoError(t, reg.Register(oversizedNamedTool{name: "shell", payload: payload}))
+
+	cfg := config.DefaultConfig()
+	cfg.Agent.ResultOffloadThreshold = 64
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithStore(st))
+	require.NotNil(t, a.resultStore)
+
+	// Sanity: another tool's oversized output at this threshold IS offloaded.
+	shellRes := a.pipeline.Execute(context.Background(), toolexec.ToolCall{
+		ID: "tc-s", Name: "shell", Input: json.RawMessage(`{}`),
+	})
+	require.Contains(t, shellRes.Content, "ref_id=", "oversized shell output should offload at low threshold")
+
+	// read_result pages must come back verbatim, never as another stub.
+	rrRes := a.pipeline.Execute(context.Background(), toolexec.ToolCall{
+		ID: "tc-rr", Name: "read_result", Input: json.RawMessage(`{"ref_id":"whatever"}`),
+	})
+	assert.Equal(t, payload, rrRes.Content,
+		"read_result page must not be re-offloaded into a nested reference")
+}
