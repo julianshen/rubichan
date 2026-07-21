@@ -279,3 +279,33 @@ func TestAfterToolHooksReceiveToolInput(t *testing.T) {
 	require.True(t, ok, "HookDataInput must be a string (consumers assert .(string)); got %T", gotInput)
 	assert.JSONEq(t, input, inputStr)
 }
+
+// TestAliasFileCallsCaptureCheckpoints pins alias canonicalization in the
+// pipeline: models sometimes call registered aliases (write_file,
+// file_write, ...) instead of the canonical file tool. The base executor
+// resolves the alias and performs the write, but name-matching middlewares
+// (checkpoint capture, verdict, classification) see the alias unless the
+// name is canonicalized up front — leaving alias edits without an undo
+// snapshot.
+func TestAliasFileCallsCaptureCheckpoints(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "aliased.go")
+	require.NoError(t, os.WriteFile(target, []byte("package x\n"), 0o644))
+
+	mgr, err := checkpoint.New(dir, "sess-alias", 0)
+	require.NoError(t, err)
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(stubFileTool{}))
+	tools.RegisterDefaultAliases(reg)
+
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithCheckpointManager(mgr))
+
+	input, _ := json.Marshal(map[string]string{"operation": "write", "path": target})
+	result := a.pipeline.Execute(context.Background(), toolexec.ToolCall{
+		ID: "tc-a", Name: "write_file", Input: input,
+	})
+	require.False(t, result.IsError, "alias execution should succeed: %s", result.Content)
+	require.NotEmpty(t, mgr.List(), "alias file write must capture a checkpoint for undo")
+}
