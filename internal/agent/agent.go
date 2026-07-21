@@ -606,6 +606,11 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	{
 		var middlewares []toolexec.Middleware
 
+		// Canonicalize alias tool names first (write_file → file) so every
+		// name-matching stage below — classification, rules, checkpoint,
+		// verdict — sees the canonical name the base executor will run.
+		middlewares = append(middlewares, toolexec.CanonicalizeToolNameMiddleware(t))
+
 		// Root slot: validation/classification/permission middlewares run
 		// outermost so blocked calls never reach hooks or capture.
 		middlewares = append(middlewares, a.toolMiddlewares.BeforeHooks...)
