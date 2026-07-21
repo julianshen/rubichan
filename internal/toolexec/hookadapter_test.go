@@ -23,7 +23,7 @@ func TestSkillHookAdapterNilRuntimeBeforeToolCall(t *testing.T) {
 func TestSkillHookAdapterNilRuntimeAfterToolResult(t *testing.T) {
 	adapter := &toolexec.SkillHookAdapter{Runtime: nil}
 
-	modified, err := adapter.DispatchAfterToolResult(context.Background(), "shell", "output", false)
+	modified, err := adapter.DispatchAfterToolResult(context.Background(), "shell", json.RawMessage(`{}`), "output", false)
 
 	assert.NoError(t, err)
 	assert.Nil(t, modified, "nil runtime should return nil modifications")

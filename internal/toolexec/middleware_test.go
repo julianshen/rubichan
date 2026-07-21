@@ -32,7 +32,7 @@ func (m *mockHookDispatcher) DispatchBeforeToolCall(_ context.Context, toolName 
 	return m.beforeCancel, m.beforeErr
 }
 
-func (m *mockHookDispatcher) DispatchAfterToolResult(_ context.Context, toolName, content string, isError bool) (map[string]any, error) {
+func (m *mockHookDispatcher) DispatchAfterToolResult(_ context.Context, toolName string, _ json.RawMessage, content string, isError bool) (map[string]any, error) {
 	m.afterCalled = true
 	m.afterName = toolName
 	m.afterContent = content
