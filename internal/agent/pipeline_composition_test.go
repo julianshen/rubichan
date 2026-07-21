@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 )
@@ -102,4 +105,64 @@ func TestDefaultCompositionUnchangedWithoutSlots(t *testing.T) {
 	})
 	require.False(t, result.IsError)
 	require.NotEmpty(t, mgr.List())
+}
+
+// oversizedShellTool returns output larger than the offload threshold with
+// an error pattern buried past the offload preview (first 200 chars).
+type oversizedShellTool struct{ output string }
+
+func (t oversizedShellTool) Name() string        { return "shell" }
+func (t oversizedShellTool) Description() string { return "stub shell" }
+func (t oversizedShellTool) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (t oversizedShellTool) Execute(context.Context, json.RawMessage) (tools.ToolResult, error) {
+	return tools.ToolResult{Content: t.output}, nil
+}
+
+// TestVerdictEvaluatesRealContentBeforeOffload pins the middleware wrapper
+// order for verdict vs. output offloading: post-next work runs innermost
+// first, so VerdictMiddleware must be registered after (inside)
+// OutputManagerMiddleware. Otherwise the offloader replaces oversized
+// content with a read_result reference whose 200-char preview hides late
+// error patterns, and the evaluator stamps success on failed tool runs.
+func TestVerdictEvaluatesRealContentBeforeOffload(t *testing.T) {
+	st, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	// >4096 bytes (default offload threshold), error pattern well past the
+	// 200-char offload preview so only the real content reveals it.
+	output := strings.Repeat("build log line\n", 300) + "\nfatal error: all goroutines are asleep"
+	require.Greater(t, len(output), 4096)
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(oversizedShellTool{output: output}))
+
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithStore(st))
+	require.NotNil(t, a.resultStore, "store-backed agent must have a result store")
+
+	result := a.pipeline.Execute(context.Background(), toolexec.ToolCall{
+		ID: "tc-v", Name: "shell", Input: json.RawMessage(`{"command":"make"}`),
+	})
+
+	// Oversized output must end up offloaded to a reference.
+	require.Contains(t, result.Content, "read_result", "oversized output should be offloaded")
+
+	// The verdict must have been computed from the real content: the stored
+	// blob carries the evaluation, and it must not report success given the
+	// buried fatal error.
+	refMatch := regexp.MustCompile(`ref_id="([^"]+)"`).FindStringSubmatch(result.Content)
+	require.NotNil(t, refMatch, "offload reference id must be present: %s", result.Content)
+	blob, err := a.resultStore.Retrieve(refMatch[1])
+	require.NoError(t, err)
+	assert.Contains(t, blob, "[evaluation]", "verdict must be evaluated before offloading")
+	// The evidence line is the proof the evaluator saw the real content:
+	// the pattern sits past the 200-char offload preview, so grading the
+	// reference could never surface it. (Whether a detected pattern flips
+	// the overall status is evaluator policy, out of scope here.)
+	assert.Contains(t, blob, `detected error pattern: "fatal error"`,
+		"verdict must be computed from the full pre-offload output")
+	assert.Contains(t, blob, "fatal error: all goroutines", "blob must hold the real output")
 }

@@ -605,18 +605,25 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		// Post-hook middleware for after-tool-result dispatch.
 		middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
 
-		// Verdict middleware evaluates results for critical tools and appends
-		// structured feedback to conversation content (visible to LLM).
-		middlewares = append(middlewares, toolexec.VerdictMiddleware(
-			evaluator.DefaultCheckerPipeline(),
-			criticalToolsForEvaluation...,
-		))
-
 		// Output offloader middleware when persistence is available.
+		// Registered before (outside) VerdictMiddleware deliberately:
+		// post-next work runs innermost-first, so the verdict evaluates the
+		// real tool output and offloading of oversized content happens last.
+		// The reverse order would offload first, leaving the evaluator a
+		// 200-char preview reference — and false success verdicts for
+		// failures buried past the preview.
 		if a.resultStore != nil {
 			offloader := &toolexec.ResultStoreAdapter{Offloader: a.resultStore}
 			middlewares = append(middlewares, toolexec.OutputManagerMiddleware(offloader))
 		}
+
+		// Verdict middleware evaluates results for critical tools and appends
+		// structured feedback to conversation content (visible to LLM; for
+		// offloaded results the verdict travels with the stored blob).
+		middlewares = append(middlewares, toolexec.VerdictMiddleware(
+			evaluator.DefaultCheckerPipeline(),
+			criticalToolsForEvaluation...,
+		))
 
 		a.pipeline = toolexec.NewPipeline(toolexec.RegistryExecutor(t), middlewares...)
 	}
