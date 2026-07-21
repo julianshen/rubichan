@@ -16,16 +16,27 @@ func VerdictMiddleware(pipeline *evaluator.CheckerPipeline, watchTools ...string
 	for _, n := range watchTools {
 		watch[n] = struct{}{}
 	}
+	return VerdictMiddlewareFor(pipeline, func(tc ToolCall) bool {
+		_, ok := watch[tc.Name]
+		return ok
+	})
+}
 
+// VerdictMiddlewareFor is the predicate form of VerdictMiddleware: results
+// are evaluated for any call shouldEvaluate accepts. Callers whose critical
+// operations depend on tool input — e.g. the canonical file tool, where
+// only write/patch operations are critical — use this instead of exact
+// name matching.
+func VerdictMiddlewareFor(pipeline *evaluator.CheckerPipeline, shouldEvaluate func(ToolCall) bool) Middleware {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(ctx context.Context, tc ToolCall) Result {
 			result := next(ctx, tc)
 
-			// Pass through if no pipeline configured or tool not watched
+			// Pass through if no pipeline configured or call not watched
 			if pipeline == nil {
 				return result
 			}
-			if _, ok := watch[tc.Name]; !ok {
+			if shouldEvaluate == nil || !shouldEvaluate(tc) {
 				return result
 			}
 
