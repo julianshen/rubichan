@@ -36,8 +36,10 @@ func (h *SkillHookAdapter) DispatchBeforeToolCall(ctx context.Context, toolName 
 }
 
 // DispatchAfterToolResult dispatches an after-tool-result hook via the skill runtime.
-// If Runtime is nil, it returns nil with no error.
-func (h *SkillHookAdapter) DispatchAfterToolResult(ctx context.Context, toolName, content string, isError bool) (map[string]any, error) {
+// If Runtime is nil, it returns nil with no error. Input is encoded as a
+// string, matching DispatchBeforeToolCall — hook consumers (post_edit
+// filters, template variables) assert HookDataInput as a string.
+func (h *SkillHookAdapter) DispatchAfterToolResult(ctx context.Context, toolName string, input json.RawMessage, content string, isError bool) (map[string]any, error) {
 	if h.Runtime == nil {
 		return nil, nil
 	}
@@ -45,6 +47,7 @@ func (h *SkillHookAdapter) DispatchAfterToolResult(ctx context.Context, toolName
 		Phase: skills.HookOnAfterToolResult,
 		Data: map[string]any{
 			skills.HookDataToolName: toolName,
+			skills.HookDataInput:    string(input),
 			skills.HookDataContent:  content,
 			skills.HookDataIsError:  isError,
 		},

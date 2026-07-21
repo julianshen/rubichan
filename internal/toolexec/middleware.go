@@ -9,7 +9,7 @@ import (
 // HookDispatcher abstracts skill runtime's hook dispatch.
 type HookDispatcher interface {
 	DispatchBeforeToolCall(ctx context.Context, toolName string, input json.RawMessage) (cancel bool, err error)
-	DispatchAfterToolResult(ctx context.Context, toolName, content string, isError bool) (modified map[string]any, err error)
+	DispatchAfterToolResult(ctx context.Context, toolName string, input json.RawMessage, content string, isError bool) (modified map[string]any, err error)
 }
 
 // OutputOffloader abstracts the ResultStore for output management.
@@ -60,7 +60,7 @@ func PostHookMiddleware(dispatcher HookDispatcher) Middleware {
 				return result
 			}
 
-			modified, err := dispatcher.DispatchAfterToolResult(ctx, tc.Name, result.Content, result.IsError)
+			modified, err := dispatcher.DispatchAfterToolResult(ctx, tc.Name, tc.Input, result.Content, result.IsError)
 			if err != nil {
 				// Graceful degradation: errors don't change result.
 				return result

@@ -244,3 +244,38 @@ func TestAfterToolHooksSeeFullResultOnce(t *testing.T) {
 	assert.NotContains(t, seen[0], "read_result",
 		"hook must not receive the offload stub")
 }
+
+// TestAfterToolHooksReceiveToolInput pins the after-result hook payload:
+// handlers must receive the original tool input as a string under
+// HookDataInput — post_edit filters and {{file}}/{{command}} template
+// variables parse it to target completed file/shell calls. (The old
+// inline dispatch passed a json.RawMessage, which every consumer's
+// string assertion silently rejected — so this contract is load-bearing
+// for the first time.)
+func TestAfterToolHooksReceiveToolInput(t *testing.T) {
+	var gotInput any
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterToolResult: func(event skills.HookEvent) (skills.HookResult, error) {
+			gotInput = event.Data[skills.HookDataInput]
+			return skills.HookResult{}, nil
+		},
+	}
+	rt := makeTestRuntime(t, "input-hook", toolManifest("input-hook"), nil, hooks)
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(stubFileTool{}))
+
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithSkillRuntime(rt))
+
+	input := `{"operation":"write","path":"main.go"}`
+	ch := make(chan TurnEvent, 64)
+	res := a.executeSingleTool(context.Background(), ch, provider.ToolUseBlock{
+		ID: "tc-i", Name: "file", Input: json.RawMessage(input),
+	})
+	require.False(t, res.isError)
+
+	inputStr, ok := gotInput.(string)
+	require.True(t, ok, "HookDataInput must be a string (consumers assert .(string)); got %T", gotInput)
+	assert.JSONEq(t, input, inputStr)
+}
