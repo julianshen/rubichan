@@ -14,6 +14,8 @@ import (
 
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -192,4 +194,53 @@ func TestVerdictCoversCanonicalFileWrites(t *testing.T) {
 	})
 	assert.NotContains(t, result.Content, "[evaluation]",
 		"file reads are not critical operations and must not be evaluated")
+}
+
+// TestAfterToolHooksSeeFullResultOnce pins two properties of the
+// post-result data flow for store-backed sessions:
+//
+//  1. OnAfterToolResult hooks receive the full tool output, not the
+//     read_result reference the offloader substitutes for oversized
+//     results — skills that redact or transform large outputs must
+//     operate on the real content (post-next order: hooks → verdict →
+//     offload).
+//  2. The hook fires exactly once per result. executeSingleTool used to
+//     dispatch it inline after the pipeline (post-offload, seeing the
+//     stub) on top of the pipeline's own PostHookMiddleware dispatch.
+func TestAfterToolHooksSeeFullResultOnce(t *testing.T) {
+	var seen []string
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnAfterToolResult: func(event skills.HookEvent) (skills.HookResult, error) {
+			if c, ok := event.Data[skills.HookDataContent].(string); ok {
+				seen = append(seen, c)
+			}
+			return skills.HookResult{}, nil
+		},
+	}
+	rt := makeTestRuntime(t, "spy-hook", toolManifest("spy-hook"), nil, hooks)
+
+	st, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+
+	output := strings.Repeat("chatty output line\n", 300) + "\nBURIED-MARKER"
+	require.Greater(t, len(output), 4096)
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(oversizedShellTool{output: output}))
+
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithStore(st), WithSkillRuntime(rt))
+
+	ch := make(chan TurnEvent, 64)
+	res := a.executeSingleTool(context.Background(), ch, provider.ToolUseBlock{
+		ID: "tc-h", Name: "shell", Input: json.RawMessage(`{"command":"make"}`),
+	})
+	require.False(t, res.isError)
+
+	require.Len(t, seen, 1, "after-tool-result hook must fire exactly once per result")
+	assert.Contains(t, seen[0], "BURIED-MARKER",
+		"hook must receive the full pre-offload output, not the offload reference")
+	assert.NotContains(t, seen[0], "read_result",
+		"hook must not receive the offload stub")
 }
