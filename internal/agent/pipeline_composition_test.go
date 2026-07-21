@@ -363,3 +363,40 @@ func TestReadResultPagesAreNeverReOffloaded(t *testing.T) {
 	assert.Equal(t, payload, rrRes.Content,
 		"read_result page must not be re-offloaded into a nested reference")
 }
+
+// TestBeforeToolHooksDispatchOnceWithStringInput completes the hook-
+// dispatch rationalization started with the after-result hooks: the
+// pipeline's HookMiddleware is the single dispatch site for
+// HookOnBeforeToolCall, firing exactly once per call with HookDataInput
+// encoded as a string (the contract pre_edit/pre_shell filters and
+// template variables assert). The removed inline dispatch in
+// executeSingleTool fired a second time with a json.RawMessage payload
+// that no consumer could read.
+func TestBeforeToolHooksDispatchOnceWithStringInput(t *testing.T) {
+	var inputs []any
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnBeforeToolCall: func(event skills.HookEvent) (skills.HookResult, error) {
+			inputs = append(inputs, event.Data[skills.HookDataInput])
+			return skills.HookResult{}, nil
+		},
+	}
+	rt := makeTestRuntime(t, "before-hook", toolManifest("before-hook"), nil, hooks)
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(stubFileTool{}))
+
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithSkillRuntime(rt))
+
+	input := `{"operation":"write","path":"main.go"}`
+	ch := make(chan TurnEvent, 64)
+	res := a.executeSingleTool(context.Background(), ch, provider.ToolUseBlock{
+		ID: "tc-b", Name: "file", Input: json.RawMessage(input),
+	})
+	require.False(t, res.isError)
+
+	require.Len(t, inputs, 1, "before-tool hook must fire exactly once per call")
+	inputStr, ok := inputs[0].(string)
+	require.True(t, ok, "HookDataInput must be a string (consumers assert .(string)); got %T", inputs[0])
+	assert.JSONEq(t, input, inputStr)
+}

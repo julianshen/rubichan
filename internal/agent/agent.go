@@ -2676,29 +2676,11 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		}
 	}()
 
-	// Dispatch HookOnBeforeToolCall. If a hook cancels the call, return
-	// an error result immediately without executing the tool.
-	if a.skillRuntime != nil {
-		hookResult, err := a.skillRuntime.DispatchHook(skills.HookEvent{
-			Phase: skills.HookOnBeforeToolCall,
-			Ctx:   ctx,
-			Data: map[string]any{
-				skills.HookDataToolName: tc.Name,
-				skills.HookDataInput:    tc.Input,
-			},
-		})
-		if err != nil {
-			a.logger.Warn("HookOnBeforeToolCall failed for %s: %v", tc.Name, err)
-		} else if hookResult != nil && hookResult.Cancel {
-			cancelMsg := fmt.Sprintf("tool %q cancelled by skill hook", tc.Name)
-			return toolExecResult{
-				toolUseID: tc.ID,
-				content:   cancelMsg,
-				isError:   true,
-				event:     makeToolResultEvent(tc.ID, tc.Name, cancelMsg, "", true),
-			}
-		}
-	}
+	// HookOnBeforeToolCall is dispatched by the pipeline's HookMiddleware
+	// (with input encoded as the string its consumers assert, and only for
+	// calls that pass the gate middlewares). No inline dispatch here — it
+	// fired every hook a second time with a json.RawMessage payload that
+	// no filter or template consumer could read.
 
 	emit := agentsdk.MakeToolProgressEmitter(tc.ID, tc.Name, func(ev TurnEvent) { a.emit(ctx, ch, ev) })
 	result := a.pipeline.Execute(toolexec.WithToolEventEmitter(ctx, emit), toolexec.ToolCall{
