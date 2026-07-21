@@ -67,6 +67,71 @@ func isCriticalToolCall(tc toolexec.ToolCall) bool {
 	return input.Operation == "write" || input.Operation == "patch"
 }
 
+// buildPipeline composes the tool-execution pipeline. The agent owns the
+// core chain; composition roots contribute only slot middlewares via
+// WithToolMiddlewares, spliced in at fixed points (spec order:
+// BeforeHooks → Hook → AfterHooks → Checkpoint → PostHook → Verdict →
+// Output).
+func (a *Agent) buildPipeline(t *tools.Registry) *toolexec.Pipeline {
+	var middlewares []toolexec.Middleware
+
+	// Canonicalize alias tool names first (write_file → file) so every
+	// name-matching stage below — classification, rules, checkpoint,
+	// verdict — sees the canonical name the base executor will run.
+	middlewares = append(middlewares, toolexec.CanonicalizeToolNameMiddleware(t))
+
+	// Root slot: validation/classification/permission middlewares run
+	// outermost so blocked calls never reach hooks or capture.
+	middlewares = append(middlewares, a.toolMiddlewares.BeforeHooks...)
+
+	// Hook middleware for before-tool-call dispatch.
+	hookAdapter := &toolexec.SkillHookAdapter{Runtime: a.skillRuntime}
+	middlewares = append(middlewares, toolexec.HookMiddleware(hookAdapter))
+
+	// Root slot: safety middlewares (e.g. shell safety) run after
+	// before-tool hooks, before checkpoint capture.
+	middlewares = append(middlewares, a.toolMiddlewares.AfterHooks...)
+
+	// Checkpoint middleware captures file state before write/patch operations.
+	if a.checkpointMgr != nil {
+		middlewares = append(middlewares, toolexec.CheckpointMiddleware(a.checkpointMgr, func() int {
+			return int(a.turnNumber.Load())
+		}))
+	}
+
+	// Post-result stages. Registration order is deliberate: post-next
+	// work runs innermost-first, so the effective result flow is
+	//
+	//	after-tool hooks (raw output) → verdict evaluation → offload →
+	//	verdict appended inline
+	//
+	// After-tool hooks must see (and may transform) the real tool
+	// output. Verdict evaluation and offloading are one fused stage
+	// (VerdictOffloadStage) because their data dependency cannot be
+	// expressed by wrapper ordering: the verdict must be evaluated on
+	// the full pre-offload output, yet appended after offloading so it
+	// stays visible in the conversation rather than vanishing into the
+	// stored blob. Uses the predicate matcher so canonical file
+	// write/patch operations are covered, not just exact tool names.
+	var offloader toolexec.OutputOffloader
+	if a.resultStore != nil {
+		offloader = &toolexec.ResultStoreAdapter{Offloader: a.resultStore}
+	}
+	middlewares = append(middlewares, toolexec.VerdictOffloadStage(
+		evaluator.DefaultCheckerPipeline(),
+		isCriticalToolCall,
+		offloader,
+	))
+
+	// Post-hook middleware for after-tool-result dispatch (innermost —
+	// hooks run first on the raw output). This is the single dispatch
+	// site for HookOnAfterToolResult; executeSingleTool must not
+	// dispatch it again.
+	middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
+
+	return toolexec.NewPipeline(toolexec.RegistryExecutor(t), middlewares...)
+}
+
 // AgentOption is a functional option for configuring an Agent.
 type AgentOption func(*Agent)
 
@@ -598,70 +663,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 
 	a.promptBuilder = NewPromptBuilder()
 
-	// Compose the tool-execution pipeline. The agent owns the core chain;
-	// composition roots contribute only slot middlewares via
-	// WithToolMiddlewares, spliced in at fixed points (spec order:
-	// BeforeHooks → Hook → AfterHooks → Checkpoint → PostHook → Verdict →
-	// Output).
-	{
-		var middlewares []toolexec.Middleware
-
-		// Canonicalize alias tool names first (write_file → file) so every
-		// name-matching stage below — classification, rules, checkpoint,
-		// verdict — sees the canonical name the base executor will run.
-		middlewares = append(middlewares, toolexec.CanonicalizeToolNameMiddleware(t))
-
-		// Root slot: validation/classification/permission middlewares run
-		// outermost so blocked calls never reach hooks or capture.
-		middlewares = append(middlewares, a.toolMiddlewares.BeforeHooks...)
-
-		// Hook middleware for before-tool-call dispatch.
-		hookAdapter := &toolexec.SkillHookAdapter{Runtime: a.skillRuntime}
-		middlewares = append(middlewares, toolexec.HookMiddleware(hookAdapter))
-
-		// Root slot: safety middlewares (e.g. shell safety) run after
-		// before-tool hooks, before checkpoint capture.
-		middlewares = append(middlewares, a.toolMiddlewares.AfterHooks...)
-
-		// Checkpoint middleware captures file state before write/patch operations.
-		if a.checkpointMgr != nil {
-			middlewares = append(middlewares, toolexec.CheckpointMiddleware(a.checkpointMgr, func() int {
-				return int(a.turnNumber.Load())
-			}))
-		}
-
-		// Post-result stages. Registration order is deliberate: post-next
-		// work runs innermost-first, so the effective result flow is
-		//
-		//	after-tool hooks (raw output) → verdict evaluation → offload →
-		//	verdict appended inline
-		//
-		// After-tool hooks must see (and may transform) the real tool
-		// output. Verdict evaluation and offloading are one fused stage
-		// (VerdictOffloadStage) because their data dependency cannot be
-		// expressed by wrapper ordering: the verdict must be evaluated on
-		// the full pre-offload output, yet appended after offloading so it
-		// stays visible in the conversation rather than vanishing into the
-		// stored blob. Uses the predicate matcher so canonical file
-		// write/patch operations are covered, not just exact tool names.
-		var offloader toolexec.OutputOffloader
-		if a.resultStore != nil {
-			offloader = &toolexec.ResultStoreAdapter{Offloader: a.resultStore}
-		}
-		middlewares = append(middlewares, toolexec.VerdictOffloadStage(
-			evaluator.DefaultCheckerPipeline(),
-			isCriticalToolCall,
-			offloader,
-		))
-
-		// Post-hook middleware for after-tool-result dispatch (innermost —
-		// hooks run first on the raw output). This is the single dispatch
-		// site for HookOnAfterToolResult; executeSingleTool must not
-		// dispatch it again.
-		middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
-
-		a.pipeline = toolexec.NewPipeline(toolexec.RegistryExecutor(t), middlewares...)
-	}
+	a.pipeline = a.buildPipeline(t)
 
 	// Register user-defined hooks (from config and AGENT.md) into the skill runtime.
 	if a.userHookRunner != nil && a.skillRuntime != nil {
