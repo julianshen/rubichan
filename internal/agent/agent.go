@@ -625,16 +625,19 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			}))
 		}
 
-		// Post-hook middleware for after-tool-result dispatch.
-		middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
+		// Post-result stages. Registration order is deliberate: post-next
+		// work runs innermost-first, so the effective result flow is
+		//
+		//	after-tool hooks (raw output) → verdict → offload
+		//
+		// After-tool hooks must see (and may transform) the real tool
+		// output; the verdict evaluates what the conversation will contain;
+		// offloading of oversized content runs last so neither hooks nor
+		// the evaluator ever operate on the 200-char-preview reference the
+		// offloader substitutes.
 
-		// Output offloader middleware when persistence is available.
-		// Registered before (outside) VerdictMiddleware deliberately:
-		// post-next work runs innermost-first, so the verdict evaluates the
-		// real tool output and offloading of oversized content happens last.
-		// The reverse order would offload first, leaving the evaluator a
-		// 200-char preview reference — and false success verdicts for
-		// failures buried past the preview.
+		// Output offloader middleware when persistence is available
+		// (outermost of the post-result stages — offloads last).
 		if a.resultStore != nil {
 			offloader := &toolexec.ResultStoreAdapter{Offloader: a.resultStore}
 			middlewares = append(middlewares, toolexec.OutputManagerMiddleware(offloader))
@@ -649,6 +652,12 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			evaluator.DefaultCheckerPipeline(),
 			isCriticalToolCall,
 		))
+
+		// Post-hook middleware for after-tool-result dispatch (innermost —
+		// hooks run first on the raw output). This is the single dispatch
+		// site for HookOnAfterToolResult; executeSingleTool must not
+		// dispatch it again.
+		middlewares = append(middlewares, toolexec.PostHookMiddleware(hookAdapter))
 
 		a.pipeline = toolexec.NewPipeline(toolexec.RegistryExecutor(t), middlewares...)
 	}
@@ -2707,26 +2716,10 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc p
 		result.Content = capped.Content
 	}
 
-	// Dispatch HookOnAfterToolResult to allow skills to modify the result.
-	if a.skillRuntime != nil {
-		hookResult, err := a.skillRuntime.DispatchHook(skills.HookEvent{
-			Phase: skills.HookOnAfterToolResult,
-			Ctx:   ctx,
-			Data: map[string]any{
-				skills.HookDataToolName: tc.Name,
-				skills.HookDataInput:    tc.Input,
-				skills.HookDataContent:  result.Content,
-				skills.HookDataIsError:  result.IsError,
-			},
-		})
-		if err != nil {
-			a.logger.Warn("HookOnAfterToolResult failed for %s: %v", tc.Name, err)
-		} else if hookResult != nil && hookResult.Modified != nil {
-			if modifiedContent, ok := hookResult.Modified[skills.HookDataContent].(string); ok {
-				result.Content = modifiedContent
-			}
-		}
-	}
+	// HookOnAfterToolResult is dispatched by the pipeline's
+	// PostHookMiddleware (innermost post-result stage, so hooks see the
+	// raw pre-offload output). No inline dispatch here — it would fire the
+	// hook a second time on the post-offload result.
 
 	return toolExecResult{
 		toolUseID: tc.ID,
