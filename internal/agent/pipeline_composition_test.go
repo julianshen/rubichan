@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -399,4 +400,45 @@ func TestBeforeToolHooksDispatchOnceWithStringInput(t *testing.T) {
 	inputStr, ok := inputs[0].(string)
 	require.True(t, ok, "HookDataInput must be a string (consumers assert .(string)); got %T", inputs[0])
 	assert.JSONEq(t, input, inputStr)
+}
+
+type warnCapturingLogger struct{ warns []string }
+
+func (l *warnCapturingLogger) Debug(format string, args ...any) {}
+func (l *warnCapturingLogger) Info(format string, args ...any)  {}
+func (l *warnCapturingLogger) Warn(format string, args ...any) {
+	l.warns = append(l.warns, fmt.Sprintf(format, args...))
+}
+func (l *warnCapturingLogger) Error(format string, args ...any) {}
+
+// TestBeforeHookFailureIsLogged pins the operator diagnostic for hook
+// failures: with the pipeline middleware as the single dispatch site, a
+// broken skill hook still blocks the call (HookMiddleware policy) AND
+// leaves a warning in the log — the removed inline dispatch was
+// previously the only place that logged these failures.
+func TestBeforeHookFailureIsLogged(t *testing.T) {
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnBeforeToolCall: func(event skills.HookEvent) (skills.HookResult, error) {
+			return skills.HookResult{}, fmt.Errorf("hook exploded")
+		},
+	}
+	rt := makeTestRuntime(t, "err-hook", toolManifest("err-hook"), nil, hooks)
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(stubFileTool{}))
+
+	logger := &warnCapturingLogger{}
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithSkillRuntime(rt), WithLogger(logger))
+
+	ch := make(chan TurnEvent, 64)
+	res := a.executeSingleTool(context.Background(), ch, provider.ToolUseBlock{
+		ID: "tc-e", Name: "file", Input: json.RawMessage(`{"operation":"read","path":"x"}`),
+	})
+	require.True(t, res.isError)
+	require.Contains(t, res.content, "hook error")
+
+	joined := strings.Join(logger.warns, "\n")
+	assert.Contains(t, joined, "HookOnBeforeToolCall failed",
+		"hook failure must leave an operator-facing warning in the log")
 }

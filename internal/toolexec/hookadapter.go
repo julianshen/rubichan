@@ -5,11 +5,23 @@ import (
 	"encoding/json"
 
 	"github.com/julianshen/rubichan/internal/skills"
+	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
 // SkillHookAdapter adapts a skills.Runtime to the HookDispatcher interface.
+// When Logger is set, hook dispatch failures are logged as warnings — the
+// middlewares themselves surface errors only through the tool result (or
+// swallow them, for after-result hooks), so this is the operator-facing
+// diagnostic for a broken skill hook.
 type SkillHookAdapter struct {
 	Runtime *skills.Runtime
+	Logger  agentsdk.Logger
+}
+
+func (h *SkillHookAdapter) warnf(format string, args ...any) {
+	if h.Logger != nil {
+		h.Logger.Warn(format, args...)
+	}
 }
 
 // DispatchBeforeToolCall dispatches a before-tool-call hook via the skill runtime.
@@ -27,6 +39,7 @@ func (h *SkillHookAdapter) DispatchBeforeToolCall(ctx context.Context, toolName 
 		Ctx: ctx,
 	})
 	if err != nil {
+		h.warnf("HookOnBeforeToolCall failed for %s: %v", toolName, err)
 		return false, err
 	}
 	if result != nil && result.Cancel {
@@ -54,6 +67,7 @@ func (h *SkillHookAdapter) DispatchAfterToolResult(ctx context.Context, toolName
 		Ctx: ctx,
 	})
 	if err != nil {
+		h.warnf("HookOnAfterToolResult failed for %s: %v", toolName, err)
 		return nil, err
 	}
 	if result != nil {

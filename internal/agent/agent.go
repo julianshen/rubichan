@@ -84,8 +84,10 @@ func (a *Agent) buildPipeline(t *tools.Registry) *toolexec.Pipeline {
 	// outermost so blocked calls never reach hooks or capture.
 	middlewares = append(middlewares, a.toolMiddlewares.BeforeHooks...)
 
-	// Hook middleware for before-tool-call dispatch.
-	hookAdapter := &toolexec.SkillHookAdapter{Runtime: a.skillRuntime}
+	// Hook middleware for before-tool-call dispatch. The adapter carries
+	// the logger so hook dispatch failures leave an operator-facing
+	// warning — the middlewares surface errors only through tool results.
+	hookAdapter := &toolexec.SkillHookAdapter{Runtime: a.skillRuntime, Logger: a.logger}
 	middlewares = append(middlewares, toolexec.HookMiddleware(hookAdapter))
 
 	// Root slot: safety middlewares (e.g. shell safety) run after
