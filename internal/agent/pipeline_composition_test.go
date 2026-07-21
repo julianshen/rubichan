@@ -152,20 +152,24 @@ func TestVerdictEvaluatesRealContentBeforeOffload(t *testing.T) {
 	// Oversized output must end up offloaded to a reference.
 	require.Contains(t, result.Content, "read_result", "oversized output should be offloaded")
 
-	// The verdict must have been computed from the real content: the stored
-	// blob carries the evaluation, and it must not report success given the
-	// buried fatal error.
+	// The verdict must be BOTH computed from the real content AND visible
+	// inline after offloading. The evidence line is the proof the evaluator
+	// saw the real content — the pattern sits past the 200-char offload
+	// preview, so grading the reference could never surface it — and the
+	// spec requires the verdict in the conversation, so it must survive
+	// offloading rather than vanish into the stored blob. (Whether a
+	// detected pattern flips the overall status is evaluator policy, out
+	// of scope here.)
+	assert.Contains(t, result.Content, "[evaluation]",
+		"verdict must remain visible in the conversation after offloading")
+	assert.Contains(t, result.Content, `detected error pattern: "fatal error"`,
+		"inline verdict must be computed from the full pre-offload output")
+
+	// The stored blob holds the raw tool output.
 	refMatch := regexp.MustCompile(`ref_id="([^"]+)"`).FindStringSubmatch(result.Content)
 	require.NotNil(t, refMatch, "offload reference id must be present: %s", result.Content)
 	blob, err := a.resultStore.Retrieve(refMatch[1])
 	require.NoError(t, err)
-	assert.Contains(t, blob, "[evaluation]", "verdict must be evaluated before offloading")
-	// The evidence line is the proof the evaluator saw the real content:
-	// the pattern sits past the 200-char offload preview, so grading the
-	// reference could never surface it. (Whether a detected pattern flips
-	// the overall status is evaluator policy, out of scope here.)
-	assert.Contains(t, blob, `detected error pattern: "fatal error"`,
-		"verdict must be computed from the full pre-offload output")
 	assert.Contains(t, blob, "fatal error: all goroutines", "blob must hold the real output")
 }
 

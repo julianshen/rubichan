@@ -633,29 +633,25 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		// Post-result stages. Registration order is deliberate: post-next
 		// work runs innermost-first, so the effective result flow is
 		//
-		//	after-tool hooks (raw output) → verdict → offload
+		//	after-tool hooks (raw output) → verdict evaluation → offload →
+		//	verdict appended inline
 		//
 		// After-tool hooks must see (and may transform) the real tool
-		// output; the verdict evaluates what the conversation will contain;
-		// offloading of oversized content runs last so neither hooks nor
-		// the evaluator ever operate on the 200-char-preview reference the
-		// offloader substitutes.
-
-		// Output offloader middleware when persistence is available
-		// (outermost of the post-result stages — offloads last).
+		// output. Verdict evaluation and offloading are one fused stage
+		// (VerdictOffloadStage) because their data dependency cannot be
+		// expressed by wrapper ordering: the verdict must be evaluated on
+		// the full pre-offload output, yet appended after offloading so it
+		// stays visible in the conversation rather than vanishing into the
+		// stored blob. Uses the predicate matcher so canonical file
+		// write/patch operations are covered, not just exact tool names.
+		var offloader toolexec.OutputOffloader
 		if a.resultStore != nil {
-			offloader := &toolexec.ResultStoreAdapter{Offloader: a.resultStore}
-			middlewares = append(middlewares, toolexec.OutputManagerMiddleware(offloader))
+			offloader = &toolexec.ResultStoreAdapter{Offloader: a.resultStore}
 		}
-
-		// Verdict middleware evaluates results for critical tool calls and
-		// appends structured feedback to conversation content (visible to
-		// LLM; for offloaded results the verdict travels with the stored
-		// blob). Uses the predicate form so canonical file write/patch
-		// operations are covered, not just exact tool names.
-		middlewares = append(middlewares, toolexec.VerdictMiddlewareFor(
+		middlewares = append(middlewares, toolexec.VerdictOffloadStage(
 			evaluator.DefaultCheckerPipeline(),
 			isCriticalToolCall,
+			offloader,
 		))
 
 		// Post-hook middleware for after-tool-result dispatch (innermost —

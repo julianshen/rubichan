@@ -28,27 +28,52 @@ func VerdictMiddleware(pipeline *evaluator.CheckerPipeline, watchTools ...string
 // only write/patch operations are critical — use this instead of exact
 // name matching.
 func VerdictMiddlewareFor(pipeline *evaluator.CheckerPipeline, shouldEvaluate func(ToolCall) bool) Middleware {
+	return VerdictOffloadStage(pipeline, shouldEvaluate, nil)
+}
+
+// VerdictOffloadStage fuses verdict evaluation and output offloading into
+// one post-result stage. The fusion is deliberate: the two operations have
+// a data dependency that middleware wrapper ordering cannot express — the
+// verdict must be *evaluated* against the full pre-offload output (a
+// 200-char offload preview hides late error patterns), but it must be
+// *appended* after offloading so it stays visible in the conversation
+// instead of vanishing into the stored blob. As separate middlewares, one
+// of those two properties is always lost.
+//
+// Flow: evaluate verdict on the raw result (when watched) → offload
+// oversized non-error content (when an offloader is configured; offload
+// failures preserve the original content) → append the formatted verdict
+// to whatever content remains. The stored blob holds the raw tool output.
+// A nil offloader degrades to plain verdict evaluation.
+func VerdictOffloadStage(pipeline *evaluator.CheckerPipeline, shouldEvaluate func(ToolCall) bool, offloader OutputOffloader) Middleware {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(ctx context.Context, tc ToolCall) Result {
 			result := next(ctx, tc)
 
-			// Pass through if no pipeline configured or call not watched
-			if pipeline == nil {
-				return result
-			}
-			if shouldEvaluate == nil || !shouldEvaluate(tc) {
-				return result
+			// Evaluate against the full pre-offload output.
+			var verdictText string
+			if pipeline != nil && shouldEvaluate != nil && shouldEvaluate(tc) {
+				verdict := pipeline.Evaluate(evaluator.ToolOutput{
+					ToolName: tc.Name,
+					Content:  result.Content,
+					IsError:  result.IsError,
+				})
+				verdictText = evaluator.FormatVerdict(verdict)
 			}
 
-			// Run the checker pipeline on the result
-			verdict := pipeline.Evaluate(evaluator.ToolOutput{
-				ToolName: tc.Name,
-				Content:  result.Content,
-				IsError:  result.IsError,
-			})
+			// Offload oversized content (same semantics as
+			// OutputManagerMiddleware: errors skip offloading, and an
+			// offloader failure preserves the original content).
+			if offloader != nil && !result.IsError {
+				if ref, err := offloader.OffloadResult(tc.Name, tc.ID, result.Content); err == nil {
+					result.Content = ref
+				}
+			}
 
-			// Append formatted verdict to the result content
-			result.Content = fmt.Sprintf("%s\n\n%s", result.Content, evaluator.FormatVerdict(verdict))
+			// Append the verdict after offloading so it stays visible.
+			if verdictText != "" {
+				result.Content = fmt.Sprintf("%s\n\n%s", result.Content, verdictText)
+			}
 			return result
 		}
 	}
