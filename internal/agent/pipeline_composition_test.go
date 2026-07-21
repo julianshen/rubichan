@@ -166,3 +166,30 @@ func TestVerdictEvaluatesRealContentBeforeOffload(t *testing.T) {
 		"verdict must be computed from the full pre-offload output")
 	assert.Contains(t, blob, "fatal error: all goroutines", "blob must hold the real output")
 }
+
+// TestVerdictCoversCanonicalFileWrites pins verdict coverage for the
+// canonical file tool: models call "file" with operation write/patch —
+// the write_file/patch_file names in criticalToolsForEvaluation are
+// aliases hidden from Registry.All(), so exact-name matching alone
+// evaluates only hallucinated alias calls and misses real file edits.
+func TestVerdictCoversCanonicalFileWrites(t *testing.T) {
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(stubFileTool{}))
+
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg)
+
+	writeInput, _ := json.Marshal(map[string]string{"operation": "write", "path": "x.go"})
+	result := a.pipeline.Execute(context.Background(), toolexec.ToolCall{
+		ID: "tc-w", Name: "file", Input: writeInput,
+	})
+	assert.Contains(t, result.Content, "[evaluation]",
+		"canonical file write must be evaluated")
+
+	readInput, _ := json.Marshal(map[string]string{"operation": "read", "path": "x.go"})
+	result = a.pipeline.Execute(context.Background(), toolexec.ToolCall{
+		ID: "tc-r", Name: "file", Input: readInput,
+	})
+	assert.NotContains(t, result.Content, "[evaluation]",
+		"file reads are not critical operations and must not be evaluated")
+}

@@ -44,6 +44,29 @@ import (
 // These tools are watched by the evaluator middleware to append verdict feedback.
 var criticalToolsForEvaluation = []string{"shell", "write_file", "patch_file"}
 
+// isCriticalToolCall reports whether a tool call warrants verdict
+// evaluation. Beyond the exact-name watch list (which covers shell plus
+// the write_file/patch_file aliases some models hallucinate), it matches
+// the canonical file tool's mutating operations — models normally call
+// "file" with operation write/patch, which exact-name matching misses.
+func isCriticalToolCall(tc toolexec.ToolCall) bool {
+	for _, n := range criticalToolsForEvaluation {
+		if tc.Name == n {
+			return true
+		}
+	}
+	if tc.Name != "file" {
+		return false
+	}
+	var input struct {
+		Operation string `json:"operation"`
+	}
+	if err := json.Unmarshal(tc.Input, &input); err != nil {
+		return false
+	}
+	return input.Operation == "write" || input.Operation == "patch"
+}
+
 // AgentOption is a functional option for configuring an Agent.
 type AgentOption func(*Agent)
 
@@ -617,12 +640,14 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 			middlewares = append(middlewares, toolexec.OutputManagerMiddleware(offloader))
 		}
 
-		// Verdict middleware evaluates results for critical tools and appends
-		// structured feedback to conversation content (visible to LLM; for
-		// offloaded results the verdict travels with the stored blob).
-		middlewares = append(middlewares, toolexec.VerdictMiddleware(
+		// Verdict middleware evaluates results for critical tool calls and
+		// appends structured feedback to conversation content (visible to
+		// LLM; for offloaded results the verdict travels with the stored
+		// blob). Uses the predicate form so canonical file write/patch
+		// operations are covered, not just exact tool names.
+		middlewares = append(middlewares, toolexec.VerdictMiddlewareFor(
 			evaluator.DefaultCheckerPipeline(),
-			criticalToolsForEvaluation...,
+			isCriticalToolCall,
 		))
 
 		a.pipeline = toolexec.NewPipeline(toolexec.RegistryExecutor(t), middlewares...)
