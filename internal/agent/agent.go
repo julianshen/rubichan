@@ -525,6 +525,7 @@ type Agent struct {
 	agentRegistry       *AgentRegistry
 	stopHookRegistry    *hooks.StopHookRegistry
 	prefetchMgr         *PrefetchManager
+	backgroundTasks     []agentsdk.BackgroundTask
 	sessionMemory       *SessionMemoryService
 	summaryCallback     agentsdk.SummaryCallback
 	summaryHandle       atomic.Pointer[SummaryHandle]
@@ -1572,6 +1573,9 @@ func replaceAssistantText(blocks []provider.ContentBlock, newText string) []prov
 
 // runLoop iteratively processes LLM responses and tool calls.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, lastUserMessage string) {
+	// Signal session end to background tasks on every exit path.
+	defer a.endBackgroundSession()
+
 	var totalInputTokens, totalOutputTokens int
 	ls := newLoopState(a.maxTurns, turnCount, a.configuredMaxTokens)
 	if a.skillRuntime != nil {
@@ -1667,6 +1671,13 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			memHandle = a.prefetchMgr.StartMemoryPrefetch(ctx, lastUserMessage, budget.SkillPrompts)
 			skillHandle = a.prefetchMgr.StartSkillPrefetch(ctx, a.buildSkillTriggerContext(lastUserMessage))
 		}
+
+		// Start registered background tasks so their async work overlaps
+		// the model call; joins run after tool execution.
+		bgJoins := a.startBackgroundTurn(ctx, agentsdk.BackgroundTurnInfo{
+			UserMessage:  lastUserMessage,
+			MemoryBudget: budget.SkillPrompts,
+		})
 
 		req := provider.CompletionRequest{
 			Model:            a.model,
@@ -2173,6 +2184,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			if _, err := skillHandle.Consume(ctx); err != nil {
 				a.logger.Warn("skill prefetch failed: %v", err)
 			}
+		}
+
+		for _, join := range bgJoins {
+			join(ctx)
 		}
 
 		// Continue to the next turn after tool results.
