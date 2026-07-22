@@ -117,6 +117,12 @@ type autoDreamBackgroundTask struct {
 	svc   *AutoDreamService
 }
 
+// autoDreamTimeout bounds one consolidation pass. EndSession runs on
+// context.Background() by design (session-end work outlives the turn), so
+// without a local deadline a hung provider stream would leak the
+// goroutine forever.
+const autoDreamTimeout = 5 * time.Minute
+
 func (d *autoDreamBackgroundTask) StartTurn(context.Context, agentsdk.BackgroundTurnInfo) func(context.Context) {
 	return nil
 }
@@ -127,6 +133,9 @@ func (d *autoDreamBackgroundTask) EndSession(ctx context.Context) {
 	if !svc.IsGateOpen() {
 		return
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, autoDreamTimeout)
+	defer cancel()
 
 	lock := NewConsolidationLock(svc.memoryDir)
 	lastConsolidated, err := lock.ReadLastConsolidatedAt()

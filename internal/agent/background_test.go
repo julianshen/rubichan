@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -114,6 +116,7 @@ type prefetchRecordingSelector struct {
 	results  []kg.ScoredEntity
 	selects  []string
 	recorded []kg.ScoredEntity
+	onRecord func()
 }
 
 func (s *prefetchRecordingSelector) Select(_ context.Context, query string, _ int) ([]kg.ScoredEntity, error) {
@@ -125,8 +128,12 @@ func (s *prefetchRecordingSelector) Select(_ context.Context, query string, _ in
 
 func (s *prefetchRecordingSelector) RecordUsage(_ context.Context, entities []kg.ScoredEntity) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.recorded = append(s.recorded, entities...)
+	cb := s.onRecord
+	s.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
 	return nil
 }
 
@@ -138,10 +145,18 @@ func (s *prefetchRecordingSelector) RecordUsage(_ context.Context, entities []kg
 // RecordUsage) so the cross-wiring is unambiguous; selB returns no
 // entities so the prompt builder's own Select/RecordUsage stays silent.
 func TestPrefetchLoopStartsAndRecordsUsage(t *testing.T) {
+	var orderMu sync.Mutex
+	var order []string
+	appendEvent := func(e string) {
+		orderMu.Lock()
+		defer orderMu.Unlock()
+		order = append(order, e)
+	}
+
 	selA := &prefetchRecordingSelector{results: []kg.ScoredEntity{
 		{Entity: &kg.Entity{ID: "prefetched-entity"}, Score: 1},
 	}}
-	selB := &prefetchRecordingSelector{}
+	selB := &prefetchRecordingSelector{onRecord: func() { appendEvent("record") }}
 
 	dmp := &dynamicMockProvider{responses: [][]provider.StreamEvent{
 		{
@@ -156,7 +171,7 @@ func TestPrefetchLoopStartsAndRecordsUsage(t *testing.T) {
 	}}
 
 	reg := tools.NewRegistry()
-	require.NoError(t, reg.Register(recordingTool{onExecute: func() {}}))
+	require.NoError(t, reg.Register(recordingTool{onExecute: func() { appendEvent("tool") }}))
 
 	cfg := config.DefaultConfig()
 	a := New(dmp, reg, autoApprove, cfg,
@@ -175,9 +190,14 @@ func TestPrefetchLoopStartsAndRecordsUsage(t *testing.T) {
 	assert.Equal(t, "look this up", selA.selects[0])
 
 	selB.mu.Lock()
-	defer selB.mu.Unlock()
 	require.Len(t, selB.recorded, 1, "prefetched entities must be recorded after tool execution")
 	assert.Equal(t, "prefetched-entity", selB.recorded[0].Entity.ID)
+	selB.mu.Unlock()
+
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	assert.Equal(t, []string{"tool", "record"}, order,
+		"usage recording (join) must happen after tool execution")
 }
 
 // TestAutoDreamTriggersOnNormalLoopExit pins the auto-dream trigger to
@@ -262,4 +282,121 @@ func TestBackgroundJoinsRunOnTerminalToolTurns(t *testing.T) {
 
 	assert.Equal(t, []string{"start", "join", "end"}, task.snapshot(),
 		"a terminal tool turn must join background tasks before session end")
+}
+
+// TestWithBackgroundTasksFiltersNil pins the nil-guard on the public
+// variadic option: a nil task must not be registered (it would panic on
+// the first StartTurn dispatch), matching WithPrefetchManager/WithAutoDream.
+func TestWithBackgroundTasksFiltersNil(t *testing.T) {
+	task := &recordingBackgroundTask{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithBackgroundTasks(nil, task, nil))
+
+	require.Len(t, a.backgroundTasks, 1, "nil tasks must be filtered out at registration")
+	require.NotPanics(t, func() {
+		joins := a.startBackgroundTurn(context.Background(), agentsdk.BackgroundTurnInfo{})
+		for _, join := range joins {
+			join(context.Background())
+		}
+	})
+}
+
+// panickingBackgroundTask panics in EndSession.
+type panickingBackgroundTask struct{}
+
+func (panickingBackgroundTask) StartTurn(context.Context, agentsdk.BackgroundTurnInfo) func(context.Context) {
+	return nil
+}
+func (panickingBackgroundTask) EndSession(context.Context) { panic("task exploded") }
+
+// syncWarnLogger captures Warn calls behind a mutex — EndSession dispatch
+// runs on its own goroutine, so the capture must be race-safe.
+type syncWarnLogger struct {
+	mu    sync.Mutex
+	warns []string
+}
+
+func (l *syncWarnLogger) Debug(string, ...any) {}
+func (l *syncWarnLogger) Info(string, ...any)  {}
+func (l *syncWarnLogger) Warn(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warns = append(l.warns, fmt.Sprintf(format, args...))
+}
+func (l *syncWarnLogger) Error(string, ...any) {}
+
+func (l *syncWarnLogger) joined() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.warns, "\n")
+}
+
+// TestEndSessionPanicIsRecovered pins the recover boundary on the
+// session-end fan-out: WithBackgroundTasks is a public seam, and its
+// EndSession dispatches run on dedicated goroutines — without recovery a
+// buggy third-party task would take down the entire process. The panic
+// must be contained and surfaced as an operator warning.
+func TestEndSessionPanicIsRecovered(t *testing.T) {
+	logger := &syncWarnLogger{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg,
+		WithBackgroundTasks(panickingBackgroundTask{}),
+		WithLogger(logger),
+	)
+
+	a.endBackgroundSession()
+
+	require.Eventually(t, func() bool {
+		return strings.Contains(logger.joined(), "panicked")
+	}, 2*time.Second, 10*time.Millisecond,
+		"a panicking EndSession must be recovered and logged, not crash the process")
+}
+
+// deadlineCapturingProvider records whether the consolidation call arrived
+// with a deadline-bearing context.
+type deadlineCapturingProvider struct {
+	mu          sync.Mutex
+	called      bool
+	hadDeadline bool
+}
+
+func (p *deadlineCapturingProvider) Stream(ctx context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	p.mu.Lock()
+	p.called = true
+	_, p.hadDeadline = ctx.Deadline()
+	p.mu.Unlock()
+
+	ch := make(chan provider.StreamEvent, 2)
+	ch <- provider.StreamEvent{Type: "text_delta", Text: "consolidated"}
+	ch <- provider.StreamEvent{Type: "stop"}
+	close(ch)
+	return ch, nil
+}
+
+// TestAutoDreamEndSessionBoundsProviderCall pins the timeout on the
+// consolidation model call: EndSession runs on context.Background() by
+// design (session-end work outlives the turn), so without a local
+// deadline a hung provider stream would leak the goroutine forever.
+func TestAutoDreamEndSessionBoundsProviderCall(t *testing.T) {
+	workDir := t.TempDir()
+	memoryDir := filepath.Join(workDir, "memories")
+	transcriptDir := filepath.Join(workDir, ".claude", "transcripts")
+	require.NoError(t, os.MkdirAll(transcriptDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(transcriptDir, "other.jsonl"), []byte("{}"), 0o644))
+
+	p := &deadlineCapturingProvider{}
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	svc := NewAutoDreamService(memoryDir, AutoDreamConfig{MinHours: 1, MinSessions: 1})
+	a := New(p, reg, autoApprove, cfg, WithWorkingDir(workDir), WithAutoDream(svc))
+
+	task := &autoDreamBackgroundTask{agent: a, svc: svc}
+	task.EndSession(context.Background())
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	require.True(t, p.called, "consolidation must reach the provider")
+	assert.True(t, p.hadDeadline, "the consolidation model call must carry a deadline")
 }
