@@ -22,15 +22,42 @@ func WithBackgroundTasks(tasks ...agentsdk.BackgroundTask) AgentOption {
 
 // startBackgroundTurn starts every registered background task for the
 // current turn and returns the join functions to invoke after tool
-// execution.
+// execution. StartTurn and the joins run on the main turn goroutine, so
+// panics are recovered per task: a bad background optimization must not
+// abort the foreground turn (the outer Turn recover would grade it
+// ExitPanic) or starve sibling tasks.
 func (a *Agent) startBackgroundTurn(ctx context.Context, info agentsdk.BackgroundTurnInfo) []func(context.Context) {
 	var joins []func(context.Context)
 	for _, task := range a.backgroundTasks {
-		if join := task.StartTurn(ctx, info); join != nil {
-			joins = append(joins, join)
+		if join := a.startTaskRecovering(ctx, task, info); join != nil {
+			joins = append(joins, a.recoveringJoin(join))
 		}
 	}
 	return joins
+}
+
+// startTaskRecovering invokes one task's StartTurn behind a recover
+// boundary; on panic the task contributes no join for this turn.
+func (a *Agent) startTaskRecovering(ctx context.Context, task agentsdk.BackgroundTask, info agentsdk.BackgroundTurnInfo) (join func(context.Context)) {
+	defer func() {
+		if r := recover(); r != nil {
+			a.logger.Warn("background task StartTurn panicked: %v", r)
+		}
+	}()
+	return task.StartTurn(ctx, info)
+}
+
+// recoveringJoin wraps a task's join so a panic in it is contained and
+// logged instead of aborting the turn.
+func (a *Agent) recoveringJoin(join func(context.Context)) func(context.Context) {
+	return func(ctx context.Context) {
+		defer func() {
+			if r := recover(); r != nil {
+				a.logger.Warn("background task join panicked: %v", r)
+			}
+		}()
+		join(ctx)
+	}
 }
 
 // endBackgroundSession signals session end to every registered background

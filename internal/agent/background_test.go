@@ -354,6 +354,73 @@ func TestEndSessionPanicIsRecovered(t *testing.T) {
 		"a panicking EndSession must be recovered and logged, not crash the process")
 }
 
+// startPanickingTask panics in StartTurn; joinPanickingTask panics in the
+// join it returns.
+type startPanickingTask struct{}
+
+func (startPanickingTask) StartTurn(context.Context, agentsdk.BackgroundTurnInfo) func(context.Context) {
+	panic("start exploded")
+}
+func (startPanickingTask) EndSession(context.Context) {}
+
+type joinPanickingTask struct{}
+
+func (joinPanickingTask) StartTurn(context.Context, agentsdk.BackgroundTurnInfo) func(context.Context) {
+	return func(context.Context) { panic("join exploded") }
+}
+func (joinPanickingTask) EndSession(context.Context) {}
+
+// TestStartTurnAndJoinPanicsAreContained pins the per-task recover
+// boundary on the turn-side callbacks: StartTurn and joins run on the
+// main turn goroutine, so without recovery a panicking third-party task
+// would abort the entire user turn as ExitPanic and starve sibling
+// tasks. A healthy task must run its full lifecycle alongside a task
+// panicking in StartTurn and one panicking in its join, and the turn
+// must finish normally.
+func TestStartTurnAndJoinPanicsAreContained(t *testing.T) {
+	healthy := &recordingBackgroundTask{}
+	logger := &syncWarnLogger{}
+
+	dmp := &dynamicMockProvider{responses: [][]provider.StreamEvent{
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "pc-1", Name: "rec_tool"}},
+			{Type: "text_delta", Text: `{}`},
+			{Type: "stop"},
+		},
+		{
+			{Type: "text_delta", Text: "done"},
+			{Type: "stop"},
+		},
+	}}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(recordingTool{onExecute: func() {}}))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg,
+		WithBackgroundTasks(startPanickingTask{}, joinPanickingTask{}, healthy),
+		WithLogger(logger),
+	)
+
+	ch, err := a.Turn(context.Background(), "keep going")
+	require.NoError(t, err)
+	var exitReason agentsdk.TurnExitReason
+	for ev := range ch {
+		if ev.Type == "done" {
+			exitReason = ev.ExitReason
+		}
+	}
+
+	assert.NotEqual(t, agentsdk.ExitPanic, exitReason,
+		"a panicking background task must not abort the user turn")
+	calls := healthy.snapshot()
+	assert.Contains(t, calls, "start", "healthy sibling task must still start")
+	assert.Contains(t, calls, "join", "healthy sibling task must still join")
+	joined := logger.joined()
+	assert.Contains(t, joined, "StartTurn panicked")
+	assert.Contains(t, joined, "join panicked")
+}
+
 // deadlineCapturingProvider records whether the consolidation call arrived
 // with a deadline-bearing context.
 type deadlineCapturingProvider struct {
