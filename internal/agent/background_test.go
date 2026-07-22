@@ -434,43 +434,66 @@ const sessionMemoryExtractionMaxTokens = 16384
 // the extraction goroutine races the next foreground call, so responses
 // must not be assigned by shared call order. Mutex-guarded throughout.
 type countingProvider struct {
-	mu         sync.Mutex
-	responses  [][]provider.StreamEvent
-	foreground int
-	extraction int
+	mu                  sync.Mutex
+	responses           [][]provider.StreamEvent
+	foreground          int
+	extraction          int
+	extractionCancelled bool
 }
 
-func (p *countingProvider) Stream(_ context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	var events []provider.StreamEvent
+func (p *countingProvider) Stream(ctx context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
 	if req.MaxTokens == sessionMemoryExtractionMaxTokens {
+		// Hold the extraction call open briefly (outside the lock) so a
+		// caller-side cancel — which product callers issue the moment
+		// "done" is observed — would be visible during the call, the way
+		// a real HTTP request bound to the context would see it.
+		cancelled := false
+		select {
+		case <-ctx.Done():
+			cancelled = true
+		case <-time.After(300 * time.Millisecond):
+		}
+
+		p.mu.Lock()
 		p.extraction++
-		events = []provider.StreamEvent{
+		p.extractionCancelled = cancelled
+		p.mu.Unlock()
+
+		return serveStreamEvents([]provider.StreamEvent{
 			{Type: "text_delta", Text: "- noted"},
 			{Type: "stop"},
-		}
-	} else {
-		if p.foreground >= len(p.responses) {
-			return nil, fmt.Errorf("countingProvider: no more foreground responses (call #%d)", p.foreground)
-		}
-		events = p.responses[p.foreground]
-		p.foreground++
+		}), nil
 	}
 
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.foreground >= len(p.responses) {
+		return nil, fmt.Errorf("countingProvider: no more foreground responses (call #%d)", p.foreground)
+	}
+	events := p.responses[p.foreground]
+	p.foreground++
+	return serveStreamEvents(events), nil
+}
+
+func serveStreamEvents(events []provider.StreamEvent) <-chan provider.StreamEvent {
 	ch := make(chan provider.StreamEvent, len(events))
 	for _, e := range events {
 		ch <- e
 	}
 	close(ch)
-	return ch, nil
+	return ch
 }
 
 func (p *countingProvider) extractionCalls() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.extraction
+}
+
+func (p *countingProvider) extractionWasCancelled() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.extractionCancelled
 }
 
 // sessionMemoryFixture returns an agent whose session-memory service is
@@ -544,6 +567,38 @@ func TestSessionMemoryExtractsOnTerminalToolTurn(t *testing.T) {
 		return p.extractionCalls() == 1
 	}, 3*time.Second, 20*time.Millisecond,
 		"extraction must trigger after a terminal tool turn")
+}
+
+// TestExtractionDetachedFromTurnContext pins extraction's independence
+// from the turn context: product callers (TUI, interactive, WS) cancel
+// the turn context the moment "done" is observed, and provider HTTP
+// requests are bound to their context — an extraction inheriting the
+// turn context would be killed mid-flight on exactly the terminal turns
+// it exists to cover. The extraction call must run on a detached
+// (bounded) context that survives the caller's cancel.
+func TestExtractionDetachedFromTurnContext(t *testing.T) {
+	a, p := sessionMemoryFixture(t, [][]provider.StreamEvent{
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "sm-3", Name: "task_complete"}},
+			{Type: "text_delta", Text: `{"summary":"all done"}`},
+			{Type: "stop"},
+		},
+	})
+	require.NoError(t, a.tools.Register(tools.NewCompletionSignalTool()))
+
+	turnCtx, cancel := context.WithCancel(context.Background())
+	ch, err := a.Turn(turnCtx, "finish and remember")
+	require.NoError(t, err)
+	for range ch {
+	}
+	cancel() // what product callers do as soon as done is observed
+
+	require.Eventually(t, func() bool {
+		return p.extractionCalls() == 1
+	}, 3*time.Second, 20*time.Millisecond, "extraction must still run")
+
+	assert.False(t, p.extractionWasCancelled(),
+		"extraction context must survive turn-context cancellation")
 }
 
 // deadlineCapturingProvider records whether the consolidation call arrived
