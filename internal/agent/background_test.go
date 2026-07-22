@@ -291,9 +291,11 @@ func TestWithBackgroundTasksFiltersNil(t *testing.T) {
 	task := &recordingBackgroundTask{}
 	reg := tools.NewRegistry()
 	cfg := config.DefaultConfig()
+	base := New(&mockProvider{}, tools.NewRegistry(), autoApprove, cfg)
 	a := New(&mockProvider{}, reg, autoApprove, cfg, WithBackgroundTasks(nil, task, nil))
 
-	require.Len(t, a.backgroundTasks, 1, "nil tasks must be filtered out at registration")
+	require.Len(t, a.backgroundTasks, len(base.backgroundTasks)+1,
+		"exactly one non-nil task must register; nils are filtered out")
 	require.NotPanics(t, func() {
 		joins := a.startBackgroundTurn(context.Background(), agentsdk.BackgroundTurnInfo{})
 		for _, join := range joins {
@@ -419,6 +421,114 @@ func TestStartTurnAndJoinPanicsAreContained(t *testing.T) {
 	joined := logger.joined()
 	assert.Contains(t, joined, "StartTurn panicked")
 	assert.Contains(t, joined, "join panicked")
+}
+
+// countingProvider serves scripted responses like dynamicMockProvider but
+// is mutex-guarded so calls from extraction goroutines are race-safe.
+type countingProvider struct {
+	mu        sync.Mutex
+	responses [][]provider.StreamEvent
+	calls     int
+}
+
+func (p *countingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.calls >= len(p.responses) {
+		return nil, fmt.Errorf("countingProvider: no more responses (call #%d)", p.calls)
+	}
+	events := p.responses[p.calls]
+	p.calls++
+	ch := make(chan provider.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+	return ch, nil
+}
+
+func (p *countingProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+// sessionMemoryFixture returns an agent whose session-memory service is
+// primed to extract after a single tool round, plus the provider whose
+// call count reveals the async extraction model call.
+func sessionMemoryFixture(t *testing.T, turnResponses [][]provider.StreamEvent) (*Agent, *countingProvider) {
+	t.Helper()
+
+	// One extra scripted response serves the extraction model call.
+	responses := append(turnResponses, []provider.StreamEvent{
+		{Type: "text_delta", Text: "- noted"},
+		{Type: "stop"},
+	})
+	p := &countingProvider{responses: responses}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(recordingTool{onExecute: func() {}}))
+
+	svc := NewSessionMemoryService(t.TempDir())
+	svc.SetConfig(SessionMemoryConfig{Enabled: true, ToolCallsBetweenUpdates: 1})
+
+	cfg := config.DefaultConfig()
+	a := New(p, reg, autoApprove, cfg, WithSessionMemory(svc))
+	return a, p
+}
+
+// TestSessionMemoryExtractsAfterToolTurn pins the extraction trigger on
+// the ordinary continue path: after a tool round the gate opens and the
+// async extraction model call reaches the provider. Written green before
+// the block moved onto the BackgroundTask seam; must stay green after.
+func TestSessionMemoryExtractsAfterToolTurn(t *testing.T) {
+	a, p := sessionMemoryFixture(t, [][]provider.StreamEvent{
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "sm-1", Name: "rec_tool"}},
+			{Type: "text_delta", Text: `{}`},
+			{Type: "stop"},
+		},
+		{
+			{Type: "text_delta", Text: "done"},
+			{Type: "stop"},
+		},
+	})
+
+	ch, err := a.Turn(context.Background(), "do the work")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.Eventually(t, func() bool {
+		return p.callCount() == 3
+	}, 3*time.Second, 20*time.Millisecond,
+		"extraction model call must follow the two turn calls")
+}
+
+// TestSessionMemoryExtractsOnTerminalToolTurn pins the seam fix: a
+// task_complete turn executes tools and exits the loop immediately, but
+// its tool round must still count toward session-memory extraction —
+// previously the inline block sat only on the continue path, so memory
+// from a session's final round was silently lost.
+func TestSessionMemoryExtractsOnTerminalToolTurn(t *testing.T) {
+	a, p := sessionMemoryFixture(t, [][]provider.StreamEvent{
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "sm-2", Name: "task_complete"}},
+			{Type: "text_delta", Text: `{"summary":"all done"}`},
+			{Type: "stop"},
+		},
+	})
+	require.NoError(t, a.tools.Register(tools.NewCompletionSignalTool()))
+
+	ch, err := a.Turn(context.Background(), "finish and remember")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.Eventually(t, func() bool {
+		return p.callCount() == 2
+	}, 3*time.Second, 20*time.Millisecond,
+		"extraction must trigger after a terminal tool turn")
 }
 
 // deadlineCapturingProvider records whether the consolidation call arrived

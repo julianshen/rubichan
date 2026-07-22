@@ -60,6 +60,33 @@ func (a *Agent) recoveringJoin(join func(context.Context)) func(context.Context)
 	}
 }
 
+// sessionMemoryBackgroundTask adapts session-memory extraction onto the
+// BackgroundTask seam: each join (after tool execution, including terminal
+// tool turns) counts the round and, when the gate opens, spawns the async
+// extraction model call. Cancelled turns are skipped — extraction against
+// a dead context could only fail.
+type sessionMemoryBackgroundTask struct{ agent *Agent }
+
+func (t sessionMemoryBackgroundTask) StartTurn(context.Context, agentsdk.BackgroundTurnInfo) func(context.Context) {
+	return func(ctx context.Context) {
+		a := t.agent
+		if a.sessionMemory == nil || ctx.Err() != nil {
+			return
+		}
+		a.sessionMemory.RecordTurn()
+		if a.sessionMemory.ShouldExtract(len(a.conversation.Messages())) {
+			msgs := a.conversation.Messages()
+			go func(msgsCopy []Message) {
+				if _, err := a.sessionMemory.Extract(ctx, msgsCopy, a.provider.Stream, a.conversation.SystemPrompt()); err != nil {
+					a.logger.Warn("session memory extraction failed: %v", err)
+				}
+			}(msgs)
+		}
+	}
+}
+
+func (sessionMemoryBackgroundTask) EndSession(context.Context) {}
+
 // endBackgroundSession signals session end to every registered background
 // task. Each task runs on its own goroutine with a fresh context so
 // session-end work is not bound to the (likely finished) turn context and
