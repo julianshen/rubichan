@@ -363,7 +363,7 @@ func TestHandlePromptEmptyPrompt(t *testing.T) {
 		{Type: "text_delta", Text: "ok"},
 		{Type: "stop"},
 	}}
-	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithACP())
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg)
 
 	_, err := a.handlePrompt(json.RawMessage(`{"prompt":""}`))
 	require.Error(t, err)
@@ -376,7 +376,7 @@ func TestHandlePromptInvalidJSON(t *testing.T) {
 		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
 	}
 	mp := &mockProvider{}
-	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithACP())
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg)
 
 	_, err := a.handlePrompt(json.RawMessage(`not json`))
 	require.Error(t, err)
@@ -389,7 +389,7 @@ func TestHandleToolExecuteEmptyTool(t *testing.T) {
 		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
 	}
 	mp := &mockProvider{}
-	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithACP())
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg)
 
 	_, err := a.handleToolExecute(json.RawMessage(`{"tool":"","input":{}}`))
 	require.Error(t, err)
@@ -402,7 +402,7 @@ func TestHandleToolExecuteInvalidJSON(t *testing.T) {
 		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
 	}
 	mp := &mockProvider{}
-	a := New(mp, tools.NewRegistry(), autoApprove, cfg, WithACP())
+	a := New(mp, tools.NewRegistry(), autoApprove, cfg)
 
 	_, err := a.handleToolExecute(json.RawMessage(`bad json`))
 	require.Error(t, err)
@@ -417,7 +417,7 @@ func TestHandleToolExecuteExistingTool(t *testing.T) {
 	mp := &mockProvider{}
 	reg := tools.NewRegistry()
 	require.NoError(t, reg.Register(&testTool{name: "my_tool"}))
-	a := New(mp, reg, autoApprove, cfg, WithACP())
+	a := New(mp, reg, autoApprove, cfg)
 
 	result, err := a.handleToolExecute(json.RawMessage(`{"tool":"my_tool","input":{}}`))
 	require.NoError(t, err)

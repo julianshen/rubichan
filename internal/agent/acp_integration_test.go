@@ -12,77 +12,9 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
-// TestAgentACPServerInitialization verifies that the ACP server is properly
-// initialized when WithACP option is provided.
-func TestAgentACPServerInitialization(t *testing.T) {
-	// Create a minimal config
-	cfg := &config.Config{
-		Provider: config.ProviderConfig{Model: "test-model"},
-		Agent:    config.AgentConfig{MaxTurns: 10},
-	}
-
-	// Create a mock provider
-	mockProvider := &mockLLMProvider{}
-
-	// Create tool registry
-	toolRegistry := tools.NewRegistry()
-
-	// Create agent with ACP enabled
-	agentCore := agent.New(
-		mockProvider,
-		toolRegistry,
-		mockApprovalFunc,
-		cfg,
-		agent.WithACP(),
-	)
-
-	if agentCore == nil {
-		t.Fatal("agent is nil")
-	}
-
-	server := agentCore.ACPServer()
-	if server == nil {
-		t.Error("ACP server is nil when WithACP was set")
-	}
-}
-
-// TestAgentACPServerDisabledByDefault verifies that the ACP server is not
-// created when WithACP option is not provided.
-func TestAgentACPServerDisabledByDefault(t *testing.T) {
-	// Create a minimal config
-	cfg := &config.Config{
-		Provider: config.ProviderConfig{Model: "test-model"},
-		Agent:    config.AgentConfig{MaxTurns: 10},
-	}
-
-	// Create a mock provider
-	mockProvider := &mockLLMProvider{}
-
-	// Create tool registry
-	toolRegistry := tools.NewRegistry()
-
-	// Create agent without WithACP option
-	agentCore := agent.New(
-		mockProvider,
-		toolRegistry,
-		mockApprovalFunc,
-		cfg,
-	)
-
-	if agentCore == nil {
-		t.Fatal("agent is nil")
-	}
-
-	server := agentCore.ACPServer()
-	if server != nil {
-		t.Error("ACP server should be nil when WithACP was not set")
-	}
-}
-
 // TestAgentACPInitializeMethod verifies that the initialize method works correctly.
 func TestAgentACPInitializeMethod(t *testing.T) {
-	agentCore := createTestAgent(t, true)
-	server := agentCore.ACPServer()
+	server := agent.NewACPServer(createTestAgent(t))
 
 	// Send initialize request
 	req := acp.Request{
@@ -113,8 +45,7 @@ func TestAgentACPInitializeMethod(t *testing.T) {
 
 // TestAgentACPPromptMethod verifies that the agent/prompt method handles requests correctly.
 func TestAgentACPPromptMethod(t *testing.T) {
-	agentCore := createTestAgent(t, true)
-	server := agentCore.ACPServer()
+	server := agent.NewACPServer(createTestAgent(t))
 
 	// Send prompt request
 	req := acp.Request{
@@ -148,8 +79,7 @@ func TestAgentACPPromptMethod(t *testing.T) {
 
 // TestAgentACPToolExecution verifies that the tool/execute method works correctly.
 func TestAgentACPToolExecution(t *testing.T) {
-	agentCore := createTestAgent(t, true)
-	server := agentCore.ACPServer()
+	server := agent.NewACPServer(createTestAgent(t))
 
 	// Send tool execution request
 	req := acp.Request{
@@ -175,8 +105,7 @@ func TestAgentACPToolExecution(t *testing.T) {
 
 // TestAgentACPSkillMethods verifies that skill methods are properly registered.
 func TestAgentACPSkillMethods(t *testing.T) {
-	agentCore := createTestAgent(t, true)
-	server := agentCore.ACPServer()
+	server := agent.NewACPServer(createTestAgent(t))
 
 	// Test skill/invoke
 	req := acp.Request{
@@ -201,8 +130,7 @@ func TestAgentACPSkillMethods(t *testing.T) {
 
 // TestAgentACPSecurityMethods verifies that security methods are properly registered.
 func TestAgentACPSecurityMethods(t *testing.T) {
-	agentCore := createTestAgent(t, true)
-	server := agentCore.ACPServer()
+	server := agent.NewACPServer(createTestAgent(t))
 
 	// Test security/scan
 	req := acp.Request{
@@ -222,70 +150,6 @@ func TestAgentACPSecurityMethods(t *testing.T) {
 
 	if resp.Result == nil && resp.Error == nil {
 		t.Error("expected result or error")
-	}
-}
-
-// TestAgentACPCapabilityRegistration verifies that tools are registered as capabilities.
-func TestAgentACPCapabilityRegistration(t *testing.T) {
-	cfg := &config.Config{
-		Provider: config.ProviderConfig{Model: "test-model"},
-		Agent:    config.AgentConfig{MaxTurns: 10},
-	}
-
-	mockProvider := &mockLLMProvider{}
-	toolRegistry := tools.NewRegistry()
-
-	// Register a test tool
-	testTool := &mockTool{
-		name:        "test_tool",
-		description: "A test tool",
-		schema:      json.RawMessage(`{"type":"object"}`),
-	}
-	if err := toolRegistry.Register(testTool); err != nil {
-		t.Fatalf("failed to register test tool: %v", err)
-	}
-
-	agentCore := agent.New(
-		mockProvider,
-		toolRegistry,
-		mockApprovalFunc,
-		cfg,
-		agent.WithACP(),
-	)
-
-	server := agentCore.ACPServer()
-
-	// Send initialize request to verify tools are in capabilities
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params:  json.RawMessage(`{"clientInfo":{"name":"test-client"}}`),
-	}
-
-	reqData, _ := json.Marshal(req)
-	respData, _ := server.HandleMessage(reqData)
-
-	var resp acp.Response
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatal(err)
-	}
-
-	if resp.Result == nil {
-		t.Fatal("result is nil")
-	}
-
-	var initResult acp.InitializeResult
-	if err := json.Unmarshal(*resp.Result, &initResult); err != nil {
-		t.Fatalf("failed to unmarshal initialize result: %v", err)
-	}
-
-	// Check that tools are in capabilities
-	toolCaps, ok := initResult.Capabilities["tool"]
-	if !ok {
-		t.Error("no tool capabilities in initialize response")
-	} else if toolCaps == nil {
-		t.Error("tool capabilities is nil")
 	}
 }
 
@@ -366,27 +230,20 @@ func TestNewACPServerComposesOverPlainAgent(t *testing.T) {
 	}
 }
 
-// Helper function to create a test agent with ACP enabled
-func createTestAgent(t *testing.T, enableACP bool) *agent.Agent {
+// Helper function to create a plain test agent; compose an ACP server
+// over it with agent.NewACPServer.
+func createTestAgent(t *testing.T) *agent.Agent {
+	t.Helper()
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{Model: "test-model"},
 		Agent:    config.AgentConfig{MaxTurns: 10},
 	}
 
-	mockProvider := &mockLLMProvider{}
-	toolRegistry := tools.NewRegistry()
-
-	opts := []agent.AgentOption{}
-	if enableACP {
-		opts = append(opts, agent.WithACP())
-	}
-
 	return agent.New(
-		mockProvider,
-		toolRegistry,
+		&mockLLMProvider{},
+		tools.NewRegistry(),
 		mockApprovalFunc,
 		cfg,
-		opts...,
 	)
 }
 

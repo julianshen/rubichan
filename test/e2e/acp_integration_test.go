@@ -62,14 +62,13 @@ func TestInteractiveModeWithACP(t *testing.T) {
 	}
 
 	opts := []agent.AgentOption{
-		agent.WithACP(),
 		agent.WithMode("interactive"),
 	}
 
 	agentCore := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Verify ACP server is initialized
-	acpServer := agentCore.ACPServer()
+	acpServer := agent.NewACPServer(agentCore)
 	if acpServer == nil {
 		t.Error("ACP server not initialized")
 		return
@@ -136,14 +135,13 @@ func TestHeadlessModeWithACP(t *testing.T) {
 	}
 
 	opts := []agent.AgentOption{
-		agent.WithACP(),
 		agent.WithMode("headless"),
 	}
 
 	agentCore := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Verify ACP server is initialized
-	acpServer := agentCore.ACPServer()
+	acpServer := agent.NewACPServer(agentCore)
 	if acpServer == nil {
 		t.Error("ACP server not initialized")
 	}
@@ -205,14 +203,13 @@ func TestWikiModeWithACP(t *testing.T) {
 	}
 
 	opts := []agent.AgentOption{
-		agent.WithACP(),
 		agent.WithMode("wiki"),
 	}
 
 	agentCore := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Verify ACP server is initialized
-	acpServer := agentCore.ACPServer()
+	acpServer := agent.NewACPServer(agentCore)
 	if acpServer == nil {
 		t.Error("ACP server not initialized")
 	}
@@ -277,14 +274,12 @@ func TestACPServerCapabilities(t *testing.T) {
 		return true, nil
 	}
 
-	opts := []agent.AgentOption{
-		agent.WithACP(),
-	}
+	opts := []agent.AgentOption{}
 
 	agentCore := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Get ACP server and verify it has methods registered
-	acpServer := agentCore.ACPServer()
+	acpServer := agent.NewACPServer(agentCore)
 	if acpServer == nil {
 		t.Fatal("ACP server not initialized")
 	}
@@ -334,14 +329,12 @@ func TestMultipleModeClientsWithSingleAgent(t *testing.T) {
 		return true, nil
 	}
 
-	opts := []agent.AgentOption{
-		agent.WithACP(),
-	}
+	opts := []agent.AgentOption{}
 
 	agentCore := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// All clients should be able to interface with the same agent's ACP server
-	acpServer := agentCore.ACPServer()
+	acpServer := agent.NewACPServer(agentCore)
 	if acpServer == nil {
 		t.Error("ACP server not initialized")
 		return

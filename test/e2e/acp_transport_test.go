@@ -55,12 +55,10 @@ func TestAllModeClientsWithTransport(t *testing.T) {
 		return true, nil
 	}
 
-	agentCore := agent.New(p, registry, approvalFunc, cfg,
-		agent.WithACP(),
-	)
+	agentCore := agent.New(p, registry, approvalFunc, cfg)
 
 	// Verify ACP server exists
-	acpServer := agentCore.ACPServer()
+	acpServer := agent.NewACPServer(agentCore)
 	if acpServer == nil {
 		t.Fatal("ACP server not initialized")
 	}

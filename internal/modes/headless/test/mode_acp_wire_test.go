@@ -40,7 +40,6 @@ func TestHeadlessModeACPWiring(t *testing.T) {
 	// Build agent options with ACP enabled (simulating runHeadless())
 	var opts []agent.AgentOption
 	opts = append(opts, agent.WithMode("headless"))
-	opts = append(opts, agent.WithACP()) // This is the key line from main.go
 
 	// Create agent
 	agentCore := agent.New(mockProvider, registry, approvalFunc, cfg, opts...)
@@ -49,7 +48,7 @@ func TestHeadlessModeACPWiring(t *testing.T) {
 	}
 
 	// Verify ACP server is initialized
-	acpServer := agentCore.ACPServer()
+	acpServer := agent.NewACPServer(agentCore)
 	if acpServer == nil {
 		t.Fatal("ACP server not initialized in headless mode")
 	}
