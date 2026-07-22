@@ -31,7 +31,7 @@ func WithContextStrategies(strategies ...agentsdk.ContextStrategy) AgentOption {
 func (a *Agent) contributeStrategySections(ctx context.Context, pb *PromptBuilder, info agentsdk.PromptContext) {
 	for _, strategy := range a.contextStrategies {
 		for _, section := range a.strategySectionsRecovering(ctx, strategy, info) {
-			if section.Content == "" {
+			if strings.TrimSpace(section.Content) == "" {
 				continue
 			}
 			pb.AddDynamicSection_UNCACHED(section.Title, section.Content, section.Reason)

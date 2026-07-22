@@ -97,6 +97,7 @@ func TestBuiltinDynamicSectionsRenderInOrder(t *testing.T) {
 func TestContextStrategyEmptySectionsAreSkipped(t *testing.T) {
 	strategy := &recordingContextStrategy{sections: []agentsdk.PromptSection{
 		{Title: "Empty", Content: "", Reason: "gate not met"},
+		{Title: "Blank", Content: "  \n\t\n", Reason: "whitespace only"},
 	}}
 
 	reg := tools.NewRegistry()
@@ -107,4 +108,6 @@ func TestContextStrategyEmptySectionsAreSkipped(t *testing.T) {
 
 	assert.False(t, strings.Contains(prompt, "## Empty"),
 		"sections with empty content must be skipped")
+	assert.False(t, strings.Contains(prompt, "## Blank"),
+		"sections with whitespace-only content must be skipped")
 }

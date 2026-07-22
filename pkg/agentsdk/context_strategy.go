@@ -25,8 +25,8 @@ type PromptSection struct {
 
 // ContextStrategy is pluggable context-window content: called
 // synchronously at prompt-build time to contribute sections to the system
-// prompt. Sections with empty content are skipped, so a strategy whose
-// gate is not met simply returns nothing.
+// prompt. Sections whose content is empty or whitespace-only are skipped,
+// so a strategy whose gate is not met simply returns nothing.
 type ContextStrategy interface {
 	ContributePromptSections(ctx context.Context, info PromptContext) []PromptSection
 }
