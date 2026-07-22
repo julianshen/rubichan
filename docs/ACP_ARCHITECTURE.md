@@ -201,16 +201,16 @@ Client updates TUI/CLI with results
 ### Initialization
 
 ```go
-// Agent creation with ACP enabled
-agentCore := agent.New(provider, registry, approval, cfg, 
-    agent.WithACP(),
+// ACP is a transport composed over a plain agent at the composition
+// root — the agent core holds no ACP state.
+agentCore := agent.New(provider, registry, approval, cfg,
     agent.WithMode("interactive"),
 )
 
-// Access ACP server
-acpServer := agentCore.ACPServer()
+// Compose the ACP server where the mode actually serves ACP
+acpServer := agent.NewACPServer(agentCore)
 
-// Server automatically initialized with capabilities
+// Server initialized with capabilities
 // - Tool execution
 // - Skill invocation
 // - Security analysis
