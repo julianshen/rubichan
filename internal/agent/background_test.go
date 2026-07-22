@@ -14,6 +14,7 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
 // recordingBackgroundTask records the lifecycle calls the loop makes on a
@@ -102,4 +103,77 @@ func TestBackgroundTasksObserveLoopLifecycle(t *testing.T) {
 	require.Len(t, task.infos, 2)
 	assert.Equal(t, "do the thing", task.infos[0].UserMessage)
 	assert.Equal(t, "do the thing", task.infos[1].UserMessage)
+}
+
+// prefetchRecordingSelector records Select queries and RecordUsage calls.
+// Select runs on the prefetch goroutine, so access is mutex-guarded.
+type prefetchRecordingSelector struct {
+	mu       sync.Mutex
+	results  []kg.ScoredEntity
+	selects  []string
+	recorded []kg.ScoredEntity
+}
+
+func (s *prefetchRecordingSelector) Select(_ context.Context, query string, _ int) ([]kg.ScoredEntity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selects = append(s.selects, query)
+	return s.results, nil
+}
+
+func (s *prefetchRecordingSelector) RecordUsage(_ context.Context, entities []kg.ScoredEntity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recorded = append(s.recorded, entities...)
+	return nil
+}
+
+// TestPrefetchLoopStartsAndRecordsUsage pins the WithPrefetchManager loop
+// behavior: the memory prefetch starts with the user's message as query,
+// and after tool execution its entities are recorded against the agent's
+// knowledge selector. Two distinct selectors separate the prefetch path
+// (selA, feeds the manager) from the knowledge path (selB, receives
+// RecordUsage) so the cross-wiring is unambiguous; selB returns no
+// entities so the prompt builder's own Select/RecordUsage stays silent.
+func TestPrefetchLoopStartsAndRecordsUsage(t *testing.T) {
+	selA := &prefetchRecordingSelector{results: []kg.ScoredEntity{
+		{Entity: &kg.Entity{ID: "prefetched-entity"}, Score: 1},
+	}}
+	selB := &prefetchRecordingSelector{}
+
+	dmp := &dynamicMockProvider{responses: [][]provider.StreamEvent{
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "pf-1", Name: "rec_tool"}},
+			{Type: "text_delta", Text: `{}`},
+			{Type: "stop"},
+		},
+		{
+			{Type: "text_delta", Text: "done"},
+			{Type: "stop"},
+		},
+	}}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(recordingTool{onExecute: func() {}}))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg,
+		WithPrefetchManager(NewPrefetchManager(selA, nil)),
+		WithKnowledgeGraph(selB),
+	)
+
+	ch, err := a.Turn(context.Background(), "look this up")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	selA.mu.Lock()
+	defer selA.mu.Unlock()
+	require.NotEmpty(t, selA.selects, "memory prefetch must query the selector")
+	assert.Equal(t, "look this up", selA.selects[0])
+
+	selB.mu.Lock()
+	defer selB.mu.Unlock()
+	require.Len(t, selB.recorded, 1, "prefetched entities must be recorded after tool execution")
+	assert.Equal(t, "prefetched-entity", selB.recorded[0].Entity.ID)
 }
