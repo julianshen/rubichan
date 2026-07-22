@@ -47,15 +47,15 @@ When adding new capabilities:
 2. Create a `Register*()` function to wire into registry
 3. Implement handlers in `internal/agent/acp_handlers.go`
 4. Add tests in `internal/acp/test/` and `test/e2e/`
-5. Enable ACP in agent creation with `agent.WithACP()` option
+5. Compose the ACP server over the agent with `agent.NewACPServer(agentCore)` — ACP is a transport built at the composition root, not a core option
 
 Example: Using ACP in a mode entrypoint:
 ```go
 agentCore := agent.New(provider, registry, approvalFunc, cfg,
-    agent.WithACP(),
     agent.WithMode("interactive"),
 )
-client := interactive.NewACPClient()
+acpServer := agent.NewACPServer(agentCore)
+client, err := interactive.NewACPClient(nil, "", acpServer)
 resp, err := client.Initialize("my-client")
 ```
 
