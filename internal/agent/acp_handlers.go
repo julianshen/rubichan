@@ -22,7 +22,6 @@ func NewACPServer(a *Agent) *acp.Server {
 // registerACPCapabilities registers all ACP capabilities and method
 // handlers on the given registry.
 func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
-	// Register tools from the tool registry
 	for _, toolName := range a.tools.Names() {
 		tool, ok := a.tools.Get(toolName)
 		if !ok {
@@ -35,14 +34,10 @@ func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
 		})
 	}
 
-	// Register agent methods
 	registry.RegisterMethod("agent/prompt", a.handlePrompt)
 	registry.RegisterMethod("tool/execute", a.handleToolExecute)
 
-	// Register skill methods
 	acp.RegisterSkillMethods(registry, a)
-
-	// Register security methods
 	acp.RegisterSecurityMethods(registry, a)
 }
 
