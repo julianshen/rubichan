@@ -313,9 +313,15 @@ func WithFallbackModel(model string) AgentOption {
 }
 
 // WithPrefetchManager returns an option that configures the agent to use
-// the given prefetch manager for async memory/skill loading.
+// the given prefetch manager for async memory/skill loading. The manager
+// is registered as a background task on the BackgroundTask seam.
 func WithPrefetchManager(pm *PrefetchManager) AgentOption {
-	return func(a *Agent) { a.prefetchMgr = pm }
+	return func(a *Agent) {
+		if pm == nil {
+			return
+		}
+		a.backgroundTasks = append(a.backgroundTasks, &prefetchBackgroundTask{agent: a, mgr: pm})
+	}
 }
 
 // WithSessionMemory attaches a session memory service to the agent.
@@ -524,7 +530,6 @@ type Agent struct {
 	agentDef            *agentsdk.AgentDefinition
 	agentRegistry       *AgentRegistry
 	stopHookRegistry    *hooks.StopHookRegistry
-	prefetchMgr         *PrefetchManager
 	backgroundTasks     []agentsdk.BackgroundTask
 	sessionMemory       *SessionMemoryService
 	summaryCallback     agentsdk.SummaryCallback
@@ -1663,17 +1668,8 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			a.saveSnapshotIfNeeded()
 		}
 
-		// Start async prefetches before LLM call
-		var memHandle *PrefetchHandle[[]kg.ScoredEntity]
-		var skillHandle *PrefetchHandle[struct{}]
-
-		if a.prefetchMgr != nil {
-			memHandle = a.prefetchMgr.StartMemoryPrefetch(ctx, lastUserMessage, budget.SkillPrompts)
-			skillHandle = a.prefetchMgr.StartSkillPrefetch(ctx, a.buildSkillTriggerContext(lastUserMessage))
-		}
-
-		// Start registered background tasks so their async work overlaps
-		// the model call; joins run after tool execution.
+		// Start registered background tasks (prefetch among them) so their
+		// async work overlaps the model call; joins run after tool execution.
 		bgJoins := a.startBackgroundTurn(ctx, agentsdk.BackgroundTurnInfo{
 			UserMessage:  lastUserMessage,
 			MemoryBudget: budget.SkillPrompts,
@@ -2166,26 +2162,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			ls.nudgeEmitted = true
 		}
 
-		// Consume prefetch results after tool execution. Prefetches are started
-		// before the LLM call and consumed here to overlap async work with the
-		// model's execution, reducing perceived latency for the next turn.
-		if memHandle != nil {
-			entities, err := memHandle.Consume(ctx)
-			if err != nil {
-				a.logger.Warn("memory prefetch failed: %v", err)
-			} else if len(entities) > 0 && a.knowledgeSelector != nil {
-				if err := a.knowledgeSelector.RecordUsage(ctx, entities); err != nil {
-					a.logger.Warn("record knowledge usage failed: %v", err)
-				}
-			}
-		}
-
-		if skillHandle != nil {
-			if _, err := skillHandle.Consume(ctx); err != nil {
-				a.logger.Warn("skill prefetch failed: %v", err)
-			}
-		}
-
+		// Join background tasks after tool execution. Their async work is
+		// started before the LLM call and joined here to overlap it with
+		// the model's execution, reducing perceived latency for the next turn.
 		for _, join := range bgJoins {
 			join(ctx)
 		}
