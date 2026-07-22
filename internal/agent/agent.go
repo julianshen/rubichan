@@ -18,7 +18,6 @@ import (
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
-	"github.com/julianshen/rubichan/internal/acp"
 	"github.com/julianshen/rubichan/internal/agent/errorclass"
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
@@ -367,11 +366,6 @@ func (a *Agent) Checkpoints() []checkpoint.Checkpoint {
 	return a.checkpointMgr.List()
 }
 
-// ACPServer returns the ACP server instance if enabled, or nil otherwise.
-func (a *Agent) ACPServer() *acp.Server {
-	return a.acpServer
-}
-
 // ToolMiddlewares carries composition-root-supplied tool-execution
 // middlewares for the two extension slots in the agent's pipeline. The
 // agent owns the core chain — skill hooks, checkpoint capture, verdict
@@ -460,15 +454,6 @@ func WithRateLimiter(rl *SharedRateLimiter) AgentOption {
 	}
 }
 
-// WithACP enables the ACP (Agent Client Protocol) server for this agent.
-// When enabled, the agent can receive JSON-RPC 2.0 requests from clients
-// and process them through the ACP interface.
-func WithACP() AgentOption {
-	return func(a *Agent) {
-		a.useACP = true
-	}
-}
-
 // WithStopHookRegistry attaches a stop hook registry to the agent.
 // Stop hooks run after each turn and can block continuation, inject
 // messages, or yield errors.
@@ -528,10 +513,7 @@ type Agent struct {
 	resultBudget        int
 	fileCache           *tools.FileReadCache
 	progress            *ProgressTracker
-	acpServer           *acp.Server             // ACP server instance (if enabled)
-	acpRegistry         *acp.CapabilityRegistry // Capability registry for ACP
-	useACP              bool                    // Enable ACP server
-	latches             *sessionLatches         // one-way ratchets for session-stable capability values
+	latches             *sessionLatches // one-way ratchets for session-stable capability values
 	agentDef            *agentsdk.AgentDefinition
 	agentRegistry       *AgentRegistry
 	stopHookRegistry    *hooks.StopHookRegistry
@@ -730,14 +712,6 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 				}
 			}
 		}
-	}
-
-	// Initialize ACP server if enabled (default: false).
-	// ACP allows clients to interact with the agent via JSON-RPC 2.0 protocol.
-	if a.useACP {
-		a.acpRegistry = acp.NewCapabilityRegistry()
-		a.acpServer = acp.NewServer(a.acpRegistry)
-		a.registerACPCapabilities(a.acpRegistry)
 	}
 
 	return a
