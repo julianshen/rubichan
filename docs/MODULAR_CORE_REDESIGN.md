@@ -170,6 +170,11 @@ Make `internal/agent` build on the `pkg` core loop instead of reimplementing `ru
 **Phase 2 — Extract feature modules out of the god struct (structural, one subsystem per PR).**
 For each subsystem, introduce the right seam interface and move it behind it, replacing the `With…` field option with a `Use(module)` registration: checkpoint/evaluator/security → *tool-execution middleware* (`toolexec.Middleware`); knowledge-graph/memory/persona/prompt-fragments/compaction → *`ContextStrategy`*; prefetch/auto-dream → *`BackgroundCoordinator`* (async); ACP → *`Transport`*. Struct shrinks one subsystem at a time; tests stay green.
 
+> **Status update (2026-07):** Two of the four seams are in place.
+> *Middleware* (#302–#304): `Pipeline`/`Middleware` promoted to `pkg/agentsdk`; composition is agent-owned (`WithToolMiddlewares` slots around a core chain of canonicalize → hooks → checkpoint → fused verdict+offload), which revived three production subsystems that main.go's wholesale `WithPipeline` replacement had silently dropped; hook dispatch (before and after) has a single site in the pipeline.
+> *BackgroundCoordinator*: `agentsdk.BackgroundTask` — started before each model call, joined after tool execution, signalled at session end on every loop exit. Prefetch and auto-dream moved behind it; their dedicated Agent fields are gone and the loop dispatches generically. Moving auto-dream fixed a latent placement defect (its trigger sat only on the max-turns exit, so normally-ending sessions never consolidated). Note: neither prefetch nor auto-dream is currently registered by `cmd/rubichan/main.go` — wiring them into the product is a pending product decision, separate from the seam.
+> Remaining: *Transport* (ACP) and *ContextStrategy* (compaction/memory/knowledge/persona — the largest).
+
 **Phase 3 — Adapters over the core.**
 Reduce `cmd/rubichan/main.go` to composition only: build core, register modules, pick an adapter. Move mode wiring into `internal/modes/*` (or `pkg` for reusable ones). Target: `main.go` under a few hundred lines.
 
