@@ -11,6 +11,7 @@ import (
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
+	kg "github.com/julianshen/rubichan/pkg/knowledgegraph"
 )
 
 // recordingContextStrategy contributes fixed sections and records the
@@ -44,6 +45,51 @@ func TestContextStrategiesContributePromptSections(t *testing.T) {
 		"contributed section must render like other dynamic sections")
 	require.Len(t, strategy.infos, 1)
 	assert.Equal(t, "tell me about the map", strategy.infos[0].UserMessage)
+}
+
+// TestBuiltinDynamicSectionsRenderInOrder pins the built-in dynamic
+// prompt sections — scratchpad, progress, project knowledge (with usage
+// recording), relevant memories — and their relative order, followed by
+// any registered strategy's sections. Written green before the built-ins
+// moved onto the ContextStrategy seam; must stay green after.
+func TestBuiltinDynamicSectionsRenderInOrder(t *testing.T) {
+	selector := &prefetchRecordingSelector{results: []kg.ScoredEntity{
+		{Entity: &kg.Entity{ID: "kg-1", Title: "Arch Choice", Body: "chose Go"}, Score: 1, EstimatedTokens: 5},
+	}}
+	custom := &recordingContextStrategy{sections: []agentsdk.PromptSection{
+		{Title: "Custom Lore", Content: "dragons live here", Reason: "test"},
+	}}
+
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg,
+		WithKnowledgeGraph(selector),
+		WithContextStrategies(custom),
+	)
+	a.scratchpad.Set("todo", "ship the seam")
+	a.progress.Record(1, "build", "compiled core", "ok")
+	a.allMemories = []MemoryEntry{{
+		Tag:        "architecture",
+		Content:    "the architecture is hexagonal",
+		Normalized: "architecture the architecture is hexagonal",
+	}}
+
+	prompt, _, _ := a.buildSystemPromptWithFragments(context.Background(), "architecture question")
+
+	positions := make([]int, 0, 5)
+	for _, title := range []string{"## Scratchpad", "## Progress", "## Project Knowledge", "## Relevant Memories", "## Custom Lore"} {
+		idx := strings.Index(prompt, title)
+		require.NotEqual(t, -1, idx, "section %q missing from prompt", title)
+		positions = append(positions, idx)
+	}
+	assert.IsNonDecreasing(t, positions, "built-in sections must keep their order, custom strategies last")
+
+	assert.Contains(t, prompt, "ship the seam")
+	assert.Contains(t, prompt, "the architecture is hexagonal")
+
+	selector.mu.Lock()
+	defer selector.mu.Unlock()
+	assert.NotEmpty(t, selector.recorded, "knowledge injection must record usage")
 }
 
 // TestContextStrategyEmptySectionsAreSkipped: strategies may return nothing

@@ -552,6 +552,9 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	for _, opt := range opts {
 		opt(a)
 	}
+	// Built-in prompt contributors go ahead of user-registered strategies
+	// so the dynamic section order is fixed regardless of option order.
+	a.contextStrategies = append(a.builtinContextStrategies(), a.contextStrategies...)
 	// Ensure logger is always available.
 	if a.logger == nil {
 		a.logger = agentsdk.DefaultLogger()
@@ -1335,51 +1338,10 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 		pb.AddCacheableSection("", baseSystemPrompt)
 	}
 
-	// Scratchpad — dynamic, changes as user adds notes.
-	if a.scratchpad != nil {
-		rendered := a.scratchpad.Render()
-		if rendered != "" {
-			pb.AddDynamicSection_UNCACHED("Scratchpad", rendered, "user-editable notes change across turns")
-		}
-	}
-
-	// Progress tracker — auto-populated from tool results, survives compaction.
-	if a.progress != nil {
-		rendered := a.progress.Render()
-		if rendered != "" {
-			pb.AddDynamicSection_UNCACHED("Progress", rendered, "accumulates tool results at runtime and changes each turn")
-		}
-	}
-
-	// Project Knowledge — injected from knowledge graph if selector available
-	if a.knowledgeSelector != nil && lastUserMessage != "" {
-		budget := a.context.Budget()
-		entities, err := a.knowledgeSelector.Select(ctx, lastUserMessage, budget.SkillPrompts)
-		if err == nil && len(entities) > 0 {
-			knowledge := renderKnowledgeSection(entities)
-			if knowledge != "" {
-				pb.AddDynamicSection_UNCACHED("Project Knowledge", knowledge, "selected per-query from knowledge graph based on user message content")
-			}
-			// Record that these entities were selected and injected into the prompt.
-			// Errors are silently discarded to ensure metrics recording never blocks prompt building.
-			_ = a.knowledgeSelector.RecordUsage(ctx, entities)
-		}
-	}
-
-	// Relevant Memories — select cross-session memories related to the user query.
-	if len(a.allMemories) > 0 && lastUserMessage != "" {
-		relevant := SelectRelevantMemories(a.allMemories, lastUserMessage, 5)
-		if len(relevant) > 0 {
-			var sb strings.Builder
-			for _, m := range relevant {
-				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", m.Tag, m.Content))
-			}
-			pb.AddDynamicSection_UNCACHED("Relevant Memories", sb.String(), "selected per-query from cross-session memory store based on user message content")
-		}
-	}
-
-	// Registered context strategies contribute their sections after the
-	// built-in dynamic sections, before skill fragments.
+	// Context strategies contribute the dynamic sections: the built-ins
+	// (scratchpad, progress, knowledge, memories — prepended at
+	// construction in canonical order) followed by registered strategies,
+	// before skill fragments.
 	a.contributeStrategySections(ctx, pb, agentsdk.PromptContext{
 		UserMessage: lastUserMessage,
 		TokenBudget: a.context.Budget().SkillPrompts,
