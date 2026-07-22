@@ -563,10 +563,12 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	if a.workingDir == "" {
 		a.workingDir, _ = os.Getwd()
 	}
-	// Initialize session memory if not provided.
+	// Initialize session memory if not provided; its extraction trigger
+	// rides the BackgroundTask seam's post-tool join.
 	if a.sessionMemory == nil {
 		a.sessionMemory = NewSessionMemoryService(a.workingDir)
 	}
+	a.backgroundTasks = append(a.backgroundTasks, sessionMemoryBackgroundTask{agent: a})
 	// Load cross-session memories.
 	var memories []MemoryEntry
 	if a.memoryStore != nil {
@@ -2093,20 +2095,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Drain any pending wake events from background subagents.
 		a.drainWakeEvents(ctx, ch)
 
-		// Trigger session memory extraction after tool execution if enough
-		// tool calls have accumulated since the last update.
-		if a.sessionMemory != nil {
-			a.sessionMemory.RecordTurn()
-			if a.sessionMemory.ShouldExtract(len(a.conversation.Messages())) {
-				msgs := a.conversation.Messages()
-				go func(msgsCopy []Message) {
-					_, err := a.sessionMemory.Extract(ctx, msgsCopy, a.provider.Stream, a.conversation.SystemPrompt())
-					if err != nil {
-						a.logger.Warn("session memory extraction failed: %v", err)
-					}
-				}(msgs)
-			}
-		}
+		// Session memory extraction now rides the background-task joins
+		// below — no inline dispatch here, so terminal tool turns (which
+		// also run the joins) count toward extraction too.
 
 		// Re-measure after tool execution so the context window status reflects
 		// the current conversation state (tool results may have grown messages).
