@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
@@ -60,11 +61,19 @@ func (a *Agent) recoveringJoin(join func(context.Context)) func(context.Context)
 	}
 }
 
+// sessionMemoryExtractionTimeout bounds one extraction pass. The
+// extraction goroutine runs on a context detached from the turn, so
+// without a local deadline a hung provider stream would leak it forever.
+const sessionMemoryExtractionTimeout = 5 * time.Minute
+
 // sessionMemoryBackgroundTask adapts session-memory extraction onto the
 // BackgroundTask seam: each join (after tool execution, including terminal
 // tool turns) counts the round and, when the gate opens, spawns the async
-// extraction model call. Cancelled turns are skipped — extraction against
-// a dead context could only fail.
+// extraction model call. Cancelled turns are skipped — the user aborted —
+// but the extraction itself runs on a detached, bounded context: product
+// callers cancel the turn context the moment "done" is observed, which
+// would otherwise kill the extraction HTTP call mid-flight on exactly the
+// terminal turns this task exists to cover.
 type sessionMemoryBackgroundTask struct{ agent *Agent }
 
 func (t sessionMemoryBackgroundTask) StartTurn(context.Context, agentsdk.BackgroundTurnInfo) func(context.Context) {
@@ -77,7 +86,9 @@ func (t sessionMemoryBackgroundTask) StartTurn(context.Context, agentsdk.Backgro
 		if a.sessionMemory.ShouldExtract(len(a.conversation.Messages())) {
 			msgs := a.conversation.Messages()
 			go func(msgsCopy []Message) {
-				if _, err := a.sessionMemory.Extract(ctx, msgsCopy, a.provider.Stream, a.conversation.SystemPrompt()); err != nil {
+				exCtx, cancel := context.WithTimeout(context.Background(), sessionMemoryExtractionTimeout)
+				defer cancel()
+				if _, err := a.sessionMemory.Extract(exCtx, msgsCopy, a.provider.Stream, a.conversation.SystemPrompt()); err != nil {
 					a.logger.Warn("session memory extraction failed: %v", err)
 				}
 			}(msgs)
