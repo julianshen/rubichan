@@ -34,10 +34,14 @@ Rubichan now uses the Agent Client Protocol (ACP) as its standardized backbone f
   - `wiki/acp_client.go` — batch client with documentation generation
 
 ### Modified Components
-- `internal/agent/agent.go` — ACP server initialization via `WithACP()` option
-- `internal/agent/acp_handlers.go` — ACP method implementations
-- `cmd/rubichan/main.go` — mode entrypoints now wire agents with `WithACP()`
+- `internal/agent/acp_handlers.go` — ACP method implementations and the `NewACPServer` composition function
 - `test/e2e/acp_integration_test.go` — end-to-end integration tests
+
+> **Note (Transport seam migration):** the `WithACP()` agent option and
+> `ACPServer()` accessor described in earlier revisions of this document
+> were removed — the agent core no longer holds ACP state. Compose the
+> server over a plain agent with `agent.NewACPServer(agentCore)` at the
+> composition root instead.
 
 ## Backward Compatibility
 
@@ -51,7 +55,7 @@ Rubichan now uses the Agent Client Protocol (ACP) as its standardized backbone f
 ### Breaking Changes
 - None at the public API level
 - Internal agent core API replaced by ACP (private implementation detail)
-- ACP server is opt-in via `WithACP()` agent option
+- ACP server is opt-in: compose one with `agent.NewACPServer(agentCore)` where a mode serves ACP
 
 ## For Developers
 
@@ -61,9 +65,9 @@ Rubichan now uses the Agent Client Protocol (ACP) as its standardized backbone f
 2. Implement mode-specific methods that construct ACP requests
 3. Create tests in `internal/modes/mymode/test/acp_client_test.go`
 4. In mode entrypoint (cmd/rubichan/mymode.go):
-   - Create agent with `agent.WithACP()` option
-   - Create mode-specific ACP client
-   - Route operations through the client to the agent's ACP server
+   - Create a plain agent, then compose the transport: `acpServer := agent.NewACPServer(agentCore)`
+   - Create mode-specific ACP client over that server
+   - Route operations through the client to the ACP server
 
 ### Extending ACP
 
