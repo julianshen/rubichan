@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
@@ -105,6 +107,75 @@ func (l *ConsolidationLock) RecordConsolidation() error {
 type SessionInfo struct {
 	SessionID string
 	MTime     time.Time
+}
+
+// autoDreamBackgroundTask adapts an AutoDreamService onto the
+// BackgroundTask seam: consolidation is gated and (when due) executed on
+// the seam's session-end signal, which fires at every loop exit.
+type autoDreamBackgroundTask struct {
+	agent *Agent
+	svc   *AutoDreamService
+}
+
+func (d *autoDreamBackgroundTask) StartTurn(context.Context, agentsdk.BackgroundTurnInfo) func(context.Context) {
+	return nil
+}
+
+// EndSession runs the auto-dream consolidation if conditions are met.
+func (d *autoDreamBackgroundTask) EndSession(ctx context.Context) {
+	a, svc := d.agent, d.svc
+	if !svc.IsGateOpen() {
+		return
+	}
+
+	lock := NewConsolidationLock(svc.memoryDir)
+	lastConsolidated, err := lock.ReadLastConsolidatedAt()
+	if err != nil {
+		a.logger.Warn("auto-dream: read last consolidated: %v", err)
+		return
+	}
+
+	transcriptDir := filepath.Join(a.workingDir, ".claude", "transcripts")
+	sessions, err := ListSessionsTouchedSince(transcriptDir, lastConsolidated)
+	if err != nil {
+		a.logger.Warn("auto-dream: list sessions: %v", err)
+		return
+	}
+
+	if !svc.ShouldRun(sessions, lastConsolidated, a.sessionID) {
+		return
+	}
+
+	params := agentsdk.DreamParams{
+		MemoryRoot:    svc.memoryDir,
+		TranscriptDir: transcriptDir,
+	}
+
+	err = svc.ExecuteDream(ctx, params, func(ctx context.Context, prompt string) (string, error) {
+		req := provider.CompletionRequest{
+			Model:     a.model,
+			System:    "You are a memory consolidation assistant.",
+			Messages:  []provider.Message{provider.NewUserMessage(prompt)},
+			MaxTokens: 4096,
+		}
+		stream, err := a.provider.Stream(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		var result strings.Builder
+		for event := range stream {
+			if event.Error != nil {
+				return "", fmt.Errorf("dream stream error: %w", event.Error)
+			}
+			if event.Type == agentsdk.EventTextDelta {
+				result.WriteString(event.Text)
+			}
+		}
+		return result.String(), nil
+	})
+	if err != nil {
+		a.logger.Warn("auto-dream: execute dream: %v", err)
+	}
 }
 
 // AutoDreamService performs periodic cross-session memory consolidation.

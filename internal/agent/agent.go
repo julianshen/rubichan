@@ -212,10 +212,15 @@ func WithSummaryCallback(cb agentsdk.SummaryCallback) AgentOption {
 	}
 }
 
-// WithAutoDream attaches an auto-dream service for periodic memory consolidation.
+// WithAutoDream attaches an auto-dream service for periodic memory
+// consolidation, registered as a background task whose session-end signal
+// gates and runs the consolidation pass.
 func WithAutoDream(svc *AutoDreamService) AgentOption {
 	return func(a *Agent) {
-		a.autoDreamSvc = svc
+		if svc == nil {
+			return
+		}
+		a.backgroundTasks = append(a.backgroundTasks, &autoDreamBackgroundTask{agent: a, svc: svc})
 	}
 }
 
@@ -534,7 +539,6 @@ type Agent struct {
 	sessionMemory       *SessionMemoryService
 	summaryCallback     agentsdk.SummaryCallback
 	summaryHandle       atomic.Pointer[SummaryHandle]
-	autoDreamSvc        *AutoDreamService
 	collapseStore       *CollapseStore
 	cacheBreakDetector  *CacheBreakDetector
 	windowManager       *ContextWindowManager
@@ -2173,69 +2177,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		ls.lastContinueReason = ContinueNextTurn
 	}
 
-	// Reached max turns.
+	// Reached max turns. Auto-dream consolidation, formerly triggered only
+	// here, now runs via the BackgroundTask session-end signal on every
+	// exit path (see the deferred endBackgroundSession above).
 	a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("max turns (%d) exceeded", a.maxTurns)})
 	a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitMaxTurns))
-
-	// Trigger auto-dream consolidation at session end if configured.
-	// Run async to avoid blocking turnMu on I/O.
-	go a.triggerAutoDream(context.Background())
-}
-
-// triggerAutoDream runs the auto-dream consolidation if conditions are met.
-func (a *Agent) triggerAutoDream(ctx context.Context) {
-	if a.autoDreamSvc == nil || !a.autoDreamSvc.IsGateOpen() {
-		return
-	}
-
-	lock := NewConsolidationLock(a.autoDreamSvc.memoryDir)
-	lastConsolidated, err := lock.ReadLastConsolidatedAt()
-	if err != nil {
-		a.logger.Warn("auto-dream: read last consolidated: %v", err)
-		return
-	}
-
-	transcriptDir := filepath.Join(a.workingDir, ".claude", "transcripts")
-	sessions, err := ListSessionsTouchedSince(transcriptDir, lastConsolidated)
-	if err != nil {
-		a.logger.Warn("auto-dream: list sessions: %v", err)
-		return
-	}
-
-	if !a.autoDreamSvc.ShouldRun(sessions, lastConsolidated, a.sessionID) {
-		return
-	}
-
-	params := agentsdk.DreamParams{
-		MemoryRoot:    a.autoDreamSvc.memoryDir,
-		TranscriptDir: transcriptDir,
-	}
-
-	err = a.autoDreamSvc.ExecuteDream(ctx, params, func(ctx context.Context, prompt string) (string, error) {
-		req := provider.CompletionRequest{
-			Model:     a.model,
-			System:    "You are a memory consolidation assistant.",
-			Messages:  []provider.Message{provider.NewUserMessage(prompt)},
-			MaxTokens: 4096,
-		}
-		stream, err := a.provider.Stream(ctx, req)
-		if err != nil {
-			return "", err
-		}
-		var result strings.Builder
-		for event := range stream {
-			if event.Error != nil {
-				return "", fmt.Errorf("dream stream error: %w", event.Error)
-			}
-			if event.Type == agentsdk.EventTextDelta {
-				result.WriteString(event.Text)
-			}
-		}
-		return result.String(), nil
-	})
-	if err != nil {
-		a.logger.Warn("auto-dream: execute dream: %v", err)
-	}
 }
 
 const maxRepeatedPendingToolRounds = 3
