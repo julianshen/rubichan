@@ -1673,11 +1673,19 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		// Start registered background tasks (prefetch among them) so their
-		// async work overlaps the model call; joins run after tool execution.
+		// async work overlaps the model call. joinBackgroundTasks must run
+		// on every path that executed tools — including terminal ones
+		// (budget stop, task_complete, cancellation) — so per-turn work is
+		// collected before the deferred session-end signal.
 		bgJoins := a.startBackgroundTurn(ctx, agentsdk.BackgroundTurnInfo{
 			UserMessage:  lastUserMessage,
 			MemoryBudget: budget.SkillPrompts,
 		})
+		joinBackgroundTasks := func() {
+			for _, join := range bgJoins {
+				join(ctx)
+			}
+		}
 
 		req := provider.CompletionRequest{
 			Model:            a.model,
@@ -2098,6 +2106,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			}
 			a.logger.Warn("token budget stop: %s (%d%%)", reason, dec.Pct)
 			a.executeTools(ctx, ch, pendingTools, streamedResults)
+			joinBackgroundTasks()
 			a.emit(ctx, ch, TurnEvent{Type: "budget_stop"})
 			exitReason := agentsdk.ExitBudgetExceeded
 			if dec.CompletionEvent.DiminishingReturns {
@@ -2126,6 +2135,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		for _, tc := range pendingTools {
 			if tc.Name == tools.TaskCompleteName {
 				a.executeTools(ctx, ch, pendingTools, streamedResults)
+				joinBackgroundTasks()
 				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete))
 				return
 			}
@@ -2134,6 +2144,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Execute tool calls — parallelize auto-approved tools when possible.
 		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
 			synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
+			joinBackgroundTasks()
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: ctx.Err()})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled))
 			return
@@ -2169,9 +2180,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		// Join background tasks after tool execution. Their async work is
 		// started before the LLM call and joined here to overlap it with
 		// the model's execution, reducing perceived latency for the next turn.
-		for _, join := range bgJoins {
-			join(ctx)
-		}
+		joinBackgroundTasks()
 
 		// Continue to the next turn after tool results.
 		ls.lastContinueReason = ContinueNextTurn

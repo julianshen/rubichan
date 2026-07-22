@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
@@ -76,16 +77,20 @@ func (p *prefetchBackgroundTask) StartTurn(ctx context.Context, info agentsdk.Ba
 	skillHandle := p.mgr.StartSkillPrefetch(ctx, p.agent.buildSkillTriggerContext(info.UserMessage))
 
 	return func(ctx context.Context) {
+		// Cancellation is not a prefetch failure: joins also run on the
+		// cancelled-turn exit path, where Consume returns ctx.Err().
 		entities, err := memHandle.Consume(ctx)
 		if err != nil {
-			p.agent.logger.Warn("memory prefetch failed: %v", err)
+			if !errors.Is(err, context.Canceled) {
+				p.agent.logger.Warn("memory prefetch failed: %v", err)
+			}
 		} else if len(entities) > 0 && p.agent.knowledgeSelector != nil {
 			if err := p.agent.knowledgeSelector.RecordUsage(ctx, entities); err != nil {
 				p.agent.logger.Warn("record knowledge usage failed: %v", err)
 			}
 		}
 
-		if _, err := skillHandle.Consume(ctx); err != nil {
+		if _, err := skillHandle.Consume(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			p.agent.logger.Warn("skill prefetch failed: %v", err)
 		}
 	}

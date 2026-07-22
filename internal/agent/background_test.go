@@ -227,3 +227,39 @@ func TestAutoDreamTriggersOnNormalLoopExit(t *testing.T) {
 	}, 3*time.Second, 20*time.Millisecond,
 		"consolidation must run after a normal loop exit when the gate is satisfied")
 }
+
+// TestBackgroundJoinsRunOnTerminalToolTurns pins the seam contract on
+// terminal tool paths: task_complete executes its tool batch and exits the
+// loop immediately, but the turn *did* execute tools, so registered
+// background tasks must still be joined — before EndSession — rather than
+// leaving their per-turn work uncollected.
+func TestBackgroundJoinsRunOnTerminalToolTurns(t *testing.T) {
+	task := &recordingBackgroundTask{}
+
+	dmp := &dynamicMockProvider{responses: [][]provider.StreamEvent{
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "done-1", Name: "task_complete"}},
+			{Type: "text_delta", Text: `{"summary":"finished"}`},
+			{Type: "stop"},
+		},
+	}}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(tools.NewCompletionSignalTool()))
+
+	cfg := config.DefaultConfig()
+	a := New(dmp, reg, autoApprove, cfg, WithBackgroundTasks(task))
+
+	ch, err := a.Turn(context.Background(), "finish up")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.Eventually(t, func() bool {
+		calls := task.snapshot()
+		return len(calls) > 0 && calls[len(calls)-1] == "end"
+	}, 2*time.Second, 10*time.Millisecond, "EndSession must fire after the loop exits")
+
+	assert.Equal(t, []string{"start", "join", "end"}, task.snapshot(),
+		"a terminal tool turn must join background tasks before session end")
+}
