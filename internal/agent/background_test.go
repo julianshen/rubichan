@@ -423,22 +423,42 @@ func TestStartTurnAndJoinPanicsAreContained(t *testing.T) {
 	assert.Contains(t, joined, "join panicked")
 }
 
-// countingProvider serves scripted responses like dynamicMockProvider but
-// is mutex-guarded so calls from extraction goroutines are race-safe.
+// sessionMemoryExtractionMaxTokens mirrors the MaxTokens the extraction
+// model call sets (session_memory_service.go), distinguishing it from
+// foreground turn calls (config default 8192). If the service changes its
+// request shape, the discriminator misroutes and these tests fail loudly.
+const sessionMemoryExtractionMaxTokens = 16384
+
+// countingProvider serves scripted responses to foreground turn calls and
+// answers extraction calls (identified by request identity) separately —
+// the extraction goroutine races the next foreground call, so responses
+// must not be assigned by shared call order. Mutex-guarded throughout.
 type countingProvider struct {
-	mu        sync.Mutex
-	responses [][]provider.StreamEvent
-	calls     int
+	mu         sync.Mutex
+	responses  [][]provider.StreamEvent
+	foreground int
+	extraction int
 }
 
-func (p *countingProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+func (p *countingProvider) Stream(_ context.Context, req provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.calls >= len(p.responses) {
-		return nil, fmt.Errorf("countingProvider: no more responses (call #%d)", p.calls)
+
+	var events []provider.StreamEvent
+	if req.MaxTokens == sessionMemoryExtractionMaxTokens {
+		p.extraction++
+		events = []provider.StreamEvent{
+			{Type: "text_delta", Text: "- noted"},
+			{Type: "stop"},
+		}
+	} else {
+		if p.foreground >= len(p.responses) {
+			return nil, fmt.Errorf("countingProvider: no more foreground responses (call #%d)", p.foreground)
+		}
+		events = p.responses[p.foreground]
+		p.foreground++
 	}
-	events := p.responses[p.calls]
-	p.calls++
+
 	ch := make(chan provider.StreamEvent, len(events))
 	for _, e := range events {
 		ch <- e
@@ -447,10 +467,10 @@ func (p *countingProvider) Stream(_ context.Context, _ provider.CompletionReques
 	return ch, nil
 }
 
-func (p *countingProvider) callCount() int {
+func (p *countingProvider) extractionCalls() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.calls
+	return p.extraction
 }
 
 // sessionMemoryFixture returns an agent whose session-memory service is
@@ -459,12 +479,7 @@ func (p *countingProvider) callCount() int {
 func sessionMemoryFixture(t *testing.T, turnResponses [][]provider.StreamEvent) (*Agent, *countingProvider) {
 	t.Helper()
 
-	// One extra scripted response serves the extraction model call.
-	responses := append(turnResponses, []provider.StreamEvent{
-		{Type: "text_delta", Text: "- noted"},
-		{Type: "stop"},
-	})
-	p := &countingProvider{responses: responses}
+	p := &countingProvider{responses: turnResponses}
 
 	reg := tools.NewRegistry()
 	require.NoError(t, reg.Register(recordingTool{onExecute: func() {}}))
@@ -500,9 +515,9 @@ func TestSessionMemoryExtractsAfterToolTurn(t *testing.T) {
 	}
 
 	require.Eventually(t, func() bool {
-		return p.callCount() == 3
+		return p.extractionCalls() == 1
 	}, 3*time.Second, 20*time.Millisecond,
-		"extraction model call must follow the two turn calls")
+		"exactly one extraction model call must follow the tool round")
 }
 
 // TestSessionMemoryExtractsOnTerminalToolTurn pins the seam fix: a
@@ -526,7 +541,7 @@ func TestSessionMemoryExtractsOnTerminalToolTurn(t *testing.T) {
 	}
 
 	require.Eventually(t, func() bool {
-		return p.callCount() == 2
+		return p.extractionCalls() == 1
 	}, 3*time.Second, 20*time.Millisecond,
 		"extraction must trigger after a terminal tool turn")
 }
