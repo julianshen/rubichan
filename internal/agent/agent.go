@@ -518,6 +518,7 @@ type Agent struct {
 	agentRegistry       *AgentRegistry
 	stopHookRegistry    *hooks.StopHookRegistry
 	backgroundTasks     []agentsdk.BackgroundTask
+	contextStrategies   []agentsdk.ContextStrategy
 	sessionMemory       *SessionMemoryService
 	summaryCallback     agentsdk.SummaryCallback
 	summaryHandle       atomic.Pointer[SummaryHandle]
@@ -1376,6 +1377,13 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 			pb.AddDynamicSection_UNCACHED("Relevant Memories", sb.String(), "selected per-query from cross-session memory store based on user message content")
 		}
 	}
+
+	// Registered context strategies contribute their sections after the
+	// built-in dynamic sections, before skill fragments.
+	a.contributeStrategySections(ctx, pb, agentsdk.PromptContext{
+		UserMessage: lastUserMessage,
+		TokenBudget: a.context.Budget().SkillPrompts,
+	})
 
 	// Skill prompt fragments — use budgeted selection to respect context budget.
 	if a.skillRuntime != nil {
