@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -176,4 +178,52 @@ func TestPrefetchLoopStartsAndRecordsUsage(t *testing.T) {
 	defer selB.mu.Unlock()
 	require.Len(t, selB.recorded, 1, "prefetched entities must be recorded after tool execution")
 	assert.Equal(t, "prefetched-entity", selB.recorded[0].Entity.ID)
+}
+
+// TestAutoDreamTriggersOnNormalLoopExit pins the auto-dream trigger to
+// the BackgroundTask seam's session-end signal, which fires on every
+// loop exit. Previously the trigger sat only on the max-turns exit path,
+// so a session that ended normally — the overwhelmingly common case —
+// could never consolidate memory regardless of the configured gate.
+func TestAutoDreamTriggersOnNormalLoopExit(t *testing.T) {
+	workDir := t.TempDir()
+	memoryDir := filepath.Join(workDir, "memories")
+
+	// Satisfy the consolidation gate: no lock file (last consolidation at
+	// zero time) and one recent session from another session ID.
+	transcriptDir := filepath.Join(workDir, ".claude", "transcripts")
+	require.NoError(t, os.MkdirAll(transcriptDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(transcriptDir, "other-session.jsonl"), []byte("{}"), 0o644))
+
+	dmp := &dynamicMockProvider{responses: [][]provider.StreamEvent{
+		{
+			{Type: "text_delta", Text: "all done"},
+			{Type: "stop"},
+		},
+		{
+			// Served to the async consolidation call after the loop exits.
+			{Type: "text_delta", Text: "consolidated"},
+			{Type: "stop"},
+		},
+	}}
+
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	svc := NewAutoDreamService(memoryDir, AutoDreamConfig{MinHours: 1, MinSessions: 1})
+	a := New(dmp, reg, autoApprove, cfg,
+		WithWorkingDir(workDir),
+		WithAutoDream(svc),
+	)
+
+	ch, err := a.Turn(context.Background(), "wrap up")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	lockPath := filepath.Join(memoryDir, ".consolidate-lock")
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(lockPath)
+		return statErr == nil
+	}, 3*time.Second, 20*time.Millisecond,
+		"consolidation must run after a normal loop exit when the gate is satisfied")
 }
