@@ -289,6 +289,83 @@ func TestAgentACPCapabilityRegistration(t *testing.T) {
 	}
 }
 
+// TestNewACPServerComposesOverPlainAgent pins the Transport seam: the ACP
+// server is composed over an agent at the composition root, with no core
+// flag or field involved — a plain agent (no WithACP) plus NewACPServer
+// yields a fully capable server (initialize succeeds, registered tools
+// appear as capabilities, agent methods are routed).
+func TestNewACPServerComposesOverPlainAgent(t *testing.T) {
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 10},
+	}
+
+	toolRegistry := tools.NewRegistry()
+	testTool := &mockTool{
+		name:        "test_tool",
+		description: "A test tool",
+		schema:      json.RawMessage(`{"type":"object"}`),
+	}
+	if err := toolRegistry.Register(testTool); err != nil {
+		t.Fatalf("failed to register test tool: %v", err)
+	}
+
+	agentCore := agent.New(&mockLLMProvider{}, toolRegistry, mockApprovalFunc, cfg)
+
+	server := agent.NewACPServer(agentCore)
+	if server == nil {
+		t.Fatal("NewACPServer returned nil")
+	}
+
+	// initialize must succeed and expose the registered tool capability.
+	req := acp.Request{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params:  json.RawMessage(`{"clientInfo":{"name":"test-client"}}`),
+	}
+	reqData, _ := json.Marshal(req)
+	respData, err := server.HandleMessage(reqData)
+	if err != nil {
+		t.Fatalf("handle message failed: %v", err)
+	}
+
+	var resp acp.Response
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("initialize returned error: %v", resp.Error)
+	}
+	var initResult acp.InitializeResult
+	if err := json.Unmarshal(*resp.Result, &initResult); err != nil {
+		t.Fatalf("failed to unmarshal initialize result: %v", err)
+	}
+	if _, ok := initResult.Capabilities["tool"]; !ok {
+		t.Error("no tool capabilities in initialize response")
+	}
+
+	// A registered agent method must be routed (result or a handler error,
+	// not a method-not-found transport error).
+	req = acp.Request{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "skill/invoke",
+		Params:  json.RawMessage(`{"skillName":"test","action":"transform","input":{}}`),
+	}
+	reqData, _ = json.Marshal(req)
+	respData, _ = server.HandleMessage(reqData)
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp.Result == nil && resp.Error == nil {
+		t.Error("expected result or error from routed skill method")
+	}
+	if resp.Error != nil && resp.Error.Code == acp.ErrorCodeMethodNotFound {
+		t.Error("skill/invoke not registered on composed server")
+	}
+}
+
 // Helper function to create a test agent with ACP enabled
 func createTestAgent(t *testing.T, enableACP bool) *agent.Agent {
 	cfg := &config.Config{

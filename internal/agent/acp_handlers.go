@@ -8,15 +8,27 @@ import (
 	"github.com/julianshen/rubichan/internal/acp"
 )
 
-// registerACPCapabilities registers all ACP capabilities and method handlers.
-func (a *Agent) registerACPCapabilities() error {
+// NewACPServer composes an ACP transport over an agent: a fresh capability
+// registry populated from the agent's tools and method handlers, wrapped in
+// a JSON-RPC server. This is a composition-root operation — the agent core
+// holds no ACP state; build the server where a mode actually serves ACP.
+func NewACPServer(a *Agent) *acp.Server {
+	registry := acp.NewCapabilityRegistry()
+	server := acp.NewServer(registry)
+	a.registerACPCapabilities(registry)
+	return server
+}
+
+// registerACPCapabilities registers all ACP capabilities and method
+// handlers on the given registry.
+func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
 	// Register tools from the tool registry
 	for _, toolName := range a.tools.Names() {
 		tool, ok := a.tools.Get(toolName)
 		if !ok {
 			continue
 		}
-		a.acpRegistry.RegisterTool(acp.Tool{
+		registry.RegisterTool(acp.Tool{
 			Name:        tool.Name(),
 			Description: tool.Description(),
 			InputSchema: tool.InputSchema(),
@@ -24,16 +36,14 @@ func (a *Agent) registerACPCapabilities() error {
 	}
 
 	// Register agent methods
-	a.acpRegistry.RegisterMethod("agent/prompt", a.handlePrompt)
-	a.acpRegistry.RegisterMethod("tool/execute", a.handleToolExecute)
+	registry.RegisterMethod("agent/prompt", a.handlePrompt)
+	registry.RegisterMethod("tool/execute", a.handleToolExecute)
 
 	// Register skill methods
-	acp.RegisterSkillMethods(a.acpRegistry, a)
+	acp.RegisterSkillMethods(registry, a)
 
 	// Register security methods
-	acp.RegisterSecurityMethods(a.acpRegistry, a)
-
-	return nil
+	acp.RegisterSecurityMethods(registry, a)
 }
 
 // handlePrompt handles agent/prompt ACP requests.

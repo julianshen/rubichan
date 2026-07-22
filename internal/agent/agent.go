@@ -737,11 +737,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 	if a.useACP {
 		a.acpRegistry = acp.NewCapabilityRegistry()
 		a.acpServer = acp.NewServer(a.acpRegistry)
-
-		// Register all capabilities and methods.
-		if err := a.registerACPCapabilities(); err != nil {
-			a.logger.Warn("failed to register ACP capabilities: %v", err)
-		}
+		a.registerACPCapabilities(a.acpRegistry)
 	}
 
 	return a
