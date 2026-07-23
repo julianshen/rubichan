@@ -45,21 +45,21 @@ func TestPublicPackagesHaveNoInternalImports(t *testing.T) {
 		via string
 	}
 	var queue []node
-	for _, r := range roots {
-		if !seen[r.PkgPath] {
-			seen[r.PkgPath] = true
-			queue = append(queue, node{r, r.PkgPath})
+	for _, root := range roots {
+		if !seen[root.PkgPath] {
+			seen[root.PkgPath] = true
+			queue = append(queue, node{root, root.PkgPath})
 		}
 	}
 
 	var violations []string
 	for len(queue) > 0 {
-		cur := queue[0]
+		current := queue[0]
 		queue = queue[1:]
-		for _, imp := range sortedImports(cur.pkg) {
-			path := imp.PkgPath
+		for _, imported := range sortedImports(current.pkg) {
+			path := imported.PkgPath
 			if strings.HasPrefix(path, modulePrefix+"internal/") {
-				violations = append(violations, cur.via+" -> "+path)
+				violations = append(violations, current.via+" -> "+path)
 				continue
 			}
 			// Only first-party packages can reach our internal/ tree;
@@ -68,7 +68,7 @@ func TestPublicPackagesHaveNoInternalImports(t *testing.T) {
 				continue
 			}
 			seen[path] = true
-			queue = append(queue, node{imp, cur.via + " -> " + path})
+			queue = append(queue, node{imported, current.via + " -> " + path})
 		}
 	}
 
