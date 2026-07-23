@@ -436,6 +436,48 @@ func TestAgentBeforePromptBuildHookCanModifyPrompt(t *testing.T) {
 	assert.Contains(t, capturedReq.System, "hook-fragment-text")
 }
 
+// TestAgentBeforePromptBuildHookCanReplaceBasePrompt pins the
+// whole-prompt-replacement path of the before-prompt-build hook: when a
+// hook sets replace_base_system_prompt, the entire base system prompt is
+// swapped (bypassing the static-section pipeline) — a transform the
+// section-contribution ContextStrategy seam cannot express, which is why
+// this mutation lives at the prompt-build site rather than behind that
+// seam. Pinned before the skillPromptContributor extraction.
+func TestAgentBeforePromptBuildHookCanReplaceBasePrompt(t *testing.T) {
+	hooks := map[skills.HookPhase]skills.HookHandler{
+		skills.HookOnBeforePromptBuild: func(event skills.HookEvent) (skills.HookResult, error) {
+			return skills.HookResult{
+				Modified: map[string]any{
+					"replace_base_system_prompt": "ENTIRELY-REPLACED-BASE-PROMPT",
+				},
+			}, nil
+		},
+	}
+
+	rt := makeTestRuntime(t, "replace-base-hook", toolManifest("replace-base-hook"), nil, hooks)
+
+	var capturedReq provider.CompletionRequest
+	cp := &capturingMockProvider{
+		events:     []provider.StreamEvent{{Type: "text_delta", Text: "ok"}, {Type: "stop"}},
+		captureReq: &capturedReq,
+	}
+
+	cfg := config.DefaultConfig()
+	a := New(cp, tools.NewRegistry(), autoApprove, cfg,
+		WithSkillRuntime(rt),
+		WithExtraSystemPrompt("Original Section", "original-section-content"),
+	)
+
+	ch, err := a.Turn(context.Background(), "hello")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assert.Contains(t, capturedReq.System, "ENTIRELY-REPLACED-BASE-PROMPT")
+	assert.NotContains(t, capturedReq.System, "original-section-content",
+		"replacing the base prompt bypasses the static-section pipeline")
+}
+
 // TestAgentAfterResponseHookFires asserts that HookOnAfterResponse is
 // dispatched when the agent finishes a turn with no pending tool calls —
 // the "response is final" branch at the end of runLoop.
