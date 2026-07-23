@@ -519,6 +519,7 @@ type Agent struct {
 	stopHookRegistry    *hooks.StopHookRegistry
 	backgroundTasks     []agentsdk.BackgroundTask
 	contextStrategies   []agentsdk.ContextStrategy
+	staticSources       []agentsdk.StaticPromptSource
 	sessionMemory       *SessionMemoryService
 	summaryCallback     agentsdk.SummaryCallback
 	summaryHandle       atomic.Pointer[SummaryHandle]
@@ -770,6 +771,9 @@ func (a *Agent) assembleSystemPromptSections(memories []MemoryEntry) []PromptSec
 			Cacheable: true,
 		})
 	}
+
+	// Registered static prompt sources render after the built-ins.
+	sections = append(sections, a.staticSourceSections()...)
 
 	return sections
 }
