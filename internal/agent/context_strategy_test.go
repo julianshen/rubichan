@@ -92,6 +92,36 @@ func TestBuiltinDynamicSectionsRenderInOrder(t *testing.T) {
 	assert.NotEmpty(t, selector.recorded, "knowledge injection must record usage")
 }
 
+// fixedStaticSource contributes fixed construction-time sections.
+type fixedStaticSource struct{ sections []agentsdk.StaticSection }
+
+func (s fixedStaticSource) ContributeStaticSections() []agentsdk.StaticSection {
+	return s.sections
+}
+
+// TestStaticPromptSourcesContributeSections pins the StaticPromptSource
+// seam: a source registered via WithStaticPromptSources contributes
+// cacheable sections to the system prompt at construction time, rendered
+// after the built-in static sections; blank sections are skipped.
+func TestStaticPromptSourcesContributeSections(t *testing.T) {
+	source := fixedStaticSource{sections: []agentsdk.StaticSection{
+		{Title: "House Rules", Content: "always rhyme"},
+		{Title: "Blank Rules", Content: "  \n"},
+	}}
+
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg, WithStaticPromptSources(source))
+
+	prompt := a.conversation.SystemPrompt()
+	assert.Contains(t, prompt, "## House Rules\n\nalways rhyme",
+		"contributed static section must render like other cacheable sections")
+	assert.NotContains(t, prompt, "## Blank Rules",
+		"blank static sections must be skipped")
+	assert.Less(t, strings.Index(prompt, "## Identity"), strings.Index(prompt, "## House Rules"),
+		"registered sources render after built-in static sections")
+}
+
 // TestContextStrategyEmptySectionsAreSkipped: strategies may return nothing
 // (their gate not met); empty titles/contents must not litter the prompt.
 func TestContextStrategyEmptySectionsAreSkipped(t *testing.T) {

@@ -23,6 +23,51 @@ func WithContextStrategies(strategies ...agentsdk.ContextStrategy) AgentOption {
 	}
 }
 
+// WithStaticPromptSources registers sources that contribute cacheable
+// system-prompt sections at construction time, rendered after the
+// built-in static sections. Nil sources are ignored. See
+// agentsdk.StaticPromptSource.
+func WithStaticPromptSources(sources ...agentsdk.StaticPromptSource) AgentOption {
+	return func(a *Agent) {
+		for _, source := range sources {
+			if source != nil {
+				a.staticSources = append(a.staticSources, source)
+			}
+		}
+	}
+}
+
+// staticSourceSections collects the registered static sources' non-blank
+// sections as cacheable prompt sections. Panics are recovered per source
+// — a public seam running during construction must not fail New.
+func (a *Agent) staticSourceSections() []PromptSection {
+	var sections []PromptSection
+	for _, source := range a.staticSources {
+		for _, section := range a.staticSectionsRecovering(source) {
+			if strings.TrimSpace(section.Content) == "" {
+				continue
+			}
+			sections = append(sections, PromptSection{
+				Name:      section.Title,
+				Content:   section.Content,
+				Cacheable: true,
+			})
+		}
+	}
+	return sections
+}
+
+// staticSectionsRecovering invokes one source behind a recover boundary;
+// on panic the source contributes nothing.
+func (a *Agent) staticSectionsRecovering(source agentsdk.StaticPromptSource) (sections []agentsdk.StaticSection) {
+	defer func() {
+		if r := recover(); r != nil {
+			a.logger.Warn("static prompt source panicked: %v", r)
+		}
+	}()
+	return source.ContributeStaticSections()
+}
+
 // contributeStrategySections invokes every registered context strategy and
 // adds its non-empty sections to the prompt builder as uncached dynamic
 // sections. Panics are recovered per strategy — this is a public seam

@@ -30,3 +30,21 @@ type PromptSection struct {
 type ContextStrategy interface {
 	ContributePromptSections(ctx context.Context, info PromptContext) []PromptSection
 }
+
+// StaticSection is one cacheable system-prompt section contributed at
+// agent construction time. Unlike PromptSection there is no cache Reason
+// — static sections sit before the cache boundary by definition.
+type StaticSection struct {
+	Title   string
+	Content string
+}
+
+// StaticPromptSource contributes construction-time system-prompt
+// sections: assembled exactly once when the agent is built, rendered in
+// registration order after the built-in static sections (base system,
+// identity, soul, project guidelines, extra prompts), and cacheable —
+// identical across every turn of the session. Sections whose content is
+// empty or whitespace-only are skipped.
+type StaticPromptSource interface {
+	ContributeStaticSections() []StaticSection
+}
