@@ -122,6 +122,49 @@ func TestStaticPromptSourcesContributeSections(t *testing.T) {
 		"registered sources render after built-in static sections")
 }
 
+// TestBuiltinStaticSectionsRenderInOrder pins the built-in static prompt
+// assembly — System, Identity (+IDENTITY.md), Soul (+SOUL.md), AGENT.md
+// guidelines, extra prompts — and their order ahead of registered
+// sources. Written green before the built-ins moved onto the
+// StaticPromptSource seam; must stay green after.
+func TestBuiltinStaticSectionsRenderInOrder(t *testing.T) {
+	source := fixedStaticSource{sections: []agentsdk.StaticSection{
+		{Title: "House Rules", Content: "always rhyme"},
+	}}
+
+	reg := tools.NewRegistry()
+	cfg := config.DefaultConfig()
+	a := New(&mockProvider{}, reg, autoApprove, cfg,
+		WithAgentMD("follow the project style"),
+		WithIdentityMD("you are the workspace helper"),
+		WithSoulMD("be kind"),
+		WithExtraSystemPrompt("Deployment Notes", "deploys are on Fridays"),
+		WithStaticPromptSources(source),
+	)
+
+	prompt := a.conversation.SystemPrompt()
+
+	positions := make([]int, 0, 6)
+	for _, marker := range []string{
+		"## System",
+		"## Identity",
+		"## Soul",
+		"## Project Guidelines (from AGENT.md)",
+		"## Deployment Notes",
+		"## House Rules",
+	} {
+		idx := strings.Index(prompt, marker)
+		require.NotEqual(t, -1, idx, "section %q missing from prompt", marker)
+		positions = append(positions, idx)
+	}
+	assert.IsNonDecreasing(t, positions, "static sections must keep canonical order")
+
+	assert.Contains(t, prompt, "### Workspace Identity (from IDENTITY.md)\n\nyou are the workspace helper")
+	assert.Contains(t, prompt, "### Workspace Soul (from SOUL.md)\n\nbe kind")
+	assert.Contains(t, prompt, "follow the project style")
+	assert.Contains(t, prompt, "deploys are on Fridays")
+}
+
 // TestContextStrategyEmptySectionsAreSkipped: strategies may return nothing
 // (their gate not met); empty titles/contents must not litter the prompt.
 func TestContextStrategyEmptySectionsAreSkipped(t *testing.T) {
