@@ -1184,151 +1184,12 @@ func (a *Agent) ForceCompact(ctx context.Context) (agentsdk.CompactResult, error
 // for telemetry. Cacheable (static) sections are placed first for optimal
 // provider caching.
 func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMessage string) (string, []int, string) {
-	type skillPromptFragmentData struct {
-		SkillName string `json:"skill_name"`
-		Prompt    string `json:"prompt"`
-	}
-
-	type promptBuildContext struct {
-		BaseSystemPrompt      string                    `json:"base_system_prompt"`
-		SkillPromptFragments  []skillPromptFragmentData `json:"skill_prompt_fragments"`
-		ContextBudgetTotal    int                       `json:"context_budget_total"`
-		ContextBudgetMaxOut   int                       `json:"context_budget_max_output_tokens"`
-		ContextBudgetWindow   int                       `json:"context_budget_effective_window"`
-		ContextBudgetSystem   int                       `json:"context_budget_system_prompt_tokens"`
-		ContextBudgetSkills   int                       `json:"context_budget_skill_prompt_tokens"`
-		ContextBudgetTools    int                       `json:"context_budget_tool_description_tokens"`
-		ContextBudgetMessages int                       `json:"context_budget_conversation_tokens"`
-	}
-
-	type promptBuildMutation struct {
-		ReplaceBaseSystemPrompt        string
-		ReplaceBaseSystemPromptPresent bool
-		AppendSystemPrompt             string
-		ReplaceSkillFragments          []skillPromptFragmentData
-		ReplaceSkillFragmentsPresent   bool
-		AppendSkillFragments           []skillPromptFragmentData
-	}
-
-	normalizeFragments := func(raw any) ([]skillPromptFragmentData, bool) {
-		switch v := raw.(type) {
-		case nil:
-			return []skillPromptFragmentData{}, true
-		case []skillPromptFragmentData:
-			return append([]skillPromptFragmentData(nil), v...), true
-		case []any:
-			out := make([]skillPromptFragmentData, 0, len(v))
-			for _, item := range v {
-				fragMap, ok := item.(map[string]any)
-				if !ok {
-					continue
-				}
-				name, _ := fragMap["skill_name"].(string)
-				prompt, _ := fragMap["prompt"].(string)
-				if name != "" && prompt != "" {
-					out = append(out, skillPromptFragmentData{SkillName: name, Prompt: prompt})
-				}
-			}
-			return out, true
-		default:
-			return nil, false
-		}
-	}
-
-	mergePromptBuildMutation := func(dst *promptBuildMutation, data map[string]any) {
-		if data == nil {
-			return
-		}
-		if v, ok := data["replace_base_system_prompt"].(string); ok {
-			dst.ReplaceBaseSystemPrompt = v
-			dst.ReplaceBaseSystemPromptPresent = true
-		}
-		if v, ok := data["append_system_prompt"].(string); ok {
-			dst.AppendSystemPrompt = v
-		}
-		if raw, ok := data["replace_skill_fragments"]; ok {
-			if fragments, parsed := normalizeFragments(raw); parsed {
-				dst.ReplaceSkillFragments = fragments
-				dst.ReplaceSkillFragmentsPresent = true
-			}
-		}
-		if raw, ok := data["append_skill_fragments"]; ok {
-			if fragments, parsed := normalizeFragments(raw); parsed {
-				dst.AppendSkillFragments = fragments
-			}
-		}
-	}
-
-	buildSkillPromptText := func(fragments []skillPromptFragmentData) string {
-		var sb strings.Builder
-		for _, f := range fragments {
-			if f.Prompt == "" {
-				continue
-			}
-			if sb.Len() > 0 {
-				sb.WriteString("\n\n")
-			}
-			sb.WriteString(f.Prompt)
-		}
-		return sb.String()
-	}
-
-	baseSystemPrompt := a.conversation.SystemPrompt()
-	builtFragments := make([]skillPromptFragmentData, 0)
-	if a.skillRuntime != nil {
-		fragments := a.skillRuntime.GetBudgetedPromptFragments()
-		builtFragments = make([]skillPromptFragmentData, 0, len(fragments))
-		for _, f := range fragments {
-			if f.ResolvedPrompt == "" {
-				continue
-			}
-			builtFragments = append(builtFragments, skillPromptFragmentData{
-				SkillName: f.SkillName,
-				Prompt:    f.ResolvedPrompt,
-			})
-		}
-	}
-
-	if a.skillRuntime != nil {
-		budget := a.context.Budget()
-		hookEvent := skills.HookEvent{
-			Phase: skills.HookOnBeforePromptBuild,
-			Ctx:   ctx,
-			Data: map[string]any{
-				skills.HookDataPromptBuild: promptBuildContext{
-					BaseSystemPrompt:      baseSystemPrompt,
-					SkillPromptFragments:  builtFragments,
-					ContextBudgetTotal:    budget.Total,
-					ContextBudgetMaxOut:   budget.MaxOutputTokens,
-					ContextBudgetWindow:   budget.EffectiveWindow(),
-					ContextBudgetSystem:   budget.SystemPrompt,
-					ContextBudgetSkills:   budget.SkillPrompts,
-					ContextBudgetTools:    budget.ToolDescriptions,
-					ContextBudgetMessages: budget.Conversation,
-				},
-			},
-		}
-		if result, err := a.skillRuntime.DispatchHook(hookEvent); err != nil {
-			a.logger.Warn("before-prompt-build hook failed: %v", err)
-		} else if result != nil {
-			mutation := promptBuildMutation{}
-			mergePromptBuildMutation(&mutation, hookEvent.Data)
-			mergePromptBuildMutation(&mutation, result.Modified)
-
-			if mutation.ReplaceBaseSystemPromptPresent {
-				baseSystemPrompt = mutation.ReplaceBaseSystemPrompt
-			}
-			if mutation.AppendSystemPrompt != "" {
-				baseSystemPrompt = strings.TrimSpace(baseSystemPrompt + "\n\n" + mutation.AppendSystemPrompt)
-			}
-			if mutation.ReplaceSkillFragmentsPresent {
-				builtFragments = mutation.ReplaceSkillFragments
-			}
-			if len(mutation.AppendSkillFragments) > 0 {
-				builtFragments = append(builtFragments, mutation.AppendSkillFragments...)
-			}
-		}
-	}
+	// Skill runtime has first say: it selects budgeted fragments and runs
+	// the before-prompt-build hook, which may rewrite the base prompt
+	// wholesale (a whole-prompt transform the ContextStrategy seam cannot
+	// express — see skillPromptContributor).
+	contributor := &skillPromptContributor{runtime: a.skillRuntime, logger: a.logger}
+	baseSystemPrompt, builtFragments := contributor.resolve(ctx, a.conversation.SystemPrompt(), a.context.Budget())
 
 	pb := NewPromptBuilder()
 
@@ -1353,15 +1214,13 @@ func (a *Agent) buildSystemPromptWithFragments(ctx context.Context, lastUserMess
 		TokenBudget: a.context.Budget().SkillPrompts,
 	})
 
-	// Skill prompt fragments — use budgeted selection to respect context budget.
-	if a.skillRuntime != nil {
-		for _, f := range builtFragments {
-			pb.AddDynamicSection_UNCACHED(f.SkillName, f.Prompt, "skill-injected prompt varies by active skill set and runtime context")
-		}
+	// Skill prompt fragments render last, as uncached dynamic sections.
+	for _, f := range builtFragments {
+		pb.AddDynamicSection_UNCACHED(f.SkillName, f.Prompt, "skill-injected prompt varies by active skill set and runtime context")
 	}
 
 	systemPrompt, cacheBreakpoints := pb.Build()
-	return systemPrompt, cacheBreakpoints, buildSkillPromptText(builtFragments)
+	return systemPrompt, cacheBreakpoints, renderSkillPromptText(builtFragments)
 }
 
 // emit sends a TurnEvent to the turn channel but guarantees the
