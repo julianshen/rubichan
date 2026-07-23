@@ -1,6 +1,9 @@
 package agentsdk_test
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -25,6 +28,8 @@ const modulePrefix = "github.com/julianshen/rubichan/"
 // test is that gate. Test files are intentionally exempt (Tests:false):
 // an embedder consumes the non-test package.
 func TestPublicPackagesHaveNoInternalImports(t *testing.T) {
+	pinCacheToPkgTree(t)
+
 	cfg := &packages.Config{Mode: packages.NeedName | packages.NeedImports | packages.NeedDeps}
 	roots, err := packages.Load(cfg, modulePrefix+"pkg/...")
 	if err != nil {
@@ -77,6 +82,39 @@ func TestPublicPackagesHaveNoInternalImports(t *testing.T) {
 		t.Fatalf("public pkg/ packages must not import internal/ (transitively); "+
 			"this breaks the redesign's portability invariant. Offending chains:\n  %s",
 			strings.Join(violations, "\n  "))
+	}
+}
+
+// pinCacheToPkgTree defeats Go's test-result cache for this gate.
+//
+// The scan runs `go list` in a subprocess (via packages.Load), whose file
+// reads are invisible to the cache's file tracking. And because this test
+// lives in pkg/agentsdk, its cached result is reused even when a *sibling*
+// public package (pkg/skillsdk, …) — not a dependency of this test binary —
+// gains a fresh internal/ import. A warm `go test ./...` would then print
+// "ok (cached)" and never rescan, letting a violation slip through the very
+// gate meant to catch it.
+//
+// Reading every .go file under pkg/ inside the test process records them in
+// the cache's input set — and the directory reads WalkDir performs make an
+// added or removed package change a scanned directory too — so any edit
+// that could introduce a violation invalidates the cached pass. Over-reading
+// only ever forces an extra (correct) rerun; it can never cause a false pass.
+func pinCacheToPkgTree(t *testing.T) {
+	t.Helper()
+	// go test runs in the package directory (pkg/agentsdk); its parent is pkg/.
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		_, err = os.ReadFile(path)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("pin cache to pkg/ tree: %v", err)
 	}
 }
 
