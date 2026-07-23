@@ -58,4 +58,7 @@ func TestRunPrintsModuleObservations(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "assistant said: Release team greeted.")
 	assert.Contains(t, out, "tool middleware saw 1 call")
+	// run must wait for EndSession so the summary shows the full lifecycle,
+	// not race ahead of the async "end" callback.
+	assert.Contains(t, out, "background task observed: [start join start end]")
 }

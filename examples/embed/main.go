@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
@@ -122,6 +123,12 @@ func run(out interface{ Write([]byte) (int, error) }) error {
 		return err
 	}
 
+	// EndSession fires on its own goroutine after the loop exits, so the
+	// turn channel closing does not guarantee "end" has been recorded yet.
+	// Wait for it so the summary shows the full start/join/end lifecycle
+	// the example is meant to demonstrate.
+	e.auditor.waitForEnd(2 * time.Second)
+
 	fmt.Fprintf(out, "assistant said: %s\n", assistant)
 	fmt.Fprintf(out, "tool middleware saw %d call(s)\n", e.toolCalls.get())
 	fmt.Fprintf(out, "background task observed: %v\n", e.auditor.events())
@@ -209,6 +216,21 @@ func (a *sessionAuditor) events() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.log...)
+}
+
+// waitForEnd blocks until EndSession has been recorded or timeout elapses,
+// so callers can report the completed lifecycle.
+func (a *sessionAuditor) waitForEnd(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		a.mu.Lock()
+		ended := len(a.log) > 0 && a.log[len(a.log)-1] == "end"
+		a.mu.Unlock()
+		if ended {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // scriptedProvider is a canned LLMProvider so the example runs with no
