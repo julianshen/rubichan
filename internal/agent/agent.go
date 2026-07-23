@@ -586,7 +586,7 @@ func New(p provider.LLMProvider, t *tools.Registry, approve ApprovalFunc, cfg *c
 		}
 	}
 	a.allMemories = memories
-	a.staticPrompts = a.assembleSystemPromptSections(memories)
+	a.staticPrompts = a.assembleSystemPromptSections()
 	a.conversation = NewConversation(renderPromptSections(a.staticPrompts))
 	a.windowManager = NewContextWindowManager(a.context)
 	// If a summarizer was provided and the caller didn't set custom
@@ -729,7 +729,7 @@ func buildSystemPrompt(_ *config.Config) string {
 	return persona.BaseSystemPrompt()
 }
 
-func (a *Agent) assembleSystemPromptSections(memories []MemoryEntry) []PromptSection {
+func (a *Agent) assembleSystemPromptSections() []PromptSection {
 	sections := []PromptSection{{
 		Name:      "System",
 		Content:   a.basePrompt,
