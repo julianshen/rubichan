@@ -185,6 +185,8 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 **Phase 4 — Publish the module API.**
 Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
 
+> **Status update (2026-07): first embedder example landed.** `examples/embed` composes `agent.New` with three seams at once — a custom `ContextStrategy`, a `BackgroundTask`, and a tool-execution middleware — over a self-contained canned provider, running one turn with no TUI/headless/ACP and no API key. A race-clean integration test asserts each module actually fires (the strategy's section reaches the system prompt, the middleware wraps the tool call, the task observes start/join/end), making the "adding a capability adds a module" thesis executable and regression-guarded. **One reachability gap remains, documented in the example:** the registration options (`WithContextStrategies`, `WithBackgroundTasks`, `WithToolMiddlewares`, …) still live on `internal/agent`, so a *different-module* embedder cannot call them yet — the interfaces are already public in `pkg/agentsdk`, but the core constructor must move to `pkg/` (Phase 1's "one loop" end state) to close it. That makes Phase 1 the highest-leverage remaining work: it's what turns "embeddable within this module" into "embeddable by anyone."
+
 Each phase is independently shippable and leaves the product fully working.
 
 ---
