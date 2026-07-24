@@ -54,15 +54,16 @@ func WithConfig(cfg AgentConfig) Option {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
-	provider         LLMProvider
-	tools            *Registry
-	config           AgentConfig
-	conversation     *Conversation
-	approve          ApprovalFunc
-	approvalChecker  ApprovalChecker
-	uiRequestHandler UIRequestHandler
-	logger           Logger
-	turnMu           sync.Mutex
+	provider          LLMProvider
+	tools             *Registry
+	config            AgentConfig
+	conversation      *Conversation
+	approve           ApprovalFunc
+	approvalChecker   ApprovalChecker
+	uiRequestHandler  UIRequestHandler
+	logger            Logger
+	contextStrategies []ContextStrategy
+	turnMu            sync.Mutex
 }
 
 // NewAgent creates a new Agent with the given LLM provider and options.
@@ -109,7 +110,7 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 	go func() {
 		defer a.turnMu.Unlock()
 		defer close(ch)
-		a.runLoop(ctx, ch, 0)
+		a.runLoop(ctx, ch, 0, userMessage)
 	}()
 	return ch, nil
 }
@@ -120,8 +121,10 @@ func (a *Agent) Conversation() *Conversation {
 	return a.conversation
 }
 
-// runLoop iteratively processes LLM responses and tool calls.
-func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int) {
+// runLoop iteratively processes LLM responses and tool calls. userMessage is
+// the message that started the turn; it is handed to context strategies at
+// prompt-build time.
+func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, userMessage string) {
 	var totalInputTokens, totalOutputTokens int
 
 	maxTurns := a.config.MaxTurns
@@ -140,7 +143,7 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int)
 
 		req := CompletionRequest{
 			Model:     a.config.Model,
-			System:    a.conversation.SystemPrompt(),
+			System:    a.effectiveSystemPrompt(ctx, userMessage),
 			Messages:  a.conversation.Messages(),
 			Tools:     toolDefs,
 			MaxTokens: a.config.MaxOutputTokens,
