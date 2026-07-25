@@ -49,8 +49,13 @@ func TestPortableExampleHasNoInternalImports(t *testing.T) {
 		what:    "the portable embedder example (examples/embed)",
 		pattern: modulePrefix + "examples/embed",
 		why:     "an out-of-module program could not copy it",
-		// go test runs in pkg/agentsdk; reach back to the examples tree.
-		pinTrees: []string{"../../examples/embed"},
+		// Pin both sides of the scanned graph. The example's own tree is
+		// obvious; pkg/ matters because a violation can also be introduced
+		// by a public package the example depends on, and such a package
+		// need not be a dependency of this test binary — so nothing else
+		// would invalidate the cached pass. go test runs in pkg/agentsdk,
+		// so ".." is the pkg/ tree.
+		pinTrees: []string{"../../examples/embed", ".."},
 	})
 }
 
