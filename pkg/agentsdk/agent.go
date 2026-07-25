@@ -64,6 +64,7 @@ type Agent struct {
 	logger            Logger
 	contextStrategies []ContextStrategy
 	backgroundTasks   []BackgroundTask
+	toolMiddlewares   []Middleware
 	turnMu            sync.Mutex
 }
 
@@ -318,10 +319,11 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 		}
 	}
 
-	// Dispatch through the shared execution core: registry lookup with
-	// did-you-mean suggestions, streaming-aware execution, error wrapping.
+	// Dispatch through the middleware pipeline, whose base handler is the
+	// shared execution core: registry lookup with did-you-mean suggestions,
+	// streaming-aware execution, error wrapping.
 	emit := MakeToolProgressEmitter(tc.ID, tc.Name, func(ev TurnEvent) { sendEvent(ctx, ch, ev) })
-	out := ExecuteTool(ctx, a.tools, tc.Name, tc.Input, emit)
+	out := a.dispatchTool(ctx, tc, emit)
 	return toolResult{
 		content: out.Content,
 		isError: out.IsError,
