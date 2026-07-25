@@ -36,6 +36,24 @@ func TestPublicPackagesHaveNoInternalImports(t *testing.T) {
 	})
 }
 
+// TestPortableExampleHasNoInternalImports is the executable form of the
+// redesign's payoff claim: examples/embed shows how a program embeds the
+// agent core and opts into modules, and it must do so using only public
+// packages. Because the example lives inside this module the compiler would
+// happily let it reach into internal/ — and then it would be demonstrating
+// something no out-of-module program could copy. This gate is what makes
+// "a different module can embed the real agent" a checked fact rather than
+// a claim in a doc comment.
+func TestPortableExampleHasNoInternalImports(t *testing.T) {
+	assertNoInternalImports(t, assertion{
+		what:    "the portable embedder example (examples/embed)",
+		pattern: modulePrefix + "examples/embed",
+		why:     "an out-of-module program could not copy it",
+		// go test runs in pkg/agentsdk; reach back to the examples tree.
+		pinTrees: []string{"../../examples/embed"},
+	})
+}
+
 // assertion describes one import-boundary gate.
 type assertion struct {
 	what     string   // subject, used in the failure message
