@@ -336,13 +336,13 @@ func (a *Agent) executeSingleTool(ctx context.Context, ch chan<- TurnEvent, tc T
 
 	// Dispatch through the middleware pipeline, whose base handler is the
 	// shared execution core: registry lookup with did-you-mean suggestions,
-	// streaming-aware execution, error wrapping.
-	emit := MakeToolProgressEmitter(tc.ID, tc.Name, func(ev TurnEvent) { sendEvent(ctx, ch, ev) })
-	out := a.dispatchTool(ctx, tc, emit)
+	// streaming-aware execution, error wrapping. Report the name that
+	// executed, which a middleware may have rewritten.
+	out, executedName := a.dispatchTool(ctx, tc, func(ev TurnEvent) { sendEvent(ctx, ch, ev) })
 	return toolResult{
 		content: out.Content,
 		isError: out.IsError,
-		event:   MakeToolResultEvent(tc.ID, tc.Name, out.Content, out.DisplayContent, out.IsError),
+		event:   MakeToolResultEvent(tc.ID, executedName, out.Content, out.DisplayContent, out.IsError),
 	}
 }
 
