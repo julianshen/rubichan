@@ -21,9 +21,9 @@ type lifecycleTask struct {
 	info []BackgroundTurnInfo
 }
 
-func (t *lifecycleTask) record(s string) {
+func (t *lifecycleTask) record(event string) {
 	t.mu.Lock()
-	t.log = append(t.log, s)
+	t.log = append(t.log, event)
 	t.mu.Unlock()
 }
 
