@@ -55,11 +55,16 @@ type embedder struct {
 
 // compose wires the core with three modules. This is the whole point of the
 // example: agentsdk.NewAgent plus a few options, no bespoke struct.
-func compose() embedder {
+func compose() (embedder, error) {
 	// A tool the demo turn will call, so the middleware and the
 	// background-task join both have something to observe.
 	registry := agentsdk.NewRegistry()
-	_ = registry.Register(greetTool{})
+	if err := registry.Register(greetTool{}); err != nil {
+		// Registration is the one setup step that can fail. Swallowing it
+		// would surface later as a confusing "unknown tool: greet" from the
+		// model's call instead of the real cause.
+		return embedder{}, fmt.Errorf("register greet tool: %w", err)
+	}
 
 	// Module 1 — a ContextStrategy that injects a section into every system
 	// prompt. A real one might pull runbook links, on-call info, or
@@ -96,13 +101,16 @@ func compose() embedder {
 		strategy:  deployWindow,
 		auditor:   auditor,
 		toolCalls: toolCalls,
-	}
+	}, nil
 }
 
 // run composes the embedder, drives one turn, and reports what the modules
 // observed.
 func run(out interface{ Write([]byte) (int, error) }) error {
-	e := compose()
+	e, err := compose()
+	if err != nil {
+		return err
+	}
 
 	assistant, err := e.driveTurn(context.Background(), "greet the release team")
 	if err != nil {
