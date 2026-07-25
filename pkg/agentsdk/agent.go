@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 )
 
@@ -112,6 +113,20 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 	go func() {
 		defer a.turnMu.Unlock()
 		defer close(ch)
+		// Last-resort boundary for the turn goroutine, which is otherwise
+		// unsupervised: an escaping panic would take down the host process
+		// rather than the turn. Registered after close(ch) so it runs first
+		// (defers are LIFO) and can still report on the channel; turnMu is
+		// released last, so a recovered panic cannot strand later turns.
+		defer func() {
+			if r := recover(); r != nil {
+				a.logger.Error("agent panic recovered: %v\n%s", r, debug.Stack())
+				sendEvent(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("agent panic: %v", r)})
+				// Consumers treat "done" as the turn's terminator; without it
+				// a caller waiting on it would hang.
+				sendEvent(ctx, ch, a.makeDoneEvent(0, 0))
+			}
+		}()
 		a.runLoop(ctx, ch, 0, userMessage)
 	}()
 	return ch, nil

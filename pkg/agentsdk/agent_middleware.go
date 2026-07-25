@@ -1,6 +1,9 @@
 package agentsdk
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // WithToolMiddlewares registers middlewares that wrap every tool execution.
 // The first middleware is the outermost wrapper (see NewPipeline). Nil
@@ -30,7 +33,25 @@ func WithToolMiddlewares(middlewares ...Middleware) Option {
 // emit is captured by the base handler rather than passed through ToolCall:
 // the emitter is bound to this call's identity and the turn's event channel,
 // which the pipeline's ToolCall carries no field for.
-func (a *Agent) dispatchTool(ctx context.Context, tc ToolUseBlock, emit ToolEventEmitter) ToolExecOutcome {
+//
+// The whole dispatch runs behind a recover boundary. Both middlewares and
+// tools are third-party code on the turn goroutine, and this loop's goroutine
+// is unsupervised, so an escaping panic would kill the host process. Folding
+// it into an error outcome instead matches what ToolExecOutcome already
+// promises for ordinary failures — a misbehaving tool never aborts the turn —
+// and gives this seam the same containment as ContextStrategy and
+// BackgroundTask.
+func (a *Agent) dispatchTool(ctx context.Context, tc ToolUseBlock, emit ToolEventEmitter) (outcome ToolExecOutcome) {
+	defer func() {
+		if r := recover(); r != nil {
+			a.logger.Warn("tool dispatch panicked for %s: %v", tc.Name, r)
+			outcome = ToolExecOutcome{
+				Content: fmt.Sprintf("tool execution error: panic: %v", r),
+				IsError: true,
+			}
+		}
+	}()
+
 	base := func(ctx context.Context, call ToolCall) Result {
 		out := ExecuteTool(ctx, a.tools, call.Name, call.Input, emit)
 		return Result{
