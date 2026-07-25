@@ -15,7 +15,12 @@ import (
 // registration is a single ordered list.
 //
 // Middlewares wrap execution only: a tool call denied by the approval flow
-// never reaches them, because it is never executed.
+// never reaches them, because it is never executed. The corollary matters for
+// policy modules — approval runs first, so a middleware sees only calls the
+// user already approved and cannot suppress or inform the approval prompt. To
+// gate a call before the user is asked, use ApprovalChecker instead; use a
+// middleware to gate execution itself, which it can do by returning a Result
+// without calling next.
 func WithToolMiddlewares(middlewares ...Middleware) Option {
 	return func(a *Agent) {
 		for _, mw := range middlewares {
