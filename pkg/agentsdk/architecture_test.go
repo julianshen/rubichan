@@ -28,18 +28,39 @@ const modulePrefix = "github.com/julianshen/rubichan/"
 // test is that gate. Test files are intentionally exempt (Tests:false):
 // an embedder consumes the non-test package.
 func TestPublicPackagesHaveNoInternalImports(t *testing.T) {
-	pinCacheToPkgTree(t)
+	assertNoInternalImports(t, assertion{
+		what:     "public pkg/ packages",
+		pattern:  modulePrefix + "pkg/...",
+		why:      "this breaks the redesign's portability invariant",
+		pinTrees: []string{".."}, // go test runs in pkg/agentsdk; its parent is pkg/
+	})
+}
+
+// assertion describes one import-boundary gate.
+type assertion struct {
+	what     string   // subject, used in the failure message
+	pattern  string   // package pattern to load
+	why      string   // consequence, used in the failure message
+	pinTrees []string // source trees to read so the result is not falsely cached
+}
+
+// assertNoInternalImports loads the assertion's packages, walks their
+// transitive first-party import graph, and fails with a blame chain if any
+// of them reaches internal/.
+func assertNoInternalImports(t *testing.T, a assertion) {
+	t.Helper()
+	pinCacheToTrees(t, a.pinTrees...)
 
 	cfg := &packages.Config{Mode: packages.NeedName | packages.NeedImports | packages.NeedDeps}
-	roots, err := packages.Load(cfg, modulePrefix+"pkg/...")
+	roots, err := packages.Load(cfg, a.pattern)
 	if err != nil {
-		t.Fatalf("load pkg/...: %v", err)
+		t.Fatalf("load %s: %v", a.pattern, err)
 	}
 	if packages.PrintErrors(roots) > 0 {
-		t.Fatal("errors loading pkg/... packages")
+		t.Fatalf("errors loading %s packages", a.pattern)
 	}
 	if len(roots) == 0 {
-		t.Fatal("no pkg/ packages loaded — pattern or module resolution broke")
+		t.Fatalf("no packages loaded for %s — pattern or module resolution broke", a.pattern)
 	}
 
 	// BFS the transitive first-party import graph, remembering the chain
@@ -79,42 +100,43 @@ func TestPublicPackagesHaveNoInternalImports(t *testing.T) {
 
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		t.Fatalf("public pkg/ packages must not import internal/ (transitively); "+
-			"this breaks the redesign's portability invariant. Offending chains:\n  %s",
-			strings.Join(violations, "\n  "))
+		t.Fatalf("%s must not import internal/ (transitively); %s. Offending chains:\n  %s",
+			a.what, a.why, strings.Join(violations, "\n  "))
 	}
 }
 
-// pinCacheToPkgTree defeats Go's test-result cache for this gate.
+// pinCacheToTrees defeats Go's test-result cache for these gates.
 //
 // The scan runs `go list` in a subprocess (via packages.Load), whose file
-// reads are invisible to the cache's file tracking. And because this test
-// lives in pkg/agentsdk, its cached result is reused even when a *sibling*
-// public package (pkg/skillsdk, …) — not a dependency of this test binary —
-// gains a fresh internal/ import. A warm `go test ./...` would then print
-// "ok (cached)" and never rescan, letting a violation slip through the very
-// gate meant to catch it.
+// reads are invisible to the cache's file tracking. And because these tests
+// live in pkg/agentsdk, a cached result is reused even when a package they
+// scan — but which is not a dependency of this test binary — gains a fresh
+// internal/ import. A warm `go test ./...` would then print "ok (cached)"
+// and never rescan, letting a violation slip through the very gate meant to
+// catch it.
 //
-// Reading every .go file under pkg/ inside the test process records them in
-// the cache's input set — and the directory reads WalkDir performs make an
-// added or removed package change a scanned directory too — so any edit
-// that could introduce a violation invalidates the cached pass. Over-reading
-// only ever forces an extra (correct) rerun; it can never cause a false pass.
-func pinCacheToPkgTree(t *testing.T) {
+// Reading every .go file under the scanned trees inside the test process
+// records them in the cache's input set — and the directory reads WalkDir
+// performs make an added or removed package change a scanned directory too —
+// so any edit that could introduce a violation invalidates the cached pass.
+// Over-reading only ever forces an extra (correct) rerun; it can never cause
+// a false pass.
+func pinCacheToTrees(t *testing.T, dirs ...string) {
 	t.Helper()
-	// go test runs in the package directory (pkg/agentsdk); its parent is pkg/.
-	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	for _, dir := range dirs {
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			_, err = os.ReadFile(path)
 			return err
+		})
+		if err != nil {
+			t.Fatalf("pin cache to %s: %v", dir, err)
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-		_, err = os.ReadFile(path)
-		return err
-	})
-	if err != nil {
-		t.Fatalf("pin cache to pkg/ tree: %v", err)
 	}
 }
 
