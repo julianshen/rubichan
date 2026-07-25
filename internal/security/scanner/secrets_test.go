@@ -9,6 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Fixture credentials below are assembled at runtime from split literals so
+// this file never contains a contiguous credential-shaped string. GitHub
+// secret scanning (and tools like gitleaks) match contiguous patterns in
+// checked-in source and raise repository security alerts even for clearly
+// fake fixtures. The scanner under test is unaffected: it reads the joined
+// string from the temp files these tests write.
+func fakeAWSKey() string         { return "AKIA" + "IOSFODNN7" + "REALKEY1" }
+func fakeAWSExample() string     { return "AKIA" + "IOSFODNN7" + "EXAMPLE" }
+func fakeGitHubPAT() string      { return "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "abcdefghij" }
+func pemLine(word string) string { return "-----" + word + " RSA PRIVATE" + " KEY-----" }
+
 func TestSecretScannerName(t *testing.T) {
 	t.Parallel()
 
@@ -27,7 +38,7 @@ func TestSecretScannerDetectsAWSKey(t *testing.T) {
 
 	dir := t.TempDir()
 	writeFile(t, dir, "config.go", `package config
-const awsKey = "AKIAIOSFODNN7REALKEY1"
+const awsKey = "`+fakeAWSKey()+`"
 `)
 
 	s := NewSecretScanner()
@@ -44,7 +55,7 @@ const awsKey = "AKIAIOSFODNN7REALKEY1"
 	assert.Equal(t, "config.go", f.Location.File)
 	assert.Equal(t, 2, f.Location.StartLine)
 	// Evidence must NOT contain the full secret
-	assert.NotContains(t, f.Evidence, "AKIAIOSFODNN7REALKEY1")
+	assert.NotContains(t, f.Evidence, fakeAWSKey())
 }
 
 func TestSecretScannerDetectsGitHubToken(t *testing.T) {
@@ -52,7 +63,7 @@ func TestSecretScannerDetectsGitHubToken(t *testing.T) {
 
 	dir := t.TempDir()
 	writeFile(t, dir, "auth.go", `package auth
-var token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+var token = "`+fakeGitHubPAT()+`"
 `)
 
 	s := NewSecretScanner()
@@ -75,9 +86,9 @@ func TestSecretScannerDetectsPrivateKey(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writeFile(t, dir, "certs/key.pem", `-----BEGIN RSA PRIVATE KEY-----
+	writeFile(t, dir, "certs/key.pem", pemLine("BEGIN")+`
 MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/yGOQ
------END RSA PRIVATE KEY-----
+`+pemLine("END")+`
 `)
 
 	s := NewSecretScanner()
@@ -121,7 +132,7 @@ func TestSecretScannerDetectsDBConnectionString(t *testing.T) {
 
 	dir := t.TempDir()
 	writeFile(t, dir, "db.go", `package db
-const dsn = "postgres://user:pass@localhost:5432/mydb"
+const dsn = "postgres://user:`+"pa"+"ss"+`@localhost:5432/mydb"
 `)
 
 	s := NewSecretScanner()
@@ -144,7 +155,7 @@ func TestSecretScannerSkipsBinary(t *testing.T) {
 
 	dir := t.TempDir()
 	// Binary file: contains null bytes within the first 512 bytes.
-	content := []byte("AKIAIOSFODNN7EXAMPLE\x00\x00binarydata")
+	content := []byte(fakeAWSExample() + "\x00\x00binarydata")
 	writeFile(t, dir, "binary.dat", string(content))
 
 	s := NewSecretScanner()
@@ -158,7 +169,7 @@ func TestSecretScannerSkipsExcluded(t *testing.T) {
 
 	dir := t.TempDir()
 	writeFile(t, dir, "vendor/lib/config.go", `package lib
-const key = "AKIAIOSFODNN7EXAMPLE"
+const key = "`+fakeAWSExample()+`"
 `)
 	writeFile(t, dir, "main.go", `package main
 func main() {}
@@ -205,10 +216,10 @@ func TestSecretScannerUsesTargetFiles(t *testing.T) {
 
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", `package a
-const key = "AKIAIOSFODNN7REALKEY1"
+const key = "`+fakeAWSKey()+`"
 `)
 	writeFile(t, dir, "b.go", `package b
-const key = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+const key = "`+fakeGitHubPAT()+`"
 `)
 
 	s := NewSecretScanner()
@@ -347,7 +358,7 @@ func TestSecretScannerContextCancellation(t *testing.T) {
 
 	dir := t.TempDir()
 	writeFile(t, dir, "config.go", `package config
-const awsKey = "AKIAIOSFODNN7EXAMPLE"
+const awsKey = "`+fakeAWSExample()+`"
 `)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -372,10 +383,10 @@ func TestSecretScannerMaskSecretShortValue(t *testing.T) {
 func TestSecretScannerMaskSecretLongValue(t *testing.T) {
 	t.Parallel()
 
-	result := maskSecret("AKIAIOSFODNN7REALKEY1", "aws-key")
+	result := maskSecret(fakeAWSKey(), "aws-key")
 	assert.Contains(t, result, "AKIA")
 	assert.Contains(t, result, "aws-key")
-	assert.NotContains(t, result, "AKIAIOSFODNN7REALKEY1")
+	assert.NotContains(t, result, fakeAWSKey())
 }
 
 func TestSecretScannerShannonEntropyEmptyString(t *testing.T) {
@@ -405,7 +416,7 @@ func TestSecretScannerUnreadableFile(t *testing.T) {
 
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", `package a
-const key = "AKIAIOSFODNN7REALKEY1"
+const key = "`+fakeAWSKey()+`"
 `)
 
 	// Also create a non-existent file path reference via Files.
