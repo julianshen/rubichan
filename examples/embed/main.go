@@ -1,29 +1,28 @@
-// Command embed is a runnable demonstration of embedding the rubichan
-// agent core in another program and opting into exactly the modules you
-// want — the payoff of the modular-core redesign (docs/MODULAR_CORE_REDESIGN.md).
+// Command embed is a runnable demonstration of embedding the rubichan agent
+// core in another program and opting into exactly the modules you want — the
+// payoff of the modular-core redesign (docs/MODULAR_CORE_REDESIGN.md).
 //
-// It composes agent.New with three of the seams the redesign introduced,
-// each a small interface in pkg/agentsdk:
+// It composes agentsdk.NewAgent with three of the seams the redesign
+// introduced, each a small interface in pkg/agentsdk:
 //
 //   - ContextStrategy    — contributes a section to every system prompt
 //   - BackgroundTask     — runs work concurrently with the agent loop
-//   - tool middleware    — wraps every tool execution
+//   - Middleware         — wraps every tool execution
 //
 // No TUI, no headless runner, no ACP: just the core loop plus the modules
-// this embedder chose. Adding a capability adds a module, not a core
-// struct field.
+// this embedder chose. Adding a capability adds a module, not a core struct
+// field.
 //
-// The example is self-contained — it uses a tiny canned provider so it
-// runs with no API key. In a real embedder you would pass a provider
-// built from internal/provider (Anthropic, OpenAI, Ollama, …) instead.
+// Portability is the point. Everything here comes from pkg/agentsdk — no
+// internal/ package appears in this file or anywhere in its import graph, so
+// a program in a *different* Go module can embed the agent exactly this way.
+// That is enforced, not asserted: TestPortableExampleHasNoInternalImports in
+// pkg/agentsdk walks this example's transitive imports and fails on any
+// internal/ dependency.
 //
-// Reachability note: the registration options (WithContextStrategies,
-// WithBackgroundTasks, WithToolMiddlewares) currently live on
-// internal/agent, so an embedder must be inside this module to call them
-// — as this example is. The interfaces they take (agentsdk.ContextStrategy,
-// agentsdk.BackgroundTask, agentsdk.Middleware) are already public and
-// stable in pkg/agentsdk; promoting the core constructor to pkg/ is the
-// remaining step that would let a different module embed it too.
+// The example is self-contained — it uses a tiny canned provider so it runs
+// with no API key. A real embedder would supply its own LLMProvider
+// implementation (Anthropic, OpenAI, Ollama, …) instead.
 package main
 
 import (
@@ -34,19 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/julianshen/rubichan/internal/agent"
-	"github.com/julianshen/rubichan/internal/config"
-	"github.com/julianshen/rubichan/internal/toolexec"
-	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
-
-// sessionMemoryMaxTokens is the MaxTokens the built-in session-memory
-// extraction call uses (see internal/agent/session_memory_service.go). The
-// scripted provider routes those calls to a trivial reply so the async
-// extraction — registered automatically by agent.New — never disturbs the
-// two-response demo script or races on its counter.
-const sessionMemoryMaxTokens = 16384
 
 func main() {
 	if err := run(os.Stdout); err != nil {
@@ -58,50 +46,48 @@ func main() {
 // embedder bundles the composed agent with handles to the modules it was
 // given, so both main and the integration test observe the same wiring.
 type embedder struct {
-	agent     *agent.Agent
+	agent     *agentsdk.Agent
 	provider  *scriptedProvider
 	strategy  *deploymentWindowStrategy
 	auditor   *sessionAuditor
 	toolCalls *callCounter
 }
 
-// compose wires the core with three modules. This is the whole point of
-// the example: agent.New plus a few Use-style options, no bespoke struct.
+// compose wires the core with three modules. This is the whole point of the
+// example: agentsdk.NewAgent plus a few options, no bespoke struct.
 func compose() embedder {
 	// A tool the demo turn will call, so the middleware and the
 	// background-task join both have something to observe.
-	registry := tools.NewRegistry()
+	registry := agentsdk.NewRegistry()
 	_ = registry.Register(greetTool{})
 
-	// Module 1 — a ContextStrategy that injects a section into every
-	// system prompt. A real one might pull runbook links, on-call info,
-	// or feature-flag state.
+	// Module 1 — a ContextStrategy that injects a section into every system
+	// prompt. A real one might pull runbook links, on-call info, or
+	// feature-flag state.
 	deployWindow := &deploymentWindowStrategy{}
 
 	// Module 2 — a BackgroundTask that observes the loop lifecycle.
 	auditor := &sessionAuditor{}
 
-	// Module 3 — a tool-execution middleware that counts calls. A real
-	// one might enforce policy, add tracing, or redact output.
+	// Module 3 — a tool-execution middleware that counts calls. A real one
+	// might enforce policy, add tracing, or redact output.
 	toolCalls := &callCounter{}
-	countingMW := func(next toolexec.HandlerFunc) toolexec.HandlerFunc {
-		return func(ctx context.Context, tc toolexec.ToolCall) toolexec.Result {
+	countingMW := func(next agentsdk.HandlerFunc) agentsdk.HandlerFunc {
+		return func(ctx context.Context, tc agentsdk.ToolCall) agentsdk.Result {
 			toolCalls.inc()
 			return next(ctx, tc)
 		}
 	}
 
 	provider := cannedProvider()
-	agentCore := agent.New(
+	agentCore := agentsdk.NewAgent(
 		provider,
-		registry,
-		autoApprove,
-		config.DefaultConfig(),
-		agent.WithContextStrategies(deployWindow),
-		agent.WithBackgroundTasks(auditor),
-		agent.WithToolMiddlewares(agent.ToolMiddlewares{
-			BeforeHooks: []toolexec.Middleware{countingMW},
-		}),
+		agentsdk.WithTools(registry),
+		agentsdk.WithApproval(autoApprove),
+		agentsdk.WithSystemPrompt("You are a release assistant."),
+		agentsdk.WithContextStrategies(deployWindow),
+		agentsdk.WithBackgroundTasks(auditor),
+		agentsdk.WithToolMiddlewares(countingMW),
 	)
 
 	return embedder{
@@ -123,10 +109,10 @@ func run(out interface{ Write([]byte) (int, error) }) error {
 		return err
 	}
 
-	// EndSession fires on its own goroutine after the loop exits, so the
-	// turn channel closing does not guarantee "end" has been recorded yet.
-	// Wait for it so the summary shows the full start/join/end lifecycle
-	// the example is meant to demonstrate.
+	// EndSession fires on its own goroutine after the loop exits, so the turn
+	// channel closing does not guarantee "end" has been recorded yet. Wait for
+	// it so the summary shows the full start/join/end lifecycle the example is
+	// meant to demonstrate.
 	e.auditor.waitForEnd(2 * time.Second)
 
 	fmt.Fprintf(out, "assistant said: %s\n", assistant)
@@ -190,18 +176,18 @@ func (s *deploymentWindowStrategy) ContributePromptSections(_ context.Context, _
 
 func (s *deploymentWindowStrategy) calls() int { return s.n }
 
-// sessionAuditor is a BackgroundTask: started before each model call,
-// joined after tool execution, and signalled once at session end. Its log
-// is mutex-guarded because EndSession runs on its own goroutine, off the
-// turn's critical path.
+// sessionAuditor is a BackgroundTask: started before each model call, joined
+// after tool execution, and signalled once at session end. Its log is
+// mutex-guarded because EndSession runs on its own goroutine, off the turn's
+// critical path.
 type sessionAuditor struct {
 	mu  sync.Mutex
 	log []string
 }
 
-func (a *sessionAuditor) record(s string) {
+func (a *sessionAuditor) record(event string) {
 	a.mu.Lock()
-	a.log = append(a.log, s)
+	a.log = append(a.log, event)
 	a.mu.Unlock()
 }
 
@@ -218,8 +204,8 @@ func (a *sessionAuditor) events() []string {
 	return append([]string(nil), a.log...)
 }
 
-// waitForEnd blocks until EndSession has been recorded or timeout elapses,
-// so callers can report the completed lifecycle.
+// waitForEnd blocks until EndSession has been recorded or timeout elapses, so
+// callers can report the completed lifecycle.
 func (a *sessionAuditor) waitForEnd(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -233,31 +219,23 @@ func (a *sessionAuditor) waitForEnd(timeout time.Duration) {
 	}
 }
 
-// scriptedProvider is a canned LLMProvider so the example runs with no
-// API key: the first foreground call asks for the greet tool, the second
-// replies with text. It records the system prompts it received so the
-// integration test can confirm the ContextStrategy's section arrived.
+// scriptedProvider is a canned LLMProvider so the example runs with no API
+// key: the first call asks for the greet tool, the second replies with text.
+// It records the system prompts it received so the integration test can
+// confirm the ContextStrategy's section arrived.
 type scriptedProvider struct {
-	mu         sync.Mutex
-	foreground int
-	systems    []string
+	mu      sync.Mutex
+	calls   int
+	systems []string
 }
 
 func cannedProvider() *scriptedProvider { return &scriptedProvider{} }
 
 func (p *scriptedProvider) Stream(_ context.Context, req agentsdk.CompletionRequest) (<-chan agentsdk.StreamEvent, error) {
 	p.mu.Lock()
-	// Route async session-memory extraction calls to a trivial reply.
-	if req.MaxTokens == sessionMemoryMaxTokens {
-		p.mu.Unlock()
-		return streamOf(
-			agentsdk.StreamEvent{Type: "text_delta", Text: "- noted"},
-			agentsdk.StreamEvent{Type: "stop"},
-		), nil
-	}
 	p.systems = append(p.systems, req.System)
-	p.foreground++
-	first := p.foreground == 1
+	p.calls++
+	first := p.calls == 1
 	p.mu.Unlock()
 
 	if first {
