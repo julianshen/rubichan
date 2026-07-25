@@ -14,7 +14,8 @@ import (
 // proves the three modules an embedder opts into actually compose and fire
 // during a real turn against the core loop.
 func TestEmbedderComposesThreeSeams(t *testing.T) {
-	e := compose()
+	e, err := compose()
+	require.NoError(t, err)
 
 	assistant, err := e.driveTurn(context.Background(), "greet the release team")
 	require.NoError(t, err)
