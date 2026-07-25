@@ -288,3 +288,94 @@ func (c *countingTool) count() int {
 	defer c.mu.Unlock()
 	return c.n
 }
+
+// renameMiddleware rewrites the tool name, the canonicalization pattern
+// internal/toolexec.CanonicalizeToolNameMiddleware implements (write_file →
+// file).
+func renameMiddleware(to string) Middleware {
+	return func(next HandlerFunc) HandlerFunc {
+		return func(ctx context.Context, tc ToolCall) Result {
+			tc.Name = to
+			return next(ctx, tc)
+		}
+	}
+}
+
+func TestAgentToolMiddlewareCanRewriteToolName(t *testing.T) {
+	// The model calls an alias; the middleware canonicalizes it. The base
+	// handler must execute the rewritten name.
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "aliased", `{"text":"hi"}`),
+		textResponse("done"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	a := NewAgent(p, WithTools(r), WithToolMiddlewares(renameMiddleware("echo")))
+	ch, err := a.Turn(context.Background(), "go")
+	require.NoError(t, err)
+
+	var results []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_result" {
+			results = append(results, ev)
+		}
+	}
+
+	require.Len(t, results, 1)
+	assert.False(t, results[0].ToolResult.IsError,
+		"the rewritten name must be the one executed, not the alias")
+	assert.JSONEq(t, `{"text":"hi"}`, results[0].ToolResult.Content)
+	assert.Equal(t, "echo", results[0].ToolResult.Name,
+		"the result event must report the name that actually executed")
+}
+
+func TestAgentToolMiddlewareRewriteReachesProgressEvents(t *testing.T) {
+	p := &mockProvider{responses: [][]StreamEvent{
+		toolCallResponse("tc_1", "aliased", `{"text":"hello"}`),
+		textResponse("done"),
+	}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&streamEchoTool{}))
+
+	a := NewAgent(p, WithTools(r), WithToolMiddlewares(renameMiddleware("stream_echo")))
+	ch, err := a.Turn(context.Background(), "go")
+	require.NoError(t, err)
+
+	var progress []TurnEvent
+	for ev := range ch {
+		if ev.Type == "tool_progress" {
+			progress = append(progress, ev)
+		}
+	}
+
+	require.Len(t, progress, 1)
+	assert.Equal(t, "stream_echo", progress[0].ToolProgress.Name,
+		"progress events must carry the name that actually executed")
+}
+
+func TestAgentToolMiddlewareRunsPerCallInBatch(t *testing.T) {
+	// Two tool calls in one response must each get their own pipeline pass.
+	twoTools := []StreamEvent{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "echo"}},
+		{Type: "text_delta", Text: `{"text":"a"}`},
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_2", Name: "echo"}},
+		{Type: "text_delta", Text: `{"text":"b"}`},
+		{Type: "stop", InputTokens: 10, OutputTokens: 5},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{twoTools, textResponse("done")}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(&echoTool{}))
+
+	trace := &traceLog{}
+	a := NewAgent(p, WithTools(r), WithToolMiddlewares(recordingMiddleware(trace, "mw")))
+
+	ch, err := a.Turn(context.Background(), "go")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assert.Equal(t, []string{
+		"mw:before", "mw:after", "mw:before", "mw:after",
+	}, trace.all(), "each tool call in a batch gets its own pipeline pass")
+}
