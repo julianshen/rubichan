@@ -63,6 +63,7 @@ type Agent struct {
 	uiRequestHandler  UIRequestHandler
 	logger            Logger
 	contextStrategies []ContextStrategy
+	backgroundTasks   []BackgroundTask
 	turnMu            sync.Mutex
 }
 
@@ -125,6 +126,9 @@ func (a *Agent) Conversation() *Conversation {
 // the message that started the turn; it is handed to context strategies at
 // prompt-build time.
 func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int, userMessage string) {
+	// Signal session end to background tasks on every exit path.
+	defer a.endBackgroundSession()
+
 	var totalInputTokens, totalOutputTokens int
 
 	maxTurns := a.config.MaxTurns
@@ -140,6 +144,21 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		toolDefs := a.tools.All()
+
+		// Start registered background tasks before the model call so their
+		// async work overlaps model latency. The joins run after tool
+		// execution on every path that executed tools, including the
+		// cancelled one, so per-turn work is collected before the deferred
+		// session-end signal.
+		bgJoins := a.startBackgroundTurn(ctx, BackgroundTurnInfo{
+			UserMessage:  userMessage,
+			MemoryBudget: a.config.ContextBudget,
+		})
+		joinBackgroundTasks := func() {
+			for _, join := range bgJoins {
+				join(ctx)
+			}
+		}
 
 		req := CompletionRequest{
 			Model:     a.config.Model,
@@ -176,7 +195,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 
-		if cancelled := a.executeTools(ctx, ch, sr.pendingTools); cancelled {
+		cancelled := a.executeTools(ctx, ch, sr.pendingTools)
+		joinBackgroundTasks()
+		if cancelled {
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
