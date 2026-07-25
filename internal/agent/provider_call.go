@@ -11,20 +11,23 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
-// providerCallOutcome tells runLoop how to proceed after a provider call.
-type providerCallOutcome int
+// loopStepOutcome tells runLoop how to proceed after one of its extracted
+// steps (provider call, turn assembly): use the result, retry the turn, or
+// return because the step already terminated the turn.
+type loopStepOutcome int
 
 const (
-	// providerCallProceed: the stream is ready; process it.
-	providerCallProceed providerCallOutcome = iota
-	// providerCallRetryTurn: a recovery action (compaction, token bump)
-	// mutated loop state; re-enter the loop without consuming a turn. The
-	// callee has already decremented ls.turnCount to cancel the loop's
-	// post-statement increment and set ls.lastContinueReason.
-	providerCallRetryTurn
-	// providerCallEnded: a terminal failure was emitted (error followed by
+	// stepProceed: the step succeeded; use its result.
+	stepProceed loopStepOutcome = iota
+	// stepRetryTurn: a recovery action (compaction, token bump,
+	// continuation prompt) mutated loop state; re-enter the loop without
+	// consuming a turn. The callee has already decremented ls.turnCount to
+	// cancel the loop's post-statement increment and set
+	// ls.lastContinueReason.
+	stepRetryTurn
+	// stepEnded: the step emitted its own terminal events (error and/or
 	// done); runLoop must return.
-	providerCallEnded
+	stepEnded
 )
 
 // streamWithRecovery performs the foreground model call for one loop
@@ -36,10 +39,10 @@ const (
 // reads as orchestration and this machine can be reasoned about (and one day
 // seamed) in isolation.
 //
-// The returned stream is non-nil only for providerCallProceed. Terminal
+// The returned stream is non-nil only for stepProceed. Terminal
 // paths emit their own error and done events before returning; totals are
 // passed in solely so those done events carry accurate token usage.
-func (a *Agent) streamWithRecovery(ctx context.Context, ch chan<- TurnEvent, ls *loopState, req provider.CompletionRequest, totalInputTokens, totalOutputTokens int) (<-chan provider.StreamEvent, providerCallOutcome) {
+func (a *Agent) streamWithRecovery(ctx context.Context, ch chan<- TurnEvent, ls *loopState, req provider.CompletionRequest, totalInputTokens, totalOutputTokens int) (<-chan provider.StreamEvent, loopStepOutcome) {
 	if a.rateLimiter != nil {
 		if !a.rateLimiter.AllowNow() {
 			a.emit(ctx, ch, TurnEvent{Type: "rate_limited"})
@@ -47,7 +50,7 @@ func (a *Agent) streamWithRecovery(ctx context.Context, ch chan<- TurnEvent, ls 
 		if err := a.rateLimiter.Wait(ctx); err != nil {
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("rate limiter: %w", err)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitRateLimited))
-			return nil, providerCallEnded
+			return nil, stepEnded
 		}
 	}
 
@@ -87,7 +90,7 @@ func (a *Agent) streamWithRecovery(ctx context.Context, ch chan<- TurnEvent, ls 
 				} else {
 					ls.lastContinueReason = ContinueMaxTokensRecovery
 				}
-				return nil, providerCallRetryTurn
+				return nil, stepRetryTurn
 			}
 			// Recovery exhausted — surface the withheld error with class context
 			// so consumers can distinguish prompt-too-long from max_tokens without parsing strings.
@@ -105,7 +108,7 @@ func (a *Agent) streamWithRecovery(ctx context.Context, ch chan<- TurnEvent, ls 
 				exitReason = agentsdk.ExitMaxOutputTokens
 			}
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
-			return nil, providerCallEnded
+			return nil, stepEnded
 		}
 
 		if class == errorclass.ClassModelOverloaded && a.fallbackModel != "" {
@@ -135,18 +138,18 @@ func (a *Agent) streamWithRecovery(ctx context.Context, ch chan<- TurnEvent, ls 
 			}, onRetry)
 			if fallbackErr == nil {
 				ls.lastContinueReason = ContinueModelFallback
-				return stream, providerCallProceed
+				return stream, stepProceed
 			}
 			a.logger.Warn("fallback model also failed: %v", fallbackErr)
 			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream (fallback): %w", fallbackErr)})
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
-			return nil, providerCallEnded
+			return nil, stepEnded
 		}
 
 		a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("provider stream: %w", err)})
 		a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitProviderError))
-		return nil, providerCallEnded
+		return nil, stepEnded
 	}
 
-	return stream, providerCallProceed
+	return stream, stepProceed
 }

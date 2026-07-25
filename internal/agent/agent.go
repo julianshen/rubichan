@@ -1505,10 +1505,10 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		req.Capabilities.ReasoningEffort = a.latches.latchReasoningEffort(a.capabilities.ReasoningEffort)
 
 		stream, callOutcome := a.streamWithRecovery(ctx, ch, ls, req, totalInputTokens, totalOutputTokens)
-		if callOutcome == providerCallRetryTurn {
+		if callOutcome == stepRetryTurn {
 			continue
 		}
-		if callOutcome == providerCallEnded {
+		if callOutcome == stepEnded {
 			return
 		}
 
