@@ -309,11 +309,22 @@ func TestTaskCompletePathToolCancelLeavesNoOrphans(t *testing.T) {
 	ch, err := a.Turn(ctx, "finish up")
 	require.NoError(t, err)
 
-	for range ch {
+	var exitReason agentsdk.TurnExitReason
+	for ev := range ch {
+		if ev.Type == "done" {
+			exitReason = ev.ExitReason
+		}
 	}
 
 	require.True(t, cancelTool.invoked, "cancel tool was not invoked — test precondition failed")
 	assertNoOrphanToolUses(t, a)
+
+	// task_complete never ran — the cancelling sibling preceded it — so
+	// reporting completion would tell every consumer the turn succeeded.
+	// The hook's response_reason still says task_complete; that answers a
+	// different question and is resolved before execution.
+	require.Equal(t, agentsdk.ExitCancelled, exitReason,
+		"a batch cancelled before task_complete ran must report cancellation, not completion")
 }
 
 // TestTaskCompletePathToolCancelPersistsSeal covers the persistence half of
