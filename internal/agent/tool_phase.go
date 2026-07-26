@@ -57,9 +57,7 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 		a.logger.Warn("token budget stop: %s (%d%%)", reason, dec.Pct)
 		// A cancelled batch leaves trailing tool_use blocks unanswered; seal
 		// them before exiting or the next provider call fails a protocol check.
-		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
-			synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
-		}
+		a.executeToolsSealingCancellation(ctx, ch, pendingTools, streamedResults)
 		joinBackgroundTasks()
 		a.emit(ctx, ch, TurnEvent{Type: "budget_stop"})
 		exitReason := agentsdk.ExitBudgetExceeded
@@ -98,9 +96,7 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 			// before execution). Reporting ExitCancelled here would make the
 			// hook's classification and the done event disagree for one turn;
 			// correcting both together is a separate change.
-			if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
-				synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
-			}
+			a.executeToolsSealingCancellation(ctx, ch, pendingTools, streamedResults)
 			joinBackgroundTasks()
 			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete))
 			return stepEnded
@@ -108,8 +104,7 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 	}
 
 	// Execute tool calls — parallelize auto-approved tools when possible.
-	if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
-		synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
+	if cancelled := a.executeToolsSealingCancellation(ctx, ch, pendingTools, streamedResults); cancelled {
 		joinBackgroundTasks()
 		a.emit(ctx, ch, TurnEvent{Type: "error", Error: ctx.Err()})
 		a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled))
@@ -134,4 +129,21 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 	}
 
 	return stepProceed
+}
+
+// executeToolsSealingCancellation runs a pending tool batch and, if it was
+// cancelled part-way, seals the tool_use blocks that never got a result. The
+// wire protocol requires every tool_use to be answered, so an unsealed batch
+// makes the next provider call fail a protocol check. It reports whether the
+// batch was cancelled.
+//
+// All three of runToolPhase's execution sites — budget stop, task_complete,
+// and the main path — need the same sealing, so they share this wrapper rather
+// than each remembering to check executeTools' return.
+func (a *Agent) executeToolsSealingCancellation(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, streamedResults map[string]toolExecResult) bool {
+	cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults)
+	if cancelled {
+		synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
+	}
+	return cancelled
 }
