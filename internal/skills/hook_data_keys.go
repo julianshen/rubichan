@@ -10,8 +10,19 @@ package skills
 const (
 	HookDataUserMessage = "user_message"
 	HookDataResponse    = "response"
-	HookDataExitReason  = "exit_reason"
 	HookDataPromptBuild = "prompt_build"
+
+	// HookDataResponseReason carries why the current response is the turn's
+	// final one — no pending tools, an empty model response, or a batch
+	// containing task_complete.
+	//
+	// It is NOT the turn's outcome. HookOnAfterResponse fires before the
+	// pending tools execute (the hook rewrites the assistant text, which
+	// must be persisted before any tool_result can follow it), so nothing
+	// that happens during execution can be reflected here: a cancelled
+	// task_complete batch still reports task_complete. Handlers that need
+	// the outcome must read the done event's ExitReason instead.
+	HookDataResponseReason = "response_reason"
 )
 
 // Tool execution data keys.

@@ -1303,6 +1303,11 @@ func assistantText(blocks []provider.ContentBlock) string {
 // rewritten so the persisted assistant message reflects the transform. This is
 // the consumer side of the transform-skill design (see internal/skills/integration.go).
 // No-op when skillRuntime is unset.
+//
+// responseReason says why this response is the turn's last, not how the turn
+// ended — see HookDataResponseReason. This hook must run before the assistant
+// message is persisted, which in turn must precede tool execution, so the
+// outcome is simply not known yet at this point.
 func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.ContentBlock, responseReason agentsdk.TurnExitReason) []provider.ContentBlock {
 	if a.skillRuntime == nil {
 		return blocks
@@ -1313,8 +1318,8 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 		Phase: skills.HookOnAfterResponse,
 		Ctx:   ctx,
 		Data: map[string]any{
-			skills.HookDataResponse:   original,
-			skills.HookDataExitReason: responseReason.String(),
+			skills.HookDataResponse:       original,
+			skills.HookDataResponseReason: responseReason.String(),
 		},
 	}
 	hookResult, err := a.skillRuntime.DispatchHook(event)
