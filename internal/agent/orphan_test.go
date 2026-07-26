@@ -283,3 +283,77 @@ func TestLoadSessionHistory_SynthesizesOrphans(t *testing.T) {
 		t.Fatalf("no tool_result found for orphan_call_1 after session load; orphan repair not wired into loadSessionHistory")
 	}
 }
+
+// assertNoOrphanToolUses fails if any tool_use in the last assistant message
+// lacks a matching tool_result later in the conversation.
+func assertNoOrphanToolUses(t *testing.T, a *Agent) {
+	t.Helper()
+	msgs := a.conversation.Messages()
+	assistantIdx := -1
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" {
+			assistantIdx = i
+			break
+		}
+	}
+	if assistantIdx == -1 {
+		t.Fatalf("no assistant message found in conversation")
+	}
+	answered := map[string]bool{}
+	for i := assistantIdx + 1; i < len(msgs); i++ {
+		for _, b := range msgs[i].Content {
+			if b.Type == "tool_result" {
+				answered[b.ToolUseID] = true
+			}
+		}
+	}
+	for _, b := range msgs[assistantIdx].Content {
+		if b.Type == "tool_use" && !answered[b.ID] {
+			t.Fatalf("orphan tool_use %q (%s) has no matching tool_result; "+
+				"the next provider call would fail with a protocol error", b.ID, b.Name)
+		}
+	}
+}
+
+// TestTaskCompletePathToolCancelLeavesNoOrphans covers the task_complete
+// terminal path, which executes the whole pending batch before exiting. If the
+// batch is cancelled part-way the trailing tool_use blocks never get results,
+// so the sweeper must run here too — not only on the main execution path.
+func TestTaskCompletePathToolCancelLeavesNoOrphans(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cancelTool := &cancelOnExecuteTool{cancel: cancel}
+
+	// The cancelling tool runs first; task_complete is later in the batch and
+	// so is skipped by the sequential executor once ctx is cancelled.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "cancel_tool", Input: json.RawMessage(`{}`)}},
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: tools.TaskCompleteName, Input: json.RawMessage(`{}`)}},
+			{Type: "stop"},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(cancelTool))
+
+	a := New(mp, reg, autoApprove, config.DefaultConfig())
+
+	ch, err := a.Turn(ctx, "finish up")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	for ev := range ch {
+		if ev.Type == "done" {
+			exitReason = ev.ExitReason
+		}
+	}
+
+	require.True(t, cancelTool.invoked, "cancel tool was not invoked — test precondition failed")
+	assertNoOrphanToolUses(t, a)
+	require.Equal(t, agentsdk.ExitCancelled, exitReason,
+		"a batch cancelled before task_complete ran should report cancellation, not task completion")
+}

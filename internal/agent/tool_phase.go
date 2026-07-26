@@ -55,7 +55,11 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 			reason = "diminishing returns"
 		}
 		a.logger.Warn("token budget stop: %s (%d%%)", reason, dec.Pct)
-		a.executeTools(ctx, ch, pendingTools, streamedResults)
+		// A cancelled batch leaves trailing tool_use blocks unanswered; seal
+		// them before exiting or the next provider call fails a protocol check.
+		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
+			synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
+		}
 		joinBackgroundTasks()
 		a.emit(ctx, ch, TurnEvent{Type: "budget_stop"})
 		exitReason := agentsdk.ExitBudgetExceeded
@@ -84,9 +88,16 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 	// the model often pairs task_complete with a final write or commit.
 	for _, tc := range pendingTools {
 		if tc.Name == tools.TaskCompleteName {
-			a.executeTools(ctx, ch, pendingTools, streamedResults)
+			// If the batch is cancelled part-way, task_complete itself may
+			// never run: seal the unanswered tool_use blocks and report the
+			// cancellation rather than claiming the task finished.
+			exitReason := agentsdk.ExitTaskComplete
+			if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
+				synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
+				exitReason = agentsdk.ExitCancelled
+			}
 			joinBackgroundTasks()
-			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete))
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
 			return stepEnded
 		}
 	}
