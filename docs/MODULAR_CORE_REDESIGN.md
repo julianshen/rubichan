@@ -195,6 +195,25 @@ Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). E
 >
 > **What remains for full Phase 1.** This does not make the *production* agent portable: `internal/agent.Agent` still owns the ~15 internal-only subsystems (skills, compaction, prefetch, provider retry/fallback, wake, checkpoints, …) and all three modes still build on it. Two loops still exist, contrary to Phase 1's "exactly one" end state. What changed is that the portable loop is now a genuine embedding target rather than a stub, so the remaining convergence work can proceed against a core that already has the seams to plug subsystems into.
 
+> **Status update (2026-07): the convergence decision — "exactly one loop" is the wrong target; "exactly one implementation of every correctness-critical step" is the right one.**
+>
+> Phase 2's seams are in place and `internal/agent.runLoop` is down from ~615 lines to 160 (#317, #319–#321, four `[STRUCTURAL]` extractions). That was the precondition this section set for revisiting convergence, so the question was finally answerable on evidence.
+>
+> **The skeletons already match.** Both loops are now the same seven beats: guard the context → prepare the request → start background work → call the provider → consume the stream → assemble the assistant turn → execute tools → repeat. `pkg/agentsdk.runLoop` (82 lines) is `internal/agent.runLoop` with every extension point removed. The remaining textual difference is not duplicated logic; it is (a) six internal-only preparation steps before the model call — skill activation, compaction, prompt-fragment and cache-breakpoint assembly, tool deferral and budget, capability latches, window measurement — and (b) the fact that internal's beats can return a *retry* outcome (`loopStepOutcome`) where the SDK's can only proceed or return, because internal's provider call is a recovery state machine and the SDK's is a single structured-error check.
+>
+> **Merging the bodies would cost more than it saves.** The shared part is roughly twenty lines of sequencing. Hosting internal's beats in the public loop needs about five further seams (pre-turn preparation, provider-call recovery, turn assembly, stop hooks, tool-phase policy) on top of the four Phase 2 delivered — and every embedder would then pay the indirection for extension points they do not use. The SDK loop's readability is not incidental; it is what makes it a credible embedding target.
+>
+> **But the fork has already cost correctness, which is the part "one loop" was really protecting.** Five defects were found in `internal/agent`'s cancellation path across #322 and #324. Two of them are still live in `pkg/agentsdk` today, because nothing propagates a fix across the fork:
+>
+> 1. **No orphan sealing.** `pkg/agentsdk.executeTools` returns on cancellation leaving the remaining `tool_use` blocks unanswered, and the package has no `synthesizeMissingToolResults` equivalent anywhere. The conversation persists on the `Agent`, so the next `Turn` sends an unanswered `tool_use` to the provider and fails a protocol check. This is #322's defect, unfixed.
+> 2. **Trailing-cancel blindness.** The same function tests `ctx.Err()` only at the top of its loop and returns `false` at the end, so a cancellation landing during the final tool is reported as a clean batch. This is #324's `ccea1cb`, unfixed.
+>
+> That is measured divergence in the exact code path that consumed two PRs and five review findings — not a hypothetical drift risk.
+>
+> **Decision.** Keep two loop *bodies*; eliminate the forked *steps*. The primitives already shared — `StreamAccumulator`, `ApprovalFlow`, `ExecuteTool` (#298–#300) — are the model, and they have not drifted precisely because there is one of each. Tool-batch execution never joined them: each loop still has its own `executeTools`, which is why the cancellation semantics diverged. The remaining Phase 1 work is therefore to make batch execution and its cancellation contract (orphan sealing, trailing-cancel detection, partial-result commit) a single `pkg/agentsdk` implementation both loops call, the same way accumulation and approval already are.
+>
+> This supersedes the "delete the parallel copy or promote it — do not keep both" instruction at the top of Phase 1. Two loop skeletons that share every non-trivial step are not the maintenance hazard that phrasing was written to prevent; two `executeTools` implementations are, and were.
+
 Each phase is independently shippable and leaves the product fully working.
 
 ---
