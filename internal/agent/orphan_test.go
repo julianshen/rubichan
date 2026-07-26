@@ -315,3 +315,77 @@ func TestTaskCompletePathToolCancelLeavesNoOrphans(t *testing.T) {
 	require.True(t, cancelTool.invoked, "cancel tool was not invoked — test precondition failed")
 	assertNoOrphanToolUses(t, a)
 }
+
+// TestTaskCompletePathToolCancelPersistsSeal covers the persistence half of
+// the same defect. Sealing the batch in memory is not enough when a store is
+// attached: executeTools returns early on cancellation, skipping its trailing
+// snapshot save, so the newest snapshot is still the pre-provider one Turn
+// wrote. Because loadSessionHistory prefers a snapshot over the message log
+// whenever one exists, resuming would restore the session from before the
+// assistant turn — dropping the completed tool results along with the seal.
+func TestTaskCompletePathToolCancelPersistsSeal(t *testing.T) {
+	t.Parallel()
+
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cancelTool := &cancelOnExecuteTool{cancel: cancel}
+
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "cancel_tool", Input: json.RawMessage(`{}`)}},
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: tools.TaskCompleteName, Input: json.RawMessage(`{}`)}},
+			{Type: "stop"},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(cancelTool))
+
+	a := New(mp, reg, autoApprove, config.DefaultConfig(), WithStore(s))
+
+	ch, err := a.Turn(ctx, "finish up")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.True(t, cancelTool.invoked, "cancel tool was not invoked — test precondition failed")
+
+	snap, err := s.GetSnapshot(a.sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, snap, "Turn always writes a snapshot, so one must exist")
+
+	// A resume loads exactly these messages, so the assistant turn and the
+	// seal for the tool that never ran must both be in them.
+	assertSnapshotSealsToolUses(t, snap)
+}
+
+// assertSnapshotSealsToolUses fails if the persisted messages contain a
+// tool_use with no matching tool_result — the shape a resume would restore.
+func assertSnapshotSealsToolUses(t *testing.T, msgs []provider.Message) {
+	t.Helper()
+	answered := map[string]bool{}
+	var pending []provider.ContentBlock
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			switch b.Type {
+			case "tool_use":
+				pending = append(pending, b)
+			case "tool_result":
+				answered[b.ToolUseID] = true
+			}
+		}
+	}
+	if len(pending) == 0 {
+		t.Fatalf("snapshot has no tool_use blocks; the assistant turn was never persisted, so a resume would lose it entirely")
+	}
+	for _, b := range pending {
+		if !answered[b.ID] {
+			t.Fatalf("snapshot leaves tool_use %q (%s) unanswered; a resumed session would replay it and fail a protocol check", b.ID, b.Name)
+		}
+	}
+}
