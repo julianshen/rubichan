@@ -183,43 +183,7 @@ func TestRunLoopToolCancelLeavesNoOrphans(t *testing.T) {
 		t.Fatalf("cancel tool was not invoked — test precondition failed")
 	}
 
-	// Walk the conversation: every tool_use in the final assistant message
-	// must have a matching tool_result somewhere after it.
-	msgs := a.conversation.Messages()
-	var assistantIdx = -1
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "assistant" {
-			assistantIdx = i
-			break
-		}
-	}
-	if assistantIdx == -1 {
-		t.Fatalf("no assistant message found in conversation")
-	}
-
-	var pending []string
-	for _, b := range msgs[assistantIdx].Content {
-		if b.Type == "tool_use" {
-			pending = append(pending, b.ID)
-		}
-	}
-	if len(pending) == 0 {
-		t.Fatalf("expected tool_use blocks in assistant message; got none")
-	}
-
-	answered := map[string]bool{}
-	for i := assistantIdx + 1; i < len(msgs); i++ {
-		for _, b := range msgs[i].Content {
-			if b.Type == "tool_result" {
-				answered[b.ToolUseID] = true
-			}
-		}
-	}
-	for _, id := range pending {
-		if !answered[id] {
-			t.Fatalf("orphan tool_use %q has no matching tool_result; sweeper not wired", id)
-		}
-	}
+	assertNoOrphanToolUses(t, a)
 }
 
 // TestLoadSessionHistory_SynthesizesOrphans verifies that loadSessionHistory
