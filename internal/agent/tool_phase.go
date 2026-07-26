@@ -132,18 +132,26 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 }
 
 // executeToolsSealingCancellation runs a pending tool batch and, if it was
-// cancelled part-way, seals the tool_use blocks that never got a result. The
-// wire protocol requires every tool_use to be answered, so an unsealed batch
-// makes the next provider call fail a protocol check. It reports whether the
-// batch was cancelled.
+// cancelled part-way, seals the tool_use blocks that never got a result and
+// persists the repaired conversation. The wire protocol requires every
+// tool_use to be answered, so an unsealed batch makes the next provider call
+// fail a protocol check. It reports whether the batch was cancelled.
 //
 // All three of runToolPhase's execution sites — budget stop, task_complete,
 // and the main path — need the same sealing, so they share this wrapper rather
 // than each remembering to check executeTools' return.
+//
+// The snapshot save matters because executeTools returns early on
+// cancellation, skipping the one it normally performs after a full batch. Left
+// alone, the newest snapshot would still be the pre-provider one Turn wrote —
+// and loadSessionHistory prefers a snapshot over the message log whenever one
+// exists, so resuming would restore the session from before the assistant turn
+// and silently drop the tool results that did complete.
 func (a *Agent) executeToolsSealingCancellation(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, streamedResults map[string]toolExecResult) bool {
 	cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults)
 	if cancelled {
 		synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
+		a.saveSnapshotIfNeeded()
 	}
 	return cancelled
 }
