@@ -195,7 +195,7 @@ Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). E
 >
 > **What remains for full Phase 1.** This does not make the *production* agent portable: `internal/agent.Agent` still owns the ~15 internal-only subsystems (skills, compaction, prefetch, provider retry/fallback, wake, checkpoints, …) and all three modes still build on it. Two loops still exist, contrary to Phase 1's "exactly one" end state. What changed is that the portable loop is now a genuine embedding target rather than a stub, so the remaining convergence work can proceed against a core that already has the seams to plug subsystems into.
 
-> **Status update (2026-07): the convergence decision — "exactly one loop" is the wrong target; "exactly one implementation of every correctness-critical step" is the right one.**
+> **Status update (2026-07): the convergence decision — "exactly one loop" stays the target; it is deferred again, with a concrete next step rather than a date.**
 >
 > Phase 2's seams are in place and `internal/agent.runLoop` is down from ~615 lines to 160 (#317, #319–#321, four `[STRUCTURAL]` extractions). That was the precondition this section set for revisiting convergence, so the question was finally answerable on evidence.
 >
