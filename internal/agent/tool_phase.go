@@ -89,15 +89,20 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 	for _, tc := range pendingTools {
 		if tc.Name == tools.TaskCompleteName {
 			// If the batch is cancelled part-way, task_complete itself may
-			// never run: seal the unanswered tool_use blocks and report the
-			// cancellation rather than claiming the task finished.
-			exitReason := agentsdk.ExitTaskComplete
+			// never run; seal the unanswered tool_use blocks so the
+			// conversation stays protocol-valid for resume.
+			//
+			// The exit reason stays ExitTaskComplete even when cancelled,
+			// matching what assembleAssistantTurn already handed the
+			// after-response hook (terminalExitReason resolves task_complete
+			// before execution). Reporting ExitCancelled here would make the
+			// hook's classification and the done event disagree for one turn;
+			// correcting both together is a separate change.
 			if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
 				synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
-				exitReason = agentsdk.ExitCancelled
 			}
 			joinBackgroundTasks()
-			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
+			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete))
 			return stepEnded
 		}
 	}
