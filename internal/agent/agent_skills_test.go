@@ -521,7 +521,11 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 
 	assert.True(t, hookCalled, "HookOnAfterResponse should fire when turn completes cleanly")
 	assert.Equal(t, "hello world", capturedText, "response text should be passed in event data")
-	assert.NotEmpty(t, capturedReason, "response_reason should be passed in event data")
+	// This provider returns text and stops, so the turn has no pending tools
+	// and the reason is deterministic — pin it rather than accepting any
+	// non-empty string, which would tolerate a wrong classification.
+	assert.Equal(t, agentsdk.ExitCompleted.String(), capturedReason,
+		"a clean completion should publish the completed response reason")
 }
 
 // TestAgentAfterResponseHookCanModifyPersistedText asserts that handlers

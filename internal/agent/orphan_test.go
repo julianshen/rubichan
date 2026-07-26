@@ -309,10 +309,16 @@ func TestTaskCompletePathToolCancelLeavesNoOrphans(t *testing.T) {
 	ch, err := a.Turn(ctx, "finish up")
 	require.NoError(t, err)
 
-	var exitReason agentsdk.TurnExitReason
+	var (
+		exitReason      agentsdk.TurnExitReason
+		cancellationErr error
+	)
 	for ev := range ch {
-		if ev.Type == "done" {
+		switch ev.Type {
+		case "done":
 			exitReason = ev.ExitReason
+		case "error":
+			cancellationErr = ev.Error
 		}
 	}
 
@@ -325,6 +331,12 @@ func TestTaskCompletePathToolCancelLeavesNoOrphans(t *testing.T) {
 	// different question and is resolved before execution.
 	require.Equal(t, agentsdk.ExitCancelled, exitReason,
 		"a batch cancelled before task_complete ran must report cancellation, not completion")
+
+	// The done event is only half of what this path emits. Consumers that
+	// surface the failure to the user read the error event, so assert it too
+	// or it could go missing without any test noticing.
+	require.ErrorIs(t, cancellationErr, context.Canceled,
+		"the cancelled task_complete path must emit the cancellation error alongside its done event")
 }
 
 // TestTaskCompletePathToolCancelPersistsSeal covers the persistence half of
