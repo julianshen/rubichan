@@ -103,9 +103,10 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 	// Drain any pending wake events from background subagents.
 	a.drainWakeEvents(ctx, ch)
 
-	// Session memory extraction now rides the background-task joins
-	// below — no inline dispatch here, so terminal tool turns (which
-	// also run the joins) count toward extraction too.
+	// Session memory extraction rides the background-task joins run by
+	// the caller after stepProceed (and by the terminal paths above), so
+	// terminal tool turns count toward extraction too — no inline
+	// dispatch here.
 
 	// Re-measure after tool execution so the context window status reflects
 	// the current conversation state (tool results may have grown messages).
