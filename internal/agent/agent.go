@@ -1303,7 +1303,7 @@ func assistantText(blocks []provider.ContentBlock) string {
 // rewritten so the persisted assistant message reflects the transform. This is
 // the consumer side of the transform-skill design (see internal/skills/integration.go).
 // No-op when skillRuntime is unset.
-func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.ContentBlock, reason agentsdk.TurnExitReason) []provider.ContentBlock {
+func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.ContentBlock, responseReason agentsdk.TurnExitReason) []provider.ContentBlock {
 	if a.skillRuntime == nil {
 		return blocks
 	}
@@ -1314,7 +1314,7 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 		Ctx:   ctx,
 		Data: map[string]any{
 			skills.HookDataResponse:   original,
-			skills.HookDataExitReason: reason.String(),
+			skills.HookDataExitReason: responseReason.String(),
 		},
 	}
 	hookResult, err := a.skillRuntime.DispatchHook(event)
@@ -1343,11 +1343,18 @@ func (a *Agent) applyAfterResponseHook(ctx context.Context, blocks []provider.Co
 	return replaceAssistantText(blocks, mutated)
 }
 
-// terminalExitReason reports whether the current pending-tool batch
+// finalResponseReason reports whether the current pending-tool batch
 // terminates the turn — i.e. no further LLM round will run after the
-// pending tools execute. Returns the final exit reason in that case.
+// pending tools execute — and if so, why this response is the final one.
 // Used to decide whether HookOnAfterResponse should fire on this turn.
-func terminalExitReason(pendingTools []provider.ToolUseBlock, defaultReason agentsdk.TurnExitReason) (agentsdk.TurnExitReason, bool) {
+//
+// This answers "why is this the final response", not "how did the turn
+// end". It is necessarily resolved before the pending tools run, so it
+// cannot account for anything that happens during execution; a batch
+// containing task_complete reports task_complete here even if execution
+// is later cancelled. The turn's actual outcome is a separate value,
+// carried by the done event.
+func finalResponseReason(pendingTools []provider.ToolUseBlock, defaultReason agentsdk.TurnExitReason) (agentsdk.TurnExitReason, bool) {
 	if len(pendingTools) == 0 {
 		return defaultReason, true
 	}

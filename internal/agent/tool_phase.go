@@ -92,7 +92,7 @@ func (a *Agent) runToolPhase(ctx context.Context, ch chan<- TurnEvent, ls *loopS
 			//
 			// The exit reason stays ExitTaskComplete even when cancelled,
 			// matching what assembleAssistantTurn already handed the
-			// after-response hook (terminalExitReason resolves task_complete
+			// after-response hook (finalResponseReason resolves task_complete
 			// before execution). Reporting ExitCancelled here would make the
 			// hook's classification and the done event disagree for one turn;
 			// correcting both together is a separate change.

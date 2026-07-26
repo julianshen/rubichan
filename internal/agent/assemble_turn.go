@@ -158,9 +158,9 @@ func (a *Agent) assembleAssistantTurn(ctx context.Context, ch chan<- TurnEvent, 
 	// subsequent turns see in conversation context — that's the surface
 	// transform skills target. A turn is final on either no-pending-tools
 	// (clean completion) or when task_complete is in the pending batch.
-	finalReason, isFinal := terminalExitReason(pendingTools, exitReason)
+	responseReason, isFinal := finalResponseReason(pendingTools, exitReason)
 	if isFinal {
-		blocks = a.applyAfterResponseHook(ctx, blocks, finalReason)
+		blocks = a.applyAfterResponseHook(ctx, blocks, responseReason)
 	}
 
 	// Add assistant message with accumulated blocks
