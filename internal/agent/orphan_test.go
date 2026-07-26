@@ -389,3 +389,84 @@ func assertSnapshotSealsToolUses(t *testing.T, msgs []provider.Message) {
 		}
 	}
 }
+
+// sideEffectTool records that it ran and returns a distinctive result, so a
+// test can tell a real execution apart from a synthesized cancellation seal.
+type sideEffectTool struct{ invoked bool }
+
+func (s *sideEffectTool) Name() string        { return "side_effect_tool" }
+func (s *sideEffectTool) Description() string { return "performs a side effect" }
+func (s *sideEffectTool) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+
+func (s *sideEffectTool) Execute(context.Context, json.RawMessage) (agentsdk.ToolResult, error) {
+	s.invoked = true
+	return agentsdk.ToolResult{Content: sideEffectResultText}, nil
+}
+
+const sideEffectResultText = "side effect committed"
+
+// TestToolCancelKeepsCompletedBatchResults covers the batched execution path
+// (the one taken when an approvalChecker is configured). executeTools collects
+// every result from the BatchExecutor and only afterwards checks ctx.Err(),
+// returning before any of them reaches the conversation. The orphan sweeper
+// then seals every call as "did not complete" — including tools that ran and
+// whose side effects already landed — and the snapshot save makes that false
+// history durable, so a resumed agent may repeat those side effects.
+//
+// Only the calls that genuinely did not run may be sealed.
+func TestToolCancelKeepsCompletedBatchResults(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sideEffect := &sideEffectTool{}
+	cancelTool := &cancelOnExecuteTool{cancel: cancel}
+
+	// The side-effect tool runs first and completes; the cancelling tool runs
+	// second, so the batch is interrupted only after a real result exists.
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: "side_effect_tool", Input: json.RawMessage(`{}`)}},
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: "cancel_tool", Input: json.RawMessage(`{}`)}},
+			{Type: "stop"},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(sideEffect))
+	require.NoError(t, reg.Register(cancelTool))
+
+	// An approvalChecker selects the batched path; without one executeTools
+	// falls back to the sequential executor, which commits as it goes.
+	a := New(mp, reg, autoApprove, config.DefaultConfig(),
+		WithApprovalChecker(AlwaysAutoApprove{}))
+
+	ch, err := a.Turn(ctx, "do the thing")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	require.True(t, sideEffect.invoked, "side-effect tool did not run — test precondition failed")
+
+	got := toolResultText(t, a, "t1")
+	require.Equal(t, sideEffectResultText, got,
+		"the completed tool's real result was replaced by a cancellation seal; "+
+			"a resumed agent would see the side effect as never having happened")
+}
+
+// toolResultText returns the content of the tool_result answering toolUseID.
+func toolResultText(t *testing.T, a *Agent, toolUseID string) string {
+	t.Helper()
+	for _, m := range a.conversation.Messages() {
+		for _, b := range m.Content {
+			if b.Type == "tool_result" && b.ToolUseID == toolUseID {
+				return b.Text
+			}
+		}
+	}
+	t.Fatalf("no tool_result found for %q", toolUseID)
+	return ""
+}
