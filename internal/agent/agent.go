@@ -1863,6 +1863,18 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc, it.approvalResult)
 	}
 
+	a.commitToolResults(ctx, ch, pendingTools, results)
+
+	// Snapshot after all tool results so a resume picks up from here.
+	a.saveSnapshotIfNeeded()
+
+	return false
+}
+
+// commitToolResults applies the aggregate result budget and then writes every
+// result into the conversation, the store, and the event channel, in the
+// model's original tool-call order. results is indexed 1:1 with pendingTools.
+func (a *Agent) commitToolResults(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, results []toolExecResult) {
 	// Apply aggregate result budget before emitting results.
 	// Skip enforcement when budget is unlimited (<=0) to avoid allocation.
 	if a.resultBudget > 0 {
@@ -1895,11 +1907,6 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		// Record progress for compaction-resistant tracking.
 		a.recordToolProgress(pendingTools[i], r)
 	}
-
-	// Snapshot after all tool results so a resume picks up from here.
-	a.saveSnapshotIfNeeded()
-
-	return false
 }
 
 func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- TurnEvent, plannedTools []plannedToolCall, streamedResults map[string]toolExecResult) bool {
