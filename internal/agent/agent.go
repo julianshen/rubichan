@@ -1512,7 +1512,6 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		}
 
 		cs := a.consumeProviderStream(ctx, ch, ls, stream, &totalInputTokens, &totalOutputTokens)
-		execStream := cs.execStream
 
 		asm, asmOutcome := a.assembleAssistantTurn(ctx, ch, ls, cs.acc, cs.execStream, cs.thinkingBuf, cs.stopReason, useNativeTools, totalInputTokens, totalOutputTokens)
 		if asmOutcome == stepRetryTurn {
@@ -1527,97 +1526,9 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 			return
 		}
 
-		// If no pending tool calls, we're done. Drain any background
-		// dispatches so goroutines don't outlive the turn (should be
-		// empty in this branch, but Drain is cheap and safe).
-		if len(pendingTools) == 0 {
-			_ = execStream.Drain()
-			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
+		if a.runToolPhase(ctx, ch, ls, asm, cs.execStream, joinBackgroundTasks, systemPrompt, skillPromptText, activeTools, totalInputTokens, totalOutputTokens) == stepEnded {
 			return
 		}
-
-		// Drain any tools dispatched during streaming; executeTools
-		// will merge these results into its output by tool_use ID.
-		var streamedResults map[string]toolExecResult
-		if drained := execStream.Drain(); len(drained) > 0 {
-			streamedResults = make(map[string]toolExecResult, len(drained))
-			for _, r := range drained {
-				streamedResults[r.toolUseID] = r
-			}
-		}
-
-		// Check token budget before executing tools.
-		// EffectiveWindow is used as the budget limit; this monitors output tokens
-		// against the available context window and stops before overflow.
-		ctxBudget := a.context.Budget()
-		dec := CheckTokenBudget(ls.budgetTracker, "", ctxBudget.EffectiveWindow(), totalOutputTokens)
-		if dec.Action == BudgetStop {
-			reason := "completion threshold"
-			if dec.CompletionEvent.DiminishingReturns {
-				reason = "diminishing returns"
-			}
-			a.logger.Warn("token budget stop: %s (%d%%)", reason, dec.Pct)
-			a.executeTools(ctx, ch, pendingTools, streamedResults)
-			joinBackgroundTasks()
-			a.emit(ctx, ch, TurnEvent{Type: "budget_stop"})
-			exitReason := agentsdk.ExitBudgetExceeded
-			if dec.CompletionEvent.DiminishingReturns {
-				exitReason = agentsdk.ExitDiminishingReturns
-			}
-			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, exitReason))
-			return
-		}
-
-		// Inject budget nudge if provided and not already emitted.
-		if dec.NudgeMessage != "" && !ls.nudgeEmitted {
-			a.conversation.AddUser(dec.NudgeMessage)
-			ls.nudgeEmitted = true
-		}
-
-		signature := pendingToolSignature(pendingTools)
-		if ls.recordToolSignature(signature, hasTextContent(blocks)) {
-			a.emit(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("detected no progress after %d repeated tool-only rounds", ls.repeatedToolRounds)})
-			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitNoProgress))
-			return
-		}
-
-		// Check if the model signaled task completion via task_complete tool.
-		// All sibling tools in the same batch are executed before exiting —
-		// the model often pairs task_complete with a final write or commit.
-		for _, tc := range pendingTools {
-			if tc.Name == tools.TaskCompleteName {
-				a.executeTools(ctx, ch, pendingTools, streamedResults)
-				joinBackgroundTasks()
-				a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitTaskComplete))
-				return
-			}
-		}
-
-		// Execute tool calls — parallelize auto-approved tools when possible.
-		if cancelled := a.executeTools(ctx, ch, pendingTools, streamedResults); cancelled {
-			synthesizeMissingToolResults(a.conversation, orphanReasonToolCancel)
-			joinBackgroundTasks()
-			a.emit(ctx, ch, TurnEvent{Type: "error", Error: ctx.Err()})
-			a.emit(ctx, ch, a.makeDoneEvent(totalInputTokens, totalOutputTokens, agentsdk.ExitCancelled))
-			return
-		}
-
-		// Drain any pending wake events from background subagents.
-		a.drainWakeEvents(ctx, ch)
-
-		// Session memory extraction now rides the background-task joins
-		// below — no inline dispatch here, so terminal tool turns (which
-		// also run the joins) count toward extraction too.
-
-		// Re-measure after tool execution so the context window status reflects
-		// the current conversation state (tool results may have grown messages).
-		a.context.MeasureUsage(a.conversation, systemPrompt, skillPromptText, activeTools)
-		status := a.windowManager.Status()
-		if status.WarningLevel != WarningNone && !ls.nudgeEmitted {
-			a.conversation.AddUser(status.Advice)
-			ls.nudgeEmitted = true
-		}
-
 		// Join background tasks after tool execution. Their async work is
 		// started before the LLM call and joined here to overlap it with
 		// the model's execution, reducing perceived latency for the next turn.
