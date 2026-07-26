@@ -494,7 +494,7 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 			if text, ok := event.Data[skills.HookDataResponse].(string); ok {
 				capturedText = text
 			}
-			if reason, ok := event.Data[skills.HookDataExitReason].(string); ok {
+			if reason, ok := event.Data[skills.HookDataResponseReason].(string); ok {
 				capturedReason = reason
 			}
 			return skills.HookResult{}, nil
@@ -521,7 +521,7 @@ func TestAgentAfterResponseHookFires(t *testing.T) {
 
 	assert.True(t, hookCalled, "HookOnAfterResponse should fire when turn completes cleanly")
 	assert.Equal(t, "hello world", capturedText, "response text should be passed in event data")
-	assert.NotEmpty(t, capturedReason, "exit_reason should be passed in event data")
+	assert.NotEmpty(t, capturedReason, "response_reason should be passed in event data")
 }
 
 // TestAgentAfterResponseHookCanModifyPersistedText asserts that handlers
@@ -642,7 +642,14 @@ func TestAgentAfterResponseHookFiresOnTaskComplete(t *testing.T) {
 
 	require.NotNil(t, captured, "HookOnAfterResponse should fire on task_complete exit too")
 	assert.Equal(t, "all done", captured[skills.HookDataResponse])
-	assert.Equal(t, agentsdk.ExitTaskComplete.String(), captured[skills.HookDataExitReason])
+	assert.Equal(t, agentsdk.ExitTaskComplete.String(), captured[skills.HookDataResponseReason])
+
+	// The hook fires before the pending tools run, so it can only report why
+	// this response is final — never how the turn ended. Publishing that
+	// pre-execution value under "exit_reason" invited skills to read it as
+	// the outcome, which is wrong the moment execution is cancelled.
+	assert.NotContains(t, captured, "exit_reason",
+		"the after-response hook must not publish a turn outcome it cannot know yet")
 }
 
 // TestAgentConversationStartHookFiresOnce asserts that HookOnConversationStart
