@@ -1791,7 +1791,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	// tools run in parallel; unsafe tools run sequentially.
 	if len(autoApproved) > 0 {
 		if ctx.Err() != nil {
-			return true
+			return a.commitAndReportCancelled(ctx, ch, pendingTools, results)
 		}
 
 		// Build 1:1 mapping from batch index to plannedToolCall to avoid
@@ -1841,14 +1841,14 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		}
 
 		if ctx.Err() != nil {
-			return true
+			return a.commitAndReportCancelled(ctx, ch, pendingTools, results)
 		}
 	}
 
 	// Execute auto-approved but non-parallelizable tools sequentially.
 	for _, it := range sequentialApproved {
 		if ctx.Err() != nil {
-			return true
+			return a.commitAndReportCancelled(ctx, ch, pendingTools, results)
 		}
 		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 		results[it.index] = a.executeSingleTool(ctx, ch, it.tc)
@@ -1857,7 +1857,7 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	// Execute needs-approval tools sequentially.
 	for _, it := range needsApproval {
 		if ctx.Err() != nil {
-			return true
+			return a.commitAndReportCancelled(ctx, ch, pendingTools, results)
 		}
 		a.emit(ctx, ch, makeToolCallEvent(it.tc))
 		results[it.index] = a.executeSingleToolWithApproval(ctx, ch, it.tc, it.approvalResult)
@@ -1871,6 +1871,20 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	return false
 }
 
+// commitAndReportCancelled writes out the results collected before
+// cancellation interrupted the batch, then reports the cancellation.
+//
+// Without this, every result the batch had already produced would be dropped
+// on the floor and the caller's orphan sweeper would seal all of them as "did
+// not complete" — including tools whose side effects already landed. The
+// snapshot taken right after would make that false history durable, and a
+// resumed agent could repeat those side effects. Only the calls that genuinely
+// never ran are left for the sweeper.
+func (a *Agent) commitAndReportCancelled(ctx context.Context, ch chan<- TurnEvent, pendingTools []provider.ToolUseBlock, results []toolExecResult) bool {
+	a.commitToolResults(ctx, ch, pendingTools, results)
+	return true
+}
+
 // commitToolResults applies the aggregate result budget and then writes every
 // result into the conversation, the store, and the event channel, in the
 // model's original tool-call order. results is indexed 1:1 with pendingTools.
@@ -1881,6 +1895,9 @@ func (a *Agent) commitToolResults(ctx context.Context, ch chan<- TurnEvent, pend
 		enforcer := NewResultBudgetEnforcer(a.resultBudget, a.resultStore)
 		for i := range pendingTools {
 			r := results[i]
+			if r.toolUseID == "" {
+				continue
+			}
 			bounded, err := enforcer.Enforce(pendingTools[i].Name, pendingTools[i].ID, agentsdk.ToolResult{
 				Content:        r.content,
 				DisplayContent: r.event.ToolResult.DisplayContent,
@@ -1900,6 +1917,14 @@ func (a *Agent) commitToolResults(ctx context.Context, ch chan<- TurnEvent, pend
 	// Emit all results and update conversation in original tool call order.
 	for i := range pendingTools {
 		r := results[i]
+		// A zero-valued slot is a call that never ran, which only happens
+		// when a cancelled batch commits early. Writing it would answer a
+		// tool_use with empty content; the orphan sweeper seals those
+		// properly instead. On the uncancelled path every slot is filled,
+		// so this skips nothing.
+		if r.toolUseID == "" {
+			continue
+		}
 		a.conversation.AddToolResult(r.toolUseID, r.content, r.isError)
 		a.persistToolResult(r.toolUseID, r.content, r.isError)
 		a.emit(ctx, ch, r.event)
