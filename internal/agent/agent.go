@@ -1880,7 +1880,11 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 	// Snapshot after all tool results so a resume picks up from here.
 	a.saveSnapshotIfNeeded()
 
-	return false
+	// Every loop above tests ctx.Err() before a call, never after, so
+	// cancellation during the *last* tool would otherwise be reported as a
+	// clean batch — and callers that exit immediately on that answer would
+	// claim the turn finished normally. Ask once more on the way out.
+	return ctx.Err() != nil
 }
 
 // commitAndReportCancelled writes out the results collected before
@@ -1976,7 +1980,10 @@ func (a *Agent) executePlannedToolsSequential(ctx context.Context, ch chan<- Tur
 	// Snapshot after all tool results so a resume picks up from here.
 	a.saveSnapshotIfNeeded()
 
-	return false
+	// The loop tests ctx.Err() before each call, never after the last one,
+	// so a cancellation landing during the final tool would look like a
+	// clean batch. See the matching check in executeTools.
+	return ctx.Err() != nil
 }
 
 // executeSingleToolWithApproval runs approval check then delegates to executeSingleTool.

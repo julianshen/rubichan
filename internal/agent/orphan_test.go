@@ -493,3 +493,49 @@ func toolResultText(t *testing.T, a *Agent, toolUseID string) string {
 	t.Fatalf("no tool_result found for %q", toolUseID)
 	return ""
 }
+
+// TestTaskCompletePathLastToolCancelReportsCancellation covers the ordering the
+// sibling test does not: the cancelling tool runs *last*.
+//
+// Both executors check ctx.Err() only at the top of their loop, so cancellation
+// that happens while the final tool is running is never observed — the loop
+// simply ends. Reporting that as "not cancelled" let the task_complete path
+// fall through to ExitTaskComplete even though the turn died mid-batch. With
+// the cancelling tool first, the next iteration's check catches it and the bug
+// stays hidden; only a trailing cancel exposes it.
+func TestTaskCompletePathLastToolCancelReportsCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cancelTool := &cancelOnExecuteTool{cancel: cancel}
+
+	mp := &mockProvider{
+		events: []provider.StreamEvent{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t1", Name: tools.TaskCompleteName, Input: json.RawMessage(`{}`)}},
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{ID: "t2", Name: "cancel_tool", Input: json.RawMessage(`{}`)}},
+			{Type: "stop"},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	require.NoError(t, reg.Register(cancelTool))
+
+	// No approvalChecker, so this takes the executePlannedToolsSequential path.
+	a := New(mp, reg, autoApprove, config.DefaultConfig())
+
+	ch, err := a.Turn(ctx, "finish up")
+	require.NoError(t, err)
+
+	var exitReason agentsdk.TurnExitReason
+	for ev := range ch {
+		if ev.Type == "done" {
+			exitReason = ev.ExitReason
+		}
+	}
+
+	require.True(t, cancelTool.invoked, "cancel tool was not invoked — test precondition failed")
+	require.Equal(t, agentsdk.ExitCancelled, exitReason,
+		"cancellation during the final tool of the batch must still be reported, not swallowed by the loop ending")
+}
