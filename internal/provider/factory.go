@@ -1,24 +1,11 @@
 package provider
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/julianshen/rubichan/internal/config"
 )
 
-// registry holds registered provider constructors.
-// This map is only written to during init() functions and read thereafter,
-// so it is safe for concurrent reads without a mutex.
-var registry = map[string]ProviderConstructor{}
-
-// RegisterProvider registers a provider constructor by name.
-func RegisterProvider(name string, constructor ProviderConstructor) {
-	registry[name] = constructor
-}
-
 // NewProvider creates an LLMProvider based on the given configuration.
-// It routes to the appropriate provider constructor based on the default provider name.
+// It routes to the appropriate provider based on the default provider name.
 // Use NewProviderWithDebug to enable debug logging of API requests/responses.
 func NewProvider(cfg *config.Config) (LLMProvider, error) {
 	return NewProviderWithDebug(cfg, false)
@@ -27,20 +14,7 @@ func NewProvider(cfg *config.Config) (LLMProvider, error) {
 // NewProviderWithDebug creates an LLMProvider and optionally enables debug
 // logging of HTTP request/response details to stderr via log.Printf.
 func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
-	var p LLMProvider
-	var err error
-
-	switch cfg.Provider.Default {
-	case "anthropic":
-		p, err = Default.New(cfg)
-	case "ollama":
-		return Default.New(cfg)
-	case "zai":
-		return Default.New(cfg)
-	default:
-		p, err = newOpenAIProvider(cfg)
-	}
-
+	p, err := Default.New(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -50,58 +24,4 @@ func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
 	}
 
 	return p, nil
-}
-
-func newOpenAIProvider(cfg *config.Config) (LLMProvider, error) {
-	name := cfg.Provider.Default
-
-	constructor, ok := registry["openai"]
-	if !ok {
-		return nil, fmt.Errorf("openai provider not registered")
-	}
-
-	for _, oc := range cfg.Provider.OpenAI {
-		if oc.Name == name {
-			apiKey, err := config.ResolveOpenAICompatibleAPIKey(oc)
-			if err != nil {
-				return nil, fmt.Errorf("resolving %s API key: %w", name, err)
-			}
-
-			return constructor(oc.BaseURL, apiKey, oc.ExtraHeaders), nil
-		}
-	}
-
-	return nil, formatUnknownProviderError(name, cfg.Provider.OpenAI)
-}
-
-// formatUnknownProviderError builds a helpful error message when the requested
-// provider name doesn't match any configured [[provider.openai_compatible]]
-// entry. It lists what IS configured and shows example config / CLI usage.
-func formatUnknownProviderError(name string, configured []config.OpenAICompatibleConfig) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "unknown provider: %q\n\n", name)
-
-	if len(configured) > 0 {
-		b.WriteString("Configured OpenAI-compatible providers:\n")
-		for _, oc := range configured {
-			fmt.Fprintf(&b, "  - %s (%s)\n", oc.Name, oc.BaseURL)
-		}
-		b.WriteString("\n")
-	} else {
-		b.WriteString("No OpenAI-compatible providers are configured.\n\n")
-	}
-
-	b.WriteString("Quick fix — use CLI flags:\n")
-	fmt.Fprintf(&b, "  rubichan --provider %s --api-base http://localhost:1234/v1 --model my-model\n\n", name)
-
-	b.WriteString("Or add to ~/.config/rubichan/config.toml:\n")
-	fmt.Fprintf(&b, "  [provider]\n")
-	fmt.Fprintf(&b, "  default = %q\n", name)
-	fmt.Fprintf(&b, "  model   = \"my-model\"\n\n")
-	fmt.Fprintf(&b, "  [[provider.openai_compatible]]\n")
-	fmt.Fprintf(&b, "  name     = %q\n", name)
-	fmt.Fprintf(&b, "  base_url = \"http://localhost:1234/v1\"\n")
-	fmt.Fprintf(&b, "  api_key  = \"none\"")
-
-	return fmt.Errorf("%s", b.String())
 }

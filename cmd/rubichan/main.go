@@ -988,36 +988,26 @@ func loadConfig() (*config.Config, error) {
 		fmt.Fprintln(os.Stderr, "Using local Ollama (no API key configured)")
 	}
 
-	// Resolve Z.ai's default model if provider is zai and no model specified.
-	if cfg.Provider.Default == "zai" && cfg.Provider.Model == "" {
+	// Resolve the provider's default model if none was specified via
+	// --model or config. Each provider's own resolution logic (constant,
+	// config-driven fallback, or dynamic lookup) lives in its ProviderDef
+	// (internal/provider/{anthropic,zai,ollama}). Providers with no
+	// DefaultModel resolver (e.g. custom OpenAI-compatible endpoints) leave
+	// cfg.Provider.Model unset, matching prior behavior.
+	if cfg.Provider.Model == "" {
 		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
-		if err != nil {
+		switch {
+		case err == nil:
+			cfg.Provider.Model = model
+			if cfg.Provider.Default == "ollama" {
+				fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
+			}
+		case errors.Is(err, provider.ErrNoDefaultModel):
+			// No default-model resolution for this provider — leave Model
+			// empty, same as before this provider had a Registry entry.
+		default:
 			return nil, err
 		}
-		cfg.Provider.Model = model
-	}
-
-	// Resolve Ollama model if provider is ollama and no model specified.
-	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
-		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Provider.Model = model
-		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
-	}
-
-	// Resolve Anthropic's default model if it's the (possibly auto-detected)
-	// provider and no model was specified. This runs last so it only ever
-	// fills in what the provider-specific resolutions above left empty.
-	// (Task 5 collapses all three into one generic call now that every
-	// provider is registered.)
-	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
-		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Provider.Model = model
 	}
 
 	return cfg, nil

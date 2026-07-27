@@ -10,11 +10,43 @@ import (
 	"testing"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestProviderDef_BaseURLAndAuth(t *testing.T) {
+	def := providerDef()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "openrouter"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySource: "config", APIKey: "test-key", ExtraHeaders: map[string]string{"X-Test": "1"}},
+	}
+
+	assert.Equal(t, "https://openrouter.ai/api/v1", def.BaseURL(cfg))
+
+	apiKey, headers, err := def.Auth(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "test-key", apiKey)
+	assert.Equal(t, map[string]string{"X-Test": "1"}, headers)
+}
+
+func TestProviderDef_AuthUnknownProvider(t *testing.T) {
+	def := providerDef()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "does-not-exist"
+
+	_, _, err := def.Auth(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"does-not-exist"`)
+}
+
+func TestProviderDef_DefaultModelIsNil(t *testing.T) {
+	def := providerDef()
+	assert.Nil(t, def.DefaultModel)
+}
 
 func TestStreamTextResponse(t *testing.T) {
 	sseBody := `data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
