@@ -66,14 +66,6 @@ type EventLogger struct {
 	path string
 }
 
-// Path returns the event log's location on disk.
-func (el *EventLogger) Path() string {
-	if el == nil {
-		return ""
-	}
-	return el.path
-}
-
 // LogFileSuffix builds the timestamp+pid suffix that keeps concurrent
 // rubichan processes from colliding on a log filename.
 func LogFileSuffix(now time.Time) string {
