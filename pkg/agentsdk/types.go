@@ -199,3 +199,36 @@ func marshalSafeRawJSON(raw json.RawMessage) json.RawMessage {
 	}
 	return json.RawMessage(fallback)
 }
+
+// NewUserMessage builds a user message carrying a single text block.
+//
+// Canonical constructor for the wire shape: both agent cores and
+// internal/provider build user messages through this, so the shape cannot
+// drift between them the way two matching struct literals silently can.
+func NewUserMessage(text string) Message {
+	return Message{
+		Role: "user",
+		Content: []ContentBlock{
+			{Type: "text", Text: text},
+		},
+	}
+}
+
+// NewToolResultMessage builds the user-role message that answers a tool_use
+// block. Every tool_use must be followed by one of these — see
+// SealOrphanedToolUses for what happens when one is missing.
+//
+// Canonical constructor, for the same reason as NewUserMessage.
+func NewToolResultMessage(toolUseID, content string, isError bool) Message {
+	return Message{
+		Role: "user",
+		Content: []ContentBlock{
+			{
+				Type:      "tool_result",
+				ToolUseID: toolUseID,
+				Text:      content,
+				IsError:   isError,
+			},
+		},
+	}
+}

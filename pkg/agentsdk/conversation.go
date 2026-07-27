@@ -23,12 +23,7 @@ func (c *Conversation) Messages() []Message {
 
 // AddUser appends a user text message.
 func (c *Conversation) AddUser(text string) {
-	c.messages = append(c.messages, Message{
-		Role: "user",
-		Content: []ContentBlock{
-			{Type: "text", Text: text},
-		},
-	})
+	c.messages = append(c.messages, NewUserMessage(text))
 }
 
 // AddAssistant appends an assistant message with the given content blocks.
@@ -41,17 +36,7 @@ func (c *Conversation) AddAssistant(blocks []ContentBlock) {
 
 // AddToolResult appends a tool result message.
 func (c *Conversation) AddToolResult(toolUseID, content string, isError bool) {
-	c.messages = append(c.messages, Message{
-		Role: "user",
-		Content: []ContentBlock{
-			{
-				Type:      "tool_result",
-				ToolUseID: toolUseID,
-				Text:      content,
-				IsError:   isError,
-			},
-		},
-	})
+	c.messages = append(c.messages, NewToolResultMessage(toolUseID, content, isError))
 }
 
 // Clear removes all messages, preserving the system prompt.
