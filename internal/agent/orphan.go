@@ -8,13 +8,13 @@ import "github.com/julianshen/rubichan/pkg/agentsdk"
 // was sealed.
 const (
 	orphanReasonStreamError = "stream error"
-	orphanReasonPanic       = "agent panic"
 	orphanReasonLoad        = "loaded from persisted session"
 
-	// orphanReasonToolCancel is shared with the portable loop, which seals
-	// the same condition — two spellings of one reason would show up as
-	// inconsistent history between the two cores.
+	// Shared with the portable loop, which seals the same two conditions —
+	// two spellings of one reason would show up as inconsistent history
+	// between the two cores.
 	orphanReasonToolCancel = agentsdk.OrphanReasonToolCancel
+	orphanReasonPanic      = agentsdk.OrphanReasonPanic
 )
 
 // emptyModelResponseText is the placeholder inserted when the model
