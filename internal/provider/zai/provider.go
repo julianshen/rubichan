@@ -7,15 +7,49 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/provider/openai"
 	"github.com/julianshen/rubichan/internal/provider/ssecompat"
 )
 
 func init() {
-	provider.RegisterProvider("zai", func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
-		return New(baseURL, apiKey, "glm-5", extraHeaders)
-	})
+	provider.Default.Register(providerDef())
+}
+
+// providerDef describes this provider's construction, auth, and default
+// model for provider.Default. Exposed as a function so tests can exercise
+// it directly, isolated from the shared provider.Default registry.
+func providerDef() provider.ProviderDef {
+	return provider.ProviderDef{
+		ID: "zai",
+		Constructor: func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
+			return New(baseURL, apiKey, "glm-5", extraHeaders)
+		},
+		BaseURL: func(cfg *config.Config) string {
+			if cfg.Provider.Zai.BaseURL != "" {
+				return cfg.Provider.Zai.BaseURL
+			}
+			return "https://api.z.ai/api/coding/paas/v4"
+		},
+		Auth: func(cfg *config.Config) (string, map[string]string, error) {
+			apiKey, err := config.ResolveAPIKey(
+				cfg.Provider.Zai.APIKeySource,
+				cfg.Provider.Zai.APIKey,
+				"Z_AI_API_KEY",
+			)
+			if err != nil {
+				return "", nil, fmt.Errorf("resolving Z.ai API key: %w", err)
+			}
+			return apiKey, nil, nil
+		},
+		DefaultModel: func(_ context.Context, cfg *config.Config) (string, error) {
+			if cfg.Provider.Zai.Model != "" {
+				return cfg.Provider.Zai.Model, nil
+			}
+			return "glm-5", nil
+		},
+	}
 }
 
 // Provider implements the LLMProvider interface for Z.ai API.

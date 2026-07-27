@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -1034,6 +1035,54 @@ data: [DONE]
 
 	assert.Equal(t, []string{"Valid"}, textParts)
 	assert.True(t, hasStop)
+}
+
+// Task 3 - ProviderDef Tests
+
+func TestProviderDef_BaseURLAndAuth(t *testing.T) {
+	t.Setenv("Z_AI_API_KEY", "test-zai-key")
+
+	def := providerDef()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "zai"
+	// config.DefaultConfig() only defaults APIKeySource to "env" for
+	// Anthropic; Z.ai has no such default (pre-existing gap, unrelated to
+	// this migration), so set it explicitly to exercise the env lookup.
+	cfg.Provider.Zai.APIKeySource = "env"
+
+	assert.Equal(t, "https://api.z.ai/api/coding/paas/v4", def.BaseURL(cfg))
+
+	apiKey, headers, err := def.Auth(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "test-zai-key", apiKey)
+	assert.Nil(t, headers)
+}
+
+func TestProviderDef_BaseURLOverride(t *testing.T) {
+	def := providerDef()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Zai.BaseURL = "https://custom.zai.example.com"
+
+	assert.Equal(t, "https://custom.zai.example.com", def.BaseURL(cfg))
+}
+
+func TestProviderDef_DefaultModel_FallsBackToGlm5(t *testing.T) {
+	def := providerDef()
+	cfg := config.DefaultConfig()
+
+	model, err := def.DefaultModel(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "glm-5", model)
+}
+
+func TestProviderDef_DefaultModel_UsesConfiguredModel(t *testing.T) {
+	def := providerDef()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Zai.Model = "custom-glm"
+
+	model, err := def.DefaultModel(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "custom-glm", model)
 }
 
 func TestExtraHeadersInRequest(t *testing.T) {

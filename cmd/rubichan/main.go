@@ -1013,14 +1013,13 @@ func loadConfig() (*config.Config, error) {
 		fmt.Fprintln(os.Stderr, "Using local Ollama (no API key configured)")
 	}
 
-	// Resolve Z.ai's default model if provider is zai and no model specified
-	// via --model. [provider.zai].model wins over the built-in fallback.
+	// Resolve Z.ai's default model if provider is zai and no model specified.
 	if cfg.Provider.Default == "zai" && cfg.Provider.Model == "" {
-		if cfg.Provider.Zai.Model != "" {
-			cfg.Provider.Model = cfg.Provider.Zai.Model
-		} else {
-			cfg.Provider.Model = "glm-5"
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		if err != nil {
+			return nil, err
 		}
+		cfg.Provider.Model = model
 	}
 
 	// Resolve Ollama model if provider is ollama and no model specified.
@@ -1036,8 +1035,8 @@ func loadConfig() (*config.Config, error) {
 	// Resolve Anthropic's default model if it's the (possibly auto-detected)
 	// provider and no model was specified. This runs last so it only ever
 	// fills in what the provider-specific resolutions above left empty.
-	// (Zai/Ollama above still resolve their own default inline until Tasks
-	// 3-4 migrate them the same way; Task 5 collapses all three into one
+	// (Ollama above still resolves its own default inline until Task 4
+	// migrates it the same way; Task 5 collapses all three into one
 	// generic call once every provider is registered.)
 	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
 		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
