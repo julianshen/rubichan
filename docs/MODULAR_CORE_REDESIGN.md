@@ -221,6 +221,28 @@ Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). E
 >
 > **What the cost analysis above does establish** is sequencing, not a permanent split: merging the bodies today would mean inventing roughly five more seams in one change, which is what §6 Risks warns against and what deferred this work in the first place. The honest position is that full convergence is still the target, still gated on further Phase 2-style extraction, and now has a concrete next step — unify `executeTools` — rather than a date.
 
+> **Status update (2026-07): drift audit — the fork surface is one file, not eight.**
+>
+> After #327 closed the `executeTools` fork, the obvious follow-up was to ask what *else* the two cores implement twice. The premise was sound: a forked step accumulates defects silently, and `executeTools` carried two that took five review findings on the internal side before anyone checked the portable one.
+>
+> **The first pass over-counted by roughly 8×.** Ten filenames exist in both `internal/agent` and `pkg/agentsdk`; eight of those have non-trivial line and declaration counts on the internal side, which looked like eight parallel implementations. Comparing actual top-level declaration *overlap* gives a different answer:
+>
+> | File | Overlapping decls | Verdict |
+> |---|---|---|
+> | `agent.go` | 9 — `Agent`, `Turn`, `runLoop`, `executeTools`, `executeSingleTool`, `makeDoneEvent`, three options | **genuine fork** — the two loops |
+> | `conversation.go` | 8 | overlapping, behaviorally identical |
+> | `registry.go` | 3 — `Get`, `Names`, `Register` | not a fork: internal's is an `AgentRegistry` over agent *definitions*, the SDK's is a *tool* `Registry`; the shared names are generic registry vocabulary |
+> | `approval.go` | 1 — `CheckApproval` | contracts in `pkg`, implementations (`TrustRule`, `TrustRuleChecker`, `SecurityAwareApprovalChecker`) in `internal` |
+> | `subagent.go`, `summarizer.go`, `fork.go`, `background.go`, `context_strategy.go` | 0 each | contract-vs-implementation layering, as designed — the SDK holds `Summarizer` / `BackgroundTask` / `ContextStrategy` / `SubagentConfig`, internal holds `LLMSummarizer` / `sessionMemoryBackgroundTask` / the four concrete strategies / `DefaultSubagentSpawner` |
+>
+> **`conversation.go` was checked method by method and agrees.** `Messages()` copies on both sides; `AddUser` and `AddToolResult` route through `provider.NewUserMessage` / `NewToolResultMessage` in one core and inline literals in the other, producing byte-identical shapes; `AddAssistant`, `Clear` and `SystemPrompt` are the same. The divergence is asymmetric *features* — internal has `Len`, `AddSystem`, `LoadFromMessages`, `DrainMessages` and the tombstone family; the SDK has `EstimateTokens` — each tied to a subsystem the other core does not have. None is a fix the other is missing.
+>
+> One residual risk worth naming: those two constructions agree by coincidence of separate struct literals, with nothing enforcing it. A change to `provider.NewToolResultMessage` would not follow into the SDK. Low severity — six-line literals — but it is the same class of hazard, and the cheapest guard would be a shared constructor rather than a test.
+>
+> **What this means for convergence.** The drift surface was confined to `agent.go`, and within it to `executeTools`, which #327 fixed and gave a shared sealing primitive. There is no hidden backlog of forked correctness logic — which makes the deferred-convergence position above *more* defensible than it looked when this audit was proposed, not less.
+>
+> **Method note, so this is not re-derived badly.** Same-filename plus line count is not evidence of duplication in a codebase that deliberately puts contracts in `pkg` and implementations in `internal` — it selects *for* the intended architecture. Compare declaration overlap, then read the overlapping declarations.
+
 Each phase is independently shippable and leaves the product fully working.
 
 ---
