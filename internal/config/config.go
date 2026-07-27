@@ -399,11 +399,19 @@ func Save(path string, cfg *Config) error {
 }
 
 // DefaultConfig returns a Config populated with sensible default values.
+//
+// Provider.Model is intentionally left empty here rather than baked to an
+// Anthropic-specific default: the correct default model depends on which
+// provider ends up selected (via flag, auto-detection, or this default's own
+// Provider.Default), which isn't known until cmd/rubichan's loadConfig() has
+// finished resolving the provider. Defaulting the model here unconditionally
+// previously caused every non-anthropic provider's own default-model
+// resolution (Ollama auto-detection, Z.ai's built-in fallback) to see a
+// non-empty Model and skip resolving anything provider-appropriate.
 func DefaultConfig() *Config {
 	return &Config{
 		Provider: ProviderConfig{
 			Default: "anthropic",
-			Model:   "claude-sonnet-4-5",
 			Anthropic: AnthropicProviderConfig{
 				APIKeySource: "env",
 			},

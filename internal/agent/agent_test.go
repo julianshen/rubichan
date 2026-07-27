@@ -1659,6 +1659,7 @@ func TestSetModel(t *testing.T) {
 	mp := &mockProvider{}
 	reg := tools.NewRegistry()
 	cfg := config.DefaultConfig()
+	cfg.Provider.Model = "claude-sonnet-4-5"
 	agent := New(mp, reg, autoApprove, cfg)
 
 	assert.Equal(t, "claude-sonnet-4-5", agent.model)
