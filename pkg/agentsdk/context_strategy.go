@@ -1,6 +1,9 @@
 package agentsdk
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // PromptContext carries the per-turn inputs the agent loop offers to
 // context strategies at prompt-build time.
@@ -47,4 +50,39 @@ type StaticSection struct {
 // empty or whitespace-only are skipped.
 type StaticPromptSource interface {
 	ContributeStaticSections() []StaticSection
+}
+
+// ContributeSections runs every strategy for one prompt build and returns
+// the sections they produced, skipping any whose content is empty or
+// whitespace-only.
+//
+// Each strategy is invoked behind its own recover boundary: strategies are
+// third-party code running on the turn goroutine, and a panicking one must
+// contribute nothing rather than abort the turn or starve its siblings.
+//
+// Shared by both agent loops. They differ in what they do with the result —
+// one appends to a prompt builder, the other returns the slice — but the
+// iteration and the recover boundary are the part worth having once.
+func ContributeSections(ctx context.Context, strategies []ContextStrategy, info PromptContext, logger Logger) []PromptSection {
+	var out []PromptSection
+	for _, strategy := range strategies {
+		for _, section := range sectionsRecovering(ctx, strategy, info, logger) {
+			if strings.TrimSpace(section.Content) == "" {
+				continue
+			}
+			out = append(out, section)
+		}
+	}
+	return out
+}
+
+// sectionsRecovering invokes one strategy behind a recover boundary; on
+// panic it contributes nothing for this prompt build.
+func sectionsRecovering(ctx context.Context, strategy ContextStrategy, info PromptContext, logger Logger) (sections []PromptSection) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Warn("context strategy ContributePromptSections panicked: %v", r)
+		}
+	}()
+	return strategy.ContributePromptSections(ctx, info)
 }

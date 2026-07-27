@@ -54,27 +54,5 @@ func (a *Agent) effectiveSystemPrompt(ctx context.Context, userMessage string) s
 // its non-empty sections. Sections whose content is empty or whitespace-only
 // are skipped, so a strategy whose gate is not met contributes nothing.
 func (a *Agent) contributeStrategySections(ctx context.Context, info PromptContext) []PromptSection {
-	var out []PromptSection
-	for _, strategy := range a.contextStrategies {
-		for _, section := range a.strategySectionsRecovering(ctx, strategy, info) {
-			if strings.TrimSpace(section.Content) == "" {
-				continue
-			}
-			out = append(out, section)
-		}
-	}
-	return out
-}
-
-// strategySectionsRecovering invokes one strategy behind a recover boundary;
-// on panic the strategy contributes nothing this turn. This is a public seam
-// running on the turn goroutine, where an unrecovered panic would abort the
-// user's turn and starve sibling strategies.
-func (a *Agent) strategySectionsRecovering(ctx context.Context, strategy ContextStrategy, info PromptContext) (sections []PromptSection) {
-	defer func() {
-		if r := recover(); r != nil {
-			a.logger.Warn("context strategy ContributePromptSections panicked: %v", r)
-		}
-	}()
-	return strategy.ContributePromptSections(ctx, info)
+	return ContributeSections(ctx, a.contextStrategies, info, a.logger)
 }
