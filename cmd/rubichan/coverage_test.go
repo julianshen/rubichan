@@ -2086,6 +2086,75 @@ func TestWireExtendedTools_AllEnabled(t *testing.T) {
 // loadConfig with custom config path
 // ---------------------------------------------------------------------------
 
+func TestLoadConfig_AnthropicDefaultModel(t *testing.T) {
+	oldConfigPath := configPath
+	oldModelFlag := modelFlag
+	oldProviderFlag := providerFlag
+	defer func() {
+		configPath = oldConfigPath
+		modelFlag = oldModelFlag
+		providerFlag = oldProviderFlag
+	}()
+
+	configPath = filepath.Join(t.TempDir(), "nonexistent-config.toml")
+	modelFlag = ""
+	// Explicit, not "" — an empty providerFlag would run autoDetectProvider,
+	// which probes a real local Ollama server if one happens to be running
+	// on this machine (see autoDetectProvider), making the test environment-
+	// dependent. Being explicit keeps this deterministic.
+	providerFlag = "anthropic"
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "anthropic", cfg.Provider.Default)
+	assert.Equal(t, "claude-sonnet-4-5", cfg.Provider.Model)
+}
+
+func TestLoadConfig_ZaiDefaultModel_FallsBackWhenUnset(t *testing.T) {
+	oldConfigPath := configPath
+	oldModelFlag := modelFlag
+	oldProviderFlag := providerFlag
+	defer func() {
+		configPath = oldConfigPath
+		modelFlag = oldModelFlag
+		providerFlag = oldProviderFlag
+	}()
+
+	configPath = filepath.Join(t.TempDir(), "nonexistent-config.toml")
+	modelFlag = ""
+	providerFlag = "zai"
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "glm-5", cfg.Provider.Model)
+}
+
+func TestLoadConfig_ZaiDefaultModel_UsesConfiguredZaiModel(t *testing.T) {
+	oldConfigPath := configPath
+	oldModelFlag := modelFlag
+	oldProviderFlag := providerFlag
+	defer func() {
+		configPath = oldConfigPath
+		modelFlag = oldModelFlag
+		providerFlag = oldProviderFlag
+	}()
+
+	toml := `
+[provider.zai]
+model = "custom-glm"
+`
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(toml), 0o600))
+
+	configPath = path
+	modelFlag = ""
+	providerFlag = "zai"
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "custom-glm", cfg.Provider.Model)
+}
+
 func TestLoadConfig_WithCustomConfigPath(t *testing.T) {
 	oldConfigPath := configPath
 	oldModelFlag := modelFlag

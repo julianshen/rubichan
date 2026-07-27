@@ -123,11 +123,6 @@ func newZaiProvider(cfg *config.Config) (LLMProvider, error) {
 		baseURL = "https://api.z.ai/api/coding/paas/v4"
 	}
 
-	model := cfg.Provider.Zai.Model
-	if model == "" {
-		model = "glm-5"
-	}
-
 	return constructor(baseURL, apiKey, nil), nil
 }
 
