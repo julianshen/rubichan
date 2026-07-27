@@ -108,8 +108,6 @@ func TestSessionLoggerClose_Nil(t *testing.T) {
 	assert.NoError(t, sl.Close())
 }
 
-// startEventLogger
-
 func TestStartEventLogger_EmptyPath(t *testing.T) {
 	t.Parallel()
 	logger, err := StartEventLogger("")
@@ -200,7 +198,7 @@ func TestStartEventLoggerWritesJSONLFile(t *testing.T) {
 	logger, err := StartEventLogger(path)
 	require.NoError(t, err)
 	require.NotNil(t, logger)
-	require.Equal(t, path, logger.Path())
+	require.Equal(t, path, logger.path)
 
 	_, err = logger.file.WriteString("{\"type\":\"command_result\"}\n")
 	require.NoError(t, err)
