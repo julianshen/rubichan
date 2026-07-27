@@ -1036,8 +1036,15 @@ func loadConfig() (*config.Config, error) {
 	// Resolve Anthropic's default model if it's the (possibly auto-detected)
 	// provider and no model was specified. This runs last so it only ever
 	// fills in what the provider-specific resolutions above left empty.
+	// (Zai/Ollama above still resolve their own default inline until Tasks
+	// 3-4 migrate them the same way; Task 5 collapses all three into one
+	// generic call once every provider is registered.)
 	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
-		cfg.Provider.Model = "claude-sonnet-4-5"
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Provider.Model = model
 	}
 
 	return cfg, nil

@@ -10,14 +10,45 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
+const anthropicBaseURL = "https://api.anthropic.com"
+
 func init() {
-	provider.RegisterProvider("anthropic", func(baseURL, apiKey string, _ map[string]string) provider.LLMProvider {
-		return New(baseURL, apiKey)
-	})
+	provider.Default.Register(providerDef())
+}
+
+// providerDef describes this provider's construction, auth, and default
+// model for provider.Default. Exposed as a function (not inlined in init)
+// so tests can exercise it directly without depending on the shared
+// provider.Default registry's global state.
+func providerDef() provider.ProviderDef {
+	return provider.ProviderDef{
+		ID: "anthropic",
+		Constructor: func(baseURL, apiKey string, _ map[string]string) provider.LLMProvider {
+			return New(baseURL, apiKey)
+		},
+		BaseURL: func(cfg *config.Config) string {
+			return anthropicBaseURL
+		},
+		Auth: func(cfg *config.Config) (string, map[string]string, error) {
+			apiKey, err := config.ResolveAPIKey(
+				cfg.Provider.Anthropic.APIKeySource,
+				cfg.Provider.Anthropic.APIKey,
+				"ANTHROPIC_API_KEY",
+			)
+			if err != nil {
+				return "", nil, fmt.Errorf("resolving Anthropic API key: %w", err)
+			}
+			return apiKey, nil, nil
+		},
+		DefaultModel: func(_ context.Context, _ *config.Config) (string, error) {
+			return "claude-sonnet-4-5", nil
+		},
+	}
 }
 
 // Provider implements the LLMProvider interface for the Anthropic API.

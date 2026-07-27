@@ -7,8 +7,6 @@ import (
 	"github.com/julianshen/rubichan/internal/config"
 )
 
-const anthropicBaseURL = "https://api.anthropic.com"
-
 // registry holds registered provider constructors.
 // This map is only written to during init() functions and read thereafter,
 // so it is safe for concurrent reads without a mutex.
@@ -34,7 +32,7 @@ func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
 
 	switch cfg.Provider.Default {
 	case "anthropic":
-		p, err = newAnthropicProvider(cfg)
+		p, err = Default.New(cfg)
 	case "ollama":
 		return newOllamaProvider(cfg)
 	case "zai":
@@ -52,24 +50,6 @@ func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
 	}
 
 	return p, nil
-}
-
-func newAnthropicProvider(cfg *config.Config) (LLMProvider, error) {
-	constructor, ok := registry["anthropic"]
-	if !ok {
-		return nil, fmt.Errorf("anthropic provider not registered")
-	}
-
-	apiKey, err := config.ResolveAPIKey(
-		cfg.Provider.Anthropic.APIKeySource,
-		cfg.Provider.Anthropic.APIKey,
-		"ANTHROPIC_API_KEY",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("resolving Anthropic API key: %w", err)
-	}
-
-	return constructor(anthropicBaseURL, apiKey, nil), nil
 }
 
 func newOllamaProvider(cfg *config.Config) (LLMProvider, error) {
