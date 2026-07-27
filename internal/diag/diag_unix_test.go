@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package diag
 
 import (
 	"os"
@@ -15,7 +15,7 @@ import (
 
 func TestWriteDiagnosticDumpIncludesSignalAndSessionLog(t *testing.T) {
 	cfgDir := t.TempDir()
-	dumpPath, err := writeDiagnosticDump(cfgDir, syscall.SIGQUIT, "/tmp/session.log")
+	dumpPath, err := WriteDiagnosticDump(cfgDir, syscall.SIGQUIT, "/tmp/session.log")
 	require.NoError(t, err)
 	require.FileExists(t, dumpPath)
 
