@@ -1182,3 +1182,43 @@ func assertNoUnansweredToolUses(t *testing.T, conv *Conversation) {
 		t.Fatalf("expected tool_use blocks in the conversation; got none — test precondition failed")
 	}
 }
+
+// TestAgentTrailingCancelIsReportedAsCancelled covers the ordering the other
+// cancellation tests miss: the cancelling tool runs *last*.
+//
+// executeTools tests ctx.Err() only at the top of its loop, so a cancellation
+// landing while the final tool runs ends the loop and is reported as a clean
+// batch. Today the loop's next-iteration check masks that — it emits the same
+// events one beat later — so the misclassification has no observable effect
+// here. It is still wrong, and internal/agent shows what it costs once a
+// caller acts on the return value: its task_complete path reported success for
+// a cancelled turn until ccea1cb.
+//
+// Asserting the return value directly rather than the event stream keeps this
+// honest about what is being fixed.
+func TestAgentTrailingCancelIsReportedAsCancelled(t *testing.T) {
+	r := NewRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, r.Register(&contextCancelTool{cancel: cancel}))
+	require.NoError(t, r.Register(&echoTool{}))
+
+	a := NewAgent(&mockProvider{}, WithTools(r))
+	a.conversation.AddAssistant([]ContentBlock{
+		{Type: "tool_use", ID: "tc_1", Name: "echo"},
+		{Type: "tool_use", ID: "tc_2", Name: "cancel_tool"},
+	})
+
+	ch := make(chan TurnEvent, 32)
+	// echo runs first and completes; cancel_tool runs last and cancels while
+	// it is the tool in flight, so no later iteration observes ctx.Err().
+	cancelled := a.executeTools(ctx, ch, []ToolUseBlock{
+		{ID: "tc_1", Name: "echo", Input: json.RawMessage(`{}`)},
+		{ID: "tc_2", Name: "cancel_tool", Input: json.RawMessage(`{}`)},
+	})
+	close(ch)
+
+	require.Error(t, ctx.Err(), "cancel tool did not cancel — test precondition failed")
+	require.True(t, cancelled,
+		"cancellation during the final tool must be reported, not swallowed by the loop ending")
+}

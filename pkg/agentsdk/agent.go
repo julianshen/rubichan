@@ -310,7 +310,10 @@ func (a *Agent) executeTools(ctx context.Context, ch chan<- TurnEvent, pendingTo
 		a.conversation.AddToolResult(tc.ID, result.content, result.isError)
 		ch <- result.event
 	}
-	return false
+	// The loop tests ctx.Err() before each call and never after the last one,
+	// so a cancellation landing during the final tool would otherwise be
+	// reported as a clean batch. Ask once more on the way out.
+	return ctx.Err() != nil
 }
 
 // toolResult holds the result of a single tool execution.
