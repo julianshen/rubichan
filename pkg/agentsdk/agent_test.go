@@ -1222,3 +1222,55 @@ func TestAgentTrailingCancelIsReportedAsCancelled(t *testing.T) {
 	require.True(t, cancelled,
 		"cancellation during the final tool must be reported, not swallowed by the loop ending")
 }
+
+// panickingApprovalTool is a plain tool; the panic in this scenario comes from
+// the embedder's approval callback, not from the tool itself.
+type panickingApprovalTool struct{}
+
+func (panickingApprovalTool) Name() string                 { return "needs_approval" }
+func (panickingApprovalTool) Description() string          { return "requires approval" }
+func (panickingApprovalTool) InputSchema() json.RawMessage { return json.RawMessage(`{}`) }
+func (panickingApprovalTool) Execute(context.Context, json.RawMessage) (ToolResult, error) {
+	return ToolResult{Content: "ran"}, nil
+}
+
+// TestAgentApprovalPanicLeavesConversationProtocolValid covers the panic exit
+// path. runLoop commits the assistant message before executeTools, and
+// ApprovalFlow.Decide then calls embedder-supplied callbacks — ApprovalFunc
+// here — with no recovery boundary of its own. dispatchTool's recover sits
+// further in and never sees it, so the panic reaches Turn's handler with
+// tool_use blocks already in history.
+//
+// Without sealing there, those blocks stay unanswered for the rest of the
+// Agent's life and the next Turn fails a protocol check, exactly as an
+// unsealed cancellation did.
+func TestAgentApprovalPanicLeavesConversationProtocolValid(t *testing.T) {
+	twoToolStream := []StreamEvent{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "needs_approval"}},
+		{Type: "text_delta", Text: `{}`},
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_2", Name: "needs_approval"}},
+		{Type: "text_delta", Text: `{}`},
+		{Type: "stop"},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{twoToolStream}}
+	r := NewRegistry()
+	require.NoError(t, r.Register(panickingApprovalTool{}))
+
+	panicking := func(context.Context, string, json.RawMessage) (bool, error) {
+		panic("approval callback exploded")
+	}
+
+	a := NewAgent(p, WithTools(r), WithApproval(panicking))
+	ch, err := a.Turn(context.Background(), "test")
+	require.NoError(t, err)
+
+	var sawError bool
+	for ev := range ch {
+		if ev.Type == "error" {
+			sawError = true
+		}
+	}
+	require.True(t, sawError, "the recovered panic should surface as an error event")
+
+	assertNoUnansweredToolUses(t, a.Conversation())
+}

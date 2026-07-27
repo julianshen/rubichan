@@ -9,6 +9,10 @@ const (
 	// OrphanReasonToolCancel marks tools that never ran because the batch
 	// was cancelled part-way.
 	OrphanReasonToolCancel = "cancelled during tool execution"
+
+	// OrphanReasonPanic marks tools left unanswered because the turn
+	// goroutine panicked after the assistant message was committed.
+	OrphanReasonPanic = "agent panic"
 )
 
 // ToolResultConversation is the slice of conversation behaviour orphan

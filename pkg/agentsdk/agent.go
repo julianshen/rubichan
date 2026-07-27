@@ -121,6 +121,13 @@ func (a *Agent) Turn(ctx context.Context, userMessage string) (<-chan TurnEvent,
 		defer func() {
 			if r := recover(); r != nil {
 				a.logger.Error("agent panic recovered: %v\n%s", r, debug.Stack())
+				// runLoop commits the assistant message before executing
+				// tools, and the approval flow calls embedder-supplied
+				// callbacks with no boundary of its own, so a panic can land
+				// here with tool_use blocks already in history. The
+				// conversation outlives this turn — leaving them unanswered
+				// would break the next one.
+				SealOrphanedToolUses(a.conversation, OrphanReasonPanic)
 				sendEvent(ctx, ch, TurnEvent{Type: "error", Error: fmt.Errorf("agent panic: %v", r)})
 				// Consumers treat "done" as the turn's terminator; without it
 				// a caller waiting on it would hang.
