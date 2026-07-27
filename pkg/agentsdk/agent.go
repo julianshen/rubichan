@@ -214,6 +214,11 @@ func (a *Agent) runLoop(ctx context.Context, ch chan<- TurnEvent, turnCount int,
 		cancelled := a.executeTools(ctx, ch, sr.pendingTools)
 		joinBackgroundTasks()
 		if cancelled {
+			// A cancelled batch leaves the tools that never ran without a
+			// tool_result. The conversation outlives this turn, so leaving
+			// them unanswered would make the *next* Turn fail a protocol
+			// check rather than failing here.
+			SealOrphanedToolUses(a.conversation, OrphanReasonToolCancel)
 			ch <- TurnEvent{Type: "error", Error: ctx.Err()}
 			ch <- a.makeDoneEvent(totalInputTokens, totalOutputTokens)
 			return
