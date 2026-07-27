@@ -173,6 +173,66 @@ func TestStreamContextCancellation(t *testing.T) {
 done:
 }
 
+func TestStreamStalledConnectionIsKilledByWatchdog(t *testing.T) {
+	// Server sends one chunk, then goes silent forever without closing the
+	// connection and without the client ever cancelling its context. This
+	// simulates a stuck local model (stalled GPU, keep_alive swap, etc.).
+	// Only the idle watchdog can unblock the reader in this scenario.
+	server := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		require.True(t, ok, "expected http.Flusher")
+
+		fmt.Fprintf(w, `{"model":"llama3","message":{"role":"assistant","content":"Hello"},"done":false}`+"\n")
+		flusher.Flush()
+
+		// Go silent. Block until the test's http.Client gives up (via
+		// request cancellation on test cleanup) rather than closing here,
+		// so the only thing that can end the client-side read is the
+		// watchdog closing the body.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	p := New(server.URL)
+	p.SetHTTPClient(&http.Client{})
+	p.SetWatchdogConfig(provider.WatchdogConfig{
+		WarnAfter: 20 * time.Millisecond,
+		KillAfter: 50 * time.Millisecond,
+	})
+
+	req := provider.CompletionRequest{
+		Model:     "llama3",
+		Messages:  []provider.Message{provider.NewUserMessage("Hi")},
+		MaxTokens: 1024,
+	}
+
+	// No cancellation — a real foreground turn context has no deadline.
+	ch, err := p.Stream(context.Background(), req)
+	require.NoError(t, err)
+
+	var sawError bool
+	timeout := time.After(2 * time.Second)
+	for done := false; !done; {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				done = true
+				break
+			}
+			if evt.Type == "error" {
+				sawError = true
+			}
+		case <-timeout:
+			t.Fatal("stream did not close after idle watchdog kill window — hang not detected")
+		}
+	}
+
+	assert.True(t, sawError, "expected an error event once the watchdog killed the stalled stream")
+}
+
 func TestStreamToolCallResponse(t *testing.T) {
 	ndjsonBody := `{"model":"llama3","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"/tmp/test.txt"}}}]},"done":false}
 {"model":"llama3","message":{"role":"assistant","content":""},"done":true}

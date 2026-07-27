@@ -27,6 +27,7 @@ type Provider struct {
 	nextToolID  atomic.Int64
 	keepAlive   string
 	debugLogger provider.DebugLogger
+	watchdogCfg provider.WatchdogConfig
 }
 
 // SetDebugLogger enables debug logging for API requests and responses.
@@ -52,6 +53,13 @@ func (p *Provider) SetHTTPClient(c *http.Client) {
 // An empty string means the provider default ("5m") will be used.
 func (p *Provider) SetKeepAlive(d string) {
 	p.keepAlive = d
+}
+
+// SetWatchdogConfig overrides the stream idle-watchdog thresholds. Intended
+// for tests; production code relies on the zero value (provider.WatchBody's
+// 45s/90s defaults).
+func (p *Provider) SetWatchdogConfig(cfg provider.WatchdogConfig) {
+	p.watchdogCfg = cfg
 }
 
 // KeepAlive returns the configured keep_alive duration, or empty if unset.
@@ -308,13 +316,31 @@ func (p *Provider) convertUserMessages(msg provider.Message) []apiMessage {
 }
 
 // processStream reads NDJSON lines from the response body and sends StreamEvents.
+// The body is wrapped in an idle watchdog: Ollama can stall mid-stream
+// (stuck model load, keep_alive swap, GPU busy) without closing the
+// connection, and the shared HTTP client has no top-level timeout for
+// exactly this reason — long streams are expected to run for minutes.
+// Without the watchdog, a stall here blocks forever with no way out short
+// of the caller cancelling ctx, which foreground turns don't do.
 func (p *Provider) processStream(ctx context.Context, body io.ReadCloser, ch chan<- provider.StreamEvent) {
 	defer close(ch)
-	defer body.Close()
+
+	onWarn := func() {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] ollama: stream idle for 45s, still waiting")
+		}
+	}
+	onKill := func() {
+		if p.debugLogger != nil {
+			p.debugLogger("[DEBUG] ollama: stream killed after idle timeout")
+		}
+	}
+	watched := provider.WatchBody(body, p.watchdogCfg, onWarn, onKill)
+	defer watched.Close()
 
 	gotDone := false
 
-	scanner := bufio.NewScanner(body)
+	scanner := bufio.NewScanner(watched)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
