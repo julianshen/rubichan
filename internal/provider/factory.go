@@ -34,7 +34,7 @@ func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
 	case "anthropic":
 		p, err = Default.New(cfg)
 	case "ollama":
-		return newOllamaProvider(cfg)
+		return Default.New(cfg)
 	case "zai":
 		return Default.New(cfg)
 	default:
@@ -49,26 +49,6 @@ func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
 		EnableDebugLogging(p)
 	}
 
-	return p, nil
-}
-
-func newOllamaProvider(cfg *config.Config) (LLMProvider, error) {
-	constructor, ok := registry["ollama"]
-	if !ok {
-		return nil, fmt.Errorf("ollama provider not registered")
-	}
-
-	baseURL := cfg.Provider.Ollama.BaseURL
-	if baseURL == "" {
-		baseURL = "http://localhost:11434" // matches ollama.DefaultBaseURL (can't import due to cycle)
-	}
-
-	p := constructor(baseURL, "", nil)
-	if ka := cfg.Agent.Cache.OllamaKeepAlive; ka != "" {
-		if kac, ok := p.(KeepAliveConfigurer); ok {
-			kac.SetKeepAlive(ka)
-		}
-	}
 	return p, nil
 }
 

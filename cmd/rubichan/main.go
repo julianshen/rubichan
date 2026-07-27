@@ -943,31 +943,6 @@ func autoDetectProvider(cfg *config.Config, providerFlagValue, ollamaURL string)
 	return false
 }
 
-// resolveOllamaModel queries Ollama for available models and resolves which
-// model to use. With a single model it auto-selects; with zero models it
-// returns an error. The ollamaURL parameter allows testing with httptest.
-func resolveOllamaModel(ollamaURL string) (string, error) {
-	client := ollama.NewClient(ollamaURL)
-	models, err := client.ListModels(context.Background())
-	if err != nil {
-		return "", fmt.Errorf("listing Ollama models: %w", err)
-	}
-
-	if len(models) == 0 {
-		return "", fmt.Errorf("no models found; run 'rubichan ollama pull <model>' first")
-	}
-
-	if len(models) == 1 {
-		return models[0].Name, nil
-	}
-
-	// Multiple models — in interactive mode, we'd show a picker.
-	// For now, return the first model. The TUI picker integration
-	// requires running a Bubble Tea program which is complex to wire here.
-	// TODO: integrate tui.ModelPicker when running interactively.
-	return models[0].Name, nil
-}
-
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -1024,7 +999,7 @@ func loadConfig() (*config.Config, error) {
 
 	// Resolve Ollama model if provider is ollama and no model specified.
 	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
-		model, err := resolveOllamaModel(ollamaURL)
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -1035,9 +1010,8 @@ func loadConfig() (*config.Config, error) {
 	// Resolve Anthropic's default model if it's the (possibly auto-detected)
 	// provider and no model was specified. This runs last so it only ever
 	// fills in what the provider-specific resolutions above left empty.
-	// (Ollama above still resolves its own default inline until Task 4
-	// migrates it the same way; Task 5 collapses all three into one
-	// generic call once every provider is registered.)
+	// (Task 5 collapses all three into one generic call now that every
+	// provider is registered.)
 	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
 		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
 		if err != nil {
