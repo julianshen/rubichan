@@ -221,7 +221,7 @@ Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). E
 >
 > **What the cost analysis above does establish** is sequencing, not a permanent split: merging the bodies today would mean inventing roughly five more seams in one change, which is what §6 Risks warns against and what deferred this work in the first place. The honest position is that full convergence is still the target, still gated on further Phase 2-style extraction, and now has a concrete next step — unify `executeTools` — rather than a date.
 
-> **Status update (2026-07): drift audit — the fork surface is one file, not eight.**
+> **Status update (2026-07): drift audit — the eight-file estimate was wrong; the known duplication is `agent.go` plus six seam-dispatch functions.**
 >
 > After #327 closed the `executeTools` fork, the obvious follow-up was to ask what *else* the two cores implement twice. The premise was sound: a forked step accumulates defects silently, and `executeTools` carried two that took five review findings on the internal side before anyone checked the portable one.
 >
@@ -239,9 +239,20 @@ Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). E
 >
 > One residual risk worth naming: those two constructions agree by coincidence of separate struct literals, with nothing enforcing it. A change to `provider.NewToolResultMessage` would not follow into the SDK. Low severity — six-line literals — but it is the same class of hazard, and the cheapest guard would be a shared constructor rather than a test.
 >
-> **What this means for convergence.** The drift surface was confined to `agent.go`, and within it to `executeTools`, which #327 fixed and gave a shared sealing primitive. There is no hidden backlog of forked correctness logic — which makes the deferred-convergence position above *more* defensible than it looked when this audit was proposed, not less.
+> **A second pass, ignoring filenames, found duplication the first pass could not see.** Intersecting *all* top-level declaration names across the two packages (71 common, 30 of them type aliases) surfaces six functions implemented twice in files that do not share a name:
 >
-> **Method note, so this is not re-derived badly.** Same-filename plus line count is not evidence of duplication in a codebase that deliberately puts contracts in `pkg` and implementations in `internal` — it selects *for* the intended architecture. Compare declaration overlap, then read the overlapping declarations.
+> | Function | `internal/agent` | `pkg/agentsdk` |
+> |---|---|---|
+> | `startBackgroundTurn`, `startTaskRecovering`, `recoveringJoin`, `endBackgroundSession` | `background.go` | `agent_background.go` |
+> | `contributeStrategySections`, `strategySectionsRecovering` | `context_strategy.go` | `agent_context_strategy.go` |
+>
+> The same-filename pairing compared `background.go` against `background.go`, but the SDK splits the *interface* (`background.go`) from the *dispatch* (`agent_background.go`), so the dispatch pair was invisible to it. These are the seam plumbing added during Phase 2 and Phase 1(b) — the per-task recover boundaries and the strategy contribution loop.
+>
+> They have **not** drifted: `startBackgroundTurn`, `startTaskRecovering` and `recoveringJoin` are line-for-line identical down to the log messages. But nothing enforces that, and they are precisely the kind of defensive code that gains a fix on one side only — which is how `executeTools` acquired two defects.
+>
+> **What this means for convergence.** This audit found no additional *observed* duplicated defect. It does not establish that none exists: `agent.go` still holds two distinct, correctness-sensitive loop implementations (#327 repaired the portable cancellation behavior and shared the sealing primitive — it did not remove the duplicate loops), the six seam-dispatch functions above are duplicated though currently identical, and comparing declaration *names* cannot detect behaviorally equivalent code written under different names. The claim this record supports is narrower than "the fork surface is one file": it is that the eight-file estimate was wrong, and that the known duplication is `agent.go` plus the seam dispatch.
+>
+> **Method note, so this is not re-derived badly.** Two heuristics failed in sequence. Same-filename plus line count selects *for* the intended contract-in-`pkg` / implementation-in-`internal` architecture, so it over-counts. Same-filename declaration overlap then *under*-counts, because the SDK splits interface and dispatch into differently-named files. Intersect declaration names across whole packages, subtract the type aliases, then read what remains — and note that even that misses same-logic-different-name.
 
 Each phase is independently shippable and leaves the product fully working.
 
