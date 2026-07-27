@@ -1114,3 +1114,71 @@ func TestAgent_ConsumeStream_MessageStart(t *testing.T) {
 	assert.Equal(t, "gpt-4o", messageStarts[0].Model)
 	assert.Equal(t, "msg_123", messageStarts[0].MessageID)
 }
+
+// TestAgentCancelledBatchLeavesConversationProtocolValid covers the defect
+// that made the portable loop unsafe to embed: a cancelled tool batch left
+// trailing tool_use blocks with no matching tool_result.
+//
+// The damage is only observable across turns. Agent keeps one Conversation
+// for its lifetime and Turn appends to it, so the malformed history survives
+// the cancelled turn and is sent to the provider on the next one, where the
+// wire protocol rejects it. TestAgentContextCancelledMidToolBatch asserts the
+// second tool is skipped — the precondition for this — without checking that
+// the conversation was repaired.
+func TestAgentCancelledBatchLeavesConversationProtocolValid(t *testing.T) {
+	twoToolStream := []StreamEvent{
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_1", Name: "cancel_tool"}},
+		{Type: "text_delta", Text: `{}`},
+		{Type: "tool_use", ToolUse: &ToolUseBlock{ID: "tc_2", Name: "echo"}},
+		{Type: "text_delta", Text: `{}`},
+		{Type: "stop"},
+	}
+	p := &mockProvider{responses: [][]StreamEvent{twoToolStream}}
+	r := NewRegistry()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, r.Register(&contextCancelTool{cancel: cancel}))
+	require.NoError(t, r.Register(&echoTool{}))
+
+	a := NewAgent(p, WithTools(r))
+	ch, err := a.Turn(ctx, "test")
+	require.NoError(t, err)
+	for range ch {
+	}
+
+	assertNoUnansweredToolUses(t, a.Conversation())
+}
+
+// assertNoUnansweredToolUses fails if any tool_use in the conversation lacks a
+// matching tool_result later on — the shape the next provider call rejects.
+func assertNoUnansweredToolUses(t *testing.T, conv *Conversation) {
+	t.Helper()
+	msgs := conv.Messages()
+
+	answered := map[string]bool{}
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type == "tool_result" && b.ToolUseID != "" {
+				answered[b.ToolUseID] = true
+			}
+		}
+	}
+
+	var seen int
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type != "tool_use" || b.ID == "" {
+				continue
+			}
+			seen++
+			if !answered[b.ID] {
+				t.Fatalf("tool_use %q (%s) has no matching tool_result; "+
+					"the next Turn would send this conversation and fail a protocol check", b.ID, b.Name)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("expected tool_use blocks in the conversation; got none — test precondition failed")
+	}
+}

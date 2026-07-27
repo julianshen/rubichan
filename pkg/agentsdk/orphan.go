@@ -2,6 +2,15 @@ package agentsdk
 
 import "fmt"
 
+// Reason strings for SealOrphanedToolUses, embedded in the synthesized
+// tool_result content so the model — and anyone reading a captured
+// conversation — can tell why each orphan was sealed.
+const (
+	// OrphanReasonToolCancel marks tools that never ran because the batch
+	// was cancelled part-way.
+	OrphanReasonToolCancel = "cancelled during tool execution"
+)
+
 // ToolResultConversation is the slice of conversation behaviour orphan
 // sealing needs. Both this package's Conversation and internal/agent's
 // satisfy it, which is what lets the two agent loops share one sealing
