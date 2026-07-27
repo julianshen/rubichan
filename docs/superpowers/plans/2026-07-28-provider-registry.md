@@ -4,7 +4,7 @@
 
 **Goal:** Replace `internal/provider/factory.go`'s switch-statement and `cmd/rubichan/main.go`'s three copy-pasted default-model `if`-blocks with one declarative per-provider registration (`ProviderDef`), so construction, auth, base URL, and default-model resolution for a provider are described once instead of as parallel logic in two files.
 
-**Architecture:** A new `Registry` type in `internal/provider/registry.go` holds `ProviderDef` values (one per provider: anthropic, zai, ollama, openai-compatible), each supplying `Constructor`/`BaseURL`/`Auth` (required) and `DefaultModel`/`ListModels` (optional — nil means unsupported). `factory.go`'s public `NewProvider`/`NewProviderWithDebug` become thin delegates to the registry; `main.go`'s `loadConfig()` calls `Registry.ResolveDefaultModel` once instead of three separate blocks.
+**Architecture:** A new `Registry` type in `internal/provider/registry.go` holds `ProviderDef` values (one per provider: anthropic, zai, ollama, openai-compatible), each supplying `Constructor`/`BaseURL`/`Auth` (required) and `DefaultModel`/`ListModels` (optional — nil means unsupported). Each provider is migrated **fully atomically, one provider per task**: `factory.go`'s switch-case and `main.go`'s corresponding `if`-block are cut over and the old code deleted in the *same* commit as that provider's new `ProviderDef` — no task leaves duplicate logic or dead code for a later task to clean up.
 
 **Tech Stack:** Go, existing `internal/provider`/`internal/config` packages, `testify` (assert/require), `testutil.NewServer` for HTTP-backed provider tests.
 
@@ -13,8 +13,10 @@
 - TDD strictly: one test at a time, Red → Green → Refactor → Commit. Never write implementation before the test.
 - Commit prefixes: `[STRUCTURAL]` (no behavior change) or `[BEHAVIORAL]` (new/changed behavior). Never mix both in one commit.
 - Run `go build ./...`, `go test ./...`, `gofmt -l .`, `go vet ./...` after every task; all must be clean before moving on.
-- No behavior change anywhere is a hard requirement until Task 6 (the cutover). Tasks 1–5 are pure *additions* — nothing in `cmd/rubichan` or the existing `factory.go` switch-statement changes or is removed until Task 6/7. This is what makes every intermediate commit safely shippable.
-- Never push to `main`. Work happens on `feature/provider-registry` (already created, spec already committed there).
+- **Zero duplication, zero dead-code windows.** Every task that adds new provider logic must, in the same commit, delete whichever old logic it supersedes (old switch-case body, old `if`-block, old standalone function). No task may leave the same logic implemented in two places, or leave code nothing calls, for a later task to remove.
+- No behavior change anywhere is a hard requirement, verified at every task boundary — except the one explicitly-flagged, intentional fix in Task 5 (see that task).
+- Never push to `main`. Work happens on `feature/provider-registry` (already created; design spec and a prior draft of this plan are already committed there — this version supersedes that draft, see note below).
+- **Correctness note this plan corrects vs. an earlier draft:** a fully-generic `if cfg.Provider.Model == "" { ResolveDefaultModel(...) }` call is only safe once *every* provider is registered in the `Registry` (including the OpenAI-compatible fallback) — calling it while some providers are still unmigrated would hard-error for those. It is also only safe if a provider with no `DefaultModel` resolver (OpenAI-compatible, by design) is treated as "leave the model as-is," not as an error — otherwise users of custom OpenAI-compatible endpoints who don't pass `--model` would get a new hard failure at startup where previously the CLI proceeded (and would fail later, if at all, from the provider's own response). `Registry.ResolveDefaultModel` returns the sentinel `ErrNoDefaultModel` for this case specifically so callers can distinguish it from a real failure.
 
 ---
 
@@ -22,9 +24,9 @@
 
 PR #329 (branch `fix/ollama-stream-watchdog`, not yet merged as of this plan's writing) changed two files this plan also touches:
 - `internal/config/config.go`: `DefaultConfig()` no longer bakes `Provider.Model = "claude-sonnet-4-5"`.
-- `cmd/rubichan/main.go`: `loadConfig()` gained three `if cfg.Provider.Model == ""` blocks (zai, ollama, anthropic) that this plan's Task 8 replaces.
+- `cmd/rubichan/main.go`: `loadConfig()` gained three `if cfg.Provider.Model == ""` blocks (zai, ollama, anthropic) that Tasks 2-5 each replace one at a time.
 
-**Before starting Task 8 or Task 9**, confirm `main.go`'s `loadConfig()` has these three blocks (run `grep -n "Provider.Zai.Model\|Resolve.*default model" cmd/rubichan/main.go`). If they're missing, PR #329 hasn't merged yet — merge it first, or `git rebase main` after it merges, then re-check. Tasks 1–7 have no dependency on PR #329 and can proceed regardless.
+**Before starting Task 2**, confirm `main.go`'s `loadConfig()` has these three blocks (run `grep -n "Provider.Zai.Model\|Resolve.*default model" cmd/rubichan/main.go`). If they're missing, PR #329 hasn't merged yet — merge it first, or `git rebase main` after it merges, then re-check. Task 1 has no dependency on PR #329.
 
 ---
 
@@ -33,12 +35,12 @@ PR #329 (branch `fix/ollama-stream-watchdog`, not yet merged as of this plan's w
 **Files:**
 - Create: `internal/provider/registry.go`
 - Create: `internal/provider/registry_test.go`
+- Modify: `internal/provider/factory.go` (move two type declarations out — see below)
 
 **Interfaces:**
-- Produces: `provider.Model{ID, Name string}`, `provider.ProviderDef{ID string; Constructor ProviderConstructor; BaseURL func(*config.Config) string; Auth func(*config.Config) (string, map[string]string, error); DefaultModel func(context.Context, *config.Config) (string, error); ListModels func(context.Context, *config.Config) ([]Model, error)}`, `provider.Registry` with `NewRegistry() *Registry`, package var `Default *Registry`, methods `Register(def ProviderDef)`, `RegisterFallback(def ProviderDef)`, `New(cfg *config.Config) (LLMProvider, error)`, `ResolveDefaultModel(ctx, cfg) (string, error)`, `ListModels(ctx, providerID string, cfg) ([]Model, error)`.
-- `KeepAliveConfigurer` and `ProviderConstructor` move here from `factory.go` (still exist, same names — Task 7 deletes the now-duplicate copies in `factory.go`; until then both files may declare them, so don't create this file's copy yet if it would collide. To avoid a duplicate-declaration compile error in the interim, this task **moves** them out of `factory.go` now rather than duplicating.)
+- Produces: `provider.Model{ID, Name string}`, `provider.ProviderDef{ID string; Constructor ProviderConstructor; BaseURL func(*config.Config) string; Auth func(*config.Config) (string, map[string]string, error); DefaultModel func(context.Context, *config.Config) (string, error); ListModels func(context.Context, *config.Config) ([]Model, error)}`, `provider.ErrNoDefaultModel` (sentinel error), `provider.Registry` with `NewRegistry() *Registry`, package var `Default *Registry`, methods `Register(def ProviderDef)`, `RegisterFallback(def ProviderDef)`, `New(cfg *config.Config) (LLMProvider, error)`, `ResolveDefaultModel(ctx, cfg) (string, error)`, `ListModels(ctx, providerID string, cfg) ([]Model, error)`.
 
-**Note on `KeepAliveConfigurer`/`ProviderConstructor` relocation:** moving these two type declarations from `factory.go` to `registry.go` in this task is a zero-behavior-change move (same package, same names, same call sites still compile) — do it as part of this task's commit since `registry.go` needs both types and Go doesn't allow duplicate declarations in one package. This is the one place this "pure addition" task also touches existing code, and it's mechanical (cut two type blocks from one file, paste into the new one).
+This task is pure addition — nothing in `cmd/rubichan` or `factory.go`'s switch-statement is touched except moving `KeepAliveConfigurer`/`ProviderConstructor` (verbatim, same names, same package — a mechanical Move, not a duplication, since Go disallows declaring them twice in one package and `registry.go` needs both).
 
 - [ ] **Step 1: Write the failing test for `Registry.New` with a registered provider**
 
@@ -49,6 +51,7 @@ package provider_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -104,7 +107,7 @@ Expected: FAIL — `undefined: provider.NewRegistry` (or similar compile error; 
 
 - [ ] **Step 3: Write `registry.go` with `Model`, `ProviderDef`, `Registry`, `Register`, `New`**
 
-First, remove these two blocks from `internal/provider/factory.go` (they move to `registry.go`):
+First, remove these two blocks from `internal/provider/factory.go` (they move to `registry.go` — leave everything else in `factory.go` untouched):
 
 ```go
 // ProviderConstructor is a function that creates a new LLMProvider.
@@ -126,6 +129,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/julianshen/rubichan/internal/config"
@@ -142,6 +146,13 @@ type KeepAliveConfigurer interface {
 	SetKeepAlive(duration string)
 	KeepAlive() string
 }
+
+// ErrNoDefaultModel is returned by Registry.ResolveDefaultModel when the
+// resolved provider has no DefaultModel resolver (e.g. a custom
+// OpenAI-compatible endpoint). Callers should treat this as "leave the
+// model unset," not as a failure — the provider was found, it simply
+// doesn't offer default-model resolution.
+var ErrNoDefaultModel = errors.New("provider has no default model")
 
 // Model describes one entry in a provider's model catalog, whether static
 // or fetched dynamically via ProviderDef.ListModels.
@@ -164,7 +175,8 @@ type ProviderDef struct {
 
 	// DefaultModel resolves the model to use when the user hasn't specified
 	// one. nil means the provider has no default-model resolution (the
-	// caller must always specify a model explicitly).
+	// caller must always specify a model explicitly) — ResolveDefaultModel
+	// returns ErrNoDefaultModel in that case.
 	DefaultModel func(ctx context.Context, cfg *config.Config) (string, error)
 
 	// ListModels returns the provider's available models. nil means the
@@ -233,15 +245,16 @@ func (r *Registry) New(cfg *config.Config) (LLMProvider, error) {
 }
 
 // ResolveDefaultModel returns the model to use for cfg.Provider.Default when
-// the user hasn't specified one. Returns an error if the provider has no
-// DefaultModel resolver.
+// the user hasn't specified one. Returns ErrNoDefaultModel if the provider
+// has no DefaultModel resolver (distinct from any other error, which means
+// resolution was attempted and failed).
 func (r *Registry) ResolveDefaultModel(ctx context.Context, cfg *config.Config) (string, error) {
 	def, err := r.lookup(cfg.Provider.Default)
 	if err != nil {
 		return "", err
 	}
 	if def.DefaultModel == nil {
-		return "", fmt.Errorf("provider %q has no default model; specify one explicitly", cfg.Provider.Default)
+		return "", ErrNoDefaultModel
 	}
 	return def.DefaultModel(ctx, cfg)
 }
@@ -265,7 +278,7 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg *confi
 Run: `go test ./internal/provider/... -run TestRegistry_New_BuildsRegisteredProvider -v`
 Expected: PASS
 
-- [ ] **Step 5: Add the remaining Registry tests (unknown provider, auth error, fallback, KeepAliveConfigurer, ResolveDefaultModel, ListModels)**
+- [ ] **Step 5: Add the remaining Registry tests**
 
 Append to `internal/provider/registry_test.go`:
 
@@ -363,7 +376,7 @@ func TestRegistry_ResolveDefaultModel_NoResolver(t *testing.T) {
 
 	_, err := r.ResolveDefaultModel(context.Background(), cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no default model")
+	assert.True(t, errors.Is(err, provider.ErrNoDefaultModel))
 }
 
 func TestRegistry_ListModels(t *testing.T) {
@@ -418,17 +431,19 @@ EOF
 
 ---
 
-## Task 2: Migrate Anthropic to a ProviderDef
+## Task 2: Migrate Anthropic (fully atomic — construction + default model)
 
 **Files:**
 - Modify: `internal/provider/anthropic/provider.go` (its `init()`, currently lines 17-21)
 - Modify: `internal/provider/anthropic/provider_test.go`
+- Modify: `internal/provider/factory.go` (the `"anthropic"` switch-case; delete `newAnthropicProvider` and `anthropicBaseURL`)
+- Modify: `cmd/rubichan/main.go` (the anthropic `if` block in `loadConfig()`)
 
 **Interfaces:**
-- Consumes: `provider.ProviderDef`, `provider.Default.Register` (Task 1).
-- Produces: `anthropic.providerDef() provider.ProviderDef` — an unexported function tests call directly, isolated from the shared `provider.Default` registry.
+- Consumes: `provider.ProviderDef`, `provider.Default.Register`, `provider.Default.New`, `provider.Default.ResolveDefaultModel` (Task 1).
+- Produces: `anthropic.providerDef() provider.ProviderDef` — an unexported function tests call directly, isolated from the shared `provider.Default` registry's global state.
 
-**Note:** this task adds the new registration *alongside* the existing `provider.RegisterProvider("anthropic", ...)` call — both stay active. `factory.go`'s switch-statement still exclusively drives real provider construction until Task 6; this task's new path is exercised only by its own tests, matching Task 1's "pure addition" ethos.
+**Why this task also touches `factory.go` and `main.go`:** per this plan's zero-duplication constraint, the new `ProviderDef` and the code it replaces cannot coexist past this one commit. `newAnthropicProvider` (factory.go) and the anthropic `if` block (main.go) are deleted in this same task, the moment the registry-based path takes over their job — not in a later cleanup task.
 
 - [ ] **Step 1: Write the failing test for the new ProviderDef**
 
@@ -473,7 +488,7 @@ func TestProviderDef_DefaultModel(t *testing.T) {
 Run: `go test ./internal/provider/anthropic/... -run TestProviderDef -v`
 Expected: FAIL — `undefined: providerDef` (and `undefined: config` until the import is added — add `"github.com/julianshen/rubichan/internal/config"` to the test file's import block now).
 
-- [ ] **Step 3: Add `providerDef()` and register it in `init()`**
+- [ ] **Step 3: Add `providerDef()`, replace `init()`'s registration**
 
 In `internal/provider/anthropic/provider.go`, replace:
 
@@ -491,9 +506,6 @@ with:
 const anthropicBaseURL = "https://api.anthropic.com"
 
 func init() {
-	provider.RegisterProvider("anthropic", func(baseURL, apiKey string, _ map[string]string) provider.LLMProvider {
-		return New(baseURL, apiKey)
-	})
 	provider.Default.Register(providerDef())
 }
 
@@ -528,42 +540,96 @@ func providerDef() provider.ProviderDef {
 }
 ```
 
-Add `"github.com/julianshen/rubichan/internal/config"` to `internal/provider/anthropic/provider.go`'s import block (`context` and `fmt` are already imported there).
+Add `"github.com/julianshen/rubichan/internal/config"` to `internal/provider/anthropic/provider.go`'s import block (`context` and `fmt` are already imported).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Cut `factory.go`'s `"anthropic"` switch-case over, delete the old function**
 
-Run: `go test ./internal/provider/anthropic/... -run TestProviderDef -v`
-Expected: PASS
+In `internal/provider/factory.go`, change the switch case (inside `NewProviderWithDebug`) from:
 
-- [ ] **Step 5: Run the full anthropic package and provider package (regression check)**
+```go
+	switch cfg.Provider.Default {
+	case "anthropic":
+		p, err = newAnthropicProvider(cfg)
+```
+
+to:
+
+```go
+	switch cfg.Provider.Default {
+	case "anthropic":
+		p, err = Default.New(cfg)
+```
+
+(This preserves the existing fall-through-to-debug-wrapping behavior for anthropic exactly — the original code already fell through for this case, so nothing about debug-logging changes here.)
+
+Delete the now-unused `newAnthropicProvider` function and the `const anthropicBaseURL = "https://api.anthropic.com"` line from `factory.go` (the constant now lives in `anthropic/provider.go`, added in Step 3). Leave `newOllamaProvider`, `newZaiProvider`, `newOpenAIProvider`, `formatUnknownProviderError`, `registry`, and `RegisterProvider` untouched — they're still used by the other, not-yet-migrated switch cases.
+
+- [ ] **Step 5: Cut `main.go`'s anthropic `if` block over**
+
+In `cmd/rubichan/main.go`'s `loadConfig()`, replace:
+
+```go
+	// Resolve Anthropic's default model if it's the (possibly auto-detected)
+	// provider and no model was specified. This runs last so it only ever
+	// fills in what the provider-specific resolutions above left empty.
+	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
+		cfg.Provider.Model = "claude-sonnet-4-5"
+	}
+```
+
+with:
+
+```go
+	// Resolve Anthropic's default model if it's the (possibly auto-detected)
+	// provider and no model was specified. This runs last so it only ever
+	// fills in what the provider-specific resolutions above left empty.
+	// (Zai/Ollama below still resolve their own default inline until Tasks
+	// 3-4 migrate them the same way; Task 5 collapses all three into one
+	// generic call once every provider is registered.)
+	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Provider.Model = model
+	}
+```
+
+`context` and `provider` are both already imported in `cmd/rubichan/main.go`. Leave the zai and ollama `if` blocks below this one exactly as they are — Tasks 3 and 4 migrate those.
+
+- [ ] **Step 6: Run the full anthropic package, provider package, and cmd/rubichan (regression check)**
 
 Run: `go test ./internal/provider/anthropic/... ./internal/provider/... ./cmd/rubichan/...`
-Expected: all PASS unchanged — the old `RegisterProvider` call and `factory.go`'s switch-statement are untouched, so every existing code path behaves exactly as before.
+Expected: all PASS unchanged, including `internal/provider/factory_test.go`'s `TestNewProviderAnthropic`/`TestNewProviderAnthropicMissingKey` (unmodified — they test the public `NewProvider` behavior, which hasn't changed) and `cmd/rubichan/coverage_test.go`'s `TestLoadConfig_AnthropicDefaultModel` (unmodified — same resolved value, same gating).
 
-- [ ] **Step 6: Format, vet, commit**
+- [ ] **Step 7: Format, vet, commit**
 
-Run: `gofmt -l internal/provider/anthropic/provider.go internal/provider/anthropic/provider_test.go` and `go vet ./internal/provider/anthropic/...`.
+Run: `gofmt -l internal/provider/anthropic/provider.go internal/provider/anthropic/provider_test.go internal/provider/factory.go cmd/rubichan/main.go` and `go vet ./internal/provider/anthropic/... ./internal/provider/... ./cmd/rubichan/...`.
 
 ```bash
-git add internal/provider/anthropic/provider.go internal/provider/anthropic/provider_test.go
+git add internal/provider/anthropic/provider.go internal/provider/anthropic/provider_test.go internal/provider/factory.go cmd/rubichan/main.go
 git commit -m "$(cat <<'EOF'
-[BEHAVIORAL] Register Anthropic as a ProviderDef
+[BEHAVIORAL] Migrate Anthropic to a ProviderDef
 
-Adds the new declarative registration alongside the existing
-RegisterProvider call, which factory.go still exclusively uses until the
-Task 6 cutover. providerDef() is exposed so tests exercise Auth/BaseURL/
-DefaultModel directly, isolated from the shared provider.Default registry.
+Fully atomic: registers the new ProviderDef, cuts factory.go's
+"anthropic" switch-case and main.go's anthropic default-model block over
+to it, and deletes newAnthropicProvider/anthropicBaseURL in the same
+commit — no window where the old and new logic coexist.
 EOF
 )"
 ```
 
+This completes a coherent, independently mergeable unit. Suggest a PR checkpoint here (Task 1 + Task 2) before continuing.
+
 ---
 
-## Task 3: Migrate Z.ai to a ProviderDef
+## Task 3: Migrate Z.ai (fully atomic)
 
 **Files:**
 - Modify: `internal/provider/zai/provider.go` (its `init()`, currently lines 15-19)
 - Modify: `internal/provider/zai/provider_test.go`
+- Modify: `internal/provider/factory.go` (the `"zai"` switch-case; delete `newZaiProvider`)
+- Modify: `cmd/rubichan/main.go` (the zai `if` block in `loadConfig()`)
 
 **Interfaces:**
 - Consumes: same as Task 2.
@@ -622,7 +688,7 @@ func TestProviderDef_DefaultModel_UsesConfiguredModel(t *testing.T) {
 Run: `go test ./internal/provider/zai/... -run TestProviderDef -v`
 Expected: FAIL — `undefined: providerDef`.
 
-- [ ] **Step 3: Add `providerDef()` and register it in `init()`**
+- [ ] **Step 3: Add `providerDef()`, replace `init()`'s registration**
 
 In `internal/provider/zai/provider.go`, replace:
 
@@ -638,9 +704,6 @@ with:
 
 ```go
 func init() {
-	provider.RegisterProvider("zai", func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
-		return New(baseURL, apiKey, "glm-5", extraHeaders)
-	})
 	provider.Default.Register(providerDef())
 }
 
@@ -682,46 +745,90 @@ func providerDef() provider.ProviderDef {
 
 Add `"context"` and `"github.com/julianshen/rubichan/internal/config"` to `internal/provider/zai/provider.go`'s import block (`fmt` is already imported).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Cut `factory.go`'s `"zai"` switch-case over, delete the old function**
 
-Run: `go test ./internal/provider/zai/... -run TestProviderDef -v`
-Expected: PASS
+In `internal/provider/factory.go`, change:
 
-- [ ] **Step 5: Run the full zai package and provider package (regression check)**
+```go
+	case "zai":
+		return newZaiProvider(cfg)
+```
+
+to:
+
+```go
+	case "zai":
+		return Default.New(cfg)
+```
+
+Keep the early `return` (not falling through to the `if debug { EnableDebugLogging(p) }` line below) — this preserves the existing behavior exactly, including its latent quirk that Z.ai (like Ollama) never receives debug-logging even when `--debug` is passed, because the original code also returns early for this case. Task 5 removes the whole switch-statement and fixes this quirk for every provider at once, explicitly flagged there — don't fix it here, to keep this commit's behavior change scoped to "same construction, now via the registry."
+
+Delete the now-unused `newZaiProvider` function from `factory.go`.
+
+- [ ] **Step 5: Cut `main.go`'s zai `if` block over**
+
+In `cmd/rubichan/main.go`'s `loadConfig()`, replace:
+
+```go
+	// Resolve Z.ai's default model if provider is zai and no model specified
+	// via --model. [provider.zai].model wins over the built-in fallback.
+	if cfg.Provider.Default == "zai" && cfg.Provider.Model == "" {
+		if cfg.Provider.Zai.Model != "" {
+			cfg.Provider.Model = cfg.Provider.Zai.Model
+		} else {
+			cfg.Provider.Model = "glm-5"
+		}
+	}
+```
+
+with:
+
+```go
+	// Resolve Z.ai's default model if provider is zai and no model specified.
+	if cfg.Provider.Default == "zai" && cfg.Provider.Model == "" {
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Provider.Model = model
+	}
+```
+
+- [ ] **Step 6: Run the full zai package, provider package, and cmd/rubichan (regression check)**
 
 Run: `go test ./internal/provider/zai/... ./internal/provider/... ./cmd/rubichan/...`
-Expected: all PASS unchanged.
+Expected: all PASS unchanged, including `cmd/rubichan/coverage_test.go`'s `TestLoadConfig_ZaiDefaultModel_FallsBackWhenUnset`/`TestLoadConfig_ZaiDefaultModel_UsesConfiguredZaiModel`.
 
-- [ ] **Step 6: Format, vet, commit**
+- [ ] **Step 7: Format, vet, commit**
 
-Run: `gofmt -l internal/provider/zai/provider.go internal/provider/zai/provider_test.go` and `go vet ./internal/provider/zai/...`.
+Run: `gofmt -l internal/provider/zai/provider.go internal/provider/zai/provider_test.go internal/provider/factory.go cmd/rubichan/main.go` and `go vet ./internal/provider/zai/... ./internal/provider/... ./cmd/rubichan/...`.
 
 ```bash
-git add internal/provider/zai/provider.go internal/provider/zai/provider_test.go
+git add internal/provider/zai/provider.go internal/provider/zai/provider_test.go internal/provider/factory.go cmd/rubichan/main.go
 git commit -m "$(cat <<'EOF'
-[BEHAVIORAL] Register Z.ai as a ProviderDef
+[BEHAVIORAL] Migrate Z.ai to a ProviderDef
 
-Same pattern as Anthropic (Task 2). DefaultModel replicates the
-cfg.Provider.Zai.Model -> "glm-5" fallback exactly.
+Same fully-atomic treatment as Anthropic (Task 2): DefaultModel
+replicates the cfg.Provider.Zai.Model -> "glm-5" fallback exactly, and
+newZaiProvider/the old main.go if-block are deleted in this same commit.
 EOF
 )"
 ```
 
-This completes PR 1 (Tasks 1-3: registry core + Anthropic + Z.ai). Suggest opening/pushing here before continuing to Ollama.
-
 ---
 
-## Task 4: Migrate Ollama to a ProviderDef (construction + default model + listing)
+## Task 4: Migrate Ollama (fully atomic — construction + default model + listing)
 
 **Files:**
 - Modify: `internal/provider/ollama/provider.go` (its `init()`, currently lines 17-21)
 - Modify: `internal/provider/ollama/provider_test.go`
+- Modify: `internal/provider/factory.go` (the `"ollama"` switch-case; delete `newOllamaProvider`)
+- Modify: `cmd/rubichan/main.go` (the ollama `if` block in `loadConfig()`; delete `resolveOllamaModel`)
+- Modify: `cmd/rubichan/main_test.go` (delete `TestResolveOllamaModel_SingleModel`, `TestResolveOllamaModel_NoModels`, `TestResolveOllamaModel_MultipleModels`, `TestResolveOllamaModel_ConnectionError` — moved to `internal/provider/ollama/provider_test.go` in this same task, not left behind for later cleanup)
 
 **Interfaces:**
 - Consumes: same as Task 2, plus `ollama.NewClient(baseURL string) *Client` and `Client.ListModels(ctx) ([]ModelInfo, error)` (existing, `internal/provider/ollama/client.go`), `ollama.DefaultBaseURL` (existing constant, `"http://localhost:11434"`).
-- Produces: `ollama.providerDef() provider.ProviderDef`, `ollama.resolveDefaultModel(ctx, cfg) (string, error)`, `ollama.listModels(ctx, cfg) ([]provider.Model, error)` — these two replicate `cmd/rubichan/main.go`'s current `resolveOllamaModel` behavior exactly (single model → auto-select; multiple → first-of-list; zero → error `"no models found; run 'rubichan ollama pull <model>' first"`).
-
-**Note:** this task does *not* touch `cmd/rubichan/main.go`'s existing `resolveOllamaModel` function — it stays, still used by the old path, until Task 9 deletes it. For this task's duration, the same model-resolution logic temporarily exists in two places; that's expected and resolved by Task 9, not a bug to fix now.
+- Produces: `ollama.providerDef() provider.ProviderDef`, `ollama.resolveDefaultModel(ctx, cfg) (string, error)`, `ollama.listModels(ctx, cfg) ([]provider.Model, error)` — these two replicate `cmd/rubichan/main.go`'s `resolveOllamaModel` behavior exactly (single model → auto-select; multiple → first-of-list; zero → error `"no models found; run 'rubichan ollama pull <model>' first"`), and this task deletes `resolveOllamaModel` in the same commit — the old and new implementations never coexist.
 
 - [ ] **Step 1: Write the failing tests for `resolveDefaultModel`/`listModels`**
 
@@ -826,7 +933,7 @@ func TestProviderDef_AuthIsKeyless(t *testing.T) {
 Run: `go test ./internal/provider/ollama/... -run 'TestResolveDefaultModel|TestListModels|TestProviderDef' -v`
 Expected: FAIL — `undefined: resolveDefaultModel` (and friends).
 
-- [ ] **Step 3: Add `resolveDefaultModel`, `listModels`, `providerDef()`, and register it in `init()`**
+- [ ] **Step 3: Add `resolveDefaultModel`, `listModels`, `providerDef()`, replace `init()`'s registration**
 
 In `internal/provider/ollama/provider.go`, replace:
 
@@ -842,9 +949,6 @@ with:
 
 ```go
 func init() {
-	provider.RegisterProvider("ollama", func(baseURL, _ string, _ map[string]string) provider.LLMProvider {
-		return New(baseURL)
-	})
 	provider.Default.Register(providerDef())
 }
 
@@ -907,47 +1011,132 @@ func listModels(ctx context.Context, cfg *config.Config) ([]provider.Model, erro
 
 Add `"github.com/julianshen/rubichan/internal/config"` to `internal/provider/ollama/provider.go`'s import block (`context` and `fmt` are already imported).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Cut `factory.go`'s `"ollama"` switch-case over, delete the old function**
 
-Run: `go test ./internal/provider/ollama/... -run 'TestResolveDefaultModel|TestListModels|TestProviderDef' -v`
-Expected: PASS
+In `internal/provider/factory.go`, change:
 
-- [ ] **Step 5: Run the full ollama package and provider package (regression check)**
+```go
+	case "ollama":
+		return newOllamaProvider(cfg)
+```
+
+to:
+
+```go
+	case "ollama":
+		return Default.New(cfg)
+```
+
+Keep the early `return`, matching Task 3's reasoning exactly — preserves the existing debug-logging quirk unchanged; Task 5 fixes it for every provider at once, explicitly.
+
+Delete the now-unused `newOllamaProvider` function from `factory.go`.
+
+- [ ] **Step 5: Cut `main.go`'s ollama `if` block over, delete `resolveOllamaModel`**
+
+In `cmd/rubichan/main.go`'s `loadConfig()`, replace:
+
+```go
+	// Resolve Ollama model if provider is ollama and no model specified.
+	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
+		model, err := resolveOllamaModel(ollamaURL)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Provider.Model = model
+		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
+	}
+```
+
+with:
+
+```go
+	// Resolve Ollama model if provider is ollama and no model specified.
+	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Provider.Model = model
+		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
+	}
+```
+
+`ollamaURL` (computed a few lines above, still used by `autoDetectProvider` just before this block) is no longer read by this block, but leave its computation and the `autoDetectProvider` call untouched — provider auto-*detection* is a separate concern from model resolution, per the design spec.
+
+Delete this function from `cmd/rubichan/main.go` entirely (immediately precedes `loadConfig()`):
+
+```go
+// resolveOllamaModel queries Ollama for available models and resolves which
+// model to use. With a single model it auto-selects; with zero models it
+// returns an error. The ollamaURL parameter allows testing with httptest.
+func resolveOllamaModel(ollamaURL string) (string, error) {
+	client := ollama.NewClient(ollamaURL)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("listing Ollama models: %w", err)
+	}
+
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models found; run 'rubichan ollama pull <model>' first")
+	}
+
+	if len(models) == 1 {
+		return models[0].Name, nil
+	}
+
+	// Multiple models — in interactive mode, we'd show a picker.
+	// For now, return the first model. The TUI picker integration
+	// requires running a Bubble Tea program which is complex to wire here.
+	// TODO: integrate tui.ModelPicker when running interactively.
+	return models[0].Name, nil
+}
+```
+
+Leave the `ollama` package import in `main.go` in place — `autoDetectProvider` still uses `ollama.NewClient(...).IsRunning(...)`.
+
+- [ ] **Step 6: Delete `resolveOllamaModel`'s tests from `main_test.go`**
+
+Remove `TestResolveOllamaModel_SingleModel`, `TestResolveOllamaModel_NoModels`, `TestResolveOllamaModel_MultipleModels` (currently just before `capabilityTestProvider`), and `TestResolveOllamaModel_ConnectionError` (currently just before `// saveFlags saves...`) from `cmd/rubichan/main_test.go`. Their behavior is now covered by Step 1's tests in `internal/provider/ollama/provider_test.go`.
+
+- [ ] **Step 7: Run the full ollama package, provider package, and cmd/rubichan (regression check)**
 
 Run: `go test ./internal/provider/ollama/... ./internal/provider/... ./cmd/rubichan/...`
-Expected: all PASS unchanged — `cmd/rubichan/main.go`'s `resolveOllamaModel` and the old switch-statement path are both untouched.
+Expected: all PASS. `grep -rn "resolveOllamaModel" cmd/rubichan/` should return no matches at all (function and all its call sites/tests gone).
 
-- [ ] **Step 6: Format, vet, commit**
+- [ ] **Step 8: Format, vet, commit**
 
-Run: `gofmt -l internal/provider/ollama/provider.go internal/provider/ollama/provider_test.go` and `go vet ./internal/provider/ollama/...`.
+Run: `gofmt -l internal/provider/ollama/provider.go internal/provider/ollama/provider_test.go internal/provider/factory.go cmd/rubichan/main.go cmd/rubichan/main_test.go` and `go vet ./internal/provider/ollama/... ./internal/provider/... ./cmd/rubichan/...`.
 
 ```bash
-git add internal/provider/ollama/provider.go internal/provider/ollama/provider_test.go
+git add internal/provider/ollama/provider.go internal/provider/ollama/provider_test.go internal/provider/factory.go cmd/rubichan/main.go cmd/rubichan/main_test.go
 git commit -m "$(cat <<'EOF'
-[BEHAVIORAL] Register Ollama as a ProviderDef with model listing
+[BEHAVIORAL] Migrate Ollama to a ProviderDef with model listing
 
-Adds resolveDefaultModel/listModels alongside the existing
-cmd/rubichan/main.go resolveOllamaModel (same behavior, temporarily
-duplicated — Task 9 removes the old copy once main.go is cut over).
-ListModels is the first real use of the ProviderDef.ListModels extension
-point; Anthropic/Z.ai don't have a listing API and leave it nil.
+Fully atomic: providerDef's DefaultModel/ListModels replicate
+resolveOllamaModel's exact behavior, and that function (plus its 4 tests
+in main_test.go) is deleted in this same commit — never coexists with
+its replacement. ListModels is the first real use of the
+ProviderDef.ListModels extension point; Anthropic/Z.ai don't have a
+listing API and leave it nil.
 EOF
 )"
 ```
 
-This completes PR 2 (Task 4: Ollama). Suggest opening/pushing here before continuing.
-
 ---
 
-## Task 5: Migrate the OpenAI-compatible provider to a ProviderDef (fallback registration)
+## Task 5: Migrate the OpenAI-compatible provider and remove the switch-statement scaffolding
 
 **Files:**
 - Modify: `internal/provider/openai/provider.go` (its `init()`, currently lines 14-18)
 - Modify: `internal/provider/openai/provider_test.go`
+- Modify: `internal/provider/factory.go` (replace the entire switch-statement with a direct `Default.New` call; delete `newOpenAIProvider`, `formatUnknownProviderError`, `registry`, `RegisterProvider`)
+- Modify: `cmd/rubichan/main.go` (collapse the anthropic/zai/ollama `if` blocks into one generic call)
 
 **Interfaces:**
 - Consumes: `Registry.RegisterFallback` (Task 1) — this provider handles *any* `cfg.Provider.Default` name that doesn't match an exact registration (openrouter, custom proxies, etc.), matching `factory.go`'s current `switch { ...; default: newOpenAIProvider }`.
-- Produces: `openai.providerDef() provider.ProviderDef`, `openai.formatUnknownProviderError(name string, configured []config.OpenAICompatibleConfig) error` (moved here from `factory.go` — Task 7 deletes the `factory.go` copy).
+- Produces: `openai.providerDef() provider.ProviderDef`, `openai.formatUnknownProviderError(name string, configured []config.OpenAICompatibleConfig) error` (moved here from `factory.go` in this same commit).
+
+**This is the last provider migration, so it's also where the shared scaffolding — the switch-statement itself, the old `registry` map, `RegisterProvider` — becomes fully unused and is deleted, and where `main.go`'s three `if` blocks collapse into one. Both are safe only now, for two reasons documented in this plan's Global Constraints: (1) `Registry.lookup` would hard-error for any not-yet-registered provider name, so the generic single-dispatch form can't land until every provider (including this fallback) is registered; (2) `ErrNoDefaultModel` must exist so an OpenAI-compatible provider's absence of default-model resolution is treated as "leave unset," not a startup failure.**
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -991,7 +1180,7 @@ func TestProviderDef_DefaultModelIsNil(t *testing.T) {
 Run: `go test ./internal/provider/openai/... -run TestProviderDef -v`
 Expected: FAIL — `undefined: providerDef`.
 
-- [ ] **Step 3: Add `providerDef()`, `formatUnknownProviderError`, register via `RegisterFallback`**
+- [ ] **Step 3: Add `providerDef()`, `formatUnknownProviderError`, replace `init()`'s registration**
 
 In `internal/provider/openai/provider.go`, replace:
 
@@ -1007,9 +1196,6 @@ with:
 
 ```go
 func init() {
-	provider.RegisterProvider("openai", func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
-		return New(baseURL, apiKey, extraHeaders)
-	})
 	provider.Default.RegisterFallback(providerDef())
 }
 
@@ -1017,7 +1203,9 @@ func init() {
 // for provider.Default. Registered as the fallback (not an exact-ID match)
 // because this provider handles any name found in cfg.Provider.OpenAI —
 // "openai", "openrouter", a custom proxy name, etc. — not one fixed ID.
-// Exposed as a function so tests can exercise it directly.
+// DefaultModel is left nil: this provider has never had default-model
+// resolution (users must pass --model), and Registry.ResolveDefaultModel's
+// ErrNoDefaultModel preserves that — see main.go's loadConfig().
 func providerDef() provider.ProviderDef {
 	return provider.ProviderDef{
 		ID: "openai",
@@ -1094,145 +1282,9 @@ Add `"strings"` and `"github.com/julianshen/rubichan/internal/config"` to `inter
 Run: `go test ./internal/provider/openai/... -run TestProviderDef -v`
 Expected: PASS
 
-- [ ] **Step 5: Run the full openai package and provider package (regression check)**
+- [ ] **Step 5: Replace `factory.go`'s entire switch-statement, delete now-dead code**
 
-Run: `go test ./internal/provider/openai/... ./internal/provider/... ./cmd/rubichan/...`
-Expected: all PASS unchanged.
-
-- [ ] **Step 6: Format, vet, commit**
-
-Run: `gofmt -l internal/provider/openai/provider.go internal/provider/openai/provider_test.go` and `go vet ./internal/provider/openai/...`.
-
-```bash
-git add internal/provider/openai/provider.go internal/provider/openai/provider_test.go
-git commit -m "$(cat <<'EOF'
-[BEHAVIORAL] Register the OpenAI-compatible provider as a Registry fallback
-
-Uses RegisterFallback since this provider handles any name found in
-cfg.Provider.OpenAI, not one fixed ID — mirrors factory.go's switch
-default: case. formatUnknownProviderError moves here from factory.go
-(duplicated for now; Task 7 removes the factory.go copy).
-EOF
-)"
-```
-
----
-
-## Task 6: Cut `factory.go` over to the registry
-
-**Files:**
-- Modify: `internal/provider/factory.go`
-
-**Interfaces:**
-- Consumes: `provider.Default.New(cfg)` (Task 1), fully populated by Tasks 2-5.
-- Produces: `NewProvider`/`NewProviderWithDebug` unchanged signatures, now delegating instead of switching.
-
-This is the actual behavioral cutover — the highest-risk single step in this plan. The old switch-statement (`newAnthropicProvider`, `newOllamaProvider`, `newZaiProvider`, `newOpenAIProvider`, the old `registry` map, `RegisterProvider`) is **not deleted yet** — it becomes unused dead code in this same file, removed cleanly in Task 7 (structural, separated per Tidy First since this task is the behavior change and Task 7 is pure deletion).
-
-- [ ] **Step 1: Run the full existing `factory_test.go` suite first, to have a known-green baseline**
-
-Run: `go test ./internal/provider/... -run TestNewProvider -v`
-Expected: all `TestNewProvider*` tests in `internal/provider/factory_test.go` PASS (11 tests — see file for names).
-
-- [ ] **Step 2: Change `NewProviderWithDebug` to delegate to `Default.New`**
-
-In `internal/provider/factory.go`, replace:
-
-```go
-// NewProviderWithDebug creates an LLMProvider and optionally enables debug
-// logging of HTTP request/response details to stderr via log.Printf.
-func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
-	var p LLMProvider
-	var err error
-
-	switch cfg.Provider.Default {
-	case "anthropic":
-		p, err = newAnthropicProvider(cfg)
-	case "ollama":
-		return newOllamaProvider(cfg)
-	case "zai":
-		return newZaiProvider(cfg)
-	default:
-		p, err = newOpenAIProvider(cfg)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	if debug {
-		EnableDebugLogging(p)
-	}
-
-	return p, nil
-}
-```
-
-with:
-
-```go
-// NewProviderWithDebug creates an LLMProvider and optionally enables debug
-// logging of HTTP request/response details to stderr via log.Printf.
-func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
-	p, err := Default.New(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	if debug {
-		EnableDebugLogging(p)
-	}
-
-	return p, nil
-}
-```
-
-Leave `newAnthropicProvider`, `newOllamaProvider`, `newZaiProvider`, `newOpenAIProvider`, `formatUnknownProviderError`, `anthropicBaseURL`, `registry`, and `RegisterProvider` exactly as they are in the file for now — they're unused by anything except each other after this change, but Task 7 removes them.
-
-- [ ] **Step 3: Run the same tests to verify they still pass, now via the new path**
-
-Run: `go test ./internal/provider/... -run TestNewProvider -v`
-Expected: all still PASS — same behavior, now produced by `Registry.New` instead of the switch-statement.
-
-- [ ] **Step 4: Run the full suite (regression check)**
-
-Run: `go test ./internal/provider/... ./cmd/rubichan/...`
-Expected: all PASS. This is the step that proves the cutover is behavior-preserving — if anything fails here, do not proceed to Task 7; investigate which `ProviderDef` doesn't match its old switch-statement counterpart.
-
-- [ ] **Step 5: Format, vet, commit**
-
-Run: `gofmt -l internal/provider/factory.go` and `go vet ./internal/provider/...`.
-
-```bash
-git add internal/provider/factory.go
-git commit -m "$(cat <<'EOF'
-[BEHAVIORAL] Cut NewProvider/NewProviderWithDebug over to the registry
-
-Delegates to Default.New instead of the switch-statement. The old
-switch-statement and per-provider newXxxProvider functions are now dead
-code, left in place for this commit and removed in the next
-(structural-only) commit so this behavioral change stays isolated and
-easy to revert on its own if something regresses.
-EOF
-)"
-```
-
----
-
-## Task 7: Delete the old switch-statement machinery
-
-**Files:**
-- Modify: `internal/provider/factory.go`
-- Modify: `internal/provider/anthropic/provider.go`, `internal/provider/zai/provider.go`, `internal/provider/ollama/provider.go`, `internal/provider/openai/provider.go` (remove now-redundant `RegisterProvider` calls)
-- Modify: `internal/provider/factory_test.go` (remove/adapt tests that exercised deleted internals — the public-behavior tests calling `NewProvider`/`NewProviderWithDebug` don't need to change at all, since Task 6 proved they still pass)
-
-**Interfaces:** none — pure deletion, no new interfaces produced or consumed. Structural only; run tests before and after per CLAUDE.md's refactoring guideline, revert if anything breaks.
-
-- [ ] **Step 1: Delete the four per-provider constructor functions and `formatUnknownProviderError`/`anthropicBaseURL` from `factory.go`**
-
-Remove from `internal/provider/factory.go`: `newAnthropicProvider`, `newOllamaProvider`, `newZaiProvider`, `newOpenAIProvider`, `formatUnknownProviderError`, the `const anthropicBaseURL = "https://api.anthropic.com"` line, the `registry map[string]ProviderConstructor` var, and `RegisterProvider`. The file should end up containing only: package/imports, `NewProvider`, `NewProviderWithDebug` (from Task 6). Update imports — `strings` is no longer used in this file (it was only for `formatUnknownProviderError`), remove it if `goimports`/`gofmt` doesn't do so automatically.
-
-The resulting `internal/provider/factory.go`:
+`internal/provider/factory.go` should end up containing only `NewProvider` and `NewProviderWithDebug`, plus the imports they need:
 
 ```go
 package provider
@@ -1264,91 +1316,38 @@ func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
 }
 ```
 
-- [ ] **Step 2: Remove the now-redundant `RegisterProvider` calls from each provider's `init()`**
+Delete `newOpenAIProvider`, `formatUnknownProviderError` (moved to `openai/provider.go` in Step 3), the `registry map[string]ProviderConstructor` var, and `RegisterProvider` — every provider now registers via `Default.Register`/`RegisterFallback` in its own `init()`, so nothing calls `RegisterProvider` anymore. Remove the `strings` import if nothing else in the file uses it (it was only for `formatUnknownProviderError`).
 
-In each of `internal/provider/anthropic/provider.go`, `internal/provider/zai/provider.go`, `internal/provider/ollama/provider.go`, `internal/provider/openai/provider.go`, change `init()` to only call `Default.Register(providerDef())` (or `Default.RegisterFallback(providerDef())` for `openai`), removing the `provider.RegisterProvider(...)` call. Example for anthropic:
+**Explicitly flagged behavior change:** the original switch-statement had `case "ollama": return newOllamaProvider(cfg)` and `case "zai": return newZaiProvider(cfg)` — early returns that skipped the `if debug { EnableDebugLogging(p) }` line entirely, so `--debug` never applied to Ollama/Z.ai even when passed (Anthropic and OpenAI-compatible always fell through to the debug check and worked correctly). The unified `Default.New(cfg)` call above has no per-provider branching, so it applies debug-logging uniformly to every provider — this closes that latent gap for Ollama and Z.ai. This is a real, positive behavior change, not incidental noise to hide: call it out in the commit message and PR description.
 
-```go
-func init() {
-	provider.Default.Register(providerDef())
-}
-```
+- [ ] **Step 6: Collapse `main.go`'s three `if` blocks into one generic call**
 
-(Same shape for zai/ollama with `Register`, and openai with `RegisterFallback`.)
-
-- [ ] **Step 3: Run the full test suite**
-
-Run: `go test ./internal/provider/... ./cmd/rubichan/...`
-Expected: all PASS. `factory_test.go`'s existing `TestNewProvider*` tests should compile and pass unmodified — they call the public `NewProvider`/`NewProviderWithDebug` functions, whose behavior Task 6 already proved is unchanged.
-
-If any test fails: revert this task's changes (`git checkout -- <files>` for uncommitted changes) and investigate before retrying — per CLAUDE.md, a structural change that breaks tests gets reverted, not patched forward.
-
-- [ ] **Step 4: Format, vet, commit**
-
-Run: `gofmt -l internal/provider/factory.go internal/provider/anthropic/provider.go internal/provider/zai/provider.go internal/provider/ollama/provider.go internal/provider/openai/provider.go` and `go vet ./internal/provider/...`.
-
-```bash
-git add internal/provider/factory.go internal/provider/anthropic/provider.go internal/provider/zai/provider.go internal/provider/ollama/provider.go internal/provider/openai/provider.go
-git commit -m "$(cat <<'EOF'
-[STRUCTURAL] Remove the old provider switch-statement and RegisterProvider
-
-Dead since the previous commit cut NewProvider/NewProviderWithDebug over
-to the registry. Each provider's init() now registers only its
-ProviderDef. No behavior change — verified by the full test suite passing
-unmodified.
-EOF
-)"
-```
-
-This completes PR 3's first half (Tasks 5-7). Continue directly to Tasks 8-9, or pause here — Tasks 8-9 are independent of whether this is a separate PR.
-
----
-
-## Task 8: Cut `main.go`'s `loadConfig()` over to `ResolveDefaultModel`
-
-**Files:**
-- Modify: `cmd/rubichan/main.go`
-
-**Interfaces:**
-- Consumes: `provider.Default.ResolveDefaultModel(ctx, cfg)` (Task 1, populated by Tasks 2-4; Task 5's OpenAI-compatible provider has no `DefaultModel`, matching today's behavior of never auto-resolving a model for it).
-
-**Reminder:** confirm the Prerequisite section at the top of this plan before starting — this task assumes `loadConfig()` currently has the three `if cfg.Provider.Model == ""` blocks (zai, ollama, anthropic) from PR #329.
-
-- [ ] **Step 1: Run the existing `loadConfig` tests first, to have a known-green baseline**
-
-Run: `go test ./cmd/rubichan/... -run TestLoadConfig -v`
-Expected: PASS (`TestLoadConfig_Default`, `TestLoadConfig_WithModelOverride`, `TestLoadConfig_WithProviderOverride`, `TestLoadConfig_ZaiDefaultModel_FallsBackWhenUnset`, `TestLoadConfig_ZaiDefaultModel_UsesConfiguredZaiModel`, `TestLoadConfig_AnthropicDefaultModel`, `TestLoadConfig_WithCustomConfigPath`).
-
-- [ ] **Step 2: Replace the three `if` blocks with one `ResolveDefaultModel` call**
-
-In `cmd/rubichan/main.go`'s `loadConfig()`, replace:
+In `cmd/rubichan/main.go`'s `loadConfig()`, replace all three of these blocks (anthropic, zai, ollama — by now each looks like `if cfg.Provider.Default == "X" && cfg.Provider.Model == "" { model, err := provider.Default.ResolveDefaultModel(...); ...}`):
 
 ```go
-	// Resolve Z.ai's default model if provider is zai and no model specified
-	// via --model. [provider.zai].model wins over the built-in fallback.
-	if cfg.Provider.Default == "zai" && cfg.Provider.Model == "" {
-		if cfg.Provider.Zai.Model != "" {
-			cfg.Provider.Model = cfg.Provider.Zai.Model
-		} else {
-			cfg.Provider.Model = "glm-5"
+	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		if err != nil {
+			return nil, err
 		}
+		cfg.Provider.Model = model
 	}
 
-	// Resolve Ollama model if provider is ollama and no model specified.
+	if cfg.Provider.Default == "zai" && cfg.Provider.Model == "" {
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Provider.Model = model
+	}
+
 	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
-		model, err := resolveOllamaModel(ollamaURL)
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
 		if err != nil {
 			return nil, err
 		}
 		cfg.Provider.Model = model
 		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
-	}
-
-	// Resolve Anthropic's default model if it's the (possibly auto-detected)
-	// provider and no model was specified. This runs last so it only ever
-	// fills in what the provider-specific resolutions above left empty.
-	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
-		cfg.Provider.Model = "claude-sonnet-4-5"
 	}
 ```
 
@@ -1358,129 +1357,65 @@ with:
 	// Resolve the provider's default model if none was specified via
 	// --model or config. Each provider's own resolution logic (constant,
 	// config-driven fallback, or dynamic lookup) lives in its ProviderDef
-	// (internal/provider/{anthropic,zai,ollama}) rather than here.
+	// (internal/provider/{anthropic,zai,ollama}). Providers with no
+	// DefaultModel resolver (e.g. custom OpenAI-compatible endpoints) leave
+	// cfg.Provider.Model unset, matching prior behavior.
 	if cfg.Provider.Model == "" {
 		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
-		if err != nil {
+		switch {
+		case err == nil:
+			cfg.Provider.Model = model
+			if cfg.Provider.Default == "ollama" {
+				fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
+			}
+		case errors.Is(err, provider.ErrNoDefaultModel):
+			// No default-model resolution for this provider — leave Model
+			// empty, same as before this provider had a Registry entry.
+		default:
 			return nil, err
 		}
-		cfg.Provider.Model = model
-		if cfg.Provider.Default == "ollama" {
-			fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
-		}
 	}
 ```
 
-`ollamaURL` (computed just above this block) is still used by `autoDetectProvider` a few lines earlier — leave that computation in place. `context` and `provider` are both already imported in `cmd/rubichan/main.go`.
+`"errors"` is already imported in `cmd/rubichan/main.go` (line 8) — no import changes needed for this step.
 
-- [ ] **Step 3: Run the same tests to verify they still pass**
+- [ ] **Step 7: Run the full suite (regression check)**
 
-Run: `go test ./cmd/rubichan/... -run TestLoadConfig -v`
-Expected: all still PASS — same resolved `cfg.Provider.Model` values, now produced by `ResolveDefaultModel` instead of three inline blocks.
+Run: `go test ./internal/provider/... ./cmd/rubichan/...`
+Expected: all PASS, including every `TestLoadConfig_*` and `TestNewProvider*` test, unmodified. `grep -rn "newOpenAIProvider\|RegisterProvider\b" internal/provider/` should return no matches (fully removed).
 
-- [ ] **Step 4: Run the full suite (regression check)**
+- [ ] **Step 8: Format, vet, commit**
 
-Run: `go test ./cmd/rubichan/... ./internal/provider/...`
-Expected: all PASS.
-
-- [ ] **Step 5: Format, vet, commit**
-
-Run: `gofmt -l cmd/rubichan/main.go` and `go vet ./cmd/rubichan/...`.
+Run: `gofmt -l internal/provider/openai/provider.go internal/provider/openai/provider_test.go internal/provider/factory.go cmd/rubichan/main.go` and `go vet ./internal/provider/... ./cmd/rubichan/...`.
 
 ```bash
-git add cmd/rubichan/main.go
+git add internal/provider/openai/provider.go internal/provider/openai/provider_test.go internal/provider/factory.go cmd/rubichan/main.go
 git commit -m "$(cat <<'EOF'
-[BEHAVIORAL] Cut loadConfig()'s default-model resolution over to the registry
+[BEHAVIORAL] Migrate OpenAI-compatible, remove the switch-statement scaffolding
 
-Replaces the three provider-specific if-blocks (zai, ollama, anthropic)
-with one provider.Default.ResolveDefaultModel call. Same resolved values
-for every provider — verified by the existing TestLoadConfig_* suite
-passing unmodified.
+Last provider migration: registers via RegisterFallback (handles any
+provider name in cfg.Provider.OpenAI, not one fixed ID), then removes
+factory.go's now-fully-unused switch/registry/RegisterProvider and
+collapses main.go's three provider-gated default-model blocks into one
+generic call, safe now that every provider (including this fallback) is
+registered and ErrNoDefaultModel distinguishes "no resolver" from a real
+failure.
+
+Flagging one incidental behavior fix: the old switch's early-return
+branches for Ollama/Z.ai skipped debug-log wiring even with --debug set;
+the unified dispatch applies it uniformly to every provider now.
 EOF
 )"
 ```
 
 ---
 
-## Task 9: Delete `resolveOllamaModel` from `main.go`
-
-**Files:**
-- Modify: `cmd/rubichan/main.go` (delete `resolveOllamaModel`, currently the function right before `loadConfig()`)
-- Modify: `cmd/rubichan/main_test.go` (delete `TestResolveOllamaModel_SingleModel`, `TestResolveOllamaModel_NoModels`, `TestResolveOllamaModel_MultipleModels`, `TestResolveOllamaModel_ConnectionError` — their behavior is now covered by Task 4's `TestResolveDefaultModel_*` tests in `internal/provider/ollama/provider_test.go`)
-
-**Interfaces:** none — pure deletion of now-fully-superseded code (Task 4's `ollama.resolveDefaultModel`/`listModels` replicate this function's exact behavior, and Task 8 stopped calling it).
-
-- [ ] **Step 1: Confirm nothing still calls `resolveOllamaModel`**
-
-Run: `grep -rn "resolveOllamaModel" cmd/rubichan/`
-Expected: only its own definition and its 4 tests — no call sites (Task 8 removed the only one).
-
-- [ ] **Step 2: Delete the function from `main.go`**
-
-Remove this function from `cmd/rubichan/main.go` (immediately precedes `loadConfig()`):
-
-```go
-// resolveOllamaModel queries Ollama for available models and resolves which
-// model to use. With a single model it auto-selects; with zero models it
-// returns an error. The ollamaURL parameter allows testing with httptest.
-func resolveOllamaModel(ollamaURL string) (string, error) {
-	client := ollama.NewClient(ollamaURL)
-	models, err := client.ListModels(context.Background())
-	if err != nil {
-		return "", fmt.Errorf("listing Ollama models: %w", err)
-	}
-
-	if len(models) == 0 {
-		return "", fmt.Errorf("no models found; run 'rubichan ollama pull <model>' first")
-	}
-
-	if len(models) == 1 {
-		return models[0].Name, nil
-	}
-
-	// Multiple models — in interactive mode, we'd show a picker.
-	// For now, return the first model. The TUI picker integration
-	// requires running a Bubble Tea program which is complex to wire here.
-	// TODO: integrate tui.ModelPicker when running interactively.
-	return models[0].Name, nil
-}
-```
-
-Leave the `ollama` package import in place — `autoDetectProvider` still uses `ollama.NewClient(...).IsRunning(...)`.
-
-- [ ] **Step 3: Delete its tests from `main_test.go`**
-
-Remove `TestResolveOllamaModel_SingleModel`, `TestResolveOllamaModel_NoModels`, `TestResolveOllamaModel_MultipleModels` (all three currently just before `capabilityTestProvider`), and `TestResolveOllamaModel_ConnectionError` (currently just before `// saveFlags saves...`) from `cmd/rubichan/main_test.go`.
-
-- [ ] **Step 4: Run the full suite**
-
-Run: `go test ./cmd/rubichan/... ./internal/provider/...`
-Expected: all PASS — Ollama default-model-resolution coverage now lives entirely in `internal/provider/ollama/provider_test.go` (Task 4).
-
-- [ ] **Step 5: Format, vet, commit**
-
-Run: `gofmt -l cmd/rubichan/main.go cmd/rubichan/main_test.go` and `go vet ./cmd/rubichan/...`.
-
-```bash
-git add cmd/rubichan/main.go cmd/rubichan/main_test.go
-git commit -m "$(cat <<'EOF'
-[STRUCTURAL] Remove resolveOllamaModel, now fully superseded
-
-ollama.resolveDefaultModel/listModels (internal/provider/ollama) replicate
-its exact behavior and have their own test coverage since Task 4; nothing
-has called this copy since Task 8. autoDetectProvider's ollama.NewClient
-usage is untouched.
-EOF
-)"
-```
-
----
-
-## Final verification (after Task 9)
+## Final verification (after Task 5)
 
 - [ ] Run: `go build ./...` — expect success.
 - [ ] Run: `gofmt -l .` — expect no output.
 - [ ] Run: `go vet ./...` — expect no issues.
-- [ ] Run: `go test ./...` — expect all packages passing, same total test count as before this plan started minus the 4 deleted `TestResolveOllamaModel_*` tests plus every new test this plan added.
+- [ ] Run: `go test ./...` — expect all packages passing.
 - [ ] Run: `go test -race ./internal/provider/... ./cmd/rubichan/...` — expect all passing (matches the verification rigor used in PR #329).
-- [ ] Confirm `internal/provider/factory.go` is now ~20 lines (just `NewProvider`/`NewProviderWithDebug`) and every provider construction/default-model concern lives in exactly one place: that provider's own `providerDef()`.
+- [ ] Run: `grep -rn "RegisterProvider\b\|newAnthropicProvider\|newZaiProvider\|newOllamaProvider\|newOpenAIProvider\|resolveOllamaModel" internal/ cmd/` — expect zero matches; confirms nothing from the old mechanism survives.
+- [ ] Confirm `internal/provider/factory.go` is ~20 lines (just `NewProvider`/`NewProviderWithDebug`) and every provider construction/default-model concern lives in exactly one place: that provider's own `providerDef()`.
