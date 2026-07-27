@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -839,20 +838,6 @@ func TestConfigDir_ReturnsExpectedPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// getActiveSessionLogPath / setActiveSessionLogPath
-// ---------------------------------------------------------------------------
-
-func TestActiveSessionLogPath_RoundTrip(t *testing.T) {
-	// Save and restore since this modifies global state.
-	prev := getActiveSessionLogPath()
-	defer setActiveSessionLogPath(prev)
-
-	setActiveSessionLogPath("/tmp/test-session.log")
-	assert.Equal(t, "/tmp/test-session.log", getActiveSessionLogPath())
-}
-
-// ---------------------------------------------------------------------------
-// storeMemoryAdapter
 // ---------------------------------------------------------------------------
 
 func TestStoreMemoryAdapter_SaveAndLoad(t *testing.T) {
@@ -1042,120 +1027,6 @@ func TestIndexProjectFiles_NonGitDir(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// captureAllStacks
-// ---------------------------------------------------------------------------
-
-func TestCaptureAllStacks_ReturnsNonEmpty(t *testing.T) {
-	t.Parallel()
-	stacks := captureAllStacks()
-	assert.NotEmpty(t, stacks)
-	assert.Contains(t, string(stacks), "goroutine")
-}
-
-// ---------------------------------------------------------------------------
-// writeStackDump
-// ---------------------------------------------------------------------------
-
-func TestWriteStackDump_CreatesFile(t *testing.T) {
-	t.Parallel()
-	cfgDir := t.TempDir()
-	path, err := writeStackDump(cfgDir, "test-dump.log", "header: test\n\n")
-	require.NoError(t, err)
-	require.FileExists(t, path)
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "header: test")
-	assert.Contains(t, string(data), "goroutine")
-}
-
-func TestWriteStackDump_InvalidDir(t *testing.T) {
-	t.Parallel()
-	// Using a file path as the config dir should fail.
-	tmpFile := filepath.Join(t.TempDir(), "not-a-dir")
-	require.NoError(t, os.WriteFile(tmpFile, []byte("x"), 0o644))
-
-	_, err := writeStackDump(tmpFile, "dump.log", "header\n")
-	assert.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// writeDiagnosticDump
-// ---------------------------------------------------------------------------
-
-func TestWriteDiagnosticDump_CreatesFile(t *testing.T) {
-	t.Parallel()
-	cfgDir := t.TempDir()
-	path, err := writeDiagnosticDump(cfgDir, os.Interrupt, "/tmp/session.log")
-	require.NoError(t, err)
-	require.FileExists(t, path)
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "signal: interrupt")
-	assert.Contains(t, string(data), "session_log: /tmp/session.log")
-}
-
-// ---------------------------------------------------------------------------
-// buildEventSink — additional cases
-// ---------------------------------------------------------------------------
-
-func TestBuildEventSink_DebugOnly(t *testing.T) {
-	t.Parallel()
-	sink := buildEventSink(nil, true)
-	require.Len(t, sink, 1) // log sink only
-}
-
-func TestBuildEventSink_DebugWithStructuredLog(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.jsonl")
-	logger, err := startEventLogger(path)
-	require.NoError(t, err)
-	defer logger.Close()
-
-	sink := buildEventSink(logger, true)
-	require.Len(t, sink, 2) // log sink + JSONL sink
-}
-
-// ---------------------------------------------------------------------------
-// eventLogger.Close — nil safety
-// ---------------------------------------------------------------------------
-
-func TestEventLoggerClose_Nil(t *testing.T) {
-	t.Parallel()
-	var el *eventLogger
-	assert.NoError(t, el.Close())
-}
-
-// ---------------------------------------------------------------------------
-// sessionLogger.Close — nil safety
-// ---------------------------------------------------------------------------
-
-func TestSessionLoggerClose_Nil(t *testing.T) {
-	t.Parallel()
-	var sl *sessionLogger
-	assert.NoError(t, sl.Close())
-}
-
-// ---------------------------------------------------------------------------
-// startEventLogger
-// ---------------------------------------------------------------------------
-
-func TestStartEventLogger_EmptyPath(t *testing.T) {
-	t.Parallel()
-	logger, err := startEventLogger("")
-	assert.NoError(t, err)
-	assert.Nil(t, logger)
-}
-
-func TestStartEventLogger_WhitespacePath(t *testing.T) {
-	t.Parallel()
-	logger, err := startEventLogger("   ")
-	assert.NoError(t, err)
-	assert.Nil(t, logger)
-}
-
-// ---------------------------------------------------------------------------
-// buildPipeline
 // ---------------------------------------------------------------------------
 
 func TestBuildPipeline_NilRuntime(t *testing.T) {
@@ -1903,18 +1774,6 @@ func TestSingleLinePlainPreview(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// logFileSuffix — additional check
-// ---------------------------------------------------------------------------
-
-func TestLogFileSuffix_ContainsPID(t *testing.T) {
-	t.Parallel()
-	now := time.Now()
-	suffix := logFileSuffix(now)
-	assert.Contains(t, suffix, fmt.Sprintf("%d", os.Getpid()))
-}
-
-// ---------------------------------------------------------------------------
-// loadConfig — basic test with default config
 // ---------------------------------------------------------------------------
 
 func TestLoadConfig_Default(t *testing.T) {

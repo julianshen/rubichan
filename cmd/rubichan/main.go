@@ -12,9 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,6 +29,7 @@ import (
 	"github.com/julianshen/rubichan/internal/cmux"
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/diag"
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
@@ -46,7 +45,6 @@ import (
 	"github.com/julianshen/rubichan/internal/security/analyzer"
 	secoutput "github.com/julianshen/rubichan/internal/security/output"
 	"github.com/julianshen/rubichan/internal/security/scanner"
-	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/builtin"
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
@@ -132,9 +130,6 @@ var (
 	wikiOutFlag         string
 	wikiFormatFlag      string
 	wikiConcurrencyFlag int
-
-	activeSessionLogMu   sync.RWMutex
-	activeSessionLogPath string
 
 	newProviderWithDebug = provider.NewProviderWithDebug
 )
@@ -250,167 +245,6 @@ func handleInteractiveProgramError(err error, runCtx context.Context, phase stri
 	return fmt.Errorf("%s: %w", phase, err)
 }
 
-func setActiveSessionLogPath(path string) {
-	activeSessionLogMu.Lock()
-	defer activeSessionLogMu.Unlock()
-	activeSessionLogPath = path
-}
-
-func getActiveSessionLogPath() string {
-	activeSessionLogMu.RLock()
-	defer activeSessionLogMu.RUnlock()
-	return activeSessionLogPath
-}
-
-type sessionLogger struct {
-	file       *os.File
-	path       string
-	prevWriter io.Writer
-	prevFlags  int
-}
-
-type eventLogger struct {
-	file *os.File
-	path string
-}
-
-func logFileSuffix(now time.Time) string {
-	return fmt.Sprintf("%s-%d", now.UTC().Format("20060102-150405.000000000"), os.Getpid())
-}
-
-func captureAllStacks() []byte {
-	buf := make([]byte, 1<<20)
-	for len(buf) <= 16<<20 {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			return buf[:n]
-		}
-		buf = make([]byte, len(buf)*2)
-	}
-	n := runtime.Stack(buf, true)
-	return buf[:n]
-}
-
-func writeStackDump(cfgDir, fileName, header string) (string, error) {
-	logDir := filepath.Join(cfgDir, "logs")
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
-		return "", fmt.Errorf("creating log directory: %w", err)
-	}
-
-	path := filepath.Join(logDir, fileName)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return "", fmt.Errorf("opening dump file: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := io.WriteString(f, header); err != nil {
-		return "", fmt.Errorf("writing dump header: %w", err)
-	}
-	if _, err := f.Write(captureAllStacks()); err != nil {
-		return "", fmt.Errorf("writing dump stack: %w", err)
-	}
-
-	return path, nil
-}
-
-func startSessionLogger(cfgDir string, mirrorToStderr bool) (*sessionLogger, error) {
-	logDir := filepath.Join(cfgDir, "logs")
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
-		return nil, fmt.Errorf("creating log directory: %w", err)
-	}
-
-	path := filepath.Join(logDir, fmt.Sprintf("rubichan-%s.log", logFileSuffix(time.Now())))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("opening session log: %w", err)
-	}
-
-	sl := &sessionLogger{
-		file:       f,
-		path:       path,
-		prevWriter: log.Writer(),
-		prevFlags:  log.Flags(),
-	}
-	setActiveSessionLogPath(path)
-	logWriter := io.Writer(f)
-	if mirrorToStderr {
-		logWriter = io.MultiWriter(os.Stderr, f)
-	}
-	log.SetOutput(logWriter)
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.LUTC)
-	log.Printf("rubichan session log started: %s", path)
-	return sl, nil
-}
-
-func (sl *sessionLogger) Close() error {
-	if sl == nil {
-		return nil
-	}
-	log.Printf("rubichan session log finished")
-	log.SetOutput(sl.prevWriter)
-	log.SetFlags(sl.prevFlags)
-	return sl.file.Close()
-}
-
-func startEventLogger(path string) (*eventLogger, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("creating event log directory: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("opening event log: %w", err)
-	}
-	return &eventLogger{file: f, path: path}, nil
-}
-
-func (el *eventLogger) Close() error {
-	if el == nil {
-		return nil
-	}
-	return el.file.Close()
-}
-
-// buildEventSink centralizes interactive/headless session event wiring.
-// Human-readable log mirroring is intentionally debug-only; when callers
-// request only --event-log, events are written to JSONL without also being
-// mirrored through the standard logger.
-func buildEventSink(structuredEventLog *eventLogger, debug bool) session.MultiSink {
-	var sink session.MultiSink
-	if debug {
-		sink = append(sink, session.NewLogSink(log.Printf))
-	}
-	if structuredEventLog != nil {
-		sink = append(sink, session.NewJSONLSink(structuredEventLog.file))
-	}
-	return sink
-}
-
-func writeDiagnosticDump(cfgDir string, sig os.Signal, sessionLogPath string) (string, error) {
-	now := time.Now()
-	header := fmt.Sprintf(
-		"timestamp: %s\nsignal: %s\nsession_log: %s\n\n",
-		now.UTC().Format(time.RFC3339Nano),
-		sig.String(),
-		sessionLogPath,
-	)
-	return writeStackDump(cfgDir, fmt.Sprintf("diagnostic-%s-%s.log", strings.ToLower(sig.String()), logFileSuffix(now)), header)
-}
-
-func writePanicDump(cfgDir string, recovered any, sessionLogPath string) (string, error) {
-	now := time.Now()
-	header := fmt.Sprintf(
-		"timestamp: %s\npanic: %v\nsession_log: %s\n\n",
-		now.UTC().Format(time.RFC3339Nano),
-		recovered,
-		sessionLogPath,
-	)
-	return writeStackDump(cfgDir, fmt.Sprintf("panic-%s.log", logFileSuffix(now)), header)
-}
-
 // setupWorkingDir determines the effective working directory. When --worktree
 // is specified, it creates/reuses a worktree and returns a cleanup function
 // that auto-removes the worktree if it has no changes. The returned manager
@@ -478,9 +312,9 @@ func main() {
 	cfgDir, cfgDirErr := configDir()
 	defer func() {
 		if r := recover(); r != nil {
-			sessionLogPath := getActiveSessionLogPath()
+			sessionLogPath := diag.ActiveSessionLogPath()
 			if cfgDirErr == nil {
-				if path, err := writePanicDump(cfgDir, r, sessionLogPath); err != nil {
+				if path, err := diag.WritePanicDump(cfgDir, r, sessionLogPath); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: failed to write panic dump: %v\n", err)
 				} else {
 					fmt.Fprintf(os.Stderr, "panic dump written to %s\n", path)
@@ -1460,18 +1294,18 @@ func runInteractive() error {
 	}
 	runCtx, cancelRun := context.WithCancelCause(context.Background())
 	defer cancelRun(nil)
-	sessionLog, err := startSessionLogger(cfgDir, debugMode)
+	sessionLog, err := diag.StartSessionLogger(cfgDir, debugMode)
 	if err != nil {
 		return err
 	}
-	structuredEventLog, err := startEventLogger(eventLogPath)
+	structuredEventLog, err := diag.StartEventLogger(eventLogPath)
 	if err != nil {
 		if closeErr := sessionLog.Close(); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to close session log: %v\n", closeErr)
 		}
 		return err
 	}
-	stopSignals := startInteractiveSignalHandler(cfgDir, sessionLog.path, cancelRun)
+	stopSignals := startInteractiveSignalHandler(cfgDir, sessionLog.Path(), cancelRun)
 	defer stopSignals()
 	defer func() {
 		if closeErr := sessionLog.Close(); closeErr != nil {
@@ -1788,7 +1622,7 @@ func runInteractive() error {
 	if rt != nil {
 		model.SetSkillSummaryProvider(rt)
 	}
-	sink := buildEventSink(structuredEventLog, debugMode)
+	sink := diag.BuildEventSink(structuredEventLog, debugMode)
 	model.SetEventSink(sink)
 	if plainHost != nil {
 		plainHost.SetEventSink(sink)
@@ -2157,7 +1991,7 @@ func runHeadless() error {
 	if err != nil {
 		return err
 	}
-	structuredEventLog, err := startEventLogger(eventLogPath)
+	structuredEventLog, err := diag.StartEventLogger(eventLogPath)
 	if err != nil {
 		return err
 	}
@@ -2352,7 +2186,7 @@ func runHeadless() error {
 	// Run LLM review and security scan concurrently for code-review mode.
 	hr := runner.NewHeadlessRunner(a.Turn)
 	hr.SetModelName(cfg.Provider.Model)
-	if sink := buildEventSink(structuredEventLog, debugMode); len(sink) > 0 {
+	if sink := diag.BuildEventSink(structuredEventLog, debugMode); len(sink) > 0 {
 		hr.SetEventSink(sink)
 	}
 	promptText = applyHeadlessBootstrapProbePrompt(promptText, headlessToolsCfg.ShouldEnable("shell"))

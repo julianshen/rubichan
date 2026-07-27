@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/julianshen/rubichan/internal/diag"
 )
 
 func startInteractiveSignalHandler(cfgDir, sessionLogPath string, cancel context.CancelCauseFunc) func() {
@@ -32,7 +34,7 @@ func startInteractiveSignalHandler(cfgDir, sessionLogPath string, cancel context
 		select {
 		case sig := <-sigCh:
 			stop()
-			path, err := writeDiagnosticDump(cfgDir, sig, sessionLogPath)
+			path, err := diag.WriteDiagnosticDump(cfgDir, sig, sessionLogPath)
 			if err != nil {
 				log.Printf("failed to write %s diagnostic dump: %v", sig.String(), err)
 			} else {

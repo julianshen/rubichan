@@ -4,15 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/julianshen/rubichan/internal/agent"
@@ -21,7 +17,6 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
-	"github.com/julianshen/rubichan/internal/session"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
@@ -80,127 +75,6 @@ func TestInteractiveExitErrorReturnsExitErrorForSignalAbort(t *testing.T) {
 	var exitErr *runner.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, 131, exitErr.Code)
-}
-
-func TestStartSessionLoggerWritesFileAndRestoresLogger(t *testing.T) {
-	origWriter := log.Writer()
-	origFlags := log.Flags()
-	var sentinel bytes.Buffer
-	log.SetOutput(&sentinel)
-	log.SetFlags(123)
-	defer log.SetOutput(origWriter)
-	defer log.SetFlags(origFlags)
-
-	logger, err := startSessionLogger(t.TempDir(), false)
-	require.NoError(t, err)
-	require.FileExists(t, logger.path)
-
-	log.Printf("captured line")
-
-	require.NoError(t, logger.Close())
-
-	data, err := os.ReadFile(logger.path)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "rubichan session log started")
-	assert.Contains(t, string(data), "captured line")
-	assert.Contains(t, string(data), "rubichan session log finished")
-	info, err := os.Stat(logger.path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	assert.Contains(t, filepath.Base(logger.path), strconv.Itoa(os.Getpid()))
-	dirInfo, err := os.Stat(filepath.Dir(logger.path))
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
-	assert.NotContains(t, sentinel.String(), "captured line")
-	log.Print("restored line")
-	assert.Contains(t, sentinel.String(), "restored line")
-	assert.Equal(t, 123, log.Flags())
-}
-
-func TestStartSessionLoggerMirrorsToStderrInDebugMode(t *testing.T) {
-	origWriter := log.Writer()
-	origFlags := log.Flags()
-	origStderr := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	defer func() { _ = r.Close() }()
-	os.Stderr = w
-	log.SetFlags(123)
-	defer log.SetOutput(origWriter)
-	defer log.SetFlags(origFlags)
-	defer func() { os.Stderr = origStderr }()
-
-	logger, err := startSessionLogger(t.TempDir(), true)
-	require.NoError(t, err)
-
-	log.Printf("debug line")
-
-	require.NoError(t, logger.Close())
-	require.NoError(t, w.Close())
-	data, err := io.ReadAll(r)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "debug line")
-}
-
-func TestStartEventLoggerWritesJSONLFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events", "session.jsonl")
-	logger, err := startEventLogger(path)
-	require.NoError(t, err)
-	require.NotNil(t, logger)
-	require.Equal(t, path, logger.path)
-
-	_, err = logger.file.WriteString("{\"type\":\"command_result\"}\n")
-	require.NoError(t, err)
-	require.NoError(t, logger.Close())
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"type":"command_result"`)
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-}
-
-func TestBuildEventSinkWithoutDebugAndEventLogIsNoOp(t *testing.T) {
-	sink := buildEventSink(nil, false)
-	require.Len(t, sink, 0)
-	assert.NotPanics(t, func() {
-		sink.Emit(session.NewTurnStartedEvent("prompt", "model"))
-	})
-}
-
-func TestBuildEventSinkIncludesJSONLWithoutDebug(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events", "session.jsonl")
-	logger, err := startEventLogger(path)
-	require.NoError(t, err)
-	require.NoError(t, logger.Close())
-
-	sink := buildEventSink(logger, false)
-	require.Len(t, sink, 1)
-}
-
-func TestWritePanicDumpIncludesPanicAndSessionLog(t *testing.T) {
-	cfgDir := t.TempDir()
-	dumpPath, err := writePanicDump(cfgDir, "boom", "/tmp/session.log")
-	require.NoError(t, err)
-	require.FileExists(t, dumpPath)
-
-	data, err := os.ReadFile(dumpPath)
-	require.NoError(t, err)
-	text := string(data)
-	assert.Contains(t, text, "panic: boom")
-	assert.Contains(t, text, "session_log: /tmp/session.log")
-	assert.Contains(t, text, "goroutine")
-	info, err := os.Stat(dumpPath)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	assert.Contains(t, filepath.Base(dumpPath), strconv.Itoa(os.Getpid()))
-}
-
-func TestLogFileSuffixIncludesTimestampAndPID(t *testing.T) {
-	now := time.Date(2026, time.March, 11, 21, 15, 30, 123456789, time.FixedZone("UTC+8", 8*3600))
-	suffix := logFileSuffix(now)
-	assert.Equal(t, fmt.Sprintf("20260311-131530.123456789-%d", os.Getpid()), suffix)
 }
 
 func TestStartInteractiveSignalHandlerStopIsIdempotent(t *testing.T) {
