@@ -9,17 +9,6 @@ import (
 
 const anthropicBaseURL = "https://api.anthropic.com"
 
-// ProviderConstructor is a function that creates a new LLMProvider.
-type ProviderConstructor func(baseURL, apiKey string, extraHeaders map[string]string) LLMProvider
-
-// KeepAliveConfigurer is implemented by providers that support configurable
-// model keep-alive duration (e.g., Ollama). Defined here so the factory can
-// type-assert without importing provider sub-packages.
-type KeepAliveConfigurer interface {
-	SetKeepAlive(duration string)
-	KeepAlive() string
-}
-
 // registry holds registered provider constructors.
 // This map is only written to during init() functions and read thereafter,
 // so it is safe for concurrent reads without a mutex.
