@@ -75,6 +75,9 @@ func NewRegistry() *Registry {
 var Default = NewRegistry()
 
 // Register adds or replaces a provider definition, looked up by ID.
+// Called only from each provider package's init(), which runs
+// single-threaded before main(); safe without a mutex as long as nothing
+// calls Register on Default after program startup.
 func (r *Registry) Register(def ProviderDef) {
 	r.defs[def.ID] = def
 }
