@@ -79,6 +79,7 @@ var Default = NewRegistry()
 // single-threaded before main(); safe without a mutex as long as nothing
 // calls Register on Default after program startup.
 func (r *Registry) Register(def ProviderDef) {
+	validateDef(def)
 	r.defs[def.ID] = def
 }
 
@@ -87,8 +88,25 @@ func (r *Registry) Register(def ProviderDef) {
 // provider's role of handling any provider name found in
 // cfg.Provider.OpenAI rather than one fixed ID.
 func (r *Registry) RegisterFallback(def ProviderDef) {
+	validateDef(def)
 	r.fallback = def
 	r.hasFallback = true
+}
+
+// validateDef panics on a definition missing a hook that New or
+// ResolveDefaultModel will call unconditionally. Registration happens in
+// init(), so this fails at program start with the provider named, rather
+// than as a bare nil-function-call on the first request that reaches it.
+// DefaultModel and ListModels are genuinely optional and not checked.
+func validateDef(def ProviderDef) {
+	switch {
+	case def.Constructor == nil:
+		panic(fmt.Errorf("provider %q: Constructor is required", def.ID))
+	case def.BaseURL == nil:
+		panic(fmt.Errorf("provider %q: BaseURL is required", def.ID))
+	case def.Auth == nil:
+		panic(fmt.Errorf("provider %q: Auth is required", def.ID))
+	}
 }
 
 func (r *Registry) lookup(id string) (ProviderDef, error) {

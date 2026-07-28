@@ -167,3 +167,63 @@ func TestRegistry_ListModels_NoResolver(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support model listing")
 }
+
+// TestRegisterRejectsIncompleteDef pins the registration-time contract.
+// New and ResolveDefaultModel call Constructor, BaseURL and Auth without
+// nil checks, so a def missing one of them panics on the first request
+// that reaches it — far from the init() that registered it, with a bare
+// nil-function-call and no provider name. Failing at registration keeps
+// the blame at the offending provider.
+func TestRegisterRejectsIncompleteDef(t *testing.T) {
+	t.Parallel()
+
+	complete := func() provider.ProviderDef {
+		return provider.ProviderDef{
+			ID:          "test",
+			Constructor: func(string, string, map[string]string) provider.LLMProvider { return nil },
+			BaseURL:     func(*config.Config) string { return "" },
+			Auth:        func(*config.Config) (string, map[string]string, error) { return "", nil, nil },
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*provider.ProviderDef)
+		missing string
+	}{
+		{"missing Constructor", func(d *provider.ProviderDef) { d.Constructor = nil }, "Constructor"},
+		{"missing BaseURL", func(d *provider.ProviderDef) { d.BaseURL = nil }, "BaseURL"},
+		{"missing Auth", func(d *provider.ProviderDef) { d.Auth = nil }, "Auth"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			def := complete()
+			tt.mutate(&def)
+
+			r := provider.NewRegistry()
+			require.PanicsWithError(t, `provider "test": `+tt.missing+" is required",
+				func() { r.Register(def) })
+			require.PanicsWithError(t, `provider "test": `+tt.missing+" is required",
+				func() { r.RegisterFallback(def) })
+		})
+	}
+}
+
+// TestRegisterAcceptsCompleteDef guards against the validation rejecting
+// a valid registration — the optional resolvers stay optional.
+func TestRegisterAcceptsCompleteDef(t *testing.T) {
+	t.Parallel()
+
+	def := provider.ProviderDef{
+		ID:          "test",
+		Constructor: func(string, string, map[string]string) provider.LLMProvider { return nil },
+		BaseURL:     func(*config.Config) string { return "" },
+		Auth:        func(*config.Config) (string, map[string]string, error) { return "", nil, nil },
+	}
+
+	r := provider.NewRegistry()
+	require.NotPanics(t, func() { r.Register(def) })
+	require.NotPanics(t, func() { r.RegisterFallback(def) })
+}
