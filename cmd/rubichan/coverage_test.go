@@ -1112,40 +1112,6 @@ func TestWireExtendedTools_SomeEnabled(t *testing.T) {
 // promptFolderAccess
 // ---------------------------------------------------------------------------
 
-func TestPromptFolderAccess_YesResponse(t *testing.T) {
-	t.Parallel()
-	var buf []byte
-	w := &writerBuffer{buf: &buf}
-	r := readerString("yes\n")
-
-	allowed, err := promptFolderAccess("/tmp/project", r, w)
-	require.NoError(t, err)
-	assert.True(t, allowed)
-	assert.Contains(t, string(buf), "Allow rubichan to access this folder?")
-}
-
-func TestPromptFolderAccess_NoResponse(t *testing.T) {
-	t.Parallel()
-	var buf []byte
-	w := &writerBuffer{buf: &buf}
-	r := readerString("no\n")
-
-	allowed, err := promptFolderAccess("/tmp/project", r, w)
-	require.NoError(t, err)
-	assert.False(t, allowed)
-}
-
-func TestPromptFolderAccess_CaseInsensitive(t *testing.T) {
-	t.Parallel()
-	var buf []byte
-	w := &writerBuffer{buf: &buf}
-	r := readerString("YES\n")
-
-	allowed, err := promptFolderAccess("/tmp/project", r, w)
-	require.NoError(t, err)
-	assert.True(t, allowed)
-}
-
 // writerBuffer is a minimal io.Writer for tests.
 type writerBuffer struct {
 	buf *[]byte

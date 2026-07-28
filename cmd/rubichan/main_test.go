@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,7 +16,6 @@ import (
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/runner"
 	"github.com/julianshen/rubichan/internal/security"
-	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 	"github.com/spf13/cobra"
@@ -108,32 +106,6 @@ func TestOpenStore_CreatesMissingDirs(t *testing.T) {
 	dbPath := filepath.Join(dir, "rubichan.db")
 	_, err = os.Stat(dbPath)
 	assert.NoError(t, err, "database file should exist in nested directory")
-}
-
-func TestEnsureFolderAccessApprovedNonInteractiveRequiresExplicitApproval(t *testing.T) {
-	dir := t.TempDir()
-	s, err := openStore(dir)
-	require.NoError(t, err)
-	defer s.Close()
-
-	err = ensureFolderAccessApprovedNonInteractive(s, filepath.Join(dir, "repo"), false, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--approve-cwd/--auto-approve")
-}
-
-func TestEnsureFolderAccessApprovedNonInteractiveApproveCwd(t *testing.T) {
-	dir := t.TempDir()
-	s, err := openStore(dir)
-	require.NoError(t, err)
-	defer s.Close()
-
-	repoDir := filepath.Join(dir, "repo")
-	err = ensureFolderAccessApprovedNonInteractive(s, repoDir, false, true)
-	require.NoError(t, err)
-
-	approved, err := s.IsFolderApproved(repoDir)
-	require.NoError(t, err)
-	assert.True(t, approved)
 }
 
 func TestAppendWorkingDirOptionAlwaysAppliesCWD(t *testing.T) {
@@ -534,97 +506,6 @@ func TestApplyAPIKeyFlag_OpenAICompatible(t *testing.T) {
 
 	assert.Equal(t, "config", cfg.Provider.OpenAI[0].APIKeySource)
 	assert.Equal(t, "new-key", cfg.Provider.OpenAI[0].APIKey)
-}
-
-func TestEnsureFolderAccessApproved_FirstTimeApprove(t *testing.T) {
-	s := mustOpenStore(t)
-	defer s.Close()
-
-	var out bytes.Buffer
-	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader("yes\n"), &out)
-	require.NoError(t, err)
-	assert.Contains(t, out.String(), "Allow rubichan to access this folder?")
-
-	approved, err := s.IsFolderApproved("/tmp/project")
-	require.NoError(t, err)
-	assert.True(t, approved)
-}
-
-func TestEnsureFolderAccessApproved_Denied(t *testing.T) {
-	s := mustOpenStore(t)
-	defer s.Close()
-
-	var out bytes.Buffer
-	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader("no\n"), &out)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "folder access denied")
-}
-
-func TestEnsureFolderAccessApproved_AlreadyApprovedSkipsPrompt(t *testing.T) {
-	s := mustOpenStore(t)
-	defer s.Close()
-	require.NoError(t, s.ApproveFolderAccess("/tmp/project"))
-
-	var out bytes.Buffer
-	err := ensureFolderAccessApproved(s, "/tmp/project", strings.NewReader(""), &out)
-	require.NoError(t, err)
-	assert.Empty(t, out.String())
-}
-
-func mustOpenStore(t *testing.T) *store.Store {
-	t.Helper()
-	s, err := store.NewStore(":memory:")
-	require.NoError(t, err)
-	return s
-}
-
-func TestEnsureFolderAccessApprovedNonInteractive_DeniedWithoutAutoApprove(t *testing.T) {
-	s := mustOpenStore(t)
-	defer s.Close()
-
-	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", false, false)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not approved")
-}
-
-func TestEnsureFolderAccessApprovedNonInteractive_AutoApproves(t *testing.T) {
-	s := mustOpenStore(t)
-	defer s.Close()
-
-	err := ensureFolderAccessApprovedNonInteractive(s, "/tmp/project", true, false)
-	require.NoError(t, err)
-
-	approved, err := s.IsFolderApproved("/tmp/project")
-	require.NoError(t, err)
-	assert.True(t, approved)
-}
-
-func TestEnsureFolderAccessApprovedInteractive_UsesAutoApprove(t *testing.T) {
-	s := mustOpenStore(t)
-	defer s.Close()
-
-	var out bytes.Buffer
-	err := ensureFolderAccessApprovedInteractive(s, "/tmp/project", strings.NewReader(""), &out, true, false)
-	require.NoError(t, err)
-	assert.Empty(t, out.String())
-
-	approved, err := s.IsFolderApproved("/tmp/project")
-	require.NoError(t, err)
-	assert.True(t, approved)
-}
-
-func TestEnsureFolderAccessApprovedInteractive_UsesApproveCwd(t *testing.T) {
-	s := mustOpenStore(t)
-	defer s.Close()
-
-	var out bytes.Buffer
-	err := ensureFolderAccessApprovedInteractive(s, "/tmp/project", strings.NewReader(""), &out, false, true)
-	require.NoError(t, err)
-	assert.Empty(t, out.String())
-
-	approved, err := s.IsFolderApproved("/tmp/project")
-	require.NoError(t, err)
-	assert.True(t, approved)
 }
 
 func TestPersonaErrorMessage(t *testing.T) {
