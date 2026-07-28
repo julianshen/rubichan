@@ -1006,7 +1006,7 @@ func loadConfig() (*config.Config, error) {
 			// No default-model resolution for this provider — leave Model
 			// empty, same as before this provider had a Registry entry.
 		default:
-			return nil, err
+			return nil, fmt.Errorf("resolving default model: %w", err)
 		}
 	}
 

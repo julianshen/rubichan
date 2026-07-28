@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"fmt"
+
 	"github.com/julianshen/rubichan/internal/config"
 )
 
@@ -16,7 +18,7 @@ func NewProvider(cfg *config.Config) (LLMProvider, error) {
 func NewProviderWithDebug(cfg *config.Config, debug bool) (LLMProvider, error) {
 	p, err := Default.New(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating provider: %w", err)
 	}
 
 	if debug {

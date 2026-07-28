@@ -24,7 +24,9 @@ func providerDef() provider.ProviderDef {
 	return provider.ProviderDef{
 		ID: "zai",
 		Constructor: func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
-			return New(baseURL, apiKey, "glm-5", extraHeaders)
+			// New defaults a blank model to glm-5; repeating the literal here
+			// would make the same default live in three places.
+			return New(baseURL, apiKey, "", extraHeaders)
 		},
 		BaseURL: func(cfg *config.Config) string {
 			if cfg.Provider.Zai.BaseURL != "" {
