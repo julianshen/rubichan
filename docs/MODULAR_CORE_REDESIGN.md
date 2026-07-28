@@ -182,6 +182,17 @@ For each subsystem, introduce the right seam interface and move it behind it, re
 **Phase 3 — Adapters over the core.**
 Reduce `cmd/rubichan/main.go` to composition only: build core, register modules, pick an adapter. Move mode wiring into `internal/modes/*` (or `pkg` for reusable ones). Target: `main.go` under a few hundred lines.
 
+> **Status update (2026-07): Phase 3 started — two slices out, both extractions of things that were never composition.**
+>
+> The phase is being taken as a sequence of named clusters rather than one move, since main.go's contents are not homogeneous: some of it is genuinely composition (build a registry, pick a provider) and belongs where it is; the rest is subsystems that happen to be spelled inline.
+>
+> - **Slice 1 — `internal/diag`.** Process-level diagnostics: the session log, the JSONL event log, the stack dumps written on signal or panic (20 tests moved with it). File layout, permissions and log-writer swapping are not main's business.
+> - **Slice 2 — `internal/folderaccess`.** The working-directory approval gate: prompt, interactive path, headless path. Whether an unapproved folder is a question or an error, and what `--approve-cwd`/`--auto-approve` mean, is product policy the entrypoint should call rather than contain. Its persistence dependency is a two-method `Store` interface declared in the package, so the policy does not import the persistence layer to state its own rules.
+>
+> **Measured: 3,383 → 3,173 lines.** That is 210 lines across two slices, against a target of "a few hundred" — i.e. roughly 7% of the distance, and the remaining ~2,900 lines are the harder part (the inline interactive/headless/wiki flows identified in Problem C, which need the dormant `internal/modes/*` adapters to become the real path). The line count also moves independently of this work: #329's Ollama fix added 17 lines to main.go between the two slices. Treat the number as a direction of travel, not a burn-down.
+>
+> **Both slices were pure `[STRUCTURAL]` moves** — bodies verbatim, tests moved with them, before-and-after test runs identical — which is what makes them cheap to review and safe to land alongside unrelated work in the same file.
+
 **Phase 4 — Publish the module API.**
 Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
 
