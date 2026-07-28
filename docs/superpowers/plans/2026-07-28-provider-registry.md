@@ -12,7 +12,7 @@
 
 - TDD strictly: one test at a time, Red → Green → Refactor → Commit. Never write implementation before the test.
 - Commit prefixes: `[STRUCTURAL]` (no behavior change) or `[BEHAVIORAL]` (new/changed behavior). Never mix both in one commit.
-- Run `go build ./...`, `go test ./...`, `gofmt -l .`, `go vet ./...` after every task; all must be clean before moving on.
+- Run `go build ./...`, `go test ./...`, `go test -cover ./...` (>90% on new code), `gofmt -l .`, `go vet ./...` and `golangci-lint run ./...` after every task; all must be clean before moving on, and the full set repeats at final verification.
 - **Zero duplication, zero dead-code windows.** Every task that adds new provider logic must, in the same commit, delete whichever old logic it supersedes (old switch-case body, old `if`-block, old standalone function). No task may leave the same logic implemented in two places, or leave code nothing calls, for a later task to remove.
 - No behavior change anywhere is a hard requirement, verified at every task boundary — except the one explicitly-flagged, intentional fix in Task 5 (see that task).
 - Never push to `main`. Work happens on `feature/provider-registry` (already created; design spec and a prior draft of this plan are already committed there — this version supersedes that draft, see note below).
@@ -1204,8 +1204,9 @@ func init() {
 // because this provider handles any name found in cfg.Provider.OpenAI —
 // "openai", "openrouter", a custom proxy name, etc. — not one fixed ID.
 // DefaultModel is left nil: this provider has never had default-model
-// resolution (users must pass --model), and Registry.ResolveDefaultModel's
-// ErrNoDefaultModel preserves that — see main.go's loadConfig().
+// resolution, so the model is simply left unset rather than the user being
+// obliged to pass --model. Registry.ResolveDefaultModel's ErrNoDefaultModel
+// preserves that — see main.go's loadConfig().
 func providerDef() provider.ProviderDef {
 	return provider.ProviderDef{
 		ID: "openai",

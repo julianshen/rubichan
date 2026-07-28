@@ -56,8 +56,12 @@ type ProviderDef struct {
     BaseURL func(cfg *config.Config) string
     Auth    func(cfg *config.Config) (apiKey string, headers map[string]string, err error)
 
-    // Optional. nil means the provider has no default-model resolution
-    // (caller must always specify one) or no dynamic listing.
+    // Both optional and independent. A nil DefaultModel means the
+    // provider offers no default-model resolution — ResolveDefaultModel
+    // reports ErrNoDefaultModel and the caller leaves the model unset,
+    // which is the preserved behavior for custom OpenAI-compatible
+    // endpoints. It does not oblige the caller to supply a model.
+    // A nil ListModels means no dynamic catalog.
     DefaultModel func(ctx context.Context, cfg *config.Config) (string, error)
     ListModels   func(ctx context.Context, cfg *config.Config) ([]Model, error)
 }
@@ -73,7 +77,9 @@ func (r *Registry) ResolveDefaultModel(ctx context.Context, cfg *config.Config) 
 func (r *Registry) ListModels(ctx context.Context, providerID string, cfg *config.Config) ([]Model, error)
 ```
 
-`Registry.New` looks up `cfg.Provider.Default`, calls the def's `BaseURL`/`Auth`, then `Constructor`. `ResolveDefaultModel` looks up the same def and calls `DefaultModel` (error if nil — caller decides whether that's fatal). `ListModels` calls `ListModels` (error if nil: "provider does not support model listing").
+`Registry.New` looks up `cfg.Provider.Default`, calls the def's `Auth` **first**, then `BaseURL`, then `Constructor`.
+
+**`Auth` before `BaseURL` is a contract, not an incidental order.** The OpenAI-compatible def's `BaseURL` discards its lookup's `ok` flag and returns the zero entry's empty URL for an unrecognized provider name, while its `Auth` returns `formatUnknownProviderError` for that same case. Authenticating first is what makes the descriptive error surface instead of a provider silently built against an empty base URL. A refactor that hoisted `BaseURL` into a variable before the `Auth` call would break this without any type error — `TestNewCallsAuthBeforeBaseURL` and `TestNewSkipsBaseURLWhenAuthFails` in `internal/provider/registry_test.go` pin it (both verified to fail when the order is reversed). `ResolveDefaultModel` looks up the same def and calls `DefaultModel` (error if nil — caller decides whether that's fatal). `ListModels` calls `ListModels` (error if nil: "provider does not support model listing").
 
 **Existing behavior explicitly preserved, not redesigned:**
 - Ollama's `KeepAliveConfigurer` type-assertion (`SetKeepAlive`) — stays exactly as-is, applied after `Constructor` runs.
@@ -84,7 +90,7 @@ func (r *Registry) ListModels(ctx context.Context, providerID string, cfg *confi
 
 ## Call-site impact
 
-`NewProvider(cfg)` / `NewProviderWithDebug(cfg, debug)` keep their exact current signatures in `factory.go`, now implemented as thin delegates to `Default.New(cfg)` (debug logging wrapping unchanged). **Zero changes needed** at any of the 6 existing call sites (`cmd/rubichan/serve.go`, `shell.go`, `knowledge.go`, `main.go` ×3, plus the `newProviderWithDebug` function-variable indirection used for test mocking).
+`NewProvider(cfg)` / `NewProviderWithDebug(cfg, debug)` keep their exact current signatures in `factory.go`, now implemented as thin delegates to `Default.New(cfg)`. **Debug wrapping changes deliberately:** the old switch's Ollama and Z.ai branches returned early and so never reached the `EnableDebugLogging` call, meaning `--debug` silently did nothing for those two providers. The unified dispatch applies it to every provider. This is the one intentional behavior change in the migration. **Zero changes needed** at any of the 6 existing call sites (`cmd/rubichan/serve.go`, `shell.go`, `knowledge.go`, `main.go` ×3, plus the `newProviderWithDebug` function-variable indirection used for test mocking).
 
 `main.go`'s `loadConfig()` replaces its three provider-specific `if cfg.Provider.Model == ""` blocks (zai, ollama, anthropic — added/fixed in PR #329) with one call: `provider.Default.ResolveDefaultModel(ctx, cfg)`, gated the same way. `autoDetectProvider` (which auto-*selects* Ollama when no API key is configured) is unchanged — only model-*selection* moves into the registry; provider auto-detection is a separate concern.
 

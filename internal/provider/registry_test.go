@@ -227,3 +227,74 @@ func TestRegisterAcceptsCompleteDef(t *testing.T) {
 	require.NotPanics(t, func() { r.Register(def) })
 	require.NotPanics(t, func() { r.RegisterFallback(def) })
 }
+
+// TestNewCallsAuthBeforeBaseURL pins an ordering the OpenAI-compatible
+// provider depends on for correctness.
+//
+// Its BaseURL discards the lookup's ok flag and returns the zero entry's
+// empty URL for an unknown provider, while its Auth returns a descriptive
+// error for that same case. Because New authenticates first, the error
+// surfaces and BaseURL's silent empty string never reaches a constructor.
+// Reversing the order — or evaluating BaseURL into a variable before the
+// Auth call — would turn a clear "unknown provider" error into a provider
+// built against an empty base URL, failing later and less legibly.
+func TestNewCallsAuthBeforeBaseURL(t *testing.T) {
+	t.Parallel()
+
+	var calls []string
+	def := provider.ProviderDef{
+		ID: "test",
+		Constructor: func(string, string, map[string]string) provider.LLMProvider {
+			calls = append(calls, "Constructor")
+			return &fakeProvider{}
+		},
+		BaseURL: func(*config.Config) string {
+			calls = append(calls, "BaseURL")
+			return ""
+		},
+		Auth: func(*config.Config) (string, map[string]string, error) {
+			calls = append(calls, "Auth")
+			return "", nil, nil
+		},
+	}
+
+	r := provider.NewRegistry()
+	r.Register(def)
+
+	cfg := &config.Config{}
+	cfg.Provider.Default = "test"
+	_, err := r.New(cfg)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"Auth", "BaseURL", "Constructor"}, calls,
+		"New must authenticate before resolving the base URL")
+}
+
+// TestNewSkipsBaseURLWhenAuthFails is the consequence of that ordering:
+// a failed Auth short-circuits, so BaseURL never runs on a config it
+// cannot resolve.
+func TestNewSkipsBaseURLWhenAuthFails(t *testing.T) {
+	t.Parallel()
+
+	baseURLCalled := false
+	def := provider.ProviderDef{
+		ID:          "test",
+		Constructor: func(string, string, map[string]string) provider.LLMProvider { return &fakeProvider{} },
+		BaseURL: func(*config.Config) string {
+			baseURLCalled = true
+			return ""
+		},
+		Auth: func(*config.Config) (string, map[string]string, error) {
+			return "", nil, errors.New("no credentials")
+		},
+	}
+
+	r := provider.NewRegistry()
+	r.Register(def)
+
+	cfg := &config.Config{}
+	cfg.Provider.Default = "test"
+	_, err := r.New(cfg)
+	require.Error(t, err)
+	require.False(t, baseURLCalled, "BaseURL must not run once Auth has failed")
+}
