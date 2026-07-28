@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,6 +29,7 @@ import (
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/diag"
+	"github.com/julianshen/rubichan/internal/folderaccess"
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
@@ -870,67 +870,6 @@ func loadProjectHooks(cfg *config.Config, s hooks.HookApprovalStore, cwd string)
 	return configs
 }
 
-func promptFolderAccess(workingDir string, in io.Reader, out io.Writer) (bool, error) {
-	if _, err := fmt.Fprintf(out, "Allow rubichan to access this folder?\n  %s\nType 'yes' to continue: ", workingDir); err != nil {
-		return false, fmt.Errorf("writing folder access prompt: %w", err)
-	}
-
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("reading folder access response: %w", err)
-	}
-	return strings.EqualFold(strings.TrimSpace(line), "yes"), nil
-}
-
-func ensureFolderAccessApproved(s *store.Store, workingDir string, in io.Reader, out io.Writer) error {
-	approved, err := s.IsFolderApproved(workingDir)
-	if err != nil {
-		return fmt.Errorf("checking folder access approval: %w", err)
-	}
-	if approved {
-		return nil
-	}
-
-	allow, err := promptFolderAccess(workingDir, in, out)
-	if err != nil {
-		return err
-	}
-	if !allow {
-		return fmt.Errorf("folder access denied by user")
-	}
-
-	if err := s.ApproveFolderAccess(workingDir); err != nil {
-		return fmt.Errorf("saving folder access approval: %w", err)
-	}
-	return nil
-}
-
-func ensureFolderAccessApprovedInteractive(s *store.Store, workingDir string, in io.Reader, out io.Writer, autoApprove, approveCwd bool) error {
-	if autoApprove || approveCwd {
-		return ensureFolderAccessApprovedNonInteractive(s, workingDir, autoApprove, approveCwd)
-	}
-	return ensureFolderAccessApproved(s, workingDir, in, out)
-}
-
-func ensureFolderAccessApprovedNonInteractive(s *store.Store, workingDir string, autoApprove, approveCwd bool) error {
-	approved, err := s.IsFolderApproved(workingDir)
-	if err != nil {
-		return fmt.Errorf("checking folder access approval: %w", err)
-	}
-	if approved {
-		return nil
-	}
-
-	if !autoApprove && !approveCwd {
-		return fmt.Errorf("folder access for %q is not approved; rerun interactively to approve or use --approve-cwd/--auto-approve", workingDir)
-	}
-
-	if err := s.ApproveFolderAccess(workingDir); err != nil {
-		return fmt.Errorf("saving folder access approval: %w", err)
-	}
-	return nil
-}
-
 const memorySaveTimeout = 5 * time.Second
 
 func saveMemoriesBestEffort(parentCtx context.Context, a *agent.Agent, out io.Writer) {
@@ -1532,7 +1471,7 @@ func runInteractive() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
-	if err := ensureFolderAccessApprovedInteractive(s, cwd, os.Stdin, os.Stderr, autoApprove, approveCwd); err != nil {
+	if err := folderaccess.EnsureApprovedInteractive(s, cwd, os.Stdin, os.Stderr, autoApprove, approveCwd); err != nil {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
@@ -2022,7 +1961,7 @@ func runHeadless() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
-	if err := ensureFolderAccessApprovedNonInteractive(s, cwd, autoApprove, approveCwd); err != nil {
+	if err := folderaccess.EnsureApprovedNonInteractive(s, cwd, autoApprove, approveCwd); err != nil {
 		return err
 	}
 	opts = append(opts, agent.WithStore(s))
