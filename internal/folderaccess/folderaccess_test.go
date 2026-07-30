@@ -3,6 +3,7 @@ package folderaccess_test
 import (
 	"bytes"
 	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -267,4 +268,24 @@ func TestEnsureApprovedInteractivePromptsWithoutFlags(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "Allow rubichan to access this folder?",
 		"with neither flag set the user must still be asked")
+}
+
+// TestPromptLeavesLaterInputForTheNextReader pins the contract that makes
+// Prompt safe on a stream it does not own: the interactive path hands the same
+// os.Stdin to the TUI once the prompt is answered, so consuming past the
+// response line would swallow the user's first keystrokes.
+func TestPromptLeavesLaterInputForTheNextReader(t *testing.T) {
+	t.Parallel()
+
+	in := strings.NewReader("yes\nhello from the TUI\n")
+	var out bytes.Buffer
+
+	allowed, err := folderaccess.Prompt("/tmp/project", in, &out)
+	require.NoError(t, err)
+	require.True(t, allowed)
+
+	rest, err := io.ReadAll(in)
+	require.NoError(t, err)
+	assert.Equal(t, "hello from the TUI\n", string(rest),
+		"Prompt must consume its line and no more")
 }

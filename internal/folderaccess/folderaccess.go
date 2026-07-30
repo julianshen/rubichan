@@ -10,7 +10,6 @@
 package folderaccess
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -34,11 +33,39 @@ func Prompt(workingDir string, in io.Reader, out io.Writer) (bool, error) {
 		return false, fmt.Errorf("writing folder access prompt: %w", err)
 	}
 
-	line, err := bufio.NewReader(in).ReadString('\n')
+	line, err := readLine(in)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, fmt.Errorf("reading folder access response: %w", err)
 	}
 	return strings.EqualFold(strings.TrimSpace(line), "yes"), nil
+}
+
+// readLine consumes one line from in and not a byte more, returning it without
+// the trailing newline. A buffered reader cannot be used here: it fills its
+// buffer from a single underlying read and is then discarded, so anything the
+// stream offered after the response line would be lost. Prompt does not own
+// its reader — the interactive path hands the same os.Stdin to the TUI once
+// the folder is approved — so over-reading would swallow the user's first
+// keystrokes.
+//
+// Reaching the end of the stream without a newline returns what was read
+// along with io.EOF, leaving the caller to decide whether that counts as an
+// answer.
+func readLine(in io.Reader) (string, error) {
+	var line []byte
+	var buf [1]byte
+	for {
+		n, err := in.Read(buf[:])
+		if n > 0 {
+			if buf[0] == '\n' {
+				return string(line), nil
+			}
+			line = append(line, buf[0])
+		}
+		if err != nil {
+			return string(line), err
+		}
+	}
 }
 
 // EnsureApproved returns nil once workingDir is approved, prompting the user
