@@ -1092,8 +1092,6 @@ func runInteractive() error {
 		return err
 	}
 
-	// Subagent system. Logf is nil here: registration failures are currently
-	// discarded in this mode, unlike headless.
 	subagentWiring, err := subagents.Wire(subagents.Options{
 		Config:          cfg,
 		Registry:        registry,
@@ -1101,6 +1099,7 @@ func runInteractive() error {
 		EnableListTasks: toolsCfg.ShouldEnable("list_tasks"),
 		WorktreeManager: wtMgr,
 		GitRoot:         gitRepoRoot,
+		Logf:            log.Printf,
 	})
 	if err != nil {
 		return err
@@ -1517,7 +1516,7 @@ func runHeadless() error {
 	defer cancel()
 
 	// Set up effective working directory (creates worktree if --worktree is set).
-	cwd, _, wtCleanup, err := setupWorkingDir(cfg)
+	cwd, wtMgr, wtCleanup, err := setupWorkingDir(cfg)
 	if err != nil {
 		return fmt.Errorf("worktree setup: %w", err)
 	}
@@ -1673,13 +1672,12 @@ func runHeadless() error {
 	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
-	// Subagent system. WorktreeManager is nil here, preserving the previous
-	// behaviour of discovering the repository root independently.
 	headlessWiring, err := subagents.Wire(subagents.Options{
 		Config:          cfg,
 		Registry:        registry,
 		EnableTask:      headlessToolsCfg.ShouldEnable("task"),
 		EnableListTasks: headlessToolsCfg.ShouldEnable("list_tasks"),
+		WorktreeManager: wtMgr,
 		GitRoot:         gitRepoRoot,
 		Logf:            log.Printf,
 	})
