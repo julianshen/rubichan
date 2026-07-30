@@ -19,6 +19,7 @@ type fakeProvider struct {
 	eventsByCall [][]provider.StreamEvent
 	errByCall    []error
 	requests     []provider.CompletionRequest
+	streams      []chan provider.StreamEvent
 	callCount    int
 }
 
@@ -38,7 +39,19 @@ func (p *fakeProvider) Stream(_ context.Context, req provider.CompletionRequest)
 		ch <- evt
 	}
 	close(ch)
+	p.streams = append(p.streams, ch)
 	return ch, nil
+}
+
+// undrained reports how many events are still sitting in the streams handed
+// out. A real provider blocks on send until its context is cancelled, so
+// anything left here would be a stranded producer in production.
+func (p *fakeProvider) undrained() int {
+	n := 0
+	for _, ch := range p.streams {
+		n += len(ch)
+	}
+	return n
 }
 
 func TestRunSuccess(t *testing.T) {
@@ -194,4 +207,60 @@ func TestRunIgnoresAnUnrelatedToolCall(t *testing.T) {
 
 	require.NoError(t, modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o"))
 	assert.Contains(t, out.String(), "Tool support: INCONCLUSIVE")
+}
+
+// TestRunFailsOnErrorAfterToolUse covers a stream that demonstrates the
+// capability and then falls over. Ollama does exactly this: it emits tool
+// calls and, if the connection drops before the done chunk, reports "stream
+// ended without done signal". A diagnostic that watched a probe fail and
+// printed PASS is worse than useless.
+func TestRunFailsOnErrorAfterToolUse(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "capability_probe"}},
+			{Type: "error", Error: fmt.Errorf("stream ended without done signal")},
+		},
+	}}
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool support stream failed")
+	assert.NotContains(t, out.String(), "Model test: PASS")
+}
+
+// TestRunFailsOnMissingStopAfterToolUse holds the two probes to the same
+// standard: Run already fails the connectivity probe when its stream ends
+// without a stop, so the tool probe cannot quietly accept one.
+func TestRunFailsOnMissingStopAfterToolUse(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "capability_probe"}}},
+	}}
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool support stream ended without stop event")
+}
+
+// TestRunDrainsTheToolProbeStream pins that the probe consumes its stream to
+// completion. Providers send with `select { case ch <- evt: case <-ctx.Done() }`
+// and Run is handed a context that never cancels, so a probe that returned
+// early would strand the producer goroutine and its connection.
+func TestRunDrainsTheToolProbeStream(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "capability_probe"}},
+			{Type: "text_delta", Text: "trailing"},
+			{Type: "stop"},
+		},
+	}}
+	var out bytes.Buffer
+
+	require.NoError(t, modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o"))
+	assert.Contains(t, out.String(), "Tool support: PASS")
+	assert.Equal(t, 0, p.undrained(), "every event offered must be consumed")
 }

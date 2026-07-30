@@ -120,12 +120,20 @@ func probeToolSupport(ctx context.Context, p provider.LLMProvider, model string)
 		return false, fmt.Errorf("tool support test request failed: %w", err)
 	}
 
-	var sawStop bool
+	var sawStop, calledProbe bool
 	for evt := range stream {
 		switch evt.Type {
 		case "tool_use":
+			// Recorded rather than returned on: the stream has to be
+			// consumed to the end either way. Providers send with
+			// `select { case ch <- evt: case <-ctx.Done(): }`, and this
+			// probe's context is not cancelled on the way out, so
+			// abandoning the channel would strand the producer goroutine
+			// and its connection. Returning early also hid whatever the
+			// model did next — Ollama emits tool calls and then reports a
+			// missing done signal when the connection drops.
 			if evt.ToolUse != nil && evt.ToolUse.Name == probeToolName {
-				return true, nil
+				calledProbe = true
 			}
 		case "error":
 			return false, fmt.Errorf("tool support stream failed: %w", evt.Error)
@@ -134,9 +142,12 @@ func probeToolSupport(ctx context.Context, p provider.LLMProvider, model string)
 		}
 	}
 
+	// A clean stop is required even when the probe was called, matching how
+	// Run treats the connectivity probe: a stream that never finished has not
+	// demonstrated anything, whatever it managed to emit first.
 	if !sawStop {
 		return false, fmt.Errorf("tool support stream ended without stop event")
 	}
 
-	return false, nil
+	return calledProbe, nil
 }
