@@ -11,6 +11,7 @@ package skillruntime
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/julianshen/rubichan/internal/commands"
 	"github.com/julianshen/rubichan/internal/integrations"
@@ -46,7 +47,7 @@ func (a *starlarkGitRunnerAdapter) Diff(ctx context.Context, args ...string) (st
 func (a *starlarkGitRunnerAdapter) Log(ctx context.Context, args ...string) ([]starengine.GitLogEntry, error) {
 	commits, err := a.runner.Log(ctx, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("git log for starlark skill: %w", err)
 	}
 	entries := make([]starengine.GitLogEntry, len(commits))
 	for i, c := range commits {
@@ -58,7 +59,7 @@ func (a *starlarkGitRunnerAdapter) Log(ctx context.Context, args ...string) ([]s
 func (a *starlarkGitRunnerAdapter) Status(ctx context.Context) ([]starengine.GitStatusEntry, error) {
 	statuses, err := a.runner.Status(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("git status for starlark skill: %w", err)
 	}
 	entries := make([]starengine.GitStatusEntry, len(statuses))
 	for i, s := range statuses {
@@ -104,7 +105,7 @@ func (a *pluginGitRunnerAdapter) Diff(args ...string) (string, error) {
 func (a *pluginGitRunnerAdapter) Log(args ...string) ([]skillsdk.GitCommit, error) {
 	commits, err := a.runner.Log(a.ctx, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("git log for plugin skill: %w", err)
 	}
 	entries := make([]skillsdk.GitCommit, len(commits))
 	for i, c := range commits {
@@ -116,7 +117,7 @@ func (a *pluginGitRunnerAdapter) Log(args ...string) ([]skillsdk.GitCommit, erro
 func (a *pluginGitRunnerAdapter) Status() ([]skillsdk.GitFileStatus, error) {
 	statuses, err := a.runner.Status(a.ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("git status for plugin skill: %w", err)
 	}
 	entries := make([]skillsdk.GitFileStatus, len(statuses))
 	for i, s := range statuses {
