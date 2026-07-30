@@ -83,6 +83,16 @@ func probeConnectivity(ctx context.Context, out io.Writer, p provider.LLMProvide
 		MaxTokens: 16,
 	}
 
+	// The probe owns its context so that returning early — on an error
+	// event, or on any path added later — releases the producer. Providers
+	// send with `select { case ch <- evt: case <-ctx.Done(): }` and an error
+	// event is not the end of the stream: the Ollama and SSE-compatible
+	// parsers both emit a parse error and keep scanning. Without this,
+	// abandoning the channel parked that goroutine and its connection for
+	// the life of the process, since Run is handed context.Background().
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	stream, err := p.Stream(ctx, req)
 	if err != nil {
 		return fmt.Errorf("model connectivity test failed: %w", err)
@@ -124,6 +134,10 @@ func probeToolSupport(ctx context.Context, p provider.LLMProvider, model string)
 		}},
 		MaxTokens: 64,
 	}
+
+	// Owned context, for the same reason as probeConnectivity.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	stream, err := p.Stream(ctx, req)
 	if err != nil {
