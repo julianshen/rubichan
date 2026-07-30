@@ -6,6 +6,7 @@ package skillruntime
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/integrations"
+	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -172,4 +174,152 @@ func TestPluginGitRunnerAdapter_Status(t *testing.T) {
 	}
 	_, err := adapter.Status()
 	require.NoError(t, err)
+}
+
+// The backend factory is the single place deciding what a skill of each kind
+// can reach, so these tests pin the routing rather than the backends
+// themselves: a manifest of each declared kind must produce that kind's
+// backend, and an unrecognised one must be refused rather than silently
+// treated as prompt-only.
+
+func testBackendDeps(t *testing.T) backendDeps {
+	t.Helper()
+	return backendDeps{
+		llmCompleter:       integrations.NewLLMCompleter(nil, "test-model"),
+		httpFetcher:        integrations.NewHTTPFetcher(5 * time.Second),
+		skillInvoker:       integrations.NewSkillInvoker(nil),
+		starlarkGitAdapter: &starlarkGitRunnerAdapter{runner: integrations.NewGitRunner(t.TempDir())},
+		pluginLLMAdapter:   &pluginLLMCompleterAdapter{ctx: context.Background()},
+		pluginHTTPAdapter:  &pluginHTTPFetcherAdapter{ctx: context.Background()},
+		pluginGitAdapter:   &pluginGitRunnerAdapter{ctx: context.Background()},
+		pluginSkillAdapter: &pluginSkillInvokerAdapter{ctx: context.Background()},
+	}
+}
+
+func TestBackendFactoryRoutesPromptOnlySkillsToTheNoopBackend(t *testing.T) {
+	t.Parallel()
+
+	factory := newBackendFactory(context.Background(), testBackendDeps(t))
+	backend, err := factory(skills.SkillManifest{Name: "prompt-skill"}, t.TempDir())
+	require.NoError(t, err)
+	assert.IsType(t, &noopPromptBackend{}, backend,
+		"a skill with no implementation still has to load through the normal flow")
+}
+
+func TestBackendFactoryRoutesStarlark(t *testing.T) {
+	t.Parallel()
+
+	manifest := skills.SkillManifest{Name: "star-skill"}
+	manifest.Implementation.Backend = skills.BackendStarlark
+
+	factory := newBackendFactory(context.Background(), testBackendDeps(t))
+	backend, err := factory(manifest, t.TempDir())
+	require.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.NotEqual(t, "*skillruntime.noopPromptBackend", fmt.Sprintf("%T", backend))
+}
+
+func TestBackendFactoryRoutesPlugin(t *testing.T) {
+	t.Parallel()
+
+	manifest := skills.SkillManifest{Name: "plugin-skill"}
+	manifest.Implementation.Backend = skills.BackendPlugin
+
+	factory := newBackendFactory(context.Background(), testBackendDeps(t))
+	backend, err := factory(manifest, t.TempDir())
+	require.NoError(t, err)
+	assert.NotNil(t, backend)
+}
+
+func TestBackendFactoryRoutesProcess(t *testing.T) {
+	t.Parallel()
+
+	manifest := skills.SkillManifest{Name: "process-skill"}
+	manifest.Implementation.Backend = skills.BackendProcess
+
+	factory := newBackendFactory(context.Background(), testBackendDeps(t))
+	backend, err := factory(manifest, t.TempDir())
+	require.NoError(t, err)
+	assert.NotNil(t, backend)
+}
+
+// TestBackendFactoryRejectsAnUnknownBackend guards the default arm. Falling
+// through to the noop backend would make a misspelled backend look like a
+// prompt-only skill that simply does nothing.
+func TestBackendFactoryRejectsAnUnknownBackend(t *testing.T) {
+	t.Parallel()
+
+	manifest := skills.SkillManifest{Name: "odd-skill"}
+	manifest.Implementation.Backend = "wasm"
+
+	factory := newBackendFactory(context.Background(), testBackendDeps(t))
+	backend, err := factory(manifest, t.TempDir())
+	require.Error(t, err)
+	assert.Nil(t, backend)
+	assert.Contains(t, err.Error(), `backend "wasm" not implemented`)
+}
+
+// stubProvider is the smallest thing satisfying provider.LLMProvider, so the
+// plugin LLM adapter can be exercised without a network call.
+type stubProvider struct{ text string }
+
+func (p *stubProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	ch := make(chan provider.StreamEvent, 2)
+	ch <- provider.StreamEvent{Type: "text_delta", Text: p.text}
+	ch <- provider.StreamEvent{Type: "stop"}
+	close(ch)
+	return ch, nil
+}
+
+func TestPluginLLMCompleterAdapterCompletesThroughTheProvider(t *testing.T) {
+	t.Parallel()
+
+	adapter := &pluginLLMCompleterAdapter{
+		ctx:       context.Background(),
+		completer: integrations.NewLLMCompleter(&stubProvider{text: "hello"}, "test-model"),
+	}
+
+	got, err := adapter.Complete("say hello")
+	require.NoError(t, err)
+	assert.Contains(t, got, "hello", "the adapter must return what the model said, not swallow it")
+}
+
+func TestNoopPromptBackendHasNoWorkflows(t *testing.T) {
+	t.Parallel()
+	assert.Empty(t, (&noopPromptBackend{}).Workflows())
+}
+
+// The git adapters wrap a runner that fails outside a repository. These cover
+// the error arms, which otherwise only run when someone points rubichan at a
+// directory git does not track.
+
+func TestGitAdaptersPropagateFailureOutsideARepository(t *testing.T) {
+	t.Parallel()
+
+	notARepo := t.TempDir()
+	star := &starlarkGitRunnerAdapter{runner: integrations.NewGitRunner(notARepo)}
+	plugin := &pluginGitRunnerAdapter{ctx: context.Background(), runner: integrations.NewGitRunner(notARepo)}
+
+	_, err := star.Log(context.Background(), "-1")
+	assert.Error(t, err, "starlark Log outside a repository")
+	_, err = star.Status(context.Background())
+	assert.Error(t, err, "starlark Status outside a repository")
+	_, err = plugin.Log("-1")
+	assert.Error(t, err, "plugin Log outside a repository")
+	_, err = plugin.Status()
+	assert.Error(t, err, "plugin Status outside a repository")
+}
+
+func TestBackendFactoryRoutesMCP(t *testing.T) {
+	t.Parallel()
+
+	manifest := skills.SkillManifest{Name: "mcp-example"}
+	manifest.Implementation.Backend = skills.BackendMCP
+	manifest.Implementation.MCPTransport = "stdio"
+	manifest.Implementation.MCPCommand = "true"
+
+	factory := newBackendFactory(context.Background(), testBackendDeps(t))
+	backend, err := factory(manifest, t.TempDir())
+	require.NoError(t, err)
+	assert.NotNil(t, backend)
 }
