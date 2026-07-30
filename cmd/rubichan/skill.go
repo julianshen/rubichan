@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/skillruntime"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
 )
@@ -443,7 +444,7 @@ func skillWhyCmd() *cobra.Command {
 			loader := skills.NewLoader(userDir, projectDir)
 			loader.AddSkillDirs(cfg.Skills.Dirs)
 			loader.AddMCPServers(cfg.MCP.Servers)
-			if err := registerBuiltinSkillPrompts(loader, configDir); err != nil {
+			if err := skillruntime.RegisterBuiltinPrompts(loader, configDir); err != nil {
 				return err
 			}
 
@@ -639,7 +640,7 @@ func discoverSkillsForCLI(cmd *cobra.Command) (*config.Config, string, []skills.
 	loader := skills.NewLoader(userDir, projectDir)
 	loader.AddSkillDirs(cfg.Skills.Dirs)
 	loader.AddMCPServers(cfg.MCP.Servers)
-	if err := registerBuiltinSkillPrompts(loader, configDir); err != nil {
+	if err := skillruntime.RegisterBuiltinPrompts(loader, configDir); err != nil {
 		return nil, "", nil, nil, err
 	}
 

@@ -237,7 +237,7 @@ func TestCreateSkillRuntimeNilConfig(t *testing.T) {
 	skillsFlag = ""
 	defer func() { skillsFlag = oldFlag }()
 
-	rt, closer, err := createSkillRuntime(context.Background(), nil, nil, nil, "interactive", t.TempDir())
+	rt, closer, err := createSkillRuntime(context.Background(), nil, nil, nil, "interactive", t.TempDir(), t.TempDir())
 	assert.Error(t, err)
 	assert.Nil(t, rt)
 	assert.Nil(t, closer)
@@ -259,7 +259,7 @@ func TestCreateSkillRuntimeInteractiveActivatesFrontendDesignForFrontendApp(t *t
 	cfg := config.DefaultConfig()
 	workDir := filepath.Join("..", "..", "examples", "app-generation-smoke")
 
-	rt, closer, err := createSkillRuntime(context.Background(), registry, nil, cfg, "interactive", workDir)
+	rt, closer, err := createSkillRuntime(context.Background(), registry, nil, cfg, "interactive", workDir, t.TempDir())
 	require.NoError(t, err)
 	require.NotNil(t, rt)
 	if closer != nil {
