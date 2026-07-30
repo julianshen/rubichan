@@ -33,6 +33,7 @@ import (
 	"github.com/julianshen/rubichan/internal/hooks"
 	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/knowledgegraph"
+	"github.com/julianshen/rubichan/internal/modelcheck"
 	"github.com/julianshen/rubichan/internal/output"
 	"github.com/julianshen/rubichan/internal/parser"
 	"github.com/julianshen/rubichan/internal/permissions"
@@ -442,112 +443,7 @@ func runModelCapabilityTest() error {
 		return fmt.Errorf("creating provider: %w", err)
 	}
 
-	return executeModelCapabilityTest(context.Background(), os.Stdout, p, cfg.Provider.Default, cfg.Provider.Model)
-}
-
-func executeModelCapabilityTest(ctx context.Context, out io.Writer, p provider.LLMProvider, providerName, model string) error {
-	if p == nil {
-		return fmt.Errorf("provider is nil")
-	}
-	if strings.TrimSpace(model) == "" {
-		return fmt.Errorf("model is not configured")
-	}
-
-	caps := provider.DetectCapabilities(providerName, model)
-	fmt.Fprintf(out, "Provider: %s\nModel: %s\n", providerName, model)
-	fmt.Fprintf(out, "Capabilities: native_tool_use=%t system_prompt=%t tool_discovery_hint=%t max_tool_count=%d reasoning_effort=%q\n",
-		caps.SupportsNativeToolUse,
-		caps.SupportsSystemPrompt,
-		caps.NeedsToolDiscoveryHint,
-		caps.MaxToolCount,
-		caps.ReasoningEffort,
-	)
-
-	req := provider.CompletionRequest{
-		Model:     model,
-		Messages:  []provider.Message{provider.NewUserMessage("Reply with exactly: OK")},
-		MaxTokens: 16,
-	}
-
-	stream, err := p.Stream(ctx, req)
-	if err != nil {
-		return fmt.Errorf("model connectivity test failed: %w", err)
-	}
-
-	var sawStop bool
-	for evt := range stream {
-		switch evt.Type {
-		case "text_delta":
-			if evt.Text != "" {
-				fmt.Fprint(out, evt.Text)
-			}
-		case "stop":
-			sawStop = true
-		case "error":
-			return fmt.Errorf("model stream test failed: %w", evt.Error)
-		}
-	}
-
-	if !sawStop {
-		return fmt.Errorf("model stream ended without stop event")
-	}
-
-	if caps.SupportsNativeToolUse {
-		toolSupported, err := checkToolSupport(ctx, p, model)
-		if err != nil {
-			return err
-		}
-		if !toolSupported {
-			fmt.Fprintln(out, "Tool support: INCONCLUSIVE (no tool_use emitted during probe)")
-		} else {
-			fmt.Fprintln(out, "Tool support: PASS")
-		}
-	} else {
-		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
-	}
-
-	fmt.Fprintln(out, "\nModel test: PASS")
-	return nil
-}
-
-func checkToolSupport(ctx context.Context, p provider.LLMProvider, model string) (bool, error) {
-	req := provider.CompletionRequest{
-		Model: model,
-		Messages: []provider.Message{provider.NewUserMessage(
-			"Call the capability_probe tool with an empty JSON object and do not output any text.",
-		)},
-		Tools: []provider.ToolDef{{
-			Name:        "capability_probe",
-			Description: "Capability probe tool for testing native tool use support",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-		}},
-		MaxTokens: 64,
-	}
-
-	stream, err := p.Stream(ctx, req)
-	if err != nil {
-		return false, fmt.Errorf("tool support test request failed: %w", err)
-	}
-
-	var sawStop bool
-	for evt := range stream {
-		switch evt.Type {
-		case "tool_use":
-			if evt.ToolUse != nil && evt.ToolUse.Name == "capability_probe" {
-				return true, nil
-			}
-		case "error":
-			return false, fmt.Errorf("tool support stream failed: %w", evt.Error)
-		case "stop":
-			sawStop = true
-		}
-	}
-
-	if !sawStop {
-		return false, fmt.Errorf("tool support stream ended without stop event")
-	}
-
-	return false, nil
+	return modelcheck.Run(context.Background(), os.Stdout, p, cfg.Provider.Default, cfg.Provider.Model)
 }
 
 // parseSkillsFlag splits a comma-separated skills string into a slice of names.
