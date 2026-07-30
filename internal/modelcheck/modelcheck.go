@@ -46,6 +46,37 @@ func Run(ctx context.Context, out io.Writer, p provider.LLMProvider, providerNam
 		caps.ReasoningEffort,
 	)
 
+	if err := probeConnectivity(ctx, out, p, model); err != nil {
+		return err
+	}
+
+	if caps.SupportsNativeToolUse {
+		toolSupported, err := probeToolSupport(ctx, p, model)
+		if err != nil {
+			return err
+		}
+		if !toolSupported {
+			fmt.Fprintln(out, "Tool support: INCONCLUSIVE (no tool_use emitted during probe)")
+		} else {
+			fmt.Fprintln(out, "Tool support: PASS")
+		}
+	} else {
+		// Unreachable through provider.DetectCapabilities as it stands:
+		// agentsdk.DefaultCapabilities enables native tool use and no
+		// profile disables it, so every provider/model pair reports true.
+		// Kept because the capability is a real field the agent consults
+		// elsewhere — if a profile ever turns it off, this is the honest
+		// report — but it is untested for that reason.
+		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
+	}
+
+	fmt.Fprintln(out, "\nModel test: PASS")
+	return nil
+}
+
+// probeConnectivity asks for a one-word reply and echoes whatever comes back,
+// proving the endpoint is reachable and that streaming works end to end.
+func probeConnectivity(ctx context.Context, out io.Writer, p provider.LLMProvider, model string) error {
 	req := provider.CompletionRequest{
 		Model:     model,
 		Messages:  []provider.Message{provider.NewUserMessage("Reply with exactly: OK")},
@@ -75,27 +106,6 @@ func Run(ctx context.Context, out io.Writer, p provider.LLMProvider, providerNam
 		return fmt.Errorf("model stream ended without stop event")
 	}
 
-	if caps.SupportsNativeToolUse {
-		toolSupported, err := probeToolSupport(ctx, p, model)
-		if err != nil {
-			return err
-		}
-		if !toolSupported {
-			fmt.Fprintln(out, "Tool support: INCONCLUSIVE (no tool_use emitted during probe)")
-		} else {
-			fmt.Fprintln(out, "Tool support: PASS")
-		}
-	} else {
-		// Unreachable through provider.DetectCapabilities as it stands:
-		// agentsdk.DefaultCapabilities enables native tool use and no
-		// profile disables it, so every provider/model pair reports true.
-		// Kept because the capability is a real field the agent consults
-		// elsewhere — if a profile ever turns it off, this is the honest
-		// report — but it is untested for that reason.
-		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
-	}
-
-	fmt.Fprintln(out, "\nModel test: PASS")
 	return nil
 }
 
