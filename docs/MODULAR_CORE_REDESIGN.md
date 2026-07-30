@@ -182,14 +182,15 @@ For each subsystem, introduce the right seam interface and move it behind it, re
 **Phase 3 — Adapters over the core.**
 Reduce `cmd/rubichan/main.go` to composition only: build core, register modules, pick an adapter. Move mode wiring into `internal/modes/*` (or `pkg` for reusable ones). Target: `main.go` under a few hundred lines.
 
-> **Status update (2026-07): Phase 3 started — two slices out, both extractions of things that were never composition.**
+> **Status update (2026-07): Phase 3 started — three slices out, all extractions of things that were never composition.**
 >
 > The phase is being taken as a sequence of named clusters rather than one move, since main.go's contents are not homogeneous: some of it is genuinely composition (build a registry, pick a provider) and belongs where it is; the rest is subsystems that happen to be spelled inline.
 >
 > - **Slice 1 — `internal/diag`.** Process-level diagnostics: the session log, the JSONL event log, the stack dumps written on signal or panic (20 tests moved with it). File layout, permissions and log-writer swapping are not main's business.
 > - **Slice 2 — `internal/folderaccess`.** The working-directory approval gate: prompt, interactive path, headless path. Whether an unapproved folder is a question or an error, and what `--approve-cwd`/`--auto-approve` mean, is product policy the entrypoint should call rather than contain. Its persistence dependency is a two-method `Store` interface declared in the package, so the policy does not import the persistence layer to state its own rules.
+> - **Slice 3 — `internal/modelcheck`.** The `--test` flag's probes: report the capabilities rubichan believes a model has, then check the belief against the live endpoint with one completion and one tool call. What counts as a working model is product behaviour. This slice also shows where the phase's boundary actually falls — `runModelCapabilityTest` stayed in main.go, because loading config and building a provider *is* composition; only the probing moved, taking both as arguments.
 >
-> **Measured: 3,383 → 3,173 lines.** That is 210 lines across two slices, against a target of "a few hundred" — i.e. roughly 7% of the distance, and the remaining ~2,900 lines are the harder part (the inline interactive/headless/wiki flows identified in Problem C, which need the dormant `internal/modes/*` adapters to become the real path). The line count also moves independently of this work: #329's Ollama fix added 17 lines to main.go between the two slices. Treat the number as a direction of travel, not a burn-down.
+> **Measured: 3,383 → 3,069 lines.** That is 314 lines across three slices, against a target of "a few hundred" — i.e. roughly 11% of the distance, and the remaining ~2,800 lines are the harder part (the inline interactive/headless/wiki flows identified in Problem C, which need the dormant `internal/modes/*` adapters to become the real path). The line count also moves independently of this work: #329's Ollama fix added 17 lines to main.go between slices 1 and 2. Treat the number as a direction of travel, not a burn-down.
 >
 > **Slice 1 was a pure `[STRUCTURAL]` move** — bodies verbatim, tests moved with them, before-and-after test runs identical, which is what makes that shape cheap to review and safe to land alongside unrelated work in the same file.
 >
@@ -199,6 +200,8 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 > - Replacing `bufio` then dropped its guard against readers that return `(0, nil)` forever, turning a prompt that errors into a prompt that hangs. Restored with the same 100-read threshold.
 >
 > Both went in as separate `[BEHAVIORAL]` commits after the structural one, per Tidy-First. The general lesson for the remaining slices: **an extraction is behaviour-preserving in the mechanical sense while still promoting private assumptions into public contracts.** Expect to find and fix a defect per slice, and expect the fix to be a separate commit rather than a reason to make the move impure.
+>
+> **Slice 3 was a clean move, and what it surfaced was dead code rather than a defect.** `Run`'s "Tool support: SKIPPED" branch is unreachable: `agentsdk.DefaultCapabilities` enables native tool use and no provider profile disables it, so `DetectCapabilities` returns true for every provider/model pair. The branch is kept — the capability is a real field the agent consults elsewhere — but it is now commented as untested for that reason rather than left looking like an oversight. Worth noting as a second thing extraction does reliably: **moving code into a package where its coverage is measured in isolation exposes which branches production never takes.** In main.go, at 3,000 lines, that signal was invisible.
 
 **Phase 4 — Publish the module API.**
 Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
