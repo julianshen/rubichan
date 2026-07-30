@@ -54,9 +54,11 @@ func Prompt(workingDir string, in io.Reader, out io.Writer) (bool, error) {
 func readLine(in io.Reader) (string, error) {
 	var line []byte
 	var buf [1]byte
+	stalled := 0
 	for {
 		n, err := in.Read(buf[:])
 		if n > 0 {
+			stalled = 0
 			if buf[0] == '\n' {
 				return string(line), nil
 			}
@@ -65,8 +67,22 @@ func readLine(in io.Reader) (string, error) {
 		if err != nil {
 			return string(line), err
 		}
+		// io.Reader permits (0, nil) and asks callers to treat it as a
+		// no-op, so a reader that never progresses would spin here
+		// forever. bufio.Reader gives up after this many attempts; a
+		// prompt that hangs is worse than one that errors.
+		if n == 0 {
+			stalled++
+			if stalled >= maxStalledReads {
+				return string(line), io.ErrNoProgress
+			}
+		}
 	}
 }
+
+// maxStalledReads matches bufio.Reader's tolerance for readers that return no
+// bytes and no error, so replacing it here does not lose its guard.
+const maxStalledReads = 100
 
 // EnsureApproved returns nil once workingDir is approved, prompting the user
 // when it is not already on record. A denial is an error: the caller cannot
