@@ -51,6 +51,7 @@ import (
 	"github.com/julianshen/rubichan/internal/skills/builtin"
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
 	"github.com/julianshen/rubichan/internal/store"
+	"github.com/julianshen/rubichan/internal/subagents"
 	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -289,6 +290,16 @@ func setupWorkingDir(cfg *config.Config) (cwd string, mgr *worktree.Manager, cle
 	}
 
 	return wtDir, mgr, cleanup, nil
+}
+
+// gitRepoRoot returns the repository root, for callers that need one without
+// caring how it is found.
+func gitRepoRoot() (string, error) {
+	out, err := runGitCommand("rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // runGitCommand executes a git command and returns its stdout.
@@ -1081,71 +1092,22 @@ func runInteractive() error {
 		return err
 	}
 
-	// --- Subagent system wiring ---
-
-	// Create agent definition registry with built-in "general" definition.
-	agentDefReg := agent.NewAgentDefRegistry()
-	_ = agentDefReg.Register(&agent.AgentDef{
-		Name:        "general",
-		Description: "General-purpose agent with all available tools",
+	// Subagent system. Logf is nil here: registration failures are currently
+	// discarded in this mode, unlike headless.
+	subagentWiring, err := subagents.Wire(subagents.Options{
+		Config:          cfg,
+		Registry:        registry,
+		EnableTask:      toolsCfg.ShouldEnable("task"),
+		EnableListTasks: toolsCfg.ShouldEnable("list_tasks"),
+		WorktreeManager: wtMgr,
+		GitRoot:         gitRepoRoot,
 	})
-	// Register config-defined agent definitions.
-	for _, defConf := range cfg.Agent.Definitions {
-		_ = agentDefReg.Register(&agent.AgentDef{
-			Name:          defConf.Name,
-			Description:   defConf.Description,
-			SystemPrompt:  defConf.SystemPrompt,
-			Tools:         defConf.Tools,
-			MaxTurns:      defConf.MaxTurns,
-			MaxDepth:      defConf.MaxDepth,
-			Model:         defConf.Model,
-			InheritSkills: defConf.InheritSkills,
-			ExtraSkills:   defConf.ExtraSkills,
-			DisableSkills: defConf.DisableSkills,
-		})
+	if err != nil {
+		return err
 	}
-
-	// Create wake manager for background subagent notifications.
-	wakeManager := agent.NewWakeManager()
-
-	// Create spawner (provider will be set after agent creation).
-	spawner := &agent.DefaultSubagentSpawner{
-		Config:    cfg,
-		AgentDefs: agentDefReg,
-	}
-
-	// Wire worktree provider for subagent isolation.
-	// Always create a manager so subagents can use isolation: "worktree"
-	// even when the parent isn't running in a worktree.
-	if wtMgr != nil {
-		spawner.WorktreeProvider = &worktreeProviderAdapter{mgr: wtMgr}
-	} else if out, gitErr := runGitCommand("rev-parse", "--show-toplevel"); gitErr == nil {
-		root := strings.TrimSpace(out)
-		wtCfg := worktree.Config{
-			MaxWorktrees: cfg.Worktree.MaxCount,
-			BaseBranch:   cfg.Worktree.BaseBranch,
-			AutoCleanup:  cfg.Worktree.AutoCleanup,
-		}
-		spawner.WorktreeProvider = &worktreeProviderAdapter{mgr: worktree.NewManager(root, wtCfg)}
-	}
-
-	// Register task and list_tasks tools.
-	taskTool := tools.NewTaskTool(
-		&spawnerAdapter{spawner: spawner},
-		&agentDefLookupAdapter{reg: agentDefReg},
-		0,
-	)
-	taskTool.SetBackgroundManager(&wakeManagerAdapter{wm: wakeManager})
-	if toolsCfg.ShouldEnable("task") {
-		if err := registry.Register(taskTool); err != nil {
-			return fmt.Errorf("registering task tool: %w", err)
-		}
-	}
-	if toolsCfg.ShouldEnable("list_tasks") {
-		if err := registry.Register(tools.NewListTasksTool(&wakeStatusAdapter{wm: wakeManager})); err != nil {
-			return fmt.Errorf("registering list_tasks tool: %w", err)
-		}
-	}
+	agentDefReg := subagentWiring.AgentDefs
+	wakeManager := subagentWiring.WakeManager
+	spawner := subagentWiring.Spawner
 
 	// Build the approval function. When --auto-approve is set, skip the TUI
 	// prompt entirely. Otherwise, defer to the TUI model's interactive prompt.
@@ -1711,65 +1673,21 @@ func runHeadless() error {
 	opts = append(opts, agent.WithSummarizer(headlessSummarizer))
 	opts = append(opts, agent.WithMemoryStore(&storeMemoryAdapter{store: s}))
 
-	// --- Subagent system wiring (headless) ---
-	// Only create spawner/worktree infrastructure when task tools are enabled.
-	var headlessWakeManager *agent.WakeManager
-	var headlessSpawner *agent.DefaultSubagentSpawner
-	if headlessToolsCfg.ShouldEnable("task") || headlessToolsCfg.ShouldEnable("list_tasks") {
-		headlessAgentDefReg := agent.NewAgentDefRegistry()
-		if err := headlessAgentDefReg.Register(&agent.AgentDef{
-			Name:        "general",
-			Description: "General-purpose agent with all available tools",
-		}); err != nil {
-			log.Printf("warning: registering general agent def: %v", err)
-		}
-		for _, defConf := range cfg.Agent.Definitions {
-			if err := headlessAgentDefReg.Register(&agent.AgentDef{
-				Name:          defConf.Name,
-				Description:   defConf.Description,
-				SystemPrompt:  defConf.SystemPrompt,
-				Tools:         defConf.Tools,
-				MaxTurns:      defConf.MaxTurns,
-				MaxDepth:      defConf.MaxDepth,
-				Model:         defConf.Model,
-				InheritSkills: defConf.InheritSkills,
-				ExtraSkills:   defConf.ExtraSkills,
-				DisableSkills: defConf.DisableSkills,
-			}); err != nil {
-				log.Printf("warning: registering agent def %q: %v", defConf.Name, err)
-			}
-		}
-		headlessWakeManager = agent.NewWakeManager()
-		headlessSpawner = &agent.DefaultSubagentSpawner{
-			Config:    cfg,
-			AgentDefs: headlessAgentDefReg,
-		}
-		if out, gitErr := runGitCommand("rev-parse", "--show-toplevel"); gitErr == nil {
-			root := strings.TrimSpace(out)
-			wtCfg := worktree.Config{
-				MaxWorktrees: cfg.Worktree.MaxCount,
-				BaseBranch:   cfg.Worktree.BaseBranch,
-				AutoCleanup:  cfg.Worktree.AutoCleanup,
-			}
-			headlessSpawner.WorktreeProvider = &worktreeProviderAdapter{mgr: worktree.NewManager(root, wtCfg)}
-		}
-		headlessTaskTool := tools.NewTaskTool(
-			&spawnerAdapter{spawner: headlessSpawner},
-			&agentDefLookupAdapter{reg: headlessAgentDefReg},
-			0,
-		)
-		headlessTaskTool.SetBackgroundManager(&wakeManagerAdapter{wm: headlessWakeManager})
-		if headlessToolsCfg.ShouldEnable("task") {
-			if err := registry.Register(headlessTaskTool); err != nil {
-				return fmt.Errorf("registering task tool: %w", err)
-			}
-		}
-		if headlessToolsCfg.ShouldEnable("list_tasks") {
-			if err := registry.Register(tools.NewListTasksTool(&wakeStatusAdapter{wm: headlessWakeManager})); err != nil {
-				return fmt.Errorf("registering list_tasks tool: %w", err)
-			}
-		}
+	// Subagent system. WorktreeManager is nil here, preserving the previous
+	// behaviour of discovering the repository root independently.
+	headlessWiring, err := subagents.Wire(subagents.Options{
+		Config:          cfg,
+		Registry:        registry,
+		EnableTask:      headlessToolsCfg.ShouldEnable("task"),
+		EnableListTasks: headlessToolsCfg.ShouldEnable("list_tasks"),
+		GitRoot:         gitRepoRoot,
+		Logf:            log.Printf,
+	})
+	if err != nil {
+		return err
 	}
+	headlessWakeManager := headlessWiring.WakeManager
+	headlessSpawner := headlessWiring.Spawner
 
 	// Headless auto-approves all tools (restricted via --tools allowlist),
 	// but still respects hierarchical deny policies so org-level restrictions
@@ -2438,98 +2356,6 @@ func splitTrustRules(rules []config.TrustRuleConf) ([]agent.TrustRule, []agent.G
 // These adapters bridge the agent package (which has the real implementations)
 // to the local interfaces defined in the tools/ and skills/ packages, converting
 // between type-specific config/result structs to avoid import cycles.
-
-// spawnerAdapter bridges agent.DefaultSubagentSpawner to the tools.TaskSpawner
-// interface, converting between type-specific config/result structs.
-type spawnerAdapter struct {
-	spawner *agent.DefaultSubagentSpawner
-}
-
-func (a *spawnerAdapter) Spawn(ctx context.Context, cfg tools.TaskSpawnConfig, prompt string) (*tools.TaskSpawnResult, error) {
-	result, err := a.spawner.Spawn(ctx, agent.SubagentConfig{
-		Name:          cfg.Name,
-		SystemPrompt:  cfg.SystemPrompt,
-		Tools:         cfg.Tools,
-		MaxTurns:      cfg.MaxTurns,
-		MaxTokens:     cfg.MaxTokens,
-		Model:         cfg.Model,
-		Depth:         cfg.Depth,
-		MaxDepth:      cfg.MaxDepth,
-		InheritSkills: cfg.InheritSkills,
-		ExtraSkills:   cfg.ExtraSkills,
-		DisableSkills: cfg.DisableSkills,
-		Isolation:     cfg.Isolation,
-	}, prompt)
-	if err != nil {
-		return nil, err
-	}
-	return &tools.TaskSpawnResult{
-		Name:         result.Name,
-		Output:       result.Output,
-		ToolsUsed:    result.ToolsUsed,
-		TurnCount:    result.TurnCount,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		Error:        result.Error,
-	}, nil
-}
-
-// agentDefLookupAdapter bridges agent.AgentDefRegistry to tools.TaskAgentDefLookup.
-type agentDefLookupAdapter struct {
-	reg *agent.AgentDefRegistry
-}
-
-func (a *agentDefLookupAdapter) GetAgentDef(name string) (*tools.TaskAgentDef, bool) {
-	def, ok := a.reg.Get(name)
-	if !ok {
-		return nil, false
-	}
-	return &tools.TaskAgentDef{
-		Name:          def.Name,
-		SystemPrompt:  def.SystemPrompt,
-		Tools:         def.Tools,
-		MaxTurns:      def.MaxTurns,
-		MaxDepth:      def.MaxDepth,
-		Model:         def.Model,
-		InheritSkills: def.InheritSkills,
-		ExtraSkills:   def.ExtraSkills,
-		DisableSkills: def.DisableSkills,
-	}, true
-}
-
-// wakeManagerAdapter bridges agent.WakeManager to tools.BackgroundTaskManager.
-type wakeManagerAdapter struct {
-	wm *agent.WakeManager
-}
-
-func (a *wakeManagerAdapter) SubmitBackground(name string, cancel context.CancelFunc) string {
-	return a.wm.Submit(name, cancel)
-}
-
-func (a *wakeManagerAdapter) CompleteBackground(taskID string, output string, err error) {
-	a.wm.Complete(taskID, &agent.SubagentResult{
-		Output: output,
-		Error:  err,
-	})
-}
-
-// wakeStatusAdapter bridges agent.WakeManager to tools.TaskStatusProvider.
-type wakeStatusAdapter struct {
-	wm *agent.WakeManager
-}
-
-func (a *wakeStatusAdapter) BackgroundTaskStatus() []tools.BackgroundTaskInfo {
-	statuses := a.wm.Status()
-	result := make([]tools.BackgroundTaskInfo, len(statuses))
-	for i, s := range statuses {
-		result[i] = tools.BackgroundTaskInfo{
-			ID:        s.ID,
-			AgentName: s.AgentName,
-			Status:    s.Status,
-		}
-	}
-	return result
-}
 
 // agentDefRegistrarAdapter bridges agent.AgentDefRegistry to skills.AgentDefRegistrar.
 type agentDefRegistrarAdapter struct {
