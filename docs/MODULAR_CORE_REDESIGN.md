@@ -191,7 +191,14 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 >
 > **Measured: 3,383 → 3,173 lines.** That is 210 lines across two slices, against a target of "a few hundred" — i.e. roughly 7% of the distance, and the remaining ~2,900 lines are the harder part (the inline interactive/headless/wiki flows identified in Problem C, which need the dormant `internal/modes/*` adapters to become the real path). The line count also moves independently of this work: #329's Ollama fix added 17 lines to main.go between the two slices. Treat the number as a direction of travel, not a burn-down.
 >
-> **Both slices were pure `[STRUCTURAL]` moves** — bodies verbatim, tests moved with them, before-and-after test runs identical — which is what makes them cheap to review and safe to land alongside unrelated work in the same file.
+> **Slice 1 was a pure `[STRUCTURAL]` move** — bodies verbatim, tests moved with them, before-and-after test runs identical, which is what makes that shape cheap to review and safe to land alongside unrelated work in the same file.
+>
+> **Slice 2 started as one and did not stay one.** The move itself was verbatim, but giving the code a package boundary turned two of its implementation details into a published contract, and both were wrong:
+>
+> - `Prompt` wrapped the caller's `io.Reader` in a `bufio.Reader` and discarded it, so anything the stream offered after the response line was lost. Harmless while the reader was a local detail of main.go on a canonical-mode terminal (each `read(2)` ends at the newline); a real defect once the same `os.Stdin` is documented as passing to the TUI afterwards. Reachable today with piped stdin.
+> - Replacing `bufio` then dropped its guard against readers that return `(0, nil)` forever, turning a prompt that errors into a prompt that hangs. Restored with the same 100-read threshold.
+>
+> Both went in as separate `[BEHAVIORAL]` commits after the structural one, per Tidy-First. The general lesson for the remaining slices: **an extraction is behaviour-preserving in the mechanical sense while still promoting private assumptions into public contracts.** Expect to find and fix a defect per slice, and expect the fix to be a separate commit rather than a reason to make the move impure.
 
 **Phase 4 — Publish the module API.**
 Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
