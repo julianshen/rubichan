@@ -7,9 +7,9 @@ package skillruntime
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -20,13 +20,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testRepoRoot returns this checkout's root, so the git-backed adapters run
-// against a real repository rather than a fixture.
-func testRepoRoot(t *testing.T) string {
+// testRepo builds a throwaway repository with one commit. The adapters used
+// to be pointed at this checkout, which made the tests fail rather than skip
+// in any environment without git history — a source tarball, a minimal
+// container — and made assertions like "Log returns entries" depend on the
+// ambient repository rather than on anything the test set up.
+func testRepo(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	require.NoError(t, err)
-	return strings.TrimSpace(string(out))
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	run("init", "--quiet")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file.txt"), []byte("contents\n"), 0o600))
+	run("add", "file.txt")
+	run("commit", "--quiet", "-m", "initial commit")
+	return dir
 }
 
 func TestNoopPromptBackend_AllMethodsWork(t *testing.T) {
@@ -53,7 +69,7 @@ func TestRegisterBuiltinPrompts(t *testing.T) {
 func TestStarlarkGitRunnerAdapter_Diff(t *testing.T) {
 	t.Parallel()
 	adapter := &starlarkGitRunnerAdapter{
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
+		runner: integrations.NewGitRunner(testRepo(t)),
 	}
 	diff, err := adapter.Diff(context.Background())
 	require.NoError(t, err)
@@ -64,38 +80,11 @@ func TestPluginGitRunnerAdapter_Diff(t *testing.T) {
 	t.Parallel()
 	adapter := &pluginGitRunnerAdapter{
 		ctx:    context.Background(),
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
+		runner: integrations.NewGitRunner(testRepo(t)),
 	}
 	diff, err := adapter.Diff()
 	require.NoError(t, err)
 	_ = diff
-}
-
-func TestPluginHTTPFetcherAdapter_Construction(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginHTTPFetcherAdapter{
-		ctx:     context.Background(),
-		fetcher: integrations.NewHTTPFetcher(5 * time.Second),
-	}
-	assert.NotNil(t, adapter)
-}
-
-func TestPluginLLMCompleterAdapter_Construction(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginLLMCompleterAdapter{
-		ctx:       context.Background(),
-		completer: nil,
-	}
-	assert.NotNil(t, adapter)
-}
-
-func TestPluginSkillInvokerAdapter_Construction(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginSkillInvokerAdapter{
-		ctx:     context.Background(),
-		invoker: integrations.NewSkillInvoker(nil),
-	}
-	assert.NotNil(t, adapter)
 }
 
 func TestPluginHTTPFetcherAdapter_Fetch(t *testing.T) {
@@ -107,18 +96,6 @@ func TestPluginHTTPFetcherAdapter_Fetch(t *testing.T) {
 	// Fetching an invalid URL should error.
 	_, err := adapter.Fetch("http://localhost:1/nonexistent")
 	assert.Error(t, err)
-}
-
-func TestPluginLLMCompleterAdapter_Complete_Wiring(t *testing.T) {
-	t.Parallel()
-	// Just verify construction; calling Complete with nil provider panics,
-	// which shows the adapter correctly delegates to the completer.
-	adapter := &pluginLLMCompleterAdapter{
-		ctx:       context.Background(),
-		completer: integrations.NewLLMCompleter(nil, "test-model"),
-	}
-	assert.NotNil(t, adapter)
-	assert.NotNil(t, adapter.completer)
 }
 
 func TestPluginSkillInvokerAdapter_Invoke_NilRuntime(t *testing.T) {
@@ -136,7 +113,7 @@ func TestPluginSkillInvokerAdapter_Invoke_NilRuntime(t *testing.T) {
 func TestStarlarkGitRunnerAdapter_Log(t *testing.T) {
 	t.Parallel()
 	adapter := &starlarkGitRunnerAdapter{
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
+		runner: integrations.NewGitRunner(testRepo(t)),
 	}
 	entries, err := adapter.Log(context.Background(), "-1")
 	require.NoError(t, err)
@@ -148,7 +125,7 @@ func TestStarlarkGitRunnerAdapter_Log(t *testing.T) {
 func TestStarlarkGitRunnerAdapter_Status(t *testing.T) {
 	t.Parallel()
 	adapter := &starlarkGitRunnerAdapter{
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
+		runner: integrations.NewGitRunner(testRepo(t)),
 	}
 	_, err := adapter.Status(context.Background())
 	require.NoError(t, err)
@@ -158,7 +135,7 @@ func TestPluginGitRunnerAdapter_Log(t *testing.T) {
 	t.Parallel()
 	adapter := &pluginGitRunnerAdapter{
 		ctx:    context.Background(),
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
+		runner: integrations.NewGitRunner(testRepo(t)),
 	}
 	entries, err := adapter.Log("-1")
 	require.NoError(t, err)
@@ -170,7 +147,7 @@ func TestPluginGitRunnerAdapter_Status(t *testing.T) {
 	t.Parallel()
 	adapter := &pluginGitRunnerAdapter{
 		ctx:    context.Background(),
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
+		runner: integrations.NewGitRunner(testRepo(t)),
 	}
 	_, err := adapter.Status()
 	require.NoError(t, err)
