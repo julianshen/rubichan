@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/modelcheck"
 	"github.com/julianshen/rubichan/internal/provider"
@@ -263,4 +264,94 @@ func TestRunDrainsTheToolProbeStream(t *testing.T) {
 	require.NoError(t, modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o"))
 	assert.Contains(t, out.String(), "Tool support: PASS")
 	assert.Equal(t, 0, p.undrained(), "every event offered must be consumed")
+}
+
+// blockingProvider mimics how real providers emit: a goroutine sending on an
+// unbuffered channel with `select { case ch <- evt: case <-ctx.Done(): }`, as
+// internal/provider/ollama and internal/provider/ssecompat both do. A consumer
+// that stops reading strands that goroutine until the context is cancelled,
+// which a fake with a buffered, pre-closed channel can never reveal.
+type blockingProvider struct {
+	eventsByCall [][]provider.StreamEvent
+	callCount    int
+	exited       chan struct{}
+}
+
+func newBlockingProvider(eventsByCall [][]provider.StreamEvent) *blockingProvider {
+	return &blockingProvider{eventsByCall: eventsByCall, exited: make(chan struct{}, 8)}
+}
+
+func (p *blockingProvider) Stream(ctx context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	idx := p.callCount
+	p.callCount++
+	var events []provider.StreamEvent
+	if idx < len(p.eventsByCall) {
+		events = p.eventsByCall[idx]
+	}
+
+	ch := make(chan provider.StreamEvent)
+	go func() {
+		defer func() { p.exited <- struct{}{} }()
+		defer close(ch)
+		for _, evt := range events {
+			select {
+			case ch <- evt:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ch, nil
+}
+
+// awaitProducerExit fails if the producer goroutine is still parked on a send.
+func (p *blockingProvider) awaitProducerExit(t *testing.T) {
+	t.Helper()
+	for i := 0; i < p.callCount; i++ {
+		select {
+		case <-p.exited:
+		case <-time.After(2 * time.Second):
+			t.Fatal("provider goroutine still blocked on send — the stream was abandoned without cancelling its context")
+		}
+	}
+}
+
+// TestRunReleasesTheProducerAfterAConnectivityError covers an error event that
+// is not the end of the stream. Both the Ollama and SSE-compatible parsers
+// emit a parse error and keep scanning, so returning on the error leaves the
+// producer holding a connection with no one reading.
+func TestRunReleasesTheProducerAfterAConnectivityError(t *testing.T) {
+	p := newBlockingProvider([][]provider.StreamEvent{
+		{
+			{Type: "error", Error: fmt.Errorf("parsing chunk: unexpected token")},
+			{Type: "text_delta", Text: "more output nobody is reading"},
+			{Type: "stop"},
+		},
+	})
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model stream test failed")
+	p.awaitProducerExit(t)
+}
+
+// TestRunReleasesTheProducerAfterAToolProbeError is the same hazard on the
+// second probe, which is where review first spotted it.
+func TestRunReleasesTheProducerAfterAToolProbeError(t *testing.T) {
+	p := newBlockingProvider([][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{
+			{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "capability_probe"}},
+			{Type: "error", Error: fmt.Errorf("parsing chunk: unexpected token")},
+			{Type: "text_delta", Text: "still going"},
+			{Type: "stop"},
+		},
+	})
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool support stream failed")
+	p.awaitProducerExit(t)
 }
