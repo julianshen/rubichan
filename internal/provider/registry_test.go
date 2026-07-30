@@ -169,11 +169,11 @@ func TestRegistry_ListModels_NoResolver(t *testing.T) {
 }
 
 // TestRegisterRejectsIncompleteDef pins the registration-time contract.
-// New and ResolveDefaultModel call Constructor, BaseURL and Auth without
-// nil checks, so a def missing one of them panics on the first request
-// that reaches it — far from the init() that registered it, with a bare
-// nil-function-call and no provider name. Failing at registration keeps
-// the blame at the offending provider.
+// New calls Constructor, BaseURL and Auth without nil checks, so a def
+// missing one of them panics on the first request that reaches it — far
+// from the init() that registered it, with a bare nil-function-call and
+// no provider name. Failing at registration keeps the blame at the
+// offending provider.
 func TestRegisterRejectsIncompleteDef(t *testing.T) {
 	t.Parallel()
 
