@@ -277,14 +277,20 @@ func TestGitAdaptersPropagateFailureOutsideARepository(t *testing.T) {
 	star := &starlarkGitRunnerAdapter{runner: integrations.NewGitRunner(notARepo)}
 	plugin := &pluginGitRunnerAdapter{ctx: context.Background(), runner: integrations.NewGitRunner(notARepo)}
 
+	// The wrapping names which adapter and which operation failed: the
+	// runner's own error says only that git did not like something.
 	_, err := star.Log(context.Background(), "-1")
-	assert.Error(t, err, "starlark Log outside a repository")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git log for starlark skill")
 	_, err = star.Status(context.Background())
-	assert.Error(t, err, "starlark Status outside a repository")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git status for starlark skill")
 	_, err = plugin.Log("-1")
-	assert.Error(t, err, "plugin Log outside a repository")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git log for plugin skill")
 	_, err = plugin.Status()
-	assert.Error(t, err, "plugin Status outside a repository")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git status for plugin skill")
 }
 
 func TestBackendFactoryRoutesMCP(t *testing.T) {
