@@ -770,31 +770,6 @@ func autoDetectProvider(cfg *config.Config, providerFlagValue, ollamaURL string)
 	return false
 }
 
-// resolveOllamaModel queries Ollama for available models and resolves which
-// model to use. With a single model it auto-selects; with zero models it
-// returns an error. The ollamaURL parameter allows testing with httptest.
-func resolveOllamaModel(ollamaURL string) (string, error) {
-	client := ollama.NewClient(ollamaURL)
-	models, err := client.ListModels(context.Background())
-	if err != nil {
-		return "", fmt.Errorf("listing Ollama models: %w", err)
-	}
-
-	if len(models) == 0 {
-		return "", fmt.Errorf("no models found; run 'rubichan ollama pull <model>' first")
-	}
-
-	if len(models) == 1 {
-		return models[0].Name, nil
-	}
-
-	// Multiple models — in interactive mode, we'd show a picker.
-	// For now, return the first model. The TUI picker integration
-	// requires running a Bubble Tea program which is complex to wire here.
-	// TODO: integrate tui.ModelPicker when running interactively.
-	return models[0].Name, nil
-}
-
 // loadConfig resolves the config path, loads the config, and applies any
 // flag overrides. This eliminates duplication between runInteractive and
 // runHeadless.
@@ -840,31 +815,26 @@ func loadConfig() (*config.Config, error) {
 		fmt.Fprintln(os.Stderr, "Using local Ollama (no API key configured)")
 	}
 
-	// Resolve Z.ai's default model if provider is zai and no model specified
-	// via --model. [provider.zai].model wins over the built-in fallback.
-	if cfg.Provider.Default == "zai" && cfg.Provider.Model == "" {
-		if cfg.Provider.Zai.Model != "" {
-			cfg.Provider.Model = cfg.Provider.Zai.Model
-		} else {
-			cfg.Provider.Model = "glm-5"
+	// Resolve the provider's default model if none was specified via
+	// --model or config. Each provider's own resolution logic (constant,
+	// config-driven fallback, or dynamic lookup) lives in its ProviderDef
+	// (internal/provider/{anthropic,zai,ollama}). Providers with no
+	// DefaultModel resolver (e.g. custom OpenAI-compatible endpoints) leave
+	// cfg.Provider.Model unset, matching prior behavior.
+	if cfg.Provider.Model == "" {
+		model, err := provider.Default.ResolveDefaultModel(context.Background(), cfg)
+		switch {
+		case err == nil:
+			cfg.Provider.Model = model
+			if cfg.Provider.Default == "ollama" {
+				fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
+			}
+		case errors.Is(err, provider.ErrNoDefaultModel):
+			// No default-model resolution for this provider — leave Model
+			// empty, same as before this provider had a Registry entry.
+		default:
+			return nil, fmt.Errorf("resolving default model: %w", err)
 		}
-	}
-
-	// Resolve Ollama model if provider is ollama and no model specified.
-	if cfg.Provider.Default == "ollama" && cfg.Provider.Model == "" {
-		model, err := resolveOllamaModel(ollamaURL)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Provider.Model = model
-		fmt.Fprintf(os.Stderr, "Using Ollama model: %s\n", model)
-	}
-
-	// Resolve Anthropic's default model if it's the (possibly auto-detected)
-	// provider and no model was specified. This runs last so it only ever
-	// fills in what the provider-specific resolutions above left empty.
-	if cfg.Provider.Default == "anthropic" && cfg.Provider.Model == "" {
-		cfg.Provider.Model = "claude-sonnet-4-5"
 	}
 
 	return cfg, nil

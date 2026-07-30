@@ -11,13 +11,68 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 )
 
 func init() {
-	provider.RegisterProvider("ollama", func(baseURL, _ string, _ map[string]string) provider.LLMProvider {
-		return New(baseURL)
-	})
+	provider.Default.Register(providerDef())
+}
+
+// providerDef describes this provider's construction, auth, default model,
+// and model listing for provider.Default. Exposed as a function so tests
+// can exercise it directly, isolated from the shared provider.Default
+// registry.
+func providerDef() provider.ProviderDef {
+	return provider.ProviderDef{
+		ID: "ollama",
+		Constructor: func(baseURL, _ string, _ map[string]string) provider.LLMProvider {
+			return New(baseURL)
+		},
+		BaseURL: func(cfg *config.Config) string {
+			return resolveBaseURL(cfg)
+		},
+		Auth: func(cfg *config.Config) (string, map[string]string, error) {
+			return "", nil, nil // local server, no credentials
+		},
+		DefaultModel: resolveDefaultModel,
+		ListModels:   listModels,
+	}
+}
+
+func resolveBaseURL(cfg *config.Config) string {
+	if cfg.Provider.Ollama.BaseURL != "" {
+		return cfg.Provider.Ollama.BaseURL
+	}
+	return DefaultBaseURL
+}
+
+// resolveDefaultModel queries Ollama for available models and resolves
+// which model to use. With a single model it auto-selects; with multiple,
+// it returns the first (a future TUI picker would use listModels/ListModels
+// directly instead of this auto-select).
+func resolveDefaultModel(ctx context.Context, cfg *config.Config) (string, error) {
+	models, err := listModels(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models found; run 'rubichan ollama pull <model>' first")
+	}
+	return models[0].ID, nil
+}
+
+func listModels(ctx context.Context, cfg *config.Config) ([]provider.Model, error) {
+	client := NewClient(resolveBaseURL(cfg))
+	infos, err := client.ListModels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing Ollama models: %w", err)
+	}
+	models := make([]provider.Model, len(infos))
+	for i, info := range infos {
+		models[i] = provider.Model{ID: info.Name, Name: info.Name}
+	}
+	return models, nil
 }
 
 // Provider implements the LLMProvider interface for Ollama (local LLM server).

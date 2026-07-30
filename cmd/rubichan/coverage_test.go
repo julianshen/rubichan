@@ -1678,13 +1678,21 @@ func TestLoadConfig_WithProviderOverride(t *testing.T) {
 		providerFlag = oldProviderFlag
 	}()
 
-	configPath = ""
+	// A temp, nonexistent path — not "" — so this test doesn't pick up a
+	// real ~/.config/rubichan/config.toml on the machine running it (which
+	// would set Provider.Model from the file, masking the assertion below).
+	configPath = filepath.Join(t.TempDir(), "nonexistent-config.toml")
 	modelFlag = ""
 	providerFlag = "openrouter"
 
 	cfg, err := loadConfig()
 	require.NoError(t, err)
 	assert.Equal(t, "openrouter", cfg.Provider.Default)
+	// "openrouter" isn't a registered provider ID, so ResolveDefaultModel
+	// resolves through the fallback (no DefaultModel resolver) and returns
+	// ErrNoDefaultModel, which loadConfig treats as "leave unset" rather
+	// than a fatal error.
+	assert.Empty(t, cfg.Provider.Model)
 }
 
 // ---------------------------------------------------------------------------

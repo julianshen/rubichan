@@ -6,15 +6,88 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/provider/ssecompat"
 )
 
 func init() {
-	provider.RegisterProvider("openai", func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
-		return New(baseURL, apiKey, extraHeaders)
-	})
+	provider.Default.RegisterFallback(providerDef())
+}
+
+// providerDef describes this provider's construction, auth, and base URL
+// for provider.Default. Registered as the fallback (not an exact-ID match)
+// because this provider handles any name found in cfg.Provider.OpenAI —
+// "openai", "openrouter", a custom proxy name, etc. — not one fixed ID.
+// DefaultModel is left nil: this provider has never had default-model
+// resolution (users must pass --model), and Registry.ResolveDefaultModel's
+// ErrNoDefaultModel preserves that — see main.go's loadConfig().
+func providerDef() provider.ProviderDef {
+	return provider.ProviderDef{
+		ID: "openai",
+		Constructor: func(baseURL, apiKey string, extraHeaders map[string]string) provider.LLMProvider {
+			return New(baseURL, apiKey, extraHeaders)
+		},
+		BaseURL: func(cfg *config.Config) string {
+			oc, _ := lookupCompatEntry(cfg)
+			return oc.BaseURL
+		},
+		Auth: func(cfg *config.Config) (string, map[string]string, error) {
+			oc, ok := lookupCompatEntry(cfg)
+			if !ok {
+				return "", nil, formatUnknownProviderError(cfg.Provider.Default, cfg.Provider.OpenAI)
+			}
+			apiKey, err := config.ResolveOpenAICompatibleAPIKey(oc)
+			if err != nil {
+				return "", nil, fmt.Errorf("resolving %s API key: %w", cfg.Provider.Default, err)
+			}
+			return apiKey, oc.ExtraHeaders, nil
+		},
+	}
+}
+
+func lookupCompatEntry(cfg *config.Config) (config.OpenAICompatibleConfig, bool) {
+	for _, oc := range cfg.Provider.OpenAI {
+		if oc.Name == cfg.Provider.Default {
+			return oc, true
+		}
+	}
+	return config.OpenAICompatibleConfig{}, false
+}
+
+// formatUnknownProviderError builds a helpful error message when the
+// requested provider name doesn't match any configured
+// [[provider.openai_compatible]] entry. It lists what IS configured and
+// shows example config / CLI usage.
+func formatUnknownProviderError(name string, configured []config.OpenAICompatibleConfig) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "unknown provider: %q\n\n", name)
+
+	if len(configured) > 0 {
+		b.WriteString("Configured OpenAI-compatible providers:\n")
+		for _, oc := range configured {
+			fmt.Fprintf(&b, "  - %s (%s)\n", oc.Name, oc.BaseURL)
+		}
+		b.WriteString("\n")
+	} else {
+		b.WriteString("No OpenAI-compatible providers are configured.\n\n")
+	}
+
+	b.WriteString("Quick fix — use CLI flags:\n")
+	fmt.Fprintf(&b, "  rubichan --provider %s --api-base http://localhost:1234/v1 --model my-model\n\n", name)
+
+	b.WriteString("Or add to ~/.config/rubichan/config.toml:\n")
+	fmt.Fprintf(&b, "  [provider]\n")
+	fmt.Fprintf(&b, "  default = %q\n", name)
+	fmt.Fprintf(&b, "  model   = \"my-model\"\n\n")
+	fmt.Fprintf(&b, "  [[provider.openai_compatible]]\n")
+	fmt.Fprintf(&b, "  name     = %q\n", name)
+	fmt.Fprintf(&b, "  base_url = \"http://localhost:1234/v1\"\n")
+	fmt.Fprintf(&b, "  api_key  = \"none\"")
+
+	return fmt.Errorf("%s", b.String())
 }
 
 // Provider implements the LLMProvider interface for OpenAI-compatible APIs.

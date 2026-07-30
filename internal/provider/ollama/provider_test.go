@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -903,4 +904,96 @@ func TestConvertUserMessagesStripsEmptyText(t *testing.T) {
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "user", msgs[0].Role)
 	assert.Equal(t, "helloworld", msgs[0].Content)
+}
+
+func TestResolveDefaultModel_SingleModel(t *testing.T) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models": [{"name": "llama3.2:latest", "size": 4294967296}]}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Ollama.BaseURL = srv.URL
+
+	model, err := resolveDefaultModel(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "llama3.2:latest", model)
+}
+
+func TestResolveDefaultModel_NoModels(t *testing.T) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models": []}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Ollama.BaseURL = srv.URL
+
+	_, err := resolveDefaultModel(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no models found")
+}
+
+func TestResolveDefaultModel_MultipleModels(t *testing.T) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models": [
+			{"name": "llama3.2:latest", "size": 4294967296},
+			{"name": "codellama:7b", "size": 3758096384}
+		]}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Ollama.BaseURL = srv.URL
+
+	model, err := resolveDefaultModel(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "llama3.2:latest", model) // returns first model
+}
+
+func TestResolveDefaultModel_ConnectionError(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Ollama.BaseURL = "http://localhost:1"
+
+	_, err := resolveDefaultModel(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "listing Ollama models")
+}
+
+func TestListModels(t *testing.T) {
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models": [{"name": "llama3.2:latest", "size": 1}]}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Ollama.BaseURL = srv.URL
+
+	models, err := listModels(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, []provider.Model{{ID: "llama3.2:latest", Name: "llama3.2:latest"}}, models)
+}
+
+func TestProviderDef_BaseURLDefault(t *testing.T) {
+	def := providerDef()
+	cfg := config.DefaultConfig()
+
+	assert.Equal(t, DefaultBaseURL, def.BaseURL(cfg))
+}
+
+func TestProviderDef_BaseURLOverride(t *testing.T) {
+	def := providerDef()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Ollama.BaseURL = "http://custom-ollama:1234"
+
+	assert.Equal(t, "http://custom-ollama:1234", def.BaseURL(cfg))
+}
+
+func TestProviderDef_AuthIsKeyless(t *testing.T) {
+	def := providerDef()
+
+	apiKey, headers, err := def.Auth(config.DefaultConfig())
+	require.NoError(t, err)
+	assert.Empty(t, apiKey)
+	assert.Nil(t, headers)
 }

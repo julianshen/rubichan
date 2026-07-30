@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
@@ -1129,6 +1130,38 @@ func TestStream_SetsRequestIDHeader(t *testing.T) {
 }
 
 func floatPtr(f float64) *float64 { return &f }
+
+func TestProviderDef_BaseURLAndAuth(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+
+	def := providerDef()
+	cfg := config.DefaultConfig()
+
+	assert.Equal(t, "https://api.anthropic.com", def.BaseURL(cfg))
+
+	apiKey, headers, err := def.Auth(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "test-anthropic-key", apiKey)
+	assert.Nil(t, headers)
+}
+
+func TestProviderDef_AuthMissingKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	def := providerDef()
+	cfg := config.DefaultConfig()
+
+	_, _, err := def.Auth(cfg)
+	require.Error(t, err)
+}
+
+func TestProviderDef_DefaultModel(t *testing.T) {
+	def := providerDef()
+
+	model, err := def.DefaultModel(context.Background(), config.DefaultConfig())
+	require.NoError(t, err)
+	assert.Equal(t, "claude-sonnet-4-5", model)
+}
 
 func TestConvertSSEEvent_MessageDelta_StopReason(t *testing.T) {
 	p := New("http://localhost", "test-key")
