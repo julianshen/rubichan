@@ -86,6 +86,12 @@ func Run(ctx context.Context, out io.Writer, p provider.LLMProvider, providerNam
 			fmt.Fprintln(out, "Tool support: PASS")
 		}
 	} else {
+		// Unreachable through provider.DetectCapabilities as it stands:
+		// agentsdk.DefaultCapabilities enables native tool use and no
+		// profile disables it, so every provider/model pair reports true.
+		// Kept because the capability is a real field the agent consults
+		// elsewhere — if a profile ever turns it off, this is the honest
+		// report — but it is untested for that reason.
 		fmt.Fprintln(out, "Tool support: SKIPPED (model capability indicates no native tool use)")
 	}
 
