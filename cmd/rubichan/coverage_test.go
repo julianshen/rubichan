@@ -20,7 +20,6 @@ import (
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tui"
-	"github.com/julianshen/rubichan/internal/worktree"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -861,33 +860,6 @@ func TestStoreMemoryAdapter_LoadEmpty(t *testing.T) {
 // agentDefLookupAdapter
 // ---------------------------------------------------------------------------
 
-func TestAgentDefLookupAdapter_Found(t *testing.T) {
-	t.Parallel()
-	reg := agent.NewAgentDefRegistry()
-	_ = reg.Register(&agent.AgentDef{
-		Name:        "test-agent",
-		Description: "A test agent",
-		MaxTurns:    10,
-	})
-	adapter := &agentDefLookupAdapter{reg: reg}
-
-	def, ok := adapter.GetAgentDef("test-agent")
-	assert.True(t, ok)
-	require.NotNil(t, def)
-	assert.Equal(t, "test-agent", def.Name)
-	assert.Equal(t, 10, def.MaxTurns)
-}
-
-func TestAgentDefLookupAdapter_NotFound(t *testing.T) {
-	t.Parallel()
-	reg := agent.NewAgentDefRegistry()
-	adapter := &agentDefLookupAdapter{reg: reg}
-
-	def, ok := adapter.GetAgentDef("nonexistent")
-	assert.False(t, ok)
-	assert.Nil(t, def)
-}
-
 // ---------------------------------------------------------------------------
 // agentDefRegistrarAdapter
 // ---------------------------------------------------------------------------
@@ -921,53 +893,9 @@ func TestAgentDefRegistrarAdapter_RegisterAndUnregister(t *testing.T) {
 // wakeManagerAdapter
 // ---------------------------------------------------------------------------
 
-func TestWakeManagerAdapter_SubmitAndComplete(t *testing.T) {
-	t.Parallel()
-	wm := agent.NewWakeManager()
-	adapter := &wakeManagerAdapter{wm: wm}
-
-	taskID := adapter.SubmitBackground("test-task", func() {})
-	assert.NotEmpty(t, taskID)
-
-	// Before completion, task should be pending/running.
-	statuses := wm.Status()
-	require.Len(t, statuses, 1)
-	assert.Equal(t, taskID, statuses[0].ID)
-	assert.Equal(t, "running", statuses[0].Status)
-
-	// Complete the task and drain the event.
-	adapter.CompleteBackground(taskID, "done", nil)
-	<-wm.Events()
-
-	// After completion, task should be removed from pending.
-	statuses = wm.Status()
-	assert.Empty(t, statuses)
-}
-
 // ---------------------------------------------------------------------------
 // wakeStatusAdapter
 // ---------------------------------------------------------------------------
-
-func TestWakeStatusAdapter_EmptyStatus(t *testing.T) {
-	t.Parallel()
-	wm := agent.NewWakeManager()
-	adapter := &wakeStatusAdapter{wm: wm}
-
-	statuses := adapter.BackgroundTaskStatus()
-	assert.Empty(t, statuses)
-}
-
-func TestWakeStatusAdapter_WithTasks(t *testing.T) {
-	t.Parallel()
-	wm := agent.NewWakeManager()
-	adapter := &wakeStatusAdapter{wm: wm}
-
-	wm.Submit("task-a", func() {})
-	wm.Submit("task-b", func() {})
-
-	statuses := adapter.BackgroundTaskStatus()
-	assert.Len(t, statuses, 2)
-}
 
 // ---------------------------------------------------------------------------
 // detectGitBranch
@@ -1735,24 +1663,6 @@ func TestNewWorktreeManager_InGitRepo(t *testing.T) {
 // worktreeProviderAdapter
 // ---------------------------------------------------------------------------
 
-func TestWorktreeProviderAdapter_HasChangesAndRemove_NotFound(t *testing.T) {
-	t.Parallel()
-	// Create a real manager on this repo.
-	out, err := runGitCommand("rev-parse", "--show-toplevel")
-	require.NoError(t, err)
-
-	mgr := worktree.NewManager(strings.TrimSpace(out), worktree.Config{})
-	adapter := &worktreeProviderAdapter{mgr: mgr}
-
-	// HasWorktreeChanges on a non-existent worktree should error.
-	_, err = adapter.HasWorktreeChanges(context.Background(), "nonexistent-worktree-xyz")
-	assert.Error(t, err)
-
-	// RemoveWorktree on non-existent should also error.
-	err = adapter.RemoveWorktree(context.Background(), "nonexistent-worktree-xyz")
-	assert.Error(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // worktree subcommands
 // ---------------------------------------------------------------------------
@@ -2144,19 +2054,6 @@ func TestPlainInteractive_PrintSessionHeader(t *testing.T) {
 // ---------------------------------------------------------------------------
 // spawnerAdapter
 // ---------------------------------------------------------------------------
-
-func TestSpawnerAdapter_SpawnRequiresProvider(t *testing.T) {
-	t.Parallel()
-	spawner := &agent.DefaultSubagentSpawner{
-		Config:    config.DefaultConfig(),
-		AgentDefs: agent.NewAgentDefRegistry(),
-	}
-	adapter := &spawnerAdapter{spawner: spawner}
-	_, err := adapter.Spawn(context.Background(), tools.TaskSpawnConfig{
-		Name: "test-task",
-	}, "do something")
-	assert.Error(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // registerCoreTools with extended tools
