@@ -14,7 +14,6 @@ import (
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
-	"github.com/julianshen/rubichan/internal/integrations"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/store"
@@ -791,18 +790,6 @@ func TestRuleEngineChecker_AllowRuleReturnsTrustRuleApproved(t *testing.T) {
 // noopPromptBackend
 // ---------------------------------------------------------------------------
 
-func TestNoopPromptBackend_AllMethodsWork(t *testing.T) {
-	t.Parallel()
-	backend := &noopPromptBackend{}
-
-	assert.NoError(t, backend.Load(skills.SkillManifest{}, nil))
-	assert.Empty(t, backend.Tools())
-	assert.Empty(t, backend.Hooks())
-	assert.Empty(t, backend.Commands())
-	assert.Empty(t, backend.Agents())
-	assert.NoError(t, backend.Unload())
-}
-
 // ---------------------------------------------------------------------------
 // appendWorkingDirOption
 // ---------------------------------------------------------------------------
@@ -1386,15 +1373,6 @@ func TestSaveMemoriesBestEffort_AgentWithNoMemoryStore(t *testing.T) {
 // registerBuiltinSkillPrompts
 // ---------------------------------------------------------------------------
 
-func TestRegisterBuiltinSkillPrompts(t *testing.T) {
-	t.Parallel()
-	configDir := t.TempDir()
-	loader := skills.NewLoader(filepath.Join(configDir, "skills"), "")
-
-	err := registerBuiltinSkillPrompts(loader, configDir)
-	assert.NoError(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // emitSkillDiscoveryWarnings — nil inputs
 // ---------------------------------------------------------------------------
@@ -1473,112 +1451,21 @@ func TestFormatBytes_TableDriven(t *testing.T) {
 // starlarkGitRunnerAdapter
 // ---------------------------------------------------------------------------
 
-func TestStarlarkGitRunnerAdapter_Diff(t *testing.T) {
-	t.Parallel()
-	adapter := &starlarkGitRunnerAdapter{
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
-	}
-	diff, err := adapter.Diff(context.Background())
-	require.NoError(t, err)
-	_ = diff
-}
-
-func TestStarlarkGitRunnerAdapter_Log(t *testing.T) {
-	t.Parallel()
-	adapter := &starlarkGitRunnerAdapter{
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
-	}
-	entries, err := adapter.Log(context.Background(), "-1")
-	require.NoError(t, err)
-	require.NotEmpty(t, entries)
-	assert.NotEmpty(t, entries[0].Hash)
-	assert.NotEmpty(t, entries[0].Author)
-}
-
-func TestStarlarkGitRunnerAdapter_Status(t *testing.T) {
-	t.Parallel()
-	adapter := &starlarkGitRunnerAdapter{
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
-	}
-	_, err := adapter.Status(context.Background())
-	require.NoError(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // pluginGitRunnerAdapter
 // ---------------------------------------------------------------------------
-
-func TestPluginGitRunnerAdapter_Diff(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginGitRunnerAdapter{
-		ctx:    context.Background(),
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
-	}
-	diff, err := adapter.Diff()
-	require.NoError(t, err)
-	_ = diff
-}
-
-func TestPluginGitRunnerAdapter_Log(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginGitRunnerAdapter{
-		ctx:    context.Background(),
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
-	}
-	entries, err := adapter.Log("-1")
-	require.NoError(t, err)
-	require.NotEmpty(t, entries)
-	assert.NotEmpty(t, entries[0].Hash)
-}
-
-func TestPluginGitRunnerAdapter_Status(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginGitRunnerAdapter{
-		ctx:    context.Background(),
-		runner: integrations.NewGitRunner(testRepoRoot(t)),
-	}
-	_, err := adapter.Status()
-	require.NoError(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // pluginHTTPFetcherAdapter
 // ---------------------------------------------------------------------------
 
-func TestPluginHTTPFetcherAdapter_Construction(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginHTTPFetcherAdapter{
-		ctx:     context.Background(),
-		fetcher: integrations.NewHTTPFetcher(5 * time.Second),
-	}
-	assert.NotNil(t, adapter)
-}
-
 // ---------------------------------------------------------------------------
 // pluginLLMCompleterAdapter
 // ---------------------------------------------------------------------------
 
-func TestPluginLLMCompleterAdapter_Construction(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginLLMCompleterAdapter{
-		ctx:       context.Background(),
-		completer: nil,
-	}
-	assert.NotNil(t, adapter)
-}
-
 // ---------------------------------------------------------------------------
 // pluginSkillInvokerAdapter
 // ---------------------------------------------------------------------------
-
-func TestPluginSkillInvokerAdapter_Construction(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginSkillInvokerAdapter{
-		ctx:     context.Background(),
-		invoker: integrations.NewSkillInvoker(nil),
-	}
-	assert.NotNil(t, adapter)
-}
 
 // ---------------------------------------------------------------------------
 // wireAppleDev with Apple project detected
@@ -1804,48 +1691,13 @@ func TestLoadConfig_WithProviderOverride(t *testing.T) {
 // pluginHTTPFetcherAdapter.Fetch
 // ---------------------------------------------------------------------------
 
-func TestPluginHTTPFetcherAdapter_Fetch(t *testing.T) {
-	t.Parallel()
-	adapter := &pluginHTTPFetcherAdapter{
-		ctx:     context.Background(),
-		fetcher: integrations.NewHTTPFetcher(5 * time.Second),
-	}
-	// Fetching an invalid URL should error.
-	_, err := adapter.Fetch("http://localhost:1/nonexistent")
-	assert.Error(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // pluginLLMCompleterAdapter.Complete
 // ---------------------------------------------------------------------------
 
-func TestPluginLLMCompleterAdapter_Complete_Wiring(t *testing.T) {
-	t.Parallel()
-	// Just verify construction; calling Complete with nil provider panics,
-	// which shows the adapter correctly delegates to the completer.
-	adapter := &pluginLLMCompleterAdapter{
-		ctx:       context.Background(),
-		completer: integrations.NewLLMCompleter(nil, "test-model"),
-	}
-	assert.NotNil(t, adapter)
-	assert.NotNil(t, adapter.completer)
-}
-
 // ---------------------------------------------------------------------------
 // pluginSkillInvokerAdapter.Invoke
 // ---------------------------------------------------------------------------
-
-func TestPluginSkillInvokerAdapter_Invoke_NilRuntime(t *testing.T) {
-	t.Parallel()
-	invoker := integrations.NewSkillInvoker(nil)
-	adapter := &pluginSkillInvokerAdapter{
-		ctx:     context.Background(),
-		invoker: invoker,
-	}
-	// With no runtime set, Invoke should fail.
-	_, err := adapter.Invoke("nonexistent", map[string]any{"key": "value"})
-	assert.Error(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // newWorktreeManager
@@ -2159,7 +2011,7 @@ func TestCreateSkillRuntime_WithEmptySkillsFlag(t *testing.T) {
 	cfg := config.DefaultConfig()
 	workDir := t.TempDir()
 
-	rt, closer, err := createSkillRuntime(context.Background(), registry, nil, cfg, "headless", workDir)
+	rt, closer, err := createSkillRuntime(context.Background(), registry, nil, cfg, "headless", workDir, t.TempDir())
 	require.NoError(t, err)
 	require.NotNil(t, rt)
 	if closer != nil {

@@ -46,17 +46,10 @@ import (
 	"github.com/julianshen/rubichan/internal/security/analyzer"
 	secoutput "github.com/julianshen/rubichan/internal/security/output"
 	"github.com/julianshen/rubichan/internal/security/scanner"
+	"github.com/julianshen/rubichan/internal/skillruntime"
 	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/skills/builtin"
 	"github.com/julianshen/rubichan/internal/skills/builtin/appledev"
-	"github.com/julianshen/rubichan/internal/skills/builtin/codereview"
-	"github.com/julianshen/rubichan/internal/skills/builtin/frontenddesign"
-	"github.com/julianshen/rubichan/internal/skills/builtin/uiuxpromax"
-	"github.com/julianshen/rubichan/internal/skills/goplugin"
-	"github.com/julianshen/rubichan/internal/skills/mcpbackend"
-	"github.com/julianshen/rubichan/internal/skills/process"
-	"github.com/julianshen/rubichan/internal/skills/sandbox"
-	starengine "github.com/julianshen/rubichan/internal/skills/starlark"
 	"github.com/julianshen/rubichan/internal/store"
 	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
@@ -72,7 +65,6 @@ import (
 	"github.com/julianshen/rubichan/internal/wiki"
 	"github.com/julianshen/rubichan/internal/worktree"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
-	"github.com/julianshen/rubichan/pkg/skillsdk"
 
 	"golang.org/x/term"
 
@@ -461,185 +453,20 @@ func parseSkillsFlag(s string) []string {
 	return names
 }
 
-// noopPromptBackend is a no-op backend for prompt-only skills that have no
-// implementation backend. It satisfies the SkillBackend interface so prompt
-// skills can be activated through the normal runtime flow.
-type noopPromptBackend struct{}
-
-func (*noopPromptBackend) Load(_ skills.SkillManifest, _ skills.PermissionChecker) error {
-	return nil
-}
-func (*noopPromptBackend) Tools() []tools.Tool                            { return nil }
-func (*noopPromptBackend) Hooks() map[skills.HookPhase]skills.HookHandler { return nil }
-func (*noopPromptBackend) Commands() []commands.SlashCommand              { return nil }
-func (*noopPromptBackend) Agents() []*skills.AgentDefinition              { return nil }
-func (*noopPromptBackend) Workflows() map[string]skills.WorkflowHandler   { return nil }
-func (*noopPromptBackend) Unload() error                                  { return nil }
-
-// createSkillRuntime creates and configures a skill runtime with built-in
-// prompt skills and any explicitly requested skills from --skills flag.
-// Built-in skills (frontend-design, apple-platform-guide) are always
-// registered and auto-activate based on mode triggers.
-//
-// The mode parameter is set in TriggerContext to enable mode-based activation
-// (e.g. "interactive", "headless", "code-review").
-//
-// The returned io.Closer must be closed by the caller to release the SQLite
-// store.
-func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config, mode string, workDir string) (*skills.Runtime, io.Closer, error) {
-	skillNames := parseSkillsFlag(skillsFlag)
-
-	if cfg == nil {
-		return nil, nil, fmt.Errorf("config is required for skill runtime")
-	}
-
-	// Determine user config directory.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot determine home directory: %w", err)
-	}
-	configDir := filepath.Join(home, ".config", "rubichan")
-
-	// Ensure config directory exists for the database file.
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("creating config directory: %w", err)
-	}
-
-	// Use persistent SQLite store so skill approvals survive across sessions.
-	dbPath := filepath.Join(configDir, "skills.db")
-	s, err := store.NewStore(dbPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("creating skill store: %w", err)
-	}
-
-	userDir := filepath.Join(configDir, "skills")
-	if cfg.Skills.UserDir != "" {
-		userDir = cfg.Skills.UserDir
-	}
-
-	// Project-level skill directory.
-	projectDir := filepath.Join(workDir, ".rubichan", "skills")
-
-	loader := skills.NewLoader(userDir, projectDir)
-	loader.AddSkillDirs(cfg.Skills.Dirs)
-	loader.AddMCPServers(cfg.MCP.Servers)
-
-	// Register built-in prompt skills. These auto-activate via mode triggers.
-	if err := registerBuiltinSkillPrompts(loader, configDir); err != nil {
-		return nil, nil, fmt.Errorf("register builtin skills: %w", err)
-	}
-
-	// Create integration objects shared across all skill backends.
-	llmCompleter := integrations.NewLLMCompleter(p, cfg.Provider.Model)
-	httpFetcher := integrations.NewHTTPFetcher(30 * time.Second)
-	gitRunner := integrations.NewGitRunner(workDir)
-
-	// SkillInvoker needs the runtime, which we haven't created yet. Create it
-	// with nil and set the invoker after runtime creation to break the cycle.
-	skillInvoker := integrations.NewSkillInvoker(nil)
-
-	// Create adapters that bridge integrations to backend-specific interfaces.
-	// Plugin adapters store the parent context so cancellation propagates
-	// through to LLM/HTTP/Git calls made from Go plugins.
-	starlarkGitAdapter := &starlarkGitRunnerAdapter{runner: gitRunner}
-	pluginLLMAdapter := &pluginLLMCompleterAdapter{ctx: ctx, completer: llmCompleter}
-	pluginHTTPAdapter := &pluginHTTPFetcherAdapter{ctx: ctx, fetcher: httpFetcher}
-	pluginGitAdapter := &pluginGitRunnerAdapter{ctx: ctx, runner: gitRunner}
-	pluginSkillAdapter := &pluginSkillInvokerAdapter{ctx: ctx, invoker: skillInvoker}
-
-	// Backend factory routes to real Starlark, Go plugin, or process backends
-	// with integration objects injected. Prompt-only skills use a noop backend.
-	backendFactory := func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
-		switch manifest.Implementation.Backend {
-		case "":
-			// Prompt-only skills have no implementation backend.
-			return &noopPromptBackend{}, nil
-		case skills.BackendStarlark:
-			engine := starengine.NewEngine(manifest.Name, dir, nil)
-			engine.SetLLMCompleter(llmCompleter)
-			engine.SetHTTPFetcher(httpFetcher)
-			engine.SetGitRunner(starlarkGitAdapter)
-			engine.SetSkillInvoker(skillInvoker)
-			return engine, nil
-
-		case skills.BackendPlugin:
-			return goplugin.NewGoPluginBackend(
-				goplugin.WithSkillDir(dir),
-				goplugin.WithLLMCompleter(pluginLLMAdapter),
-				goplugin.WithHTTPFetcher(pluginHTTPAdapter),
-				goplugin.WithGitRunner(pluginGitAdapter),
-				goplugin.WithSkillInvoker(pluginSkillAdapter),
-			), nil
-
-		case skills.BackendProcess:
-			return process.NewProcessBackend(), nil
-
-		case skills.BackendMCP:
-			// Derive MCP server name from manifest name by stripping the "mcp-" prefix
-			// added during discovery in loader.go.
-			mcpServerName := strings.TrimPrefix(manifest.Name, "mcp-")
-			return mcpbackend.NewMCPBackendFromConfig(
-				ctx,
-				mcpServerName,
-				manifest.Implementation.MCPTransport,
-				manifest.Implementation.MCPCommand,
-				manifest.Implementation.MCPArgs,
-				manifest.Implementation.MCPURL,
-			)
-
-		default:
-			return nil, fmt.Errorf("backend %q not implemented", manifest.Implementation.Backend)
-		}
-	}
-
-	sandboxFactory := func(skillName string, declared []skills.Permission) skills.PermissionChecker {
-		return sandbox.New(s, skillName, declared, sandbox.DefaultPolicy())
-	}
-
-	// If --approve-skills is set, auto-approve all requested skills.
-	var autoApproveSkills []string
-	if approveSkillsFlag {
-		autoApproveSkills = skillNames
-	}
-
-	rt := skills.NewRuntime(loader, s, registry, autoApproveSkills, backendFactory, sandboxFactory)
-	rt.SetActivationThreshold(cfg.Skills.ActivationThreshold)
-
-	// Now that the runtime exists, wire the SkillInvoker to close the circular
-	// dependency. The invoker delegates to rt.InvokeWorkflow.
-	skillInvoker.SetInvoker(rt)
-
-	// Discover skills from all sources.
-	if err := rt.Discover(skillNames); err != nil {
-		s.Close()
-		return nil, nil, fmt.Errorf("discovering skills: %w", err)
-	}
-
-	// Collect top-level project files for trigger evaluation.
-	entries, _ := os.ReadDir(workDir)
-	projectFiles := make([]string, 0, len(entries))
-	for _, e := range entries {
-		projectFiles = append(projectFiles, e.Name())
-	}
-
-	// Evaluate triggers and activate matching skills.
-	triggerCtx := skills.TriggerContext{
-		Mode:         mode,
-		ProjectFiles: projectFiles,
-	}
-	if err := rt.EvaluateAndActivate(triggerCtx); err != nil {
-		s.Close()
-		return nil, nil, fmt.Errorf("activating skills: %w", err)
-	}
-
-	return rt, s, nil
-}
-
-func registerBuiltinSkillPrompts(loader *skills.Loader, configDir string) error {
-	frontenddesign.Register(loader)
-	codereview.Register(loader)
-	appledev.RegisterPrompt(loader)
-	return uiuxpromax.Register(loader, configDir)
+// createSkillRuntime builds the skill runtime for a mode, resolving the CLI's
+// skill flags into the selection the runtime package expects. The config
+// directory comes from the caller, which already resolved it.
+func createSkillRuntime(ctx context.Context, registry *tools.Registry, p provider.LLMProvider, cfg *config.Config, mode, workDir, cfgDir string) (*skills.Runtime, io.Closer, error) {
+	return skillruntime.New(ctx, skillruntime.Options{
+		Registry:    registry,
+		Provider:    p,
+		Config:      cfg,
+		Mode:        mode,
+		WorkDir:     workDir,
+		ConfigDir:   cfgDir,
+		SkillNames:  parseSkillsFlag(skillsFlag),
+		AutoApprove: approveSkillsFlag,
+	})
 }
 
 func emitSkillDiscoveryWarnings(w io.Writer, rt *skills.Runtime) {
@@ -1391,7 +1218,7 @@ func runInteractive() error {
 	opts = append(opts, agent.WithMode("interactive"))
 
 	// Create skill runtime with built-in prompt skills and any explicit --skills.
-	rt, storeCloser, err := createSkillRuntime(runCtx, registry, p, cfg, "interactive", cwd)
+	rt, storeCloser, err := createSkillRuntime(runCtx, registry, p, cfg, "interactive", cwd, cfgDir)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
@@ -1884,7 +1711,7 @@ func runHeadless() error {
 		headlessMode = "headless"
 	}
 	opts = append(opts, agent.WithMode(headlessMode))
-	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg, headlessMode, cwd)
+	rt, storeCloser, err := createSkillRuntime(ctx, registry, p, cfg, headlessMode, cwd, cfgDir)
 	if err != nil {
 		return fmt.Errorf("creating skill runtime: %w", err)
 	}
@@ -2557,107 +2384,6 @@ func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config,
 // starlarkGitRunnerAdapter bridges integrations.GitRunner to the
 // starlark.GitRunner interface. The Diff method passes through directly;
 // Log and Status convert between struct types.
-type starlarkGitRunnerAdapter struct {
-	runner *integrations.GitRunner
-}
-
-func (a *starlarkGitRunnerAdapter) Diff(ctx context.Context, args ...string) (string, error) {
-	return a.runner.Diff(ctx, args...)
-}
-
-func (a *starlarkGitRunnerAdapter) Log(ctx context.Context, args ...string) ([]starengine.GitLogEntry, error) {
-	commits, err := a.runner.Log(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]starengine.GitLogEntry, len(commits))
-	for i, c := range commits {
-		entries[i] = starengine.GitLogEntry{Hash: c.Hash, Author: c.Author, Message: c.Message}
-	}
-	return entries, nil
-}
-
-func (a *starlarkGitRunnerAdapter) Status(ctx context.Context) ([]starengine.GitStatusEntry, error) {
-	statuses, err := a.runner.Status(ctx)
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]starengine.GitStatusEntry, len(statuses))
-	for i, s := range statuses {
-		entries[i] = starengine.GitStatusEntry{Path: s.Path, Status: s.Status}
-	}
-	return entries, nil
-}
-
-// pluginLLMCompleterAdapter bridges integrations.LLMCompleter to the
-// goplugin.PluginLLMCompleter interface. The stored context propagates
-// cancellation from the parent (e.g. headless timeout) to LLM calls.
-type pluginLLMCompleterAdapter struct {
-	ctx       context.Context
-	completer *integrations.LLMCompleter
-}
-
-func (a *pluginLLMCompleterAdapter) Complete(prompt string) (string, error) {
-	return a.completer.Complete(a.ctx, prompt)
-}
-
-// pluginHTTPFetcherAdapter bridges integrations.HTTPFetcher to the
-// goplugin.PluginHTTPFetcher interface.
-type pluginHTTPFetcherAdapter struct {
-	ctx     context.Context
-	fetcher *integrations.HTTPFetcher
-}
-
-func (a *pluginHTTPFetcherAdapter) Fetch(url string) (string, error) {
-	return a.fetcher.Fetch(a.ctx, url)
-}
-
-// pluginGitRunnerAdapter bridges integrations.GitRunner to the
-// goplugin.PluginGitRunner interface (skillsdk types).
-type pluginGitRunnerAdapter struct {
-	ctx    context.Context
-	runner *integrations.GitRunner
-}
-
-func (a *pluginGitRunnerAdapter) Diff(args ...string) (string, error) {
-	return a.runner.Diff(a.ctx, args...)
-}
-
-func (a *pluginGitRunnerAdapter) Log(args ...string) ([]skillsdk.GitCommit, error) {
-	commits, err := a.runner.Log(a.ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]skillsdk.GitCommit, len(commits))
-	for i, c := range commits {
-		entries[i] = skillsdk.GitCommit{Hash: c.Hash, Author: c.Author, Message: c.Message}
-	}
-	return entries, nil
-}
-
-func (a *pluginGitRunnerAdapter) Status() ([]skillsdk.GitFileStatus, error) {
-	statuses, err := a.runner.Status(a.ctx)
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]skillsdk.GitFileStatus, len(statuses))
-	for i, s := range statuses {
-		entries[i] = skillsdk.GitFileStatus{Path: s.Path, Status: s.Status}
-	}
-	return entries, nil
-}
-
-// pluginSkillInvokerAdapter bridges integrations.SkillInvoker to the
-// goplugin.PluginSkillInvoker interface.
-type pluginSkillInvokerAdapter struct {
-	ctx     context.Context
-	invoker *integrations.SkillInvoker
-}
-
-func (a *pluginSkillInvokerAdapter) Invoke(name string, input map[string]any) (map[string]any, error) {
-	return a.invoker.Invoke(a.ctx, name, input)
-}
-
 // storeMemoryAdapter bridges store.Store to agent.MemoryStore interface.
 type storeMemoryAdapter struct {
 	store *store.Store
