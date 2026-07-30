@@ -86,3 +86,112 @@ func TestRunToolSupportMissing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "Tool support: INCONCLUSIVE")
 }
+
+func TestRunRejectsNilProvider(t *testing.T) {
+	var out bytes.Buffer
+	err := modelcheck.Run(context.Background(), &out, nil, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider is nil")
+	assert.Empty(t, out.String(), "nothing should be reported about a provider that does not exist")
+}
+
+func TestRunReportsConnectivityFailure(t *testing.T) {
+	p := &fakeProvider{errByCall: []error{fmt.Errorf("dial tcp: refused")}}
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model connectivity test failed")
+	assert.Contains(t, err.Error(), "dial tcp: refused", "the transport's reason is what makes this actionable")
+}
+
+// TestRunRequiresAStopEvent covers a stream that ends without stopping — a
+// truncated or half-closed response. It has to fail: a model that never
+// finished a sixteen-token reply has not demonstrated it works.
+func TestRunRequiresAStopEvent(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "text_delta", Text: "OK"}},
+	}}
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model stream ended without stop event")
+	assert.NotContains(t, out.String(), "Model test: PASS")
+}
+
+func TestRunReportsToolProbeRequestFailure(t *testing.T) {
+	p := &fakeProvider{
+		eventsByCall: [][]provider.StreamEvent{{{Type: "stop"}}},
+		errByCall:    []error{nil, fmt.Errorf("429 rate limited")},
+	}
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool support test request failed")
+	assert.Contains(t, err.Error(), "429 rate limited")
+}
+
+func TestRunReportsToolProbeStreamError(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{{Type: "error", Error: fmt.Errorf("tools unsupported")}},
+	}}
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool support stream failed")
+}
+
+// TestRunRequiresAStopEventFromTheToolProbe distinguishes a model that
+// declined the probe from one whose stream died mid-probe. The first is
+// inconclusive; the second is an error, because nothing was learned.
+func TestRunRequiresAStopEventFromTheToolProbe(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{{Type: "text_delta", Text: "thinking"}},
+	}}
+	var out bytes.Buffer
+
+	err := modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool support stream ended without stop event")
+	assert.NotContains(t, out.String(), "INCONCLUSIVE",
+		"a dead stream must not be reported as the model declining the probe")
+}
+
+// TestRunProbeOffersExactlyOneTool pins the probe's shape. A probe that
+// offered several tools, or a schema the model could not satisfy, would
+// measure the prompt rather than the capability.
+func TestRunProbeOffersExactlyOneTool(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "capability_probe"}}, {Type: "stop"}},
+	}}
+	var out bytes.Buffer
+
+	require.NoError(t, modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o"))
+	require.Len(t, p.requests, 2)
+	probe := p.requests[1]
+	require.Len(t, probe.Tools, 1)
+	assert.Equal(t, "capability_probe", probe.Tools[0].Name)
+	assert.JSONEq(t, `{"type":"object","properties":{},"additionalProperties":false}`,
+		string(probe.Tools[0].InputSchema))
+	assert.Contains(t, probe.Messages[0].Content[0].Text, "capability_probe",
+		"the prompt must name the tool it offers")
+}
+
+// TestRunIgnoresAnUnrelatedToolCall guards the name comparison: a model that
+// invents its own tool has not demonstrated it can call the one it was given.
+func TestRunIgnoresAnUnrelatedToolCall(t *testing.T) {
+	p := &fakeProvider{eventsByCall: [][]provider.StreamEvent{
+		{{Type: "stop"}},
+		{{Type: "tool_use", ToolUse: &provider.ToolUseBlock{Name: "something_else"}}, {Type: "stop"}},
+	}}
+	var out bytes.Buffer
+
+	require.NoError(t, modelcheck.Run(context.Background(), &out, p, "openai", "gpt-4o"))
+	assert.Contains(t, out.String(), "Tool support: INCONCLUSIVE")
+}
