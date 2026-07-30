@@ -115,50 +115,16 @@ func New(ctx context.Context, opts Options) (*skills.Runtime, io.Closer, error) 
 	pluginGitAdapter := &pluginGitRunnerAdapter{ctx: ctx, runner: gitRunner}
 	pluginSkillAdapter := &pluginSkillInvokerAdapter{ctx: ctx, invoker: skillInvoker}
 
-	// Backend factory routes to real Starlark, Go plugin, or process backends
-	// with integration objects injected. Prompt-only skills use a noop backend.
-	backendFactory := func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
-		switch manifest.Implementation.Backend {
-		case "":
-			// Prompt-only skills have no implementation backend.
-			return &noopPromptBackend{}, nil
-		case skills.BackendStarlark:
-			engine := starengine.NewEngine(manifest.Name, dir, nil)
-			engine.SetLLMCompleter(llmCompleter)
-			engine.SetHTTPFetcher(httpFetcher)
-			engine.SetGitRunner(starlarkGitAdapter)
-			engine.SetSkillInvoker(skillInvoker)
-			return engine, nil
-
-		case skills.BackendPlugin:
-			return goplugin.NewGoPluginBackend(
-				goplugin.WithSkillDir(dir),
-				goplugin.WithLLMCompleter(pluginLLMAdapter),
-				goplugin.WithHTTPFetcher(pluginHTTPAdapter),
-				goplugin.WithGitRunner(pluginGitAdapter),
-				goplugin.WithSkillInvoker(pluginSkillAdapter),
-			), nil
-
-		case skills.BackendProcess:
-			return process.NewProcessBackend(), nil
-
-		case skills.BackendMCP:
-			// Derive MCP server name from manifest name by stripping the "mcp-" prefix
-			// added during discovery in loader.go.
-			mcpServerName := strings.TrimPrefix(manifest.Name, "mcp-")
-			return mcpbackend.NewMCPBackendFromConfig(
-				ctx,
-				mcpServerName,
-				manifest.Implementation.MCPTransport,
-				manifest.Implementation.MCPCommand,
-				manifest.Implementation.MCPArgs,
-				manifest.Implementation.MCPURL,
-			)
-
-		default:
-			return nil, fmt.Errorf("backend %q not implemented", manifest.Implementation.Backend)
-		}
-	}
+	backendFactory := newBackendFactory(ctx, backendDeps{
+		llmCompleter:       llmCompleter,
+		httpFetcher:        httpFetcher,
+		skillInvoker:       skillInvoker,
+		starlarkGitAdapter: starlarkGitAdapter,
+		pluginLLMAdapter:   pluginLLMAdapter,
+		pluginHTTPAdapter:  pluginHTTPAdapter,
+		pluginGitAdapter:   pluginGitAdapter,
+		pluginSkillAdapter: pluginSkillAdapter,
+	})
 
 	sandboxFactory := func(skillName string, declared []skills.Permission) skills.PermissionChecker {
 		return sandbox.New(s, skillName, declared, sandbox.DefaultPolicy())
@@ -202,6 +168,68 @@ func New(ctx context.Context, opts Options) (*skills.Runtime, io.Closer, error) 
 	}
 
 	return rt, s, nil
+}
+
+// backendDeps are the integration objects and adapters a backend may be
+// handed. Grouped so the factory's signature does not have to name eight
+// parameters, and so a test can construct them once.
+type backendDeps struct {
+	llmCompleter       *integrations.LLMCompleter
+	httpFetcher        *integrations.HTTPFetcher
+	skillInvoker       *integrations.SkillInvoker
+	starlarkGitAdapter *starlarkGitRunnerAdapter
+	pluginLLMAdapter   *pluginLLMCompleterAdapter
+	pluginHTTPAdapter  *pluginHTTPFetcherAdapter
+	pluginGitAdapter   *pluginGitRunnerAdapter
+	pluginSkillAdapter *pluginSkillInvokerAdapter
+}
+
+// newBackendFactory routes a manifest to the backend that implements it,
+// injecting only the integrations that backend's interface accepts. This is
+// the single place that decides what a skill of each kind can reach.
+func newBackendFactory(ctx context.Context, deps backendDeps) func(skills.SkillManifest, string) (skills.SkillBackend, error) {
+	return func(manifest skills.SkillManifest, dir string) (skills.SkillBackend, error) {
+		switch manifest.Implementation.Backend {
+		case "":
+			// Prompt-only skills have no implementation backend.
+			return &noopPromptBackend{}, nil
+		case skills.BackendStarlark:
+			engine := starengine.NewEngine(manifest.Name, dir, nil)
+			engine.SetLLMCompleter(deps.llmCompleter)
+			engine.SetHTTPFetcher(deps.httpFetcher)
+			engine.SetGitRunner(deps.starlarkGitAdapter)
+			engine.SetSkillInvoker(deps.skillInvoker)
+			return engine, nil
+
+		case skills.BackendPlugin:
+			return goplugin.NewGoPluginBackend(
+				goplugin.WithSkillDir(dir),
+				goplugin.WithLLMCompleter(deps.pluginLLMAdapter),
+				goplugin.WithHTTPFetcher(deps.pluginHTTPAdapter),
+				goplugin.WithGitRunner(deps.pluginGitAdapter),
+				goplugin.WithSkillInvoker(deps.pluginSkillAdapter),
+			), nil
+
+		case skills.BackendProcess:
+			return process.NewProcessBackend(), nil
+
+		case skills.BackendMCP:
+			// Derive MCP server name from manifest name by stripping the "mcp-" prefix
+			// added during discovery in loader.go.
+			mcpServerName := strings.TrimPrefix(manifest.Name, "mcp-")
+			return mcpbackend.NewMCPBackendFromConfig(
+				ctx,
+				mcpServerName,
+				manifest.Implementation.MCPTransport,
+				manifest.Implementation.MCPCommand,
+				manifest.Implementation.MCPArgs,
+				manifest.Implementation.MCPURL,
+			)
+
+		default:
+			return nil, fmt.Errorf("backend %q not implemented", manifest.Implementation.Backend)
+		}
+	}
 }
 
 // RegisterBuiltinPrompts registers the prompt skills that ship with rubichan.
