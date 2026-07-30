@@ -59,7 +59,7 @@ type Options struct {
 //
 // The returned io.Closer must be closed by the caller to release the SQLite
 // store.
-func New(ctx context.Context, opts Options) (*skills.Runtime, io.Closer, error) {
+func New(ctx context.Context, opts Options) (rt *skills.Runtime, closer io.Closer, err error) {
 
 	if opts.Config == nil {
 		return nil, nil, fmt.Errorf("config is required for skill runtime")
@@ -79,6 +79,16 @@ func New(ctx context.Context, opts Options) (*skills.Runtime, io.Closer, error) 
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating skill store: %w", err)
 	}
+	// Every failure from here on must release the store. Doing it per-arm
+	// meant each new arm had to remember: the built-in registration arm did
+	// not, leaving the SQLite handle and its file lock open for the life of
+	// the process. A single deferred release covers the arms that exist and
+	// the ones added later.
+	defer func() {
+		if err != nil {
+			s.Close()
+		}
+	}()
 
 	userDir := filepath.Join(configDir, "skills")
 	if cfg.Skills.UserDir != "" {
@@ -137,7 +147,7 @@ func New(ctx context.Context, opts Options) (*skills.Runtime, io.Closer, error) 
 		autoApproveSkills = skillNames
 	}
 
-	rt := skills.NewRuntime(loader, s, opts.Registry, autoApproveSkills, backendFactory, sandboxFactory)
+	rt = skills.NewRuntime(loader, s, opts.Registry, autoApproveSkills, backendFactory, sandboxFactory)
 	rt.SetActivationThreshold(cfg.Skills.ActivationThreshold)
 
 	// Now that the runtime exists, wire the SkillInvoker to close the circular
@@ -146,7 +156,6 @@ func New(ctx context.Context, opts Options) (*skills.Runtime, io.Closer, error) 
 
 	// Discover skills from all sources.
 	if err := rt.Discover(skillNames); err != nil {
-		s.Close()
 		return nil, nil, fmt.Errorf("discovering skills: %w", err)
 	}
 
@@ -163,7 +172,6 @@ func New(ctx context.Context, opts Options) (*skills.Runtime, io.Closer, error) 
 		ProjectFiles: projectFiles,
 	}
 	if err := rt.EvaluateAndActivate(triggerCtx); err != nil {
-		s.Close()
 		return nil, nil, fmt.Errorf("activating skills: %w", err)
 	}
 
