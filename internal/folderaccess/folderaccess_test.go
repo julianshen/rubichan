@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/folderaccess"
 	"github.com/julianshen/rubichan/internal/store"
@@ -288,4 +289,36 @@ func TestPromptLeavesLaterInputForTheNextReader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello from the TUI\n", string(rest),
 		"Prompt must consume its line and no more")
+}
+
+// stalledReader always reports zero bytes and no error. io.Reader permits this
+// and tells callers to treat it as a no-op, so a reader that never progresses
+// must be given up on rather than spun on forever — bufio.Reader, which this
+// package used to rely on, bails after 100 such reads.
+type stalledReader struct{}
+
+func (stalledReader) Read([]byte) (int, error) { return 0, nil }
+
+func TestPromptGivesUpOnAReaderThatNeverProgresses(t *testing.T) {
+	t.Parallel()
+
+	type result struct {
+		allowed bool
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var out bytes.Buffer
+		allowed, err := folderaccess.Prompt("/tmp/project", stalledReader{}, &out)
+		done <- result{allowed, err}
+	}()
+
+	select {
+	case got := <-done:
+		require.Error(t, got.err, "a reader that never progresses is not an approval")
+		assert.False(t, got.allowed)
+		assert.Contains(t, got.err.Error(), "reading folder access response")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Prompt hung on a reader that never progresses")
+	}
 }
