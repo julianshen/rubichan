@@ -254,11 +254,10 @@ func setupWorkingDir(cfg *config.Config) (cwd string, mgr *worktree.Manager, cle
 		return cwd, nil, cleanup, nil
 	}
 
-	out, gitErr := runGitCommand("rev-parse", "--show-toplevel")
+	root, gitErr := gitRepoRoot()
 	if gitErr != nil {
 		return "", nil, nil, fmt.Errorf("not in a git repository: %w", gitErr)
 	}
-	root := strings.TrimSpace(out)
 
 	wtCfg := worktree.Config{
 		MaxWorktrees: cfg.Worktree.MaxCount,
@@ -297,7 +296,7 @@ func setupWorkingDir(cfg *config.Config) (cwd string, mgr *worktree.Manager, cle
 func gitRepoRoot() (string, error) {
 	out, err := runGitCommand("rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolving git repository root: %w", err)
 	}
 	return strings.TrimSpace(out), nil
 }
@@ -1698,14 +1697,10 @@ func runHeadless() error {
 		headlessCheckers = append(headlessCheckers, agent.AlwaysAutoApprove{})
 		composite := agent.NewCompositeApprovalChecker(headlessCheckers...)
 		opts = append(opts, agent.WithApprovalChecker(composite))
-		if headlessSpawner != nil {
-			headlessSpawner.ApprovalChecker = composite
-		}
+		headlessSpawner.ApprovalChecker = composite
 	}
 	opts = append(opts, agent.WithParallelPolicy(agent.AllowAllParallel{}))
-	if headlessWakeManager != nil {
-		opts = append(opts, agent.WithWakeManager(headlessWakeManager))
-	}
+	opts = append(opts, agent.WithWakeManager(headlessWakeManager))
 
 	// Build tool execution slot middlewares; the agent composes the pipeline.
 	hpc := buildPipeline(registry, cfg, cwd, rt)
@@ -1721,12 +1716,10 @@ func runHeadless() error {
 	a := agent.New(p, registry, approvalFunc, cfg, opts...)
 
 	// Wire spawner dependencies that need the agent and provider.
-	if headlessSpawner != nil {
-		headlessSpawner.Provider = p
-		headlessSpawner.ParentTools = registry
-		headlessSpawner.ParentSkillRuntime = rt
-		headlessSpawner.RateLimiter = headlessRateLimiter
-	}
+	headlessSpawner.Provider = p
+	headlessSpawner.ParentTools = registry
+	headlessSpawner.ParentSkillRuntime = rt
+	headlessSpawner.RateLimiter = headlessRateLimiter
 
 	// Register notes tool backed by agent's scratchpad.
 	if headlessToolsCfg.ShouldEnable("notes") {
