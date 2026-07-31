@@ -47,8 +47,8 @@ type ProviderDef struct {
 	Auth        func(cfg *config.Config) (apiKey string, headers map[string]string, err error)
 
 	// DefaultModel resolves the model to use when the user hasn't specified
-	// one. nil means the provider has no default-model resolution (the
-	// caller must always specify a model explicitly) — ResolveDefaultModel
+	// one. nil means the provider has no default-model resolution — the
+	// model is left unset rather than defaulted. ResolveDefaultModel
 	// returns ErrNoDefaultModel in that case.
 	DefaultModel func(ctx context.Context, cfg *config.Config) (string, error)
 
