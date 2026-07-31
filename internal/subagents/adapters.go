@@ -5,6 +5,7 @@ package subagents
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/tools"
@@ -111,7 +112,7 @@ type worktreeProviderAdapter struct {
 func (a *worktreeProviderAdapter) CreateWorktree(ctx context.Context, name string) (*agent.WorktreeHandle, error) {
 	wt, err := a.mgr.Create(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating worktree %q for subagent: %w", name, err)
 	}
 	return &agent.WorktreeHandle{Dir: wt.Dir(), Name: wt.Name}, nil
 }

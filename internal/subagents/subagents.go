@@ -119,7 +119,7 @@ func Wire(opts Options) (*Wiring, error) {
 	taskTool := tools.NewTaskTool(
 		&spawnerAdapter{spawner: spawner},
 		&agentDefLookupAdapter{reg: agentDefs},
-		0,
+		0, // depth: this tool is the top level, so spawned agents start at 1
 	)
 	taskTool.SetBackgroundManager(&wakeManagerAdapter{wm: wakeManager})
 	if opts.EnableTask {

@@ -50,14 +50,35 @@ func TestWireRegistersTheBuiltinGeneralDefinition(t *testing.T) {
 func TestWireRegistersConfigDefinitions(t *testing.T) {
 	t.Parallel()
 	opts := testOptions()
-	opts.Config.Agent.Definitions = []config.AgentDefConf{
-		{Name: "reviewer", Description: "reviews code", MaxTurns: 7},
-	}
+	inherit := true
+	// Every field, with a distinct value: the translation is field-by-field
+	// and a dropped one would otherwise go unnoticed.
+	opts.Config.Agent.Definitions = []config.AgentDefConf{{
+		Name:          "reviewer",
+		Description:   "reviews code",
+		SystemPrompt:  "review carefully",
+		Tools:         []string{"read_file"},
+		MaxTurns:      7,
+		MaxDepth:      2,
+		Model:         "test-model",
+		InheritSkills: &inherit,
+		ExtraSkills:   []string{"extra"},
+		DisableSkills: []string{"disabled"},
+	}}
 	w, err := subagents.Wire(opts)
 	require.NoError(t, err)
 	def, ok := w.AgentDefs.Get("reviewer")
 	require.True(t, ok)
-	assert.Equal(t, 7, def.MaxTurns, "config fields must survive the translation")
+	assert.Equal(t, "reviews code", def.Description)
+	assert.Equal(t, "review carefully", def.SystemPrompt)
+	assert.Equal(t, []string{"read_file"}, def.Tools)
+	assert.Equal(t, 7, def.MaxTurns)
+	assert.Equal(t, 2, def.MaxDepth)
+	assert.Equal(t, "test-model", def.Model)
+	require.NotNil(t, def.InheritSkills)
+	assert.True(t, *def.InheritSkills)
+	assert.Equal(t, []string{"extra"}, def.ExtraSkills)
+	assert.Equal(t, []string{"disabled"}, def.DisableSkills)
 }
 
 // TestWireReportsUnregisterableDefinitions covers a config that names a
