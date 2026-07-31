@@ -26,14 +26,17 @@ type Options struct {
 	// Registry receives the task tools. Required.
 	Registry *tools.Registry
 	// EnableTask and EnableListTasks mirror the caller's tool allowlist.
-	// When both are false nothing is registered and no worktree provider is
-	// resolved, so a caller that has disabled them pays nothing — notably no
-	// git invocation.
+	// When both are false the tools are not registered, but the wiring is
+	// still built and its worktree provider still resolved: the caller
+	// receives the spawner regardless.
 	EnableTask      bool
 	EnableListTasks bool
-	// WorktreeManager is the session's own manager, when it has one. Sharing
-	// it matters: two managers over the same repository each enforce
-	// MaxWorktrees independently and neither sees the other's worktrees.
+	// WorktreeManager is the session's own manager, when it has one. Passing
+	// it avoids constructing a second manager over the same repository —
+	// which is redundant rather than incorrect, since Manager keeps no state:
+	// it derives everything from the repository root and two instances share
+	// both the worktrees directory and the lock file.
+	//
 	// When nil, Wire discovers the repository root through GitRoot and builds
 	// one, so subagents can still use isolation: "worktree" even though the
 	// session itself is not running in one.
@@ -101,12 +104,16 @@ func Wire(opts Options) (*Wiring, error) {
 	}
 	w := &Wiring{AgentDefs: agentDefs, WakeManager: wakeManager, Spawner: spawner}
 
-	if !opts.EnableTask && !opts.EnableListTasks {
-		return w, nil
-	}
-
+	// Resolved before the tool gate, not after. The spawner is handed to the
+	// caller either way, and a spawner that cannot isolate is a different
+	// object from one that can — so whether it gets a worktree provider must
+	// not depend on which tools happen to be registered.
 	if mgr := resolveWorktreeManager(opts); mgr != nil {
 		spawner.WorktreeProvider = &worktreeProviderAdapter{mgr: mgr}
+	}
+
+	if !opts.EnableTask && !opts.EnableListTasks {
+		return w, nil
 	}
 
 	taskTool := tools.NewTaskTool(

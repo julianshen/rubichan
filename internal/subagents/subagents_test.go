@@ -89,10 +89,11 @@ func TestWireToleratesANilLogger(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestWireReusesTheSessionWorktreeManager is the point of the WorktreeManager
-// option. Two managers over one repository each enforce MaxWorktrees on their
-// own count and neither sees the other's worktrees, so a session that already
-// has a manager must hand it over rather than let Wire build a second.
+// TestWireReusesTheSessionWorktreeManager pins the WorktreeManager option:
+// a supplied manager is used as-is and the repository is not re-discovered.
+// This is redundancy avoided, not a bug fixed — worktree.Manager keeps no
+// state, so a second instance over the same root would have behaved
+// identically.
 func TestWireReusesTheSessionWorktreeManager(t *testing.T) {
 	t.Parallel()
 	session := worktree.NewManager(t.TempDir(), worktree.Config{MaxWorktrees: 3})
@@ -161,18 +162,19 @@ func TestWireRegistersOnlyTheEnabledTools(t *testing.T) {
 	}
 }
 
-// TestWireSkipsGitWhenNoTaskToolsAreEnabled pins that a caller who disabled
-// the task tools pays nothing — in particular no git invocation.
-func TestWireSkipsGitWhenNoTaskToolsAreEnabled(t *testing.T) {
+// TestWireResolvesIsolationEvenWithNoTaskTools guards the ordering. The
+// caller receives the spawner whether or not the task tools are registered,
+// and a spawner that cannot isolate is a different object from one that can,
+// so the worktree provider must not depend on the tool allowlist.
+func TestWireResolvesIsolationEvenWithNoTaskTools(t *testing.T) {
 	t.Parallel()
 	opts := testOptions()
 	opts.EnableTask, opts.EnableListTasks = false, false
-	opts.GitRoot = func() (string, error) {
-		t.Fatal("git must not be invoked when no task tools are enabled")
-		return "", nil
-	}
+	opts.GitRoot = func() (string, error) { return t.TempDir(), nil }
 
 	w, err := subagents.Wire(opts)
 	require.NoError(t, err)
-	assert.NotNil(t, w.AgentDefs, "the registry is still built for callers that inspect it")
+	require.NotNil(t, w.AgentDefs)
+	assert.NotNil(t, w.Spawner.WorktreeProvider,
+		"isolation is a property of the spawner, not of which tools were registered")
 }
