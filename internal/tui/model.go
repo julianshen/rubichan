@@ -81,6 +81,9 @@ const (
 	StateResumeOverlay
 	// StateModelPickerOverlay indicates the TUI is showing the model picker.
 	StateModelPickerOverlay
+	// StateFetchingModels indicates the TUI is querying a provider (Ollama)
+	// for its available models before opening the picker.
+	StateFetchingModels
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.

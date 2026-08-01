@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+
+	"github.com/julianshen/rubichan/internal/provider"
 )
 
 // ModelChoice represents a selectable model option.
@@ -131,4 +134,28 @@ func (o *ModelPickerOverlay) Result() any {
 		return ModelPickerResult{ModelName: o.picker.Selected()}
 	}
 	return nil
+}
+
+// ModelsFetchedMsg carries the result of an async Registry.ListModels call,
+// triggered when the model picker is opened for a provider that supports
+// live listing (currently only Ollama). Handled in Update (update.go).
+type ModelsFetchedMsg struct {
+	Models []provider.Model
+	Err    error
+}
+
+// fetchOllamaModels returns a tea.Cmd that queries the Registry in the
+// background. Ollama's ListModels makes a real HTTP call to a local
+// server — even though it's typically fast, it must never run inline in
+// the synchronous command-dispatch path (ActionOpenModelPicker), which
+// would block the whole TUI event loop on network I/O if the local
+// server were slow or unresponsive. This mirrors the existing async
+// tea.Cmd -> tea.Msg pattern used for wiki generation (wiki_command.go's
+// wikiDoneMsg).
+func (m *Model) fetchOllamaModels() tea.Cmd {
+	cfg := m.cfg
+	return func() tea.Msg {
+		models, err := provider.Default.ListModels(context.Background(), "ollama", cfg)
+		return ModelsFetchedMsg{Models: models, Err: err}
+	}
 }
