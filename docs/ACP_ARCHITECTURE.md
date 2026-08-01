@@ -1,5 +1,9 @@
 # ACP Architecture & Design
 
+> ## ⚠️ Describes a design, not the running system
+>
+> `internal/acp` has **no production caller**: `agent.NewACPServer` is constructed only in tests. The mode adapters that were to be its consumers were deleted in 2026-08 after an audit found none of their operations could complete against it. Read this as a design record; verify against source before relying on any claim here. See `docs/MODULAR_CORE_REDESIGN.md`.
+
 ## Overview
 
 Rubichan implements the Agent Client Protocol (ACP) as a JSON-RPC 2.0 server. All three modes (Interactive, Headless, Wiki) communicate with the agent core via ACP.
@@ -265,11 +269,7 @@ All layers tested independently and integrated:
   - Error code handling
   - Coverage: 92%+
 
-- **Mode adapter tests** (`internal/modes/*/test/`):
-  - Client creation
-  - Method calls
-  - Response processing
-  - Coverage: 90%+
+- ~~**Mode adapter tests** (`internal/modes/*/test/`)~~ — deleted 2026-08 along with the adapters. They asserted only that a client could be constructed against a real server; they never issued a request, which is why a total method mismatch survived them. See `docs/MODULAR_CORE_REDESIGN.md`.
 
 - **Integration tests** (`test/e2e/acp_integration_test.go`):
   - Agent creation with ACP
