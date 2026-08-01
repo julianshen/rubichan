@@ -255,3 +255,10 @@ func TestBootstrapOpenAIProviderRoundTrip(t *testing.T) {
 	require.NoError(t, err, "NewProvider should succeed with bootstrap-saved openai config")
 	assert.NotNil(t, p)
 }
+
+func TestDefaultModelPlaceholder(t *testing.T) {
+	assert.Equal(t, "claude-sonnet-4-5", defaultModelPlaceholder("anthropic"))
+	assert.Equal(t, "glm-5", defaultModelPlaceholder("zai"))
+	assert.Equal(t, "gpt-4o", defaultModelPlaceholder("openai"))
+	assert.Equal(t, "gpt-4o", defaultModelPlaceholder("some-custom-openai-compatible-name"))
+}
