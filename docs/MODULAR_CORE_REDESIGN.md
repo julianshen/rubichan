@@ -221,16 +221,16 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 
 > **Audit (2026-08): the Phase 3 endgame is blocked on protocol capability, not on migration effort.**
 >
-> After five slices, `main.go` is 2,583 lines and `runInteractive` (555) + `runHeadless` (436) are 38% of it. The plan for those has always been "make `internal/modes/*` the real path". Before starting that, the two paths were compared. They are not two implementations of the same thing, and the gap is not drift.
+> After five slices, `main.go` is 2,582 lines and `runInteractive` (554) + `runHeadless` (435) are 38% of it. The plan for those has always been "make `internal/modes/*` the real path". Before starting that, the two paths were compared. They are not two implementations of the same thing, and the gap is not drift.
 >
-> **What the adapters actually are.** 991 lines of production code across the three packages — `headless` 165, `interactive` 665, `wiki` 161 — plus 1,090 lines of their own tests, which pass at 24.5% / 56.6% / 39.5% statement coverage. They are thin JSON-RPC clients, not mode implementations. Their entire operational surface is `RunCodeReview` and `RunSecurityScan` (headless), `GenerateDocs` (wiki), and `Initialize`/`Prompt` plus session-management helpers (interactive). None of them composes a provider, a tool registry, skills, hooks, checkpointing or approval — which is what the 991 inline lines in `main.go` almost entirely consist of.
+> **What the adapters actually are.** 991 lines of production code across the three packages — `headless` 165, `interactive` 665, `wiki` 161 — plus 1,090 lines of in-package tests (and 638 more in the sibling `test/` subpackages, for 1,728 in all), which pass at 24.5% / 56.6% / 39.5% statement coverage. They are thin JSON-RPC clients, not mode implementations. Their entire operational surface is `RunCodeReview` and `RunSecurityScan` (headless), `GenerateDocs` (wiki), and `Initialize`/`Prompt` plus session-management helpers (interactive). None of them composes a provider, a tool registry, skills, hooks, checkpointing or approval — which is what the 989 inline lines in `main.go` almost entirely consist of.
 >
 > **What the protocol can carry.** `internal/agent/acp_handlers.go` registers exactly two agent methods, plus the skill and security groups:
 >
 > - `tool/execute` is an explicit stub returning `{"status": "not_implemented"}`, with a comment saying to use `agent/prompt` instead.
 > - `agent/prompt` runs a turn and **drains the entire event channel into an array before returning**. Its own comment concedes that "full multi-turn support would require async event streaming."
 >
-> **That is the blocker.** A buffered request/response cannot express a streaming TUI, and it cannot express interactive tool approval, which needs a round trip *during* a turn. So the inline interactive flow cannot move onto the ACP path as the path currently exists — not because migrating 555 lines is laborious, but because the destination cannot represent what those lines do. The same applies to any headless mode that streams output rather than returning a report.
+> **That is the blocker.** A buffered request/response cannot express a streaming TUI, and it cannot express interactive tool approval, which needs a round trip *during* a turn. So the inline interactive flow cannot move onto the ACP path as the path currently exists — not because migrating 554 lines is laborious, but because the destination cannot represent what those lines do. The same applies to any headless mode that streams output rather than returning a report.
 >
 > **This corrects the Problem C framing**, which said the design "just needs to become the real path". It needs a streaming transport first. The honest ordering is: (1) decide whether ACP gains streaming/bidirectional events, (2) only then migrate modes, (3) or decide the adapters are not the destination and extract the mode flows in place instead.
 >
