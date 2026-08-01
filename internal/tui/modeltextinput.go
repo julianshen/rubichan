@@ -28,12 +28,37 @@ func NewModelTextInputOverlay(currentModel string) (*ModelTextInputOverlay, tea.
 	return o, o.form.Init()
 }
 
-// Update forwards the message to the underlying huh.Form, intercepting
-// Escape and Enter keys to manage overlay completion.
+// Update forwards every message to the underlying huh.Form first —
+// including Escape and Enter — so any per-field logic huh runs
+// synchronously (value sync, and validation if a .Validate() is ever
+// added to this field) still executes. Overlay completion is then
+// tracked with local flags rather than by reading o.form.State, because
+// of two real huh v1.0.0 limitations, not a testing artifact:
+//  1. huh's stock keymap never binds Escape to abort — o.form.State
+//     would never become StateAborted no matter how this method is
+//     driven, in tests or in production.
+//  2. Submit's StateCompleted transition requires draining a 3-hop
+//     Cmd -> Msg -> Update cascade (NextField -> blur -> nextGroup) that
+//     a single Update() call — the shape every message arrives as in
+//     this app — never completes on its own.
+//
+// Forwarding Enter before declaring done means the field's own
+// validation (which huh runs synchronously within its Update handling,
+// before the async NextField cmd is even constructed) still gets a
+// chance to run. This field has no .Validate() today, so that's inert —
+// but if one is ever added, its result isn't currently surfaced to the
+// caller (this overlay declares "submitted" unconditionally on Enter,
+// not conditionally on validation passing). A future validator would
+// need this method to also inspect the field's error state before
+// setting o.submitted, not just forward the message.
 func (o *ModelTextInputOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
+	form, cmd := o.form.Update(msg)
+	if f, ok := form.(*huh.Form); ok {
+		o.form = f
+	}
+
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.Type {
 		case tea.KeyEscape:
 			o.done = true
 			o.cancelled = true
@@ -47,10 +72,6 @@ func (o *ModelTextInputOverlay) Update(msg tea.Msg) (Overlay, tea.Cmd) {
 		}
 	}
 
-	form, cmd := o.form.Update(msg)
-	if f, ok := form.(*huh.Form); ok {
-		o.form = f
-	}
 	return o, cmd
 }
 
