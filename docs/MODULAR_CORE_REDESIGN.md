@@ -92,7 +92,7 @@ Capabilities that pi.dev deliberately keeps *outside* the core (todos, plan mode
 
 **Problem E — The modular seam that exists is scaffolded but not adopted.**
 
-`internal/modes/{interactive,headless,wiki}` are already the *intended* thin adapters — each is a small (161–297-line) ACP client that imports only `internal/acp` + `pkg/agentsdk`, not `internal/agent` or the TUI. That is exactly the right shape. But grepping non-test references shows they are **effectively unwired**: the real interactive, headless, and wiki flows are implemented **inline in `main.go`** (headless around `main.go:2320`, wiki via `wireWiki`/`wiki.Run`, interactive via `tui.NewModel` binding straight to `internal/agent.Agent`). So there are two parallel interactive front-ends — a direct-binding TUI (production) and an ACP-mediated one (`modes/interactive`, dormant). Relatedly, several ACP handlers are explicit stubs (`handleToolExecute` → `"not_implemented"`; `Invoke`/`List`/`Scan` return placeholder values). The elegant "every mode is an ACP client over one core" design is **drawn but not finished** — which is good news for the redesign: the target shape is already sketched in the tree, it just needs to become the real path.
+`internal/modes/{interactive,headless,wiki}` are already the *intended* thin adapters — each is a small (161–297-line) ACP client that imports only `internal/acp` + `pkg/agentsdk`, not `internal/agent` or the TUI. That is exactly the right shape. But grepping non-test references shows they are **effectively unwired**: the real interactive, headless, and wiki flows are implemented **inline in `main.go`** (headless around `main.go:2320`, wiki via `wireWiki`/`wiki.Run`, interactive via `tui.NewModel` binding straight to `internal/agent.Agent`). So there are two parallel interactive front-ends — a direct-binding TUI (production) and an ACP-mediated one (`modes/interactive`, dormant). Relatedly, several ACP handlers are explicit stubs (`handleToolExecute` → `"not_implemented"`; `Invoke`/`List`/`Scan` return placeholder values). The elegant "every mode is an ACP client over one core" design is **drawn but not finished** — which reads like good news for the redesign: the target shape is already sketched in the tree, and needs only to become the real path. **A later audit found that framing too optimistic; see the Phase 3 endgame note below.**
 
 ---
 
@@ -218,6 +218,25 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 > **The sequencing lesson survived; the execution of it did not.** The extraction was supposed to parameterise every divergence so the move stayed behaviour-preserving, with each fix landing afterwards as a reviewable `[BEHAVIORAL]` commit. It parameterised two of three. The third — the construction gate — was silently resolved in headless's favour, which changed interactive: it had always resolved a worktree provider, and after the move it did so only when the task tools were enabled. Review caught it. **Parameterising divergences is the right technique; the failure mode is believing you have enumerated them all.** Diff each copy against the extracted result per call site, not against each other.
 >
 > The general point still holds: **two copies of a block in two long functions will drift, and nothing surfaces it until they are forced into one place.** What this slice adds is that the drift is easier to find than to characterise — the duplication was obvious, its consequences were not, and the confident-sounding version was wrong.
+
+> **Audit (2026-08): the Phase 3 endgame is blocked on protocol capability, not on migration effort.**
+>
+> After five slices, `main.go` is 2,583 lines and `runInteractive` (555) + `runHeadless` (436) are 38% of it. The plan for those has always been "make `internal/modes/*` the real path". Before starting that, the two paths were compared. They are not two implementations of the same thing, and the gap is not drift.
+>
+> **What the adapters actually are.** 991 lines of production code across the three packages — `headless` 165, `interactive` 665, `wiki` 161 — plus 1,090 lines of their own tests, which pass at 24.5% / 56.6% / 39.5% statement coverage. They are thin JSON-RPC clients, not mode implementations. Their entire operational surface is `RunCodeReview` and `RunSecurityScan` (headless), `GenerateDocs` (wiki), and `Initialize`/`Prompt` plus session-management helpers (interactive). None of them composes a provider, a tool registry, skills, hooks, checkpointing or approval — which is what the 991 inline lines in `main.go` almost entirely consist of.
+>
+> **What the protocol can carry.** `internal/agent/acp_handlers.go` registers exactly two agent methods, plus the skill and security groups:
+>
+> - `tool/execute` is an explicit stub returning `{"status": "not_implemented"}`, with a comment saying to use `agent/prompt` instead.
+> - `agent/prompt` runs a turn and **drains the entire event channel into an array before returning**. Its own comment concedes that "full multi-turn support would require async event streaming."
+>
+> **That is the blocker.** A buffered request/response cannot express a streaming TUI, and it cannot express interactive tool approval, which needs a round trip *during* a turn. So the inline interactive flow cannot move onto the ACP path as the path currently exists — not because migrating 555 lines is laborious, but because the destination cannot represent what those lines do. The same applies to any headless mode that streams output rather than returning a report.
+>
+> **This corrects the Problem C framing**, which said the design "just needs to become the real path". It needs a streaming transport first. The honest ordering is: (1) decide whether ACP gains streaming/bidirectional events, (2) only then migrate modes, (3) or decide the adapters are not the destination and extract the mode flows in place instead.
+>
+> **Option 3 deserves weight it has not been given.** The adapters are 991 lines that no production path exercises, whose tests exercise them only against themselves. If ACP is not going to gain streaming soon, they are a second system being maintained on the strength of an intention. Deleting them is a legitimate outcome of this audit, and cheaper than the migration the doc has been assuming.
+>
+> No recommendation is made here between (1) and (3) — that is a product call about whether ACP is a real external interface or an internal aspiration. What the audit settles is that **the choice cannot be deferred by doing more extraction**: the remaining 38% of `main.go` is exactly the part that depends on the answer.
 
 **Phase 4 — Publish the module API.**
 Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
