@@ -26,48 +26,21 @@ All three modes share a common **Agent Core** (`internal/agent/`) with mode-spec
 
 Public SDK lives in `pkg/skillsdk/` — stable interface for skill authors. Everything in `internal/` is private.
 
-## ACP Protocol Integration
+## ACP Protocol Integration — dormant, no production caller
 
-Rubichan uses the Agent Client Protocol (ACP) as its standardized backbone for agent-mode communication. See `docs/ACP_ARCHITECTURE.md` for technical details and `docs/ACP_MIGRATION.md` for migration guide.
+**This section previously described ACP as "the standardized backbone for agent-mode communication." That was aspirational, not descriptive.** A Phase 3 audit (see `docs/MODULAR_CORE_REDESIGN.md`) established that the mode adapters that were supposed to be ACP's consumers could not complete a single operation against the server, and they have since been deleted.
 
-### Three Execution Modes (All via ACP)
-- **Interactive**: Terminal UI with continuous conversation via `internal/modes/interactive/acp_client.go`
-- **Headless**: CI/CD pipeline integration via `internal/modes/headless/acp_client.go`
-- **Wiki**: Batch documentation generation via `internal/modes/wiki/acp_client.go`
+Current state, so nobody plans against the old claim:
 
-### ACP Implementation
-- **Server**: `internal/acp/server.go` with stdio transport
-- **Types**: `internal/acp/types.go` with JSON-RPC 2.0 structures
-- **Protocol extensions**: `internal/acp/*_protocol.go` for skills, security, tools
-- **Mode-specific clients**: `internal/modes/{mode}/acp_client.go` translate UI operations to ACP requests
+- **`internal/acp` has no production caller.** `agent.NewACPServer` is constructed only in tests. `grep -rn "NewACPServer" --include=*.go . | grep -v _test.go` returns its own definition and nothing else.
+- **The three execution modes do not use ACP.** Interactive, headless and wiki are implemented inline in `cmd/rubichan/main.go` and bind directly to `internal/agent`.
+- **Registered methods are `agent/prompt`, `tool/execute`, `skill/{invoke,list,manifest}`, `security/{scan,approve}`, plus `initialize` and `shutdown`.** `tool/execute` is an explicit `not_implemented` stub.
+- **The method constants in `types.go` are largely unwired.** `tools/list`, `tools/call`, `resources/*`, `prompts/*` and `sampling/createMessage` are referenced only by `methods_test.go`, which round-trips them through JSON. They are never registered or sent.
+- **There is no server-initiated dispatch.** `Notification` and `notifications/{progress,log}` are declared but never constructed; `ResponseDispatcher` correlates strictly by request ID and drops unmatched messages. So no streaming output and no mid-turn approval.
 
-### For Developers
-When adding new capabilities:
-1. Define types in `internal/acp/*_protocol.go`
-2. Create a `Register*()` function to wire into registry
-3. Implement handlers in `internal/agent/acp_handlers.go`
-4. Add tests in `internal/acp/test/` and `test/e2e/`
-5. Compose the ACP server over the agent with `agent.NewACPServer(agentCore)` — ACP is a transport built at the composition root, not a core option
+Do not treat ACP as a live interface, and do not add capabilities to it on the assumption that something consumes them. Whether it should be revived against a real protocol or removed is an open decision.
 
-Example: Using ACP in a mode entrypoint:
-```go
-agentCore := agent.New(provider, registry, approvalFunc, cfg,
-    agent.WithMode("interactive"),
-)
-acpServer := agent.NewACPServer(agentCore)
-client, err := interactive.NewACPClient(nil, "", acpServer)
-resp, err := client.Initialize("my-client")
-```
-
-### Phase 5: Transport Integration (Complete)
-
-All mode clients now use real ACP request/response communication via stdio transport:
-
-- **Interactive Client** (`internal/modes/interactive/acp_client.go`): 5-second timeout for user-facing operations
-- **Headless Client** (`internal/modes/headless/acp_client.go`): 30-second timeout for CI/CD operations  
-- **Wiki Client** (`internal/modes/wiki/acp_client.go`): 60-second timeout for batch documentation with progress tracking
-
-Transport managed by ResponseDispatcher (`internal/acp/dispatcher.go`) for request-response correlation.
+Note also that `internal/acp` is **not** the repository's MCP support: that lives in `internal/tools/mcp` and `internal/skills/mcpbackend`.
 
 ## Build Commands (planned)
 

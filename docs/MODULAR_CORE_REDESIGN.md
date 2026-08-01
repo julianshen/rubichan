@@ -248,6 +248,25 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 >
 > No recommendation is made here between (1) and (2) — that is a product call about whether ACP is a real external interface or an internal aspiration. What the audit settles is that **the choice cannot be deferred by doing more extraction**: the remaining 38% of `main.go` is exactly the part that depends on the answer.
 
+> **Resolution (2026-08): option 2. The adapters are deleted.**
+>
+> 4,573 lines removed across 23 files, with no production build or test change — the suite's failure list is byte-identical before and after. What went:
+>
+> - `internal/modes/{headless,interactive,wiki}` — 991 production lines, 1,728 test lines
+> - `internal/store/session_store_adapter.go` and its test — existed only to implement `interactive.SessionStore`; `main.go` never referenced it
+> - `test/e2e/{acp_transport,acp_integration,resume_session}_test.go` — exercised only the above
+>
+> **Tracing usage found more dormancy than the audit had counted.** `internal/modes/interactive` held a second, complete session-resume implementation — `SessionManager`, `SessionSelector`, `SessionSelectorOverlay`, `InteractiveTUI.resumeSessionFlow` — parallel to the production one and never reached. Production resume runs through `agent.WithResumeSession`, `commands.NewResumeCommand`, and `/sessions` → `agent.ListSessions`. Deleting the duplicate removed no capability.
+>
+> **The pattern worth keeping: dormant code accretes dependents, and they look like usage.** The store adapter was the audit's single "non-test importer outside the packages", which read as evidence of integration. It was the opposite — a bridge built *to* the dormant code, itself reachable only from tests. A grep for importers answers "what references this", not "what runs this", and only the second question tells you whether deletion is safe.
+>
+> **What the deletion exposed.** With the adapters gone, `agent.NewACPServer` has no caller outside tests, so `internal/acp` is now a subsystem with zero production consumers. Two further facts came out of checking it:
+>
+> - Its declared method vocabulary — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, `sampling/createMessage` — is **MCP's**, not the Agent Client Protocol's, and every one of those constants is referenced only by `methods_test.go`, which round-trips them through JSON. None is registered or sent.
+> - The methods it actually serves — `agent/prompt`, `tool/execute`, `skill/*`, `security/*` — belong to neither protocol. And the repository's real MCP support is elsewhere: `internal/tools/mcp`, `internal/skills/mcpbackend`.
+>
+> So `internal/acp` implements neither the protocol it is named for nor the one it borrowed its vocabulary from. Whether to rebuild it against a real spec or remove it is left open; `CLAUDE.md` no longer describes it as a live backbone.
+
 **Phase 4 — Publish the module API.**
 Document the ~7 seams in `pkg/…` with examples (`examples/` already exists). External apps now embed the **real** core and opt into exactly the modules they want (e.g. a NATS bridge with tools + checkpoint but no TUI).
 

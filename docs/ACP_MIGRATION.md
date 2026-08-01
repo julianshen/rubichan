@@ -1,5 +1,13 @@
 # ACP Adoption Migration Guide
 
+> ## ⚠️ Superseded — the migration this describes did not happen
+>
+> Everything below is written in the past tense about a state the repository never reached. A Phase 3 audit (2026-08) found that the mode adapters could not complete a single operation against the ACP server, and they have been deleted. See the endgame audit and its resolution in `docs/MODULAR_CORE_REDESIGN.md`.
+>
+> Specifically, the "After (ACP-Based)" section below is false in every particular: the three modes never communicated via ACP, `internal/modes/*` no longer exists, and `agent.NewACPServer` has no caller outside tests. The declared method vocabulary (`tools/*`, `resources/*`, `prompts/*`) is MCP's rather than the Agent Client Protocol's, and is unreferenced outside a JSON round-trip test.
+>
+> This file is kept as a record of the intent. Do not use it as a guide.
+
 ## Overview
 
 Rubichan now uses the Agent Client Protocol (ACP) as its standardized backbone for agent-mode communication. This document explains the changes and migration strategy.
