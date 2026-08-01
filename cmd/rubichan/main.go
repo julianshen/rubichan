@@ -1101,7 +1101,7 @@ func runInteractive() error {
 		Logf:            log.Printf,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("wiring subagents: %w", err)
 	}
 	agentDefReg := subagentWiring.AgentDefs
 	wakeManager := subagentWiring.WakeManager
@@ -1681,7 +1681,7 @@ func runHeadless() error {
 		Logf:            log.Printf,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("wiring subagents: %w", err)
 	}
 	headlessWakeManager := headlessWiring.WakeManager
 	headlessSpawner := headlessWiring.Spawner
