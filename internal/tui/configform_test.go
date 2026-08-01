@@ -154,3 +154,45 @@ func TestConfigFormSaveOpenAIUpdatesExistingEntry(t *testing.T) {
 	assert.Equal(t, "sk-new", loaded.Provider.OpenAI[0].APIKey)
 	assert.Equal(t, "sk-other", loaded.Provider.OpenAI[1].APIKey, "the unrelated openrouter entry must be untouched")
 }
+
+func TestConfigFormSaveOpenAIBaseURLOnlyEditWithBlankKeyPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "openai"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{Name: "openai", BaseURL: "https://api.openai.com/v1", APIKeySource: "env"},
+	}
+
+	form := NewConfigForm(cfg, path)
+	require.Empty(t, form.openaiKey, "env-sourced key should not be pre-filled into the form")
+	form.openaiBaseURL = "https://custom-proxy.example.com/v1"
+	require.NoError(t, form.Save())
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	require.Len(t, loaded.Provider.OpenAI, 1)
+	assert.Equal(t, "https://custom-proxy.example.com/v1", loaded.Provider.OpenAI[0].BaseURL)
+	assert.Equal(t, "env", loaded.Provider.OpenAI[0].APIKeySource, "must not be downgraded to config when no key was entered")
+	assert.Empty(t, loaded.Provider.OpenAI[0].APIKey)
+}
+
+func TestConfigFormSaveOpenAIPreservesExtraHeadersOnUpdate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "openai"
+	cfg.Provider.OpenAI = []config.OpenAICompatibleConfig{
+		{Name: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "sk-old", ExtraHeaders: map[string]string{"X-Custom": "value"}},
+	}
+
+	form := NewConfigForm(cfg, path)
+	form.openaiKey = "sk-new"
+	require.NoError(t, form.Save())
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	require.Len(t, loaded.Provider.OpenAI, 1)
+	assert.Equal(t, "sk-new", loaded.Provider.OpenAI[0].APIKey)
+	assert.Equal(t, map[string]string{"X-Custom": "value"}, loaded.Provider.OpenAI[0].ExtraHeaders, "must not be silently wiped by an unrelated field update")
+}

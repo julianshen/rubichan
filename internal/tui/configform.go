@@ -155,22 +155,31 @@ func (c *ConfigForm) Save() error {
 	if c.cfg.Provider.Default == "zai" && c.cfg.Provider.Zai.APIKey != "" {
 		c.cfg.Provider.Zai.APIKeySource = "config"
 	}
-	if c.cfg.Provider.Default == "openai" && c.openaiKey != "" {
+	if c.cfg.Provider.Default == "openai" {
+		existing, found := findOpenAICompatibleEntry(c.cfg, "openai")
 		baseURL := c.openaiBaseURL
 		if baseURL == "" {
 			baseURL = "https://api.openai.com/v1"
 		}
-		entry := config.OpenAICompatibleConfig{Name: "openai", BaseURL: baseURL, APIKey: c.openaiKey, APIKeySource: "config"}
-		updated := false
-		for i, oc := range c.cfg.Provider.OpenAI {
-			if oc.Name == "openai" {
-				c.cfg.Provider.OpenAI[i] = entry
-				updated = true
-				break
-			}
+		entry := existing // preserves ExtraHeaders and any other fields this form doesn't expose
+		entry.Name = "openai"
+		entry.BaseURL = baseURL
+		if c.openaiKey != "" {
+			entry.APIKey = c.openaiKey
+			entry.APIKeySource = "config"
 		}
-		if !updated {
-			c.cfg.Provider.OpenAI = append(c.cfg.Provider.OpenAI, entry)
+		if found || c.openaiKey != "" || c.openaiBaseURL != "" {
+			updated := false
+			for i, oc := range c.cfg.Provider.OpenAI {
+				if oc.Name == "openai" {
+					c.cfg.Provider.OpenAI[i] = entry
+					updated = true
+					break
+				}
+			}
+			if !updated {
+				c.cfg.Provider.OpenAI = append(c.cfg.Provider.OpenAI, entry)
+			}
 		}
 	}
 
