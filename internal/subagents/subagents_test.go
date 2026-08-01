@@ -112,9 +112,10 @@ func TestWireToleratesANilLogger(t *testing.T) {
 
 // TestWireReusesTheSessionWorktreeManager pins the WorktreeManager option:
 // a supplied manager is used as-is and the repository is not re-discovered.
-// This is redundancy avoided, not a bug fixed — worktree.Manager keeps no
-// state, so a second instance over the same root would have behaved
-// identically.
+// This is redundancy avoided, not a bug fixed — the manager Wire would
+// otherwise have built carries the same Config and no lifecycle hook, and
+// worktree.Manager keeps no worktree inventory of its own, so the two would
+// have behaved alike here.
 func TestWireReusesTheSessionWorktreeManager(t *testing.T) {
 	t.Parallel()
 	session := worktree.NewManager(t.TempDir(), worktree.Config{MaxWorktrees: 3})

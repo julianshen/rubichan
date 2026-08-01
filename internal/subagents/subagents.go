@@ -32,10 +32,15 @@ type Options struct {
 	EnableTask      bool
 	EnableListTasks bool
 	// WorktreeManager is the session's own manager, when it has one. Passing
-	// it avoids constructing a second manager over the same repository —
-	// which is redundant rather than incorrect, since Manager keeps no state:
-	// it derives everything from the repository root and two instances share
-	// both the worktrees directory and the lock file.
+	// it avoids constructing a second manager over the same repository.
+	//
+	// That second manager was redundant rather than incorrect, given how both
+	// are built here: worktree.Manager keeps no worktree inventory of its own
+	// — it enumerates a shared directory under the repository root and takes a
+	// shared lock — so two instances built from the same root with the same
+	// Config and no lifecycle hook behave alike. Manager does hold
+	// per-instance state (its Config, and an optional hook set via
+	// SetHookFunc), so same-root instances are not interchangeable in general.
 	//
 	// When nil, Wire discovers the repository root through GitRoot and builds
 	// one, so subagents can still use isolation: "worktree" even though the
