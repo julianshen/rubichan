@@ -244,7 +244,7 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 >
 > **This corrects the Problem C framing**, which said the design "just needs to become the real path". The honest ordering is: (1) decide whether ACP gains server-initiated events, then rewrite the adapters against the methods the server actually serves, then migrate; or (2) decide the adapters are not the destination and extract the mode flows in place.
 >
-> **Option 2 deserves weight it has not been given.** The adapters are 991 lines that no production path exercises, whose tests never send them a request, and every one of whose operations would fail if they did. That is not scaffolding awaiting a capability; it is code that has never worked against the thing it targets. Deleting it is a legitimate outcome of this audit, and much cheaper than the migration the doc has been assuming.
+> **Option 2 deserves weight it has not been given.** The adapters are 991 lines that no production path exercises, whose tests never invoke a single one of the four operations — the deleted e2e suite's only client request was `Initialize`, which the server does serve — and every one of those operations would fail if invoked. That is not scaffolding awaiting a capability; it is code that has never worked against the thing it targets. Deleting it is a legitimate outcome of this audit, and much cheaper than the migration the doc has been assuming.
 >
 > No recommendation is made here between (1) and (2) — that is a product call about whether ACP is a real external interface or an internal aspiration. What the audit settles is that **the choice cannot be deferred by doing more extraction**: the remaining 38% of `main.go` is exactly the part that depends on the answer.
 

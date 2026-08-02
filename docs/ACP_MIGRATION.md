@@ -69,9 +69,18 @@ Rubichan now uses the Agent Client Protocol (ACP) as its standardized backbone f
 
 ### ~~Using ACP in a New Mode~~ — do not follow
 
-> These steps produced the adapters that were deleted in 2026-08, and following them would reproduce the same defect. Step 2 is where it went wrong: "implement mode-specific methods that construct ACP requests" carries no obligation to check that the server registers the method being called, and nothing downstream catches it. Every adapter built this way invented its own method name — `agent/codeReview`, `wiki/generate` — and the step-3 tests passed because they only asserted the client could be constructed.
+> These steps produced the adapters that were deleted in 2026-08, and following them would reproduce the same defect. Step 2 is where it went wrong: "implement mode-specific methods that construct ACP requests" carries no obligation to check that the request will be *served*, and nothing downstream catches it.
 >
-> If ACP is rebuilt, a new mode's first test must issue a real request against a real server and assert on the response.
+> The four audited operations failed in **two distinct ways**, and this distinction matters more than the count:
+>
+> | failure | operations |
+> |---|---|
+> | method not registered | `headless.RunCodeReview` → `agent/codeReview`; `wiki.GenerateDocs` → `wiki/generate` |
+> | method registered, payload rejected | `interactive.Prompt` → `agent/prompt` (sends `{"turn"}`, handler reads `{"prompt"}`); `headless.RunSecurityScan` → `security/scan` (omits the required `Target`) |
+>
+> Half the adapters used real, registered methods. A rebuild that only checks "is this method registered" would ship the other two bugs unchanged.
+>
+> If ACP is rebuilt, a new mode's first test must issue a real request against a real server **and assert on the response body** — not merely that a response arrived, since both payload failures return a well-formed JSON-RPC error.
 
 1. ~~Create `internal/modes/mymode/acp_client.go` with a client struct~~
 2. ~~Implement mode-specific methods that construct ACP requests~~
