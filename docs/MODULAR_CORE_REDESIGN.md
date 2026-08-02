@@ -256,7 +256,17 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 > - `internal/store/session_store_adapter.go` and its test — existed only to implement `interactive.SessionStore`; `main.go` never referenced it
 > - `test/e2e/{acp_transport,acp_integration,resume_session}_test.go` — exercised only the above
 >
-> **Tracing usage found more dormancy than the audit had counted.** `internal/modes/interactive` held a second, complete session-resume implementation — `SessionManager`, `SessionSelector`, `SessionSelectorOverlay`, `InteractiveTUI.resumeSessionFlow` — parallel to the production one and never reached. Production resume runs through `agent.WithResumeSession`, `commands.NewResumeCommand`, and `/sessions` → `agent.ListSessions`. Deleting the duplicate removed no capability.
+> **Tracing usage found more dormancy than the audit had counted.** `internal/modes/interactive` held a second, complete session-resume implementation — `SessionManager`, `SessionSelector`, `SessionSelectorOverlay`, `InteractiveTUI.resumeSessionFlow` — parallel to the production one and never reached. Deleting the duplicate removed no capability.
+>
+> There are **three** production paths, and they are separate — an earlier draft of this note ran them together into one chain that does not exist:
+>
+> | path | mechanism |
+> |---|---|
+> | TUI `/resume` | `commands.ActionResume` → `internal/tui/model.go:908` → `store.Store.ListSessions` → `tui.SessionResumeOverlay` → `Agent.ResumeSession` |
+> | `--resume <id>` | `agent.WithResumeSession` at construction, no UI involved |
+> | `/sessions` | a distinct command calling `Agent.ListSessions`; it lists, it does not resume |
+>
+> None of the three touches a deleted symbol, so the deletion holds. But the corrected table is worth more than the conclusion it supports: **the original chain was assembled from real fragments that do not connect** — `/sessions` was spliced onto the end of the resume path because both mention sessions. That is the same failure mode as the audit's own retracted claims, arrived at by the same route: a plausible sentence written from adjacent facts rather than a followed path.
 >
 > **The pattern worth keeping: dormant code accretes dependents, and they look like usage.** The store adapter was the audit's single "non-test importer outside the packages", which read as evidence of integration. It was the opposite — a bridge built *to* the dormant code, itself reachable only from tests. A grep for importers answers "what references this", not "what runs this", and only the second question tells you whether deletion is safe.
 >
