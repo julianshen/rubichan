@@ -82,11 +82,11 @@ func (p *ModelPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if p.form.State == huh.StateCompleted {
 		p.done = true
-		return p, tea.Quit
+		return p, nil
 	}
 	if p.form.State == huh.StateAborted {
 		p.cancelled = true
-		return p, tea.Quit
+		return p, nil
 	}
 	return p, cmd
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -107,6 +108,43 @@ func TestModelCommandNoArgsFetchesForOllama(t *testing.T) {
 	assert.NotNil(t, cmd) // fetchOllamaModels + spinner.Tick, batched
 	assert.Equal(t, StateFetchingModels, m.state)
 	assert.Nil(t, m.activeOverlay, "overlay doesn't open until ModelsFetchedMsg arrives")
+}
+
+func TestModelPickerOverlaySelectionDoesNotQuit(t *testing.T) {
+	overlay, initCmd := NewModelPickerOverlay([]ModelChoice{
+		{Name: "llama3.2:latest", Size: "4.7GB"},
+		{Name: "mistral:latest", Size: "4.1GB"},
+	})
+	require.NotNil(t, initCmd)
+
+	// Drive the form to completion by pressing Enter on the first option,
+	// draining whatever Cmd chain huh's async NextField->nextGroup
+	// cascade produces — a single Update() call can't observe
+	// StateCompleted synchronously (see modeltextinput.go's doc comment
+	// for the same underlying huh v1.0.0 property). This loop is the
+	// regression coverage for the bug this test is named after: if any
+	// intermediate Cmd resolves to tea.QuitMsg, the whole app would quit
+	// when a user selects a model, instead of just completing this
+	// overlay.
+	var lastCmd tea.Cmd
+	updated, cmd := overlay.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	overlay = updated.(*ModelPickerOverlay)
+	lastCmd = cmd
+	for i := 0; i < 10 && lastCmd != nil; i++ {
+		msg := lastCmd()
+		if _, isQuit := msg.(tea.QuitMsg); isQuit {
+			t.Fatal("ModelPicker must never resolve to tea.QuitMsg — it is embedded via the Overlay interface, not run as its own tea.Program; quitting here would exit the whole app when a user selects a model")
+		}
+		updated, lastCmd = overlay.Update(msg)
+		overlay = updated.(*ModelPickerOverlay)
+	}
+
+	require.True(t, overlay.Done())
+	result := overlay.Result()
+	require.NotNil(t, result)
+	picked, ok := result.(ModelPickerResult)
+	require.True(t, ok)
+	assert.Equal(t, "llama3.2:latest", picked.ModelName)
 }
 
 func TestModelCommandWithArgSwitchesDirectly(t *testing.T) {
