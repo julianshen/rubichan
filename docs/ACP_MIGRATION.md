@@ -67,15 +67,16 @@ Rubichan now uses the Agent Client Protocol (ACP) as its standardized backbone f
 
 ## For Developers
 
-### Using ACP in a New Mode
+### ~~Using ACP in a New Mode~~ — do not follow
 
-1. Create `internal/modes/mymode/acp_client.go` with a client struct
-2. Implement mode-specific methods that construct ACP requests
-3. Create tests in `internal/modes/mymode/test/acp_client_test.go`
-4. In mode entrypoint (cmd/rubichan/mymode.go):
-   - Create a plain agent, then compose the transport: `acpServer := agent.NewACPServer(agentCore)`
-   - Create mode-specific ACP client over that server
-   - Route operations through the client to the ACP server
+> These steps produced the adapters that were deleted in 2026-08, and following them would reproduce the same defect. Step 2 is where it went wrong: "implement mode-specific methods that construct ACP requests" carries no obligation to check that the server registers the method being called, and nothing downstream catches it. Every adapter built this way invented its own method name — `agent/codeReview`, `wiki/generate` — and the step-3 tests passed because they only asserted the client could be constructed.
+>
+> If ACP is rebuilt, a new mode's first test must issue a real request against a real server and assert on the response.
+
+1. ~~Create `internal/modes/mymode/acp_client.go` with a client struct~~
+2. ~~Implement mode-specific methods that construct ACP requests~~
+3. ~~Create tests in `internal/modes/mymode/test/acp_client_test.go`~~
+4. ~~In mode entrypoint (cmd/rubichan/mymode.go): create a plain agent, compose the transport, route operations through the client~~
 
 ### Extending ACP
 
