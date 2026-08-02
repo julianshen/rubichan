@@ -272,7 +272,7 @@ Reduce `cmd/rubichan/main.go` to composition only: build core, register modules,
 >
 > **What the deletion exposed.** With the adapters gone, `agent.NewACPServer` has no caller outside tests, so `internal/acp` is now a subsystem with zero production consumers. Two further facts came out of checking it:
 >
-> - Its declared method vocabulary — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, `sampling/createMessage` — is **MCP's**, not the Agent Client Protocol's, and every one of those constants is referenced only by `methods_test.go`, which round-trips them through JSON. None is registered or sent.
+> - Its declared method vocabulary — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, `sampling/createMessage` — is **MCP's**, not the Agent Client Protocol's. None of it is registered or sent, and the dead weight comes in two degrees: `tools/list`, `tools/call` and `resources/list` are referenced only by `methods_test.go`, which round-trips them through JSON; `resources/read`, `prompts/list`, `prompts/call` and `sampling/createMessage` have **no reference anywhere in the tree**, not even a test. Anyone removing this vocabulary should expect four of the seven to delete with nothing to update.
 > - The methods it actually serves — `agent/prompt`, `tool/execute`, `skill/*`, `security/*` — belong to neither protocol. And the repository's real MCP support is elsewhere: `internal/tools/mcp`, `internal/skills/mcpbackend`.
 >
 > So `internal/acp` implements neither the protocol it is named for nor the one it borrowed its vocabulary from. Whether to rebuild it against a real spec or remove it is left open; `CLAUDE.md` no longer describes it as a live backbone.

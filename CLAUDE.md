@@ -33,9 +33,9 @@ Public SDK lives in `pkg/skillsdk/` — stable interface for skill authors. Ever
 Current state, so nobody plans against the old claim:
 
 - **`internal/acp` has no production caller.** `agent.NewACPServer` is constructed only in tests. `grep -rn "NewACPServer" --include=*.go . | grep -v _test.go` returns its own definition and nothing else.
-- **The three execution modes do not use ACP.** Interactive, headless and wiki are implemented inline in `cmd/rubichan/main.go` and bind directly to `internal/agent`.
+- **The three execution modes do not use ACP.** All are implemented inline in `cmd/rubichan/main.go`, but they do not share a shape: interactive and headless bind directly to `internal/agent`, while `--wiki` calls `runWikiHeadless`, which drives `internal/wiki.Run` and never constructs an agent at all. Do not look for a wiki agent integration point; there isn't one.
 - **Registered methods are `agent/prompt`, `tool/execute`, `skill/{invoke,list,manifest}`, `security/{scan,approve}`, plus `initialize` and `shutdown`.** `tool/execute` is an explicit `not_implemented` stub.
-- **The method constants in `types.go` are largely unwired.** `tools/list`, `tools/call`, `resources/*`, `prompts/*` and `sampling/createMessage` are referenced only by `methods_test.go`, which round-trips them through JSON. They are never registered or sent.
+- **The method constants in `types.go` are largely unwired**, in two degrees. `tools/list`, `tools/call` and `resources/list` are referenced only by `methods_test.go`, which round-trips them through JSON. `resources/read`, `prompts/list`, `prompts/call` and `sampling/createMessage` have **no reference anywhere in the tree** — not even a test. None of the seven is registered or sent.
 - **There is no server-initiated dispatch.** `Notification` and `notifications/{progress,log}` are declared but never constructed; `ResponseDispatcher` correlates strictly by request ID and drops unmatched messages. So no streaming output and no mid-turn approval.
 
 Do not treat ACP as a live interface, and do not add capabilities to it on the assumption that something consumes them. Whether it should be revived against a real protocol or removed is an open decision.
