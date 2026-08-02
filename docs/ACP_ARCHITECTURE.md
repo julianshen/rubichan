@@ -271,11 +271,7 @@ All layers tested independently and integrated:
 
 - ~~**Mode adapter tests** (`internal/modes/*/test/`)~~ — deleted 2026-08 along with the adapters. They asserted only that a client could be constructed against a real server; they never issued a request, which is why a total method mismatch survived them. See `docs/MODULAR_CORE_REDESIGN.md`.
 
-- **Integration tests** (`test/e2e/acp_integration_test.go`):
-  - Agent creation with ACP
-  - Multiple clients with one agent
-  - Full mode workflows
-  - Coverage: 85%+
+- ~~**Integration tests** (`test/e2e/acp_integration_test.go`)~~ — deleted 2026-08. It covered "full mode workflows" against the mode adapters, but every one of those workflows called a method the server does not serve, so what it actually covered was the adapters agreeing with themselves. Coverage of `agent.NewACPServer` itself is retained in `internal/agent/acp_integration_test.go` and `internal/agent/coverage_test.go`.
 
 Run tests:
 ```bash
