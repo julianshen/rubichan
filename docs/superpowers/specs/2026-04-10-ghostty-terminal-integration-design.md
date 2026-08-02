@@ -249,13 +249,15 @@ internal/terminal/
 
 ### Modified Files
 
+> **Stale as of 2026-08:** the three `internal/modes/*` entries below name packages that no longer exist. They were dormant ACP adapters — no production path ever reached them — and were deleted. The interactive, headless and wiki flows they were meant to carry are implemented inline in `cmd/rubichan/main.go`, so that is where Caps threading and progress emission would go. See `docs/MODULAR_CORE_REDESIGN.md`.
+
 ```
 internal/tui/hyperlink.go          # Replace supportedTerminals with Caps.Hyperlinks
 internal/tui/model.go              # Accept *terminal.Caps, wire Bubble Tea options
 internal/tui/markdown.go           # Use Caps.DarkBackground for glamour style
-internal/modes/interactive/*.go    # Thread Caps, emit notifications, inline diagrams
-internal/modes/headless/*.go       # Thread Caps, emit progress bar + notifications
-internal/modes/wiki/acp_client.go  # Wire ProgressFunc to OSC 9;4
+internal/modes/interactive/*.go    # DELETED — see note above
+internal/modes/headless/*.go       # DELETED — see note above
+internal/modes/wiki/acp_client.go  # DELETED — see note above
 cmd/agent/main.go                  # Call terminal.Detect(), pass to modes
 ```
 
