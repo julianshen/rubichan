@@ -307,6 +307,10 @@ func (h *plainInteractiveHost) handleCommandParts(ctx context.Context, line stri
 		_, _ = fmt.Fprintln(h.out, "Config overlay is not available in plain interactive mode.")
 	case commands.ActionOpenWiki:
 		_, _ = fmt.Fprintln(h.out, "Wiki overlay is not available in plain interactive mode.")
+	case commands.ActionResume:
+		// resumeCommand returns an empty Output, so without this case the
+		// command resolved, printed nothing, and looked like it had worked.
+		_, _ = fmt.Fprintln(h.out, "Resume overlay is not available in plain interactive mode. Restart with --resume <session-id>.")
 	}
 
 	return false, nil
