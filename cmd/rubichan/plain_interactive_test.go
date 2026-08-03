@@ -259,6 +259,7 @@ func TestPlainInteractiveOverlayCommandsReportUnavailable(t *testing.T) {
 	}{
 		{"about", commands.NewAboutCommand(), "/about"},
 		{"undo", commands.NewUndoOverlayCommand(), "/undo"},
+		{"bare model opens the picker", commands.NewModelCommand(func(string) {}), "/model"},
 		{"an action added later", &unsupportedActionCommand{action: commands.ActionOpenModelPicker}, "/futurecmd"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

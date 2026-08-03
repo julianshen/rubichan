@@ -75,3 +75,38 @@ func TestErrExitIsExported(t *testing.T) {
 	err := shell.ErrExit
 	assert.True(t, errors.Is(err, shell.ErrExit))
 }
+
+// TestMakeSlashCommandFuncReportsOverlayActions covers the same defect fixed in
+// plain interactive mode, in the third host. Shell mode registers /model, whose
+// argument-less form returns ActionOpenModelPicker with an empty Output; before
+// this, the wrapper tested only for ActionQuit and returned that empty string,
+// so bare /model printed nothing.
+func TestMakeSlashCommandFuncReportsOverlayActions(t *testing.T) {
+	t.Parallel()
+
+	registry := commands.NewRegistry()
+	require.NoError(t, registry.Register(commands.NewModelCommand(func(string) {})))
+
+	fn := makeSlashCommandFunc(registry)
+
+	output, quit, err := fn(context.Background(), "model", nil)
+	require.NoError(t, err)
+	assert.False(t, quit, "an unsupported command must not end the shell")
+	assert.NotEmpty(t, output, "a command that does nothing must at least say so")
+	assert.Contains(t, output, "not available in shell mode")
+}
+
+// TestMakeSlashCommandFuncStaysQuietForOrdinaryCommands guards the other side:
+// ActionNone must not trigger the unavailable message.
+func TestMakeSlashCommandFuncStaysQuietForOrdinaryCommands(t *testing.T) {
+	t.Parallel()
+
+	registry := commands.NewRegistry()
+	require.NoError(t, registry.Register(commands.NewHelpCommand(registry)))
+
+	fn := makeSlashCommandFunc(registry)
+
+	output, _, err := fn(context.Background(), "help", nil)
+	require.NoError(t, err)
+	assert.NotContains(t, output, "not available in shell mode")
+}
