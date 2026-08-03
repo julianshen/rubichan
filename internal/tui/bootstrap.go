@@ -5,6 +5,23 @@ import (
 	"github.com/julianshen/rubichan/internal/config"
 )
 
+// defaultModelPlaceholder returns the hint text shown in the bootstrap
+// wizard's model field for the given provider — the same literal each
+// provider's own ProviderDef.DefaultModel resolves to (Anthropic:
+// internal/provider/anthropic/provider.go; Z.ai: internal/provider/zai/provider.go).
+// OpenAI-compatible has no fixed default since it's an arbitrary endpoint,
+// so it gets a generic, well-known example instead.
+func defaultModelPlaceholder(providerName string) string {
+	switch providerName {
+	case "anthropic":
+		return "claude-sonnet-4-5"
+	case "zai":
+		return "glm-5"
+	default:
+		return "gpt-4o"
+	}
+}
+
 // NeedsBootstrap returns true if the config file doesn't exist or has no
 // provider API key configured (and provider is not ollama).
 func NeedsBootstrap(configPath string) bool {
@@ -78,15 +95,31 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 	).Title("Authentication").
 		WithHideFunc(func() bool { return cfg.Provider.Default != "zai" })
 
-	modelGroup := huh.NewGroup(
+	anthropicModelGroup := huh.NewGroup(
 		huh.NewInput().
 			Title("Model").
-			Placeholder("claude-sonnet-4-5").
+			Placeholder(defaultModelPlaceholder("anthropic")).
 			Value(&cfg.Provider.Model),
 	).Title("Model").
-		WithHideFunc(func() bool { return cfg.Provider.Default == "ollama" })
+		WithHideFunc(func() bool { return cfg.Provider.Default != "anthropic" })
 
-	bf.form = huh.NewForm(providerGroup, anthropicKeyGroup, openaiGroup, zaiKeyGroup, modelGroup)
+	openaiModelGroup := huh.NewGroup(
+		huh.NewInput().
+			Title("Model").
+			Placeholder(defaultModelPlaceholder("openai")).
+			Value(&cfg.Provider.Model),
+	).Title("Model").
+		WithHideFunc(func() bool { return cfg.Provider.Default != "openai" })
+
+	zaiModelGroup := huh.NewGroup(
+		huh.NewInput().
+			Title("Model").
+			Placeholder(defaultModelPlaceholder("zai")).
+			Value(&cfg.Provider.Model),
+	).Title("Model").
+		WithHideFunc(func() bool { return cfg.Provider.Default != "zai" })
+
+	bf.form = huh.NewForm(providerGroup, anthropicKeyGroup, openaiGroup, zaiKeyGroup, anthropicModelGroup, openaiModelGroup, zaiModelGroup)
 	return bf
 }
 

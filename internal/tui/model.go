@@ -81,6 +81,9 @@ const (
 	StateResumeOverlay
 	// StateModelPickerOverlay indicates the TUI is showing the model picker.
 	StateModelPickerOverlay
+	// StateFetchingModels indicates the TUI is querying a provider (Ollama)
+	// for its available models before opening the picker.
+	StateFetchingModels
 )
 
 // Model is the Bubble Tea model for the Rubichan TUI.
@@ -926,32 +929,22 @@ func (m *Model) handleCommandParts(line string, parts []string) tea.Cmd {
 		m.state = StateResumeOverlay
 		return nil
 	case commands.ActionOpenModelPicker:
-		models := m.availableModels()
-		if len(models) == 0 {
-			m.content.WriteString("No models available.\n")
+		if m.cfg == nil {
+			m.content.WriteString("No config available\n")
 			m.setContentAndAutoScroll()
 			return nil
 		}
-		overlay, initCmd := NewModelPickerOverlay(models)
+		if m.cfg.Provider.Default == "ollama" {
+			m.state = StateFetchingModels
+			return tea.Batch(m.fetchOllamaModels(), m.spinner.Tick)
+		}
+		overlay, initCmd := NewModelTextInputOverlay(m.cfg.Provider.Model)
 		m.activeOverlay = overlay
 		m.state = StateModelPickerOverlay
 		return initCmd
 	}
 
 	return nil
-}
-
-// availableModels returns the model choices for the picker overlay.
-func (m *Model) availableModels() []ModelChoice {
-	// Provide a basic set of well-known models. In the future this
-	// could query the provider for available models.
-	return []ModelChoice{
-		{Name: "claude-opus-4-6", Size: "large"},
-		{Name: "claude-sonnet-4-6", Size: "medium"},
-		{Name: "claude-haiku-4-5-20251001", Size: "small"},
-		{Name: "gpt-4o", Size: "large"},
-		{Name: "gpt-4o-mini", Size: "small"},
-	}
 }
 
 func summarizeActiveSkills(active []string) string {

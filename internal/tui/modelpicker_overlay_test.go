@@ -3,10 +3,12 @@ package tui
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/julianshen/rubichan/internal/commands"
+	"github.com/julianshen/rubichan/internal/config"
 )
 
 func TestModelPickerOverlayImplementsOverlay(t *testing.T) {
@@ -64,16 +66,85 @@ func TestProcessOverlayResultModelPickerCancelled(t *testing.T) {
 	assert.Equal(t, StateInput, m.state)
 }
 
-func TestModelCommandNoArgsOpensPickerOverlay(t *testing.T) {
+func TestModelCommandNoArgsWithNilConfigShowsMessage(t *testing.T) {
 	reg := commands.NewRegistry()
 	m := NewModel(nil, "test", "model", 10, "", nil, reg)
+
+	require.NoError(t, reg.Register(commands.NewModelCommand(func(string) {})))
+
+	before := m.content.String()
+	cmd := m.handleCommand("/model")
+	assert.Nil(t, cmd)
+	assert.Equal(t, StateInput, m.state)
+	assert.Nil(t, m.activeOverlay)
+	assert.Contains(t, m.content.String()[len(before):], "No config available")
+}
+
+func TestModelCommandNoArgsOpensTextInputForNonOllama(t *testing.T) {
+	reg := commands.NewRegistry()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "anthropic"
+	m := NewModel(nil, "test", "model", 10, "", cfg, reg)
 
 	require.NoError(t, reg.Register(commands.NewModelCommand(func(string) {})))
 
 	cmd := m.handleCommand("/model")
 	assert.NotNil(t, cmd) // huh form Init returns a command
 	assert.Equal(t, StateModelPickerOverlay, m.state)
-	assert.NotNil(t, m.activeOverlay)
+	require.NotNil(t, m.activeOverlay)
+	_, ok := m.activeOverlay.(*ModelTextInputOverlay)
+	assert.True(t, ok, "non-ollama providers get the text-input overlay, not the selection-list picker")
+}
+
+func TestModelCommandNoArgsFetchesForOllama(t *testing.T) {
+	reg := commands.NewRegistry()
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "ollama"
+	m := NewModel(nil, "test", "model", 10, "", cfg, reg)
+
+	require.NoError(t, reg.Register(commands.NewModelCommand(func(string) {})))
+
+	cmd := m.handleCommand("/model")
+	assert.NotNil(t, cmd) // fetchOllamaModels + spinner.Tick, batched
+	assert.Equal(t, StateFetchingModels, m.state)
+	assert.Nil(t, m.activeOverlay, "overlay doesn't open until ModelsFetchedMsg arrives")
+}
+
+func TestModelPickerOverlaySelectionDoesNotQuit(t *testing.T) {
+	overlay, initCmd := NewModelPickerOverlay([]ModelChoice{
+		{Name: "llama3.2:latest", Size: "4.7GB"},
+		{Name: "mistral:latest", Size: "4.1GB"},
+	})
+	require.NotNil(t, initCmd)
+
+	// Drive the form to completion by pressing Enter on the first option,
+	// draining whatever Cmd chain huh's async NextField->nextGroup
+	// cascade produces — a single Update() call can't observe
+	// StateCompleted synchronously (see modeltextinput.go's doc comment
+	// for the same underlying huh v1.0.0 property). This loop is the
+	// regression coverage for the bug this test is named after: if any
+	// intermediate Cmd resolves to tea.QuitMsg, the whole app would quit
+	// when a user selects a model, instead of just completing this
+	// overlay.
+	var lastCmd tea.Cmd
+	updated, cmd := overlay.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	overlay = updated.(*ModelPickerOverlay)
+	lastCmd = cmd
+	for i := 0; i < 10 && lastCmd != nil; i++ {
+		msg := lastCmd()
+		if _, isQuit := msg.(tea.QuitMsg); isQuit {
+			t.Fatal("ModelPicker must never resolve to tea.QuitMsg — it is embedded via the Overlay interface, not run as its own tea.Program; quitting here would exit the whole app when a user selects a model")
+		}
+		updated, lastCmd = overlay.Update(msg)
+		overlay = updated.(*ModelPickerOverlay)
+	}
+
+	require.True(t, overlay.Done())
+	result := overlay.Result()
+	require.NotNil(t, result)
+	picked, ok := result.(ModelPickerResult)
+	require.True(t, ok)
+	assert.Equal(t, "llama3.2:latest", picked.ModelName)
 }
 
 func TestModelCommandWithArgSwitchesDirectly(t *testing.T) {

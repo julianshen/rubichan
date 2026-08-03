@@ -202,8 +202,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setContentAndAutoScroll()
 		return m, nil
 
+	case ModelsFetchedMsg:
+		if msg.Err != nil {
+			m.content.WriteString(fmt.Sprintf("Failed to list Ollama models: %s\n", msg.Err))
+			m.setContentAndAutoScroll()
+			m.state = StateInput
+			return m, nil
+		}
+		if len(msg.Models) == 0 {
+			m.content.WriteString("No models available.\n")
+			m.setContentAndAutoScroll()
+			m.state = StateInput
+			return m, nil
+		}
+		choices := make([]ModelChoice, len(msg.Models))
+		for i, mo := range msg.Models {
+			choices[i] = ModelChoice{Name: mo.ID}
+		}
+		overlay, initCmd := NewModelPickerOverlay(choices)
+		m.activeOverlay = overlay
+		m.state = StateModelPickerOverlay
+		return m, initCmd
+
 	case spinner.TickMsg:
-		if m.state == StateStreaming {
+		if m.state == StateStreaming || m.state == StateFetchingModels {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			cmds = append(cmds, cmd)

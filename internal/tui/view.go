@@ -44,6 +44,8 @@ func (m *Model) View() string {
 				label = "Thinking..."
 			}
 			b.WriteString(fmt.Sprintf("%s%s", label, elapsed))
+		case StateFetchingModels:
+			b.WriteString("Fetching models...")
 		case StateAwaitingApproval:
 			if m.activeOverlay != nil {
 				b.WriteString(stripANSI(m.activeOverlay.View()))
@@ -106,6 +108,8 @@ func (m *Model) View() string {
 			label = "Thinking..."
 		}
 		b.WriteString(fmt.Sprintf("%s %s%s", m.spinner.View(), styleSpinner.Render(label), elapsed))
+	case StateFetchingModels:
+		b.WriteString(fmt.Sprintf("%s %s", m.spinner.View(), styleSpinner.Render("Fetching models...")))
 	case StateAwaitingApproval:
 		if m.activeOverlay != nil {
 			b.WriteString(m.activeOverlay.View())

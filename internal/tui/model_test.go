@@ -124,10 +124,14 @@ func TestModelHandleSlashModel(t *testing.T) {
 }
 
 func TestModelHandleSlashModelNoArgOpensPicker(t *testing.T) {
-	m := NewModel(nil, "rubichan", "claude-3", 50, "", nil, nil)
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "anthropic"
+	cfg.Provider.Model = "claude-3"
+	m := NewModel(nil, "rubichan", "claude-3", 50, "", cfg, nil)
 	cmd := m.handleCommand("/model")
 
-	// Should open model picker overlay (huh form Init returns a command).
+	// Should open the text-input overlay pre-filled with the current model
+	// (huh form Init returns a command).
 	assert.NotNil(t, cmd)
 	assert.Equal(t, StateModelPickerOverlay, m.state)
 	assert.NotNil(t, m.activeOverlay)
