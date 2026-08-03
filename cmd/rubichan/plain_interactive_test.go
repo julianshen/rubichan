@@ -213,3 +213,22 @@ func TestExitMessageAdvertisesOnlyWhatPlainModeSupports(t *testing.T) {
 	assert.Contains(t, msg, "--resume sess-abc123", "the flag is the path that works in plain mode")
 	assert.NotContains(t, msg, "/resume", "plain mode has no resume overlay; advertising it strands the user")
 }
+
+// TestPlainInteractiveResumeReportsUnavailable pins that /resume says something
+// rather than nothing. The command resolves and returns ActionResume with an
+// empty Output, so before this case existed the host printed nothing at all and
+// carried on — indistinguishable from success, and therefore unreportable by
+// the user who hit it.
+func TestPlainInteractiveResumeReportsUnavailable(t *testing.T) {
+	reg := commands.NewRegistry()
+	require.NoError(t, reg.Register(commands.NewResumeCommand()))
+	out := &bytes.Buffer{}
+	host := newPlainInteractiveHost(bytes.NewBufferString(""), out, "gpt-test", 20, reg)
+
+	quit, err := host.handleCommand(context.Background(), "/resume")
+
+	require.NoError(t, err)
+	assert.False(t, quit, "an unsupported command must not end the session")
+	assert.Contains(t, out.String(), "not available in plain interactive mode")
+	assert.Contains(t, out.String(), "--resume", "point the user at the path that does work")
+}
