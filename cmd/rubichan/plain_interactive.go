@@ -301,6 +301,8 @@ func (h *plainInteractiveHost) handleCommandParts(ctx context.Context, line stri
 	logPlainSlashCommand(line, result.Output, activated, deactivated)
 
 	switch result.Action {
+	case commands.ActionNone:
+		// Ordinary command. Its Output, if any, was printed above.
 	case commands.ActionQuit:
 		return true, nil
 	case commands.ActionOpenConfig:
@@ -308,9 +310,14 @@ func (h *plainInteractiveHost) handleCommandParts(ctx context.Context, line stri
 	case commands.ActionOpenWiki:
 		_, _ = fmt.Fprintln(h.out, "Wiki overlay is not available in plain interactive mode.")
 	case commands.ActionResume:
-		// resumeCommand returns an empty Output, so without this case the
-		// command resolved, printed nothing, and looked like it had worked.
 		_, _ = fmt.Fprintln(h.out, "Resume overlay is not available in plain interactive mode. Restart with --resume <session-id>.")
+	default:
+		// Every remaining Action opens a TUI overlay, and each of those
+		// commands returns an empty Output — so a missing case here is not a
+		// no-op the user can see, it is silence indistinguishable from success.
+		// A default rather than one case per action, so that an Action added
+		// later cannot rejoin that set unnoticed.
+		_, _ = fmt.Fprintln(h.out, "That command needs the full terminal UI and is not available in plain interactive mode.")
 	}
 
 	return false, nil
