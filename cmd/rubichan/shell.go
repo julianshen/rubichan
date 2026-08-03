@@ -367,7 +367,22 @@ func makeSlashCommandFunc(registry *commands.Registry) shell.SlashCommandFunc {
 			return "", false, err
 		}
 
-		quit := result.Action == commands.ActionQuit
-		return result.Output, quit, nil
+		switch result.Action {
+		case commands.ActionNone:
+			return result.Output, false, nil
+		case commands.ActionQuit:
+			return result.Output, true, nil
+		default:
+			// Every remaining action opens a TUI overlay, and those commands
+			// return an empty Output — so testing only for ActionQuit and
+			// returning Output meant bare /model printed nothing at all.
+			// A default rather than a case per action, so an action added later
+			// cannot become silent here the same way.
+			msg := "That command needs the full terminal UI and is not available in shell mode."
+			if result.Output != "" {
+				msg = result.Output + "\n" + msg
+			}
+			return msg, false, nil
+		}
 	}
 }
