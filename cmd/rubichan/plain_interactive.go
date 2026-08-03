@@ -243,12 +243,15 @@ func (h *plainInteractiveHost) displayExitMessage() {
 // exitMessage renders the saved-session notice. Split out from
 // displayExitMessage so the wording can be tested without standing up an
 // agent and its store, which is the only way to obtain a session ID.
+//
+// It advertises only --resume. /resume opens a selector overlay that exists
+// only in the Bubble Tea TUI, so naming it here would send a plain-mode user
+// to a command this host declines to run — and it would do so on the way out,
+// where the claim cannot be tested until their next session.
 func exitMessage(sessionID string) string {
 	return fmt.Sprintf(
 		"\nSession saved: %s\n"+
-			"Resume your session next time:\n"+
-			"  • Type:    /resume\n"+
-			"  • Or:      --resume %s\n",
+			"Resume it next time with:  --resume %s\n",
 		sessionID, sessionID)
 }
 

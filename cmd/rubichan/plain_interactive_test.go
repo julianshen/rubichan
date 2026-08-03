@@ -198,3 +198,18 @@ func TestPlainInteractiveDisplayExitMessageNoAgent(t *testing.T) {
 	output := out.String()
 	assert.Empty(t, output, "exit message should be empty when no agent is available")
 }
+
+// TestExitMessageAdvertisesOnlyWhatPlainModeSupports pins that the banner does
+// not send the user to a command this mode declines to run. Plain mode has no
+// resume overlay, so /resume is a dead end here; --resume works because it is
+// applied at construction via agent.WithResumeSession, before any UI exists.
+//
+// The banner is the more damaging half of that gap: it prints as the user
+// leaves, so a false instruction is not discovered until their next session.
+func TestExitMessageAdvertisesOnlyWhatPlainModeSupports(t *testing.T) {
+	msg := exitMessage("sess-abc123")
+
+	assert.Contains(t, msg, "sess-abc123", "the user needs the ID to resume")
+	assert.Contains(t, msg, "--resume sess-abc123", "the flag is the path that works in plain mode")
+	assert.NotContains(t, msg, "/resume", "plain mode has no resume overlay; advertising it strands the user")
+}
