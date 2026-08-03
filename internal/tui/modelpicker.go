@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -144,6 +145,14 @@ type ModelsFetchedMsg struct {
 	Err    error
 }
 
+// fetchOllamaModelsTimeout bounds how long fetchOllamaModels waits for a
+// response, in addition to (not instead of) ollama.Client's own 30s HTTP
+// client timeout — this call lists installed models (metadata, not
+// inference) and is expected to be near-instant, so a shorter ceiling
+// gives better worst-case UX than waiting the client's full timeout
+// before surfacing an error. Var, not const, so tests can shrink it.
+var fetchOllamaModelsTimeout = 10 * time.Second
+
 // fetchOllamaModels returns a tea.Cmd that queries the Registry in the
 // background. Ollama's ListModels makes a real HTTP call to a local
 // server — even though it's typically fast, it must never run inline in
@@ -155,7 +164,9 @@ type ModelsFetchedMsg struct {
 func (m *Model) fetchOllamaModels() tea.Cmd {
 	cfg := m.cfg
 	return func() tea.Msg {
-		models, err := provider.Default.ListModels(context.Background(), "ollama", cfg)
+		ctx, cancel := context.WithTimeout(context.Background(), fetchOllamaModelsTimeout)
+		defer cancel()
+		models, err := provider.Default.ListModels(ctx, "ollama", cfg)
 		return ModelsFetchedMsg{Models: models, Err: err}
 	}
 }

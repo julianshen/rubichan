@@ -3,6 +3,7 @@ package tui
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,31 @@ func TestFetchOllamaModelsQueriesTheConfiguredServer(t *testing.T) {
 	require.NoError(t, fetched.Err)
 	require.Len(t, fetched.Models, 1)
 	assert.Equal(t, "llama3.2:latest", fetched.Models[0].ID)
+}
+
+func TestFetchOllamaModelsRespectsTimeout(t *testing.T) {
+	old := fetchOllamaModelsTimeout
+	fetchOllamaModelsTimeout = 20 * time.Millisecond
+	defer func() { fetchOllamaModelsTimeout = old }()
+
+	block := make(chan struct{})
+	defer close(block)
+	srv := testutil.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block // never responds within the test's shrunk timeout
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Provider.Ollama.BaseURL = srv.URL
+
+	m := NewModel(nil, "test", "model", 10, "", cfg, nil)
+	cmd := m.fetchOllamaModels()
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	fetched, ok := msg.(ModelsFetchedMsg)
+	require.True(t, ok)
+	require.Error(t, fetched.Err, "a hanging Ollama server must not block this fetch past its own timeout")
 }
 
 func TestSpinnerTicksDuringFetchingModels(t *testing.T) {
