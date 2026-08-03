@@ -52,6 +52,24 @@ func TestModelTextInputOverlaySubmitProducesModelPickerResult(t *testing.T) {
 	assert.Contains(t, picked.ModelName, "claude-opus-4-8")
 }
 
+func TestModelTextInputOverlayWhitespaceOnlySubmitProducesNilResult(t *testing.T) {
+	overlay, initCmd := NewModelTextInputOverlay("")
+	if initCmd != nil {
+		initCmd()
+	}
+
+	var updated Overlay
+	for _, r := range "   " {
+		updated, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		overlay = updated.(*ModelTextInputOverlay)
+	}
+	updated, _ = overlay.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	overlay = updated.(*ModelTextInputOverlay)
+
+	require.True(t, overlay.Done())
+	assert.Nil(t, overlay.Result(), "whitespace-only input must not reach agent.SetModel as a garbage model name")
+}
+
 func TestModelTextInputOverlayAbortProducesNilResult(t *testing.T) {
 	overlay, initCmd := NewModelTextInputOverlay("claude-sonnet-4-5")
 	if initCmd != nil {

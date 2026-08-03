@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 )
@@ -86,10 +88,13 @@ func (o *ModelTextInputOverlay) Done() bool {
 }
 
 // Result returns a ModelPickerResult when a non-empty model name was
-// submitted, nil otherwise (cancelled, or submitted empty).
+// submitted, nil otherwise (cancelled, or submitted empty/whitespace-only —
+// trimmed before the check so a few stray spaces don't reach
+// agent.SetModel as a garbage model name).
 func (o *ModelTextInputOverlay) Result() any {
-	if o.submitted && o.value != "" {
-		return ModelPickerResult{ModelName: o.value}
+	trimmed := strings.TrimSpace(o.value)
+	if o.submitted && trimmed != "" {
+		return ModelPickerResult{ModelName: trimmed}
 	}
 	return nil
 }
