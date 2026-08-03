@@ -232,3 +232,62 @@ func TestPlainInteractiveResumeReportsUnavailable(t *testing.T) {
 	assert.Contains(t, out.String(), "not available in plain interactive mode")
 	assert.Contains(t, out.String(), "--resume", "point the user at the path that does work")
 }
+
+// unsupportedActionCommand returns an Action this host has no case for, standing
+// in for any overlay action added in future.
+type unsupportedActionCommand struct{ action commands.Action }
+
+func (c *unsupportedActionCommand) Name() string                      { return "futurecmd" }
+func (c *unsupportedActionCommand) Description() string               { return "an overlay command" }
+func (c *unsupportedActionCommand) Arguments() []commands.ArgumentDef { return nil }
+func (c *unsupportedActionCommand) Complete(_ context.Context, _ []string) []commands.Candidate {
+	return nil
+}
+func (c *unsupportedActionCommand) Execute(_ context.Context, _ []string) (commands.Result, error) {
+	return commands.Result{Action: c.action}, nil
+}
+
+// TestPlainInteractiveOverlayCommandsReportUnavailable covers the class, not
+// just the instances. /resume was one of five overlay actions reachable in plain
+// mode with no case and no Output; the others were silent for the same reason.
+// The default arm means a newly added Action cannot join them unnoticed.
+func TestPlainInteractiveOverlayCommandsReportUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cmd  commands.SlashCommand
+		line string
+	}{
+		{"about", commands.NewAboutCommand(), "/about"},
+		{"undo", commands.NewUndoOverlayCommand(), "/undo"},
+		{"an action added later", &unsupportedActionCommand{action: commands.ActionOpenModelPicker}, "/futurecmd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := commands.NewRegistry()
+			require.NoError(t, reg.Register(tc.cmd))
+			out := &bytes.Buffer{}
+			host := newPlainInteractiveHost(bytes.NewBufferString(""), out, "gpt-test", 20, reg)
+
+			quit, err := host.handleCommand(context.Background(), tc.line)
+
+			require.NoError(t, err)
+			assert.False(t, quit)
+			assert.NotEmpty(t, out.String(), "a command that does nothing must at least say so")
+			assert.Contains(t, out.String(), "not available in plain interactive mode")
+		})
+	}
+}
+
+// TestPlainInteractiveOrdinaryCommandStaysQuiet guards the other side: the
+// default arm must not fire for ActionNone, which is what every ordinary
+// command returns.
+func TestPlainInteractiveOrdinaryCommandStaysQuiet(t *testing.T) {
+	reg := commands.NewRegistry()
+	require.NoError(t, reg.Register(&unsupportedActionCommand{action: commands.ActionNone}))
+	out := &bytes.Buffer{}
+	host := newPlainInteractiveHost(bytes.NewBufferString(""), out, "gpt-test", 20, reg)
+
+	_, err := host.handleCommand(context.Background(), "/futurecmd")
+
+	require.NoError(t, err)
+	assert.NotContains(t, out.String(), "not available in plain interactive mode")
+}
