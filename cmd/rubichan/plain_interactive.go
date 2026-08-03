@@ -237,15 +237,19 @@ func (h *plainInteractiveHost) displayExitMessage() {
 		return
 	}
 
-	// Format exit message showing session ID and resume instructions
-	msg := fmt.Sprintf(
+	_, _ = fmt.Fprint(h.out, exitMessage(sessionID))
+}
+
+// exitMessage renders the saved-session notice. Split out from
+// displayExitMessage so the wording can be tested without standing up an
+// agent and its store, which is the only way to obtain a session ID.
+func exitMessage(sessionID string) string {
+	return fmt.Sprintf(
 		"\nSession saved: %s\n"+
 			"Resume your session next time:\n"+
 			"  • Type:    /resume\n"+
 			"  • Or:      --resume %s\n",
 		sessionID, sessionID)
-
-	_, _ = fmt.Fprint(h.out, msg)
 }
 
 func (h *plainInteractiveHost) handleCommand(ctx context.Context, line string) (bool, error) {
