@@ -78,21 +78,29 @@ func NewConn(r io.Reader, w io.Writer, registry *CapabilityRegistry) *Conn {
 // fails. Every pending request is failed on exit so no caller is left waiting
 // on a connection that has gone away.
 func (c *Conn) Serve(ctx context.Context) error {
-	defer c.failPending()
-
-	notificationsDone := make(chan struct{})
 	go func() {
-		defer close(notificationsDone)
 		for n := range c.notifications {
 			if _, err := c.registry.Call(n.Method, n.Params); err != nil {
 				log.Printf("acp: notification %s failed: %v", n.Method, err)
 			}
 		}
 	}()
-	defer func() {
-		close(c.notifications)
-		<-notificationsDone
-	}()
+
+	// Defers run last-registered-first, and the order matters. failPending is
+	// registered last so it runs first: callers blocked in Request are released
+	// before anything else is torn down. Closing the notification channel then
+	// lets the worker drain and exit on its own.
+	//
+	// Serve deliberately does not wait for that worker. A handler that wedges
+	// would otherwise hold shutdown open indefinitely and keep every pending
+	// Request waiting on a connection that has already finished. Notifications
+	// are fire-and-forget, so letting the worker outlive Serve costs nothing;
+	// blocking on it costs the shutdown guarantee.
+	//
+	// The close is safe because only dispatch sends, and dispatch runs on this
+	// goroutine — once the loop below exits there are no further senders.
+	defer close(c.notifications)
+	defer c.failPending()
 
 	lines := make(chan []byte)
 	scanErr := make(chan error, 1)
@@ -134,14 +142,14 @@ func (c *Conn) Serve(ctx context.Context) error {
 			if len(line) == 0 {
 				continue
 			}
-			c.dispatch(line)
+			c.dispatch(ctx, line)
 		}
 	}
 }
 
 // dispatch routes one inbound message by shape: a method means the peer is
 // asking us something, no method means it is answering us.
-func (c *Conn) dispatch(line []byte) {
+func (c *Conn) dispatch(ctx context.Context, line []byte) {
 	var probe struct {
 		Method string `json:"method"`
 	}
@@ -152,14 +160,14 @@ func (c *Conn) dispatch(line []byte) {
 		c.routeResponse(line)
 		return
 	}
-	c.serveRequest(line)
+	c.serveRequest(ctx, line)
 }
 
 // serveRequest answers an inbound method call. It runs in its own goroutine so
 // a handler that itself calls Request — session/prompt asking the client for
 // permission mid-turn — does not deadlock against the read loop that would
 // carry the answer.
-func (c *Conn) serveRequest(line []byte) {
+func (c *Conn) serveRequest(ctx context.Context, line []byte) {
 	var req Request
 	if err := json.Unmarshal(line, &req); err != nil {
 		// The peer may still be waiting on an id we can recover. Answering is
@@ -184,7 +192,13 @@ func (c *Conn) serveRequest(line []byte) {
 		// outruns the handler the loop pauses, which is preferable to an
 		// unbounded goroutine per notification. Handlers must therefore not
 		// call Request, since that would wait on the loop they are blocking.
-		c.notifications <- req
+		// Cancellation-aware: if the peer outruns the handler *and* the
+		// connection is being torn down, an unconditional send would pin the
+		// read loop against a full channel that nothing will drain in time.
+		select {
+		case c.notifications <- req:
+		case <-ctx.Done():
+		}
 		return
 	}
 
