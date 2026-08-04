@@ -198,3 +198,30 @@ func (m *mockTool) Execute(ctx context.Context, input json.RawMessage) (agentsdk
 		Content: "ok",
 	}, nil
 }
+
+// TestNewACPRegistryServesTheHandshake pins that an agent's ACP surface can be
+// initialized at all. Every ACP session opens with this call, so a registry
+// that does not serve it is unusable regardless of what else it registers.
+func TestNewACPRegistryServesTheHandshake(t *testing.T) {
+	registry := agent.NewACPRegistry(createTestAgent(t))
+
+	raw, err := registry.Call("initialize", json.RawMessage(
+		`{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true}}}`))
+	if err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+
+	var got acp.InitializeResult
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal initialize result: %v", err)
+	}
+	if got.ProtocolVersion != acp.ProtocolVersion {
+		t.Errorf("protocolVersion = %d, want %d", got.ProtocolVersion, acp.ProtocolVersion)
+	}
+	if got.AgentInfo.Name != "rubichan" {
+		t.Errorf("agentInfo.name = %q, want rubichan", got.AgentInfo.Name)
+	}
+	if got.AuthMethods == nil {
+		t.Error("authMethods must be present even when empty")
+	}
+}

@@ -8,6 +8,9 @@ import (
 	"github.com/julianshen/rubichan/internal/acp"
 )
 
+// agentVersion is reported to peers in the initialize handshake.
+const agentVersion = "1.0.0"
+
 // NewACPRegistry builds the capability registry an ACP peer is served from:
 // the agent's tools plus its method handlers. This is a composition-root
 // operation — the agent core holds no ACP state.
@@ -35,6 +38,17 @@ func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
 			InputSchema: tool.InputSchema(),
 		})
 	}
+
+	acp.RegisterInitialize(registry, acp.InitializeConfig{
+		AgentInfo: acp.AgentInfo{Name: "rubichan", Version: agentVersion},
+		Capabilities: acp.AgentCapabilities{
+			// Declared conservatively: each of these is a promise the client
+			// may hold us to, and claiming one we do not honour is the mistake
+			// the deleted mode adapters made in the other direction.
+			LoadSession: false,
+			Prompt:      acp.PromptCapabilities{EmbeddedContext: true},
+		},
+	})
 
 	registry.RegisterMethod("agent/prompt", a.handlePrompt)
 	registry.RegisterMethod("tool/execute", a.handleToolExecute)
