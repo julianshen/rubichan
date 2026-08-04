@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 )
@@ -35,7 +37,16 @@ type Conn struct {
 	mu      sync.Mutex
 	nextID  int64
 	pending map[int64]chan *Response
+	// closed is set once Serve has stopped. Without it, a request registered
+	// after Serve returned would wait on a channel nothing will ever close,
+	// because failPending has already run. Guarded by mu, so registering and
+	// closing cannot interleave.
+	closed bool
 }
+
+// ErrConnClosed is returned by Request when the connection has stopped serving,
+// whether it was already down or dropped mid-call.
+var ErrConnClosed = errors.New("acp: connection closed")
 
 // NewConn creates a connection that reads from r, writes to w, and serves
 // inbound method calls out of registry.
@@ -174,6 +185,10 @@ func (c *Conn) Request(ctx context.Context, method string, params any) (json.Raw
 	}
 
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("%s: %w", method, ErrConnClosed)
+	}
 	c.nextID++
 	id := c.nextID
 	ch := make(chan *Response, 1)
@@ -197,7 +212,7 @@ func (c *Conn) Request(ctx context.Context, method string, params any) (json.Raw
 		return nil, ctx.Err()
 	case resp := <-ch:
 		if resp == nil {
-			return nil, fmt.Errorf("connection closed while awaiting response to %s", method)
+			return nil, fmt.Errorf("awaiting response to %s: %w", method, ErrConnClosed)
 		}
 		if resp.Error != nil {
 			return nil, fmt.Errorf("%s failed: %s (code %d)", method, resp.Error.Message, resp.Error.Code)
@@ -214,6 +229,7 @@ func (c *Conn) Request(ctx context.Context, method string, params any) (json.Raw
 func (c *Conn) failPending() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.closed = true
 	for id, ch := range c.pending {
 		close(ch)
 		delete(c.pending, id)
@@ -246,6 +262,12 @@ func marshalParams(params any) (json.RawMessage, error) {
 // numericID normalises a JSON-RPC id to int64. Encoding a request turns the id
 // into a JSON number, and decoding the peer's response yields float64, so the
 // two must be reconciled before they can be matched.
+//
+// A float is accepted only when it is exactly an integer this side could have
+// sent. Truncating instead would be worse than refusing: an id of 1.5 would
+// become 1 and hand the peer's answer to whoever is waiting on request 1 — for
+// session/request_permission, an approval the user never gave, returned as a
+// valid result. Refusing merely drops a message no request is owed.
 func numericID(id any) (int64, bool) {
 	switch v := id.(type) {
 	case int64:
@@ -253,6 +275,12 @@ func numericID(id any) (int64, bool) {
 	case int:
 		return int64(v), true
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) {
+			return 0, false
+		}
+		if v < math.MinInt64 || v >= math.MaxInt64 {
+			return 0, false
+		}
 		return int64(v), true
 	case json.Number:
 		n, err := v.Int64()

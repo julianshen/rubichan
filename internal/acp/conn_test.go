@@ -309,7 +309,7 @@ func TestConnRequestFailsWhenConnectionDrops(t *testing.T) {
 	select {
 	case err := <-errs:
 		require.Error(t, err, "a dropped connection must fail the caller, not strand it")
-		assert.Contains(t, err.Error(), "connection closed")
+		assert.ErrorIs(t, err, acp.ErrConnClosed)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Request stranded after the connection dropped")
 	}
@@ -397,5 +397,35 @@ func TestConnRequestSurfacesPeerError(t *testing.T) {
 		assert.Contains(t, err.Error(), "path is required")
 	case <-time.After(2 * time.Second):
 		t.Fatal("peer error never surfaced")
+	}
+}
+
+// TestConnRequestAfterServeExitsFailsFast covers the window failPending alone
+// does not close: a request registered *after* Serve has already returned has
+// nothing left to fail it, so it waits on a channel no one will ever touch.
+// With a background context that is a permanent hang.
+func TestConnRequestAfterServeExitsFailsFast(t *testing.T) {
+	t.Parallel()
+
+	connR, peerW := io.Pipe()
+	c := acp.NewConn(connR, io.Discard, acp.NewCapabilityRegistry())
+
+	served := make(chan struct{})
+	go func() { defer close(served); _ = c.Serve(context.Background()) }()
+
+	require.NoError(t, peerW.Close())
+	<-served // Serve has exited and already run failPending.
+
+	errs := make(chan error, 1)
+	go func() {
+		_, err := c.Request(context.Background(), "session/request_permission", nil)
+		errs <- err
+	}()
+
+	select {
+	case err := <-errs:
+		require.Error(t, err, "a request on a dead connection must fail, not wait forever")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Request stranded: registered after Serve exited, so nothing will ever fail it")
 	}
 }
