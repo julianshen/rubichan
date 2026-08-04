@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"testing"
 	"time"
 
@@ -269,8 +270,8 @@ func TestConnNotificationGetsNoReply(t *testing.T) {
 	// Nothing should come back. Give the connection a moment to get it wrong.
 	replied := make(chan struct{})
 	go func() {
-		var any map[string]any
-		if err := p.fromConn.Decode(&any); err == nil {
+		var reply map[string]any
+		if err := p.fromConn.Decode(&reply); err == nil {
 			close(replied)
 		}
 	}()
@@ -324,9 +325,19 @@ func TestConnRequestHonoursContextCancellation(t *testing.T) {
 	// Reads block forever (nothing is ever sent) and writes go nowhere, which is
 	// exactly the state a caller is in while waiting on an approval prompt.
 	blocked, stop := io.Pipe()
-	t.Cleanup(func() { _ = stop.Close() })
 	c := acp.NewConn(blocked, io.Discard, acp.NewCapabilityRegistry())
-	go func() { _ = c.Serve(context.Background()) }()
+	serveCtx, stopServe := context.WithCancel(context.Background())
+	served := make(chan struct{})
+	go func() { defer close(served); _ = c.Serve(serveCtx) }()
+	t.Cleanup(func() {
+		stopServe()
+		_ = stop.Close()
+		select {
+		case <-served:
+		case <-time.After(2 * time.Second):
+			t.Error("Serve did not return after cancel")
+		}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -427,5 +438,47 @@ func TestConnRequestAfterServeExitsFailsFast(t *testing.T) {
 		require.Error(t, err, "a request on a dead connection must fail, not wait forever")
 	case <-time.After(2 * time.Second):
 		t.Fatal("Request stranded: registered after Serve exited, so nothing will ever fail it")
+	}
+}
+
+// TestConnDeliversNotificationsInOrder pins that notifications arrive at their
+// handler in the order the peer sent them. session/update is a stream of turn
+// events — agent_message_chunk, tool_call, tool_call_update — so reordering
+// does not lose data, it renders the wrong turn. One goroutine per notification
+// leaves the order to the scheduler.
+func TestConnDeliversNotificationsInOrder(t *testing.T) {
+	t.Parallel()
+
+	const count = 50
+	seen := make(chan string, count)
+	registry := acp.NewCapabilityRegistry()
+	registry.RegisterMethod("session/update", func(params json.RawMessage) (json.RawMessage, error) {
+		var got struct {
+			Seq string `json:"seq"`
+		}
+		if err := json.Unmarshal(params, &got); err != nil {
+			return nil, err
+		}
+		seen <- got.Seq
+		return nil, nil
+	})
+
+	_, p := newConnPair(t, registry)
+
+	for i := 0; i < count; i++ {
+		_, err := p.toConn.Write([]byte(
+			`{"jsonrpc":"2.0","method":"session/update","params":{"seq":"` +
+				strconv.Itoa(i) + `"}}` + "\n"))
+		require.NoError(t, err)
+	}
+
+	for i := 0; i < count; i++ {
+		select {
+		case got := <-seen:
+			require.Equal(t, strconv.Itoa(i), got,
+				"notification %d arrived out of order; a reordered session/update stream renders the wrong turn", i)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d notifications were delivered", i, count)
+		}
 	}
 }
