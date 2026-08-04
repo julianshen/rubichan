@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/acp"
@@ -12,40 +13,9 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
-// TestAgentACPInitializeMethod verifies that the initialize method works correctly.
-func TestAgentACPInitializeMethod(t *testing.T) {
-	server := agent.NewACPServer(createTestAgent(t))
-
-	// Send initialize request
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params:  json.RawMessage(`{"clientInfo":{"name":"test-client"}}`),
-	}
-
-	reqData, _ := json.Marshal(req)
-	respData, err := server.HandleMessage(reqData)
-	if err != nil {
-		t.Fatalf("handle message failed: %v", err)
-	}
-
-	var resp acp.Response
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatal(err)
-	}
-
-	if resp.Error != nil {
-		t.Errorf("got error %v, expected success", resp.Error)
-	}
-	if resp.Result == nil {
-		t.Error("result is nil")
-	}
-}
-
 // TestAgentACPPromptMethod verifies that the agent/prompt method handles requests correctly.
 func TestAgentACPPromptMethod(t *testing.T) {
-	server := agent.NewACPServer(createTestAgent(t))
+	registry := agent.NewACPRegistry(createTestAgent(t))
 
 	// Send prompt request
 	req := acp.Request{
@@ -55,31 +25,22 @@ func TestAgentACPPromptMethod(t *testing.T) {
 		Params:  json.RawMessage(`{"prompt":"test prompt","maxTurns":1}`),
 	}
 
-	reqData, _ := json.Marshal(req)
-	respData, _ := server.HandleMessage(reqData)
-
-	var resp acp.Response
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
+	result, err := registry.Call(req.Method, req.Params)
+	if err != nil {
+		return // a handler error is an acceptable outcome for a stub provider
 	}
-
-	if resp.Result == nil && resp.Error == nil {
-		t.Error("expected result or error")
+	var decoded map[string]any
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
 	}
-	if resp.Result != nil {
-		var result map[string]interface{}
-		if err := json.Unmarshal(*resp.Result, &result); err != nil {
-			t.Fatalf("failed to unmarshal result: %v", err)
-		}
-		if status, ok := result["status"].(string); !ok || status != "complete" {
-			t.Errorf("expected status='complete', got %v", result["status"])
-		}
+	if status, ok := decoded["status"].(string); !ok || status != "complete" {
+		t.Errorf("expected status='complete', got %v", decoded["status"])
 	}
 }
 
 // TestAgentACPToolExecution verifies that the tool/execute method works correctly.
 func TestAgentACPToolExecution(t *testing.T) {
-	server := agent.NewACPServer(createTestAgent(t))
+	registry := agent.NewACPRegistry(createTestAgent(t))
 
 	// Send tool execution request
 	req := acp.Request{
@@ -89,23 +50,14 @@ func TestAgentACPToolExecution(t *testing.T) {
 		Params:  json.RawMessage(`{"tool":"unknown_tool","input":{"path":"main.go"}}`),
 	}
 
-	reqData, _ := json.Marshal(req)
-	respData, _ := server.HandleMessage(reqData)
-
-	var resp acp.Response
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	// Should return an error because the tool doesn't exist
-	if resp.Error == nil {
+	if _, err := registry.Call(req.Method, req.Params); err == nil {
 		t.Error("expected error for non-existent tool")
 	}
 }
 
 // TestAgentACPSkillMethods verifies that skill methods are properly registered.
 func TestAgentACPSkillMethods(t *testing.T) {
-	server := agent.NewACPServer(createTestAgent(t))
+	registry := agent.NewACPRegistry(createTestAgent(t))
 
 	// Test skill/invoke
 	req := acp.Request{
@@ -115,22 +67,15 @@ func TestAgentACPSkillMethods(t *testing.T) {
 		Params:  json.RawMessage(`{"skillName":"test","action":"transform","input":{}}`),
 	}
 
-	reqData, _ := json.Marshal(req)
-	respData, _ := server.HandleMessage(reqData)
-
-	var resp acp.Response
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	if resp.Result == nil && resp.Error == nil {
+	result, err := registry.Call(req.Method, req.Params)
+	if result == nil && err == nil {
 		t.Error("expected result or error")
 	}
 }
 
 // TestAgentACPSecurityMethods verifies that security methods are properly registered.
 func TestAgentACPSecurityMethods(t *testing.T) {
-	server := agent.NewACPServer(createTestAgent(t))
+	registry := agent.NewACPRegistry(createTestAgent(t))
 
 	// Test security/scan
 	req := acp.Request{
@@ -140,25 +85,17 @@ func TestAgentACPSecurityMethods(t *testing.T) {
 		Params:  json.RawMessage(`{"scope":"project","target":"./","interactive":false}`),
 	}
 
-	reqData, _ := json.Marshal(req)
-	respData, _ := server.HandleMessage(reqData)
-
-	var resp acp.Response
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	if resp.Result == nil && resp.Error == nil {
+	result, err := registry.Call(req.Method, req.Params)
+	if result == nil && err == nil {
 		t.Error("expected result or error")
 	}
 }
 
-// TestNewACPServerComposesOverPlainAgent pins the Transport seam: the ACP
-// server is composed over an agent at the composition root, with no core
-// flag or field involved — a plain agent (no WithACP) plus NewACPServer
-// yields a fully capable server (initialize succeeds, registered tools
-// appear as capabilities, agent methods are routed).
-func TestNewACPServerComposesOverPlainAgent(t *testing.T) {
+// TestNewACPRegistryComposesOverPlainAgent pins the Transport seam: the ACP
+// surface is composed over an agent at the composition root, with no core flag
+// or field involved — a plain agent plus NewACPRegistry yields a registry whose
+// tools appear as capabilities and whose agent methods are routed.
+func TestNewACPRegistryComposesOverPlainAgent(t *testing.T) {
 	cfg := &config.Config{
 		Provider: config.ProviderConfig{Model: "test-model"},
 		Agent:    config.AgentConfig{MaxTurns: 10},
@@ -176,62 +113,36 @@ func TestNewACPServerComposesOverPlainAgent(t *testing.T) {
 
 	agentCore := agent.New(&mockLLMProvider{}, toolRegistry, mockApprovalFunc, cfg)
 
-	server := agent.NewACPServer(agentCore)
-	if server == nil {
-		t.Fatal("NewACPServer returned nil")
+	registry := agent.NewACPRegistry(agentCore)
+	if registry == nil {
+		t.Fatal("NewACPRegistry returned nil")
 	}
 
-	// initialize must succeed and expose the registered tool capability.
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params:  json.RawMessage(`{"clientInfo":{"name":"test-client"}}`),
-	}
-	reqData, _ := json.Marshal(req)
-	respData, err := server.HandleMessage(reqData)
+	// The agent's tools must appear as capabilities.
+	caps, err := registry.GetCapabilities()
 	if err != nil {
-		t.Fatalf("handle message failed: %v", err)
+		t.Fatalf("GetCapabilities failed: %v", err)
+	}
+	var sawTool bool
+	for _, c := range caps {
+		if c.Type == "tool" && c.Name == "test_tool" {
+			sawTool = true
+		}
+	}
+	if !sawTool {
+		t.Error("registered tool did not appear as an ACP capability")
 	}
 
-	var resp acp.Response
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Error != nil {
-		t.Fatalf("initialize returned error: %v", resp.Error)
-	}
-	var initResult acp.InitializeResult
-	if err := json.Unmarshal(*resp.Result, &initResult); err != nil {
-		t.Fatalf("failed to unmarshal initialize result: %v", err)
-	}
-	if _, ok := initResult.Capabilities["tool"]; !ok {
-		t.Error("no tool capabilities in initialize response")
-	}
-
-	// A registered agent method must be routed (result or a handler error,
-	// not a method-not-found transport error).
-	req = acp.Request{
-		JSONRPC: "2.0",
-		ID:      2,
-		Method:  "skill/invoke",
-		Params:  json.RawMessage(`{"skillName":"test","action":"transform","input":{}}`),
-	}
-	reqData, _ = json.Marshal(req)
-	respData, _ = server.HandleMessage(reqData)
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-	if resp.Result == nil && resp.Error == nil {
-		t.Error("expected result or error from routed skill method")
-	}
-	if resp.Error != nil && resp.Error.Code == acp.ErrorCodeMethodNotFound {
-		t.Error("skill/invoke not registered on composed server")
+	// A registered agent method must be routed — a handler error is fine, but
+	// ErrMethodNotFound means it was never wired.
+	if _, err := registry.Call("skill/invoke",
+		json.RawMessage(`{"skillName":"test","action":"transform","input":{}}`)); errors.Is(err, acp.ErrMethodNotFound) {
+		t.Error("skill/invoke not registered on the composed registry")
 	}
 }
 
-// Helper function to create a plain test agent; compose an ACP server
-// over it with agent.NewACPServer.
+// createTestAgent builds a plain test agent; compose an ACP surface over it
+// with agent.NewACPRegistry.
 func createTestAgent(t *testing.T) *agent.Agent {
 	t.Helper()
 	cfg := &config.Config{

@@ -67,37 +67,6 @@ type SecurityVerdict struct {
 	Confidence float64 `json:"confidence,omitempty"` // Confidence score (0.0-1.0)
 }
 
-// ClientInfo describes the client connecting to the agent.
-type ClientInfo struct {
-	Name    string `json:"name"`              // Client name
-	Version string `json:"version,omitempty"` // Client version
-}
-
-// ServerInfo describes the agent server.
-type ServerInfo struct {
-	Name    string `json:"name"`              // Server name (e.g., "rubichan")
-	Version string `json:"version,omitempty"` // Server version
-}
-
-// InitializeParams are parameters for the initialize request.
-type InitializeParams struct {
-	ClientInfo ClientInfo `json:"clientInfo"`
-}
-
-// InitializeResponse represents the initialize handshake response from server.
-type InitializeResponse struct {
-	JSONRPC string           `json:"jsonrpc"` // Always "2.0"
-	ID      interface{}      `json:"id"`      // Matches request ID
-	Result  InitializeResult `json:"result"`
-	Error   *RPCError        `json:"error,omitempty"`
-}
-
-// InitializeResult contains the server's initialization response data.
-type InitializeResult struct {
-	ServerInfo   ServerInfo             `json:"serverInfo"`
-	Capabilities map[string]interface{} `json:"capabilities,omitempty"`
-}
-
 // CapabilityDefinition represents a single capability entry in the registry.
 type CapabilityDefinition struct {
 	Name       string          `json:"name"`                 // Capability name

@@ -8,15 +8,17 @@ import (
 	"github.com/julianshen/rubichan/internal/acp"
 )
 
-// NewACPServer composes an ACP transport over an agent: a fresh capability
-// registry populated from the agent's tools and method handlers, wrapped in
-// a JSON-RPC server. This is a composition-root operation — the agent core
-// holds no ACP state; build the server where a mode actually serves ACP.
-func NewACPServer(a *Agent) *acp.Server {
+// NewACPRegistry builds the capability registry an ACP peer is served from:
+// the agent's tools plus its method handlers. This is a composition-root
+// operation — the agent core holds no ACP state.
+//
+// It returns a registry rather than a server because the transport is now
+// acp.Conn, which takes a registry and owns the framing. Callers wrap it with
+// acp.NewConn(r, w, registry) where a mode actually serves ACP.
+func NewACPRegistry(a *Agent) *acp.CapabilityRegistry {
 	registry := acp.NewCapabilityRegistry()
-	server := acp.NewServer(registry)
 	a.registerACPCapabilities(registry)
-	return server
+	return registry
 }
 
 // registerACPCapabilities registers all ACP capabilities and method

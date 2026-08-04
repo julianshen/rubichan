@@ -12,6 +12,11 @@ import (
 	"sync"
 )
 
+// maxMessageSize caps a single JSON-RPC message at 10 MB, which accommodates
+// large file reads and completion outputs. bufio.Scanner has a hard internal
+// token limit, so a payload beyond this fails the read rather than truncating.
+const maxMessageSize = 10 * 1024 * 1024
+
 // notificationBacklog bounds how far the peer may run ahead of the notification
 // handler before the read loop pauses. Generous enough that ordinary streaming
 // never blocks, small enough that a flood cannot grow without limit.
