@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -98,6 +99,12 @@ func (cr *CapabilityRegistry) GetMethods() []string {
 	return methods
 }
 
+// ErrMethodNotFound reports that no handler is registered for a method. It is a
+// sentinel because callers must distinguish "nobody serves this" from "the
+// handler failed" to pick a JSON-RPC error code, and matching on message text
+// misclassifies any handler error that happens to mention a missing method.
+var ErrMethodNotFound = errors.New("acp: method not found")
+
 // Call invokes a registered method handler.
 func (cr *CapabilityRegistry) Call(method string, params json.RawMessage) (json.RawMessage, error) {
 	cr.mu.RLock()
@@ -105,7 +112,7 @@ func (cr *CapabilityRegistry) Call(method string, params json.RawMessage) (json.
 	cr.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("method not found: %s", method)
+		return nil, fmt.Errorf("%w: %s", ErrMethodNotFound, method)
 	}
 	return handler(params)
 }

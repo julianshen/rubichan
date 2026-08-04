@@ -7,10 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
-	"strings"
 	"sync"
 )
+
+// notificationBacklog bounds how far the peer may run ahead of the notification
+// handler before the read loop pauses. Generous enough that ordinary streaming
+// never blocks, small enough that a flood cannot grow without limit.
+const notificationBacklog = 256
 
 // Conn is a bidirectional ACP connection over a single byte stream.
 //
@@ -29,6 +34,13 @@ type Conn struct {
 	r *bufio.Scanner
 
 	registry *CapabilityRegistry
+
+	// notifications are served by a single worker in arrival order. ACP's
+	// session/update is a stream of turn events, so delivering them
+	// concurrently does not just interleave work, it renders the wrong turn.
+	// Requests keep their own goroutine each, because a request handler may
+	// call Request and must not block the read loop that carries its answer.
+	notifications chan Request
 
 	// writeMu serialises writes. Requests, responses and notifications share
 	// one stream, and an interleaved write corrupts the wire.
@@ -54,10 +66,11 @@ func NewConn(r io.Reader, w io.Writer, registry *CapabilityRegistry) *Conn {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, maxMessageSize), maxMessageSize)
 	return &Conn{
-		w:        w,
-		r:        scanner,
-		registry: registry,
-		pending:  make(map[int64]chan *Response),
+		w:             w,
+		r:             scanner,
+		registry:      registry,
+		pending:       make(map[int64]chan *Response),
+		notifications: make(chan Request, notificationBacklog),
 	}
 }
 
@@ -66,6 +79,20 @@ func NewConn(r io.Reader, w io.Writer, registry *CapabilityRegistry) *Conn {
 // on a connection that has gone away.
 func (c *Conn) Serve(ctx context.Context) error {
 	defer c.failPending()
+
+	notificationsDone := make(chan struct{})
+	go func() {
+		defer close(notificationsDone)
+		for n := range c.notifications {
+			if _, err := c.registry.Call(n.Method, n.Params); err != nil {
+				log.Printf("acp: notification %s failed: %v", n.Method, err)
+			}
+		}
+	}()
+	defer func() {
+		close(c.notifications)
+		<-notificationsDone
+	}()
 
 	lines := make(chan []byte)
 	scanErr := make(chan error, 1)
@@ -88,10 +115,20 @@ func (c *Conn) Serve(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-scanErr:
-			return err
 		case line, ok := <-lines:
 			if !ok {
+				// The producer sends its error before closing lines, so the
+				// value is already available. Reading it here rather than in a
+				// sibling select case matters: both would be ready at once and
+				// select picks at random, silently turning a read failure into
+				// a clean end of stream.
+				select {
+				case err := <-scanErr:
+					if err != nil {
+						return fmt.Errorf("read acp stream: %w", err)
+					}
+				default:
+				}
 				return nil
 			}
 			if len(line) == 0 {
@@ -125,13 +162,29 @@ func (c *Conn) dispatch(line []byte) {
 func (c *Conn) serveRequest(line []byte) {
 	var req Request
 	if err := json.Unmarshal(line, &req); err != nil {
+		// The peer may still be waiting on an id we can recover. Answering is
+		// what separates a malformed request from a hung one.
+		var probe struct {
+			ID any `json:"id"`
+		}
+		if json.Unmarshal(line, &probe) == nil && probe.ID != nil {
+			_ = c.write(Response{
+				JSONRPC: "2.0",
+				ID:      probe.ID,
+				Error:   &RPCError{Code: ErrorCodeInvalidRequest, Message: err.Error()},
+			})
+		}
 		return
 	}
 
 	// A request without an id is a notification: the peer wants no answer, and
 	// replying to one would put an unmatched response on the wire.
 	if req.ID == nil {
-		go func() { _, _ = c.registry.Call(req.Method, req.Params) }()
+		// Sending from the read loop is deliberate back-pressure: if the peer
+		// outruns the handler the loop pauses, which is preferable to an
+		// unbounded goroutine per notification. Handlers must therefore not
+		// call Request, since that would wait on the loop they are blocking.
+		c.notifications <- req
 		return
 	}
 
@@ -139,7 +192,7 @@ func (c *Conn) serveRequest(line []byte) {
 		result, err := c.registry.Call(req.Method, req.Params)
 		if err != nil {
 			code := ErrorCodeInternalError
-			if strings.Contains(err.Error(), "method not found") {
+			if errors.Is(err, ErrMethodNotFound) {
 				code = ErrorCodeMethodNotFound
 			}
 			_ = c.write(Response{
@@ -239,12 +292,14 @@ func (c *Conn) failPending() {
 func (c *Conn) write(msg any) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal acp message: %w", err)
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	_, err = c.w.Write(append(data, '\n'))
-	return err
+	if _, err := c.w.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("write acp message: %w", err)
+	}
+	return nil
 }
 
 // marshalParams keeps an already-encoded payload as-is and encodes anything
