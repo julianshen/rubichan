@@ -482,3 +482,57 @@ func TestConnDeliversNotificationsInOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestConnShutdownIsNotHeldByABlockedNotification pins that one wedged handler
+// cannot hold the whole connection open. The notification worker was drained
+// before failPending ran — defers are LIFO and failPending was registered first
+// — so a handler that never returns kept Serve from returning and left every
+// pending Request waiting on a connection that was already finished.
+func TestConnShutdownIsNotHeldByABlockedNotification(t *testing.T) {
+	t.Parallel()
+
+	wedged := make(chan struct{})
+	entered := make(chan struct{})
+	t.Cleanup(func() { close(wedged) })
+
+	registry := acp.NewCapabilityRegistry()
+	registry.RegisterMethod("session/update", func(json.RawMessage) (json.RawMessage, error) {
+		close(entered)
+		<-wedged // never returns while the test runs
+		return nil, nil
+	})
+
+	connR, peerW := io.Pipe()
+	c := acp.NewConn(connR, io.Discard, registry)
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- c.Serve(ctx) }()
+
+	_, err := peerW.Write([]byte(`{"jsonrpc":"2.0","method":"session/update"}` + "\n"))
+	require.NoError(t, err)
+	<-entered // the handler is now wedged
+
+	// A caller is waiting on the peer when the connection is torn down.
+	errs := make(chan error, 1)
+	go func() {
+		_, err := c.Request(context.Background(), "session/request_permission", nil)
+		errs <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case <-served:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve blocked on a wedged notification handler")
+	}
+
+	select {
+	case err := <-errs:
+		assert.ErrorIs(t, err, acp.ErrConnClosed,
+			"a pending caller must be released even when a handler is stuck")
+	case <-time.After(2 * time.Second):
+		t.Fatal("pending Request was never released")
+	}
+}
