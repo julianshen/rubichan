@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +30,19 @@ func TestNumericID(t *testing.T) {
 		{"non-numeric json.Number", json.Number("seven"), 0, false},
 		{"string id is not correlatable here", "7", 0, false},
 		{"absent id", nil, 0, false},
+
+		// Truncation is worse than dropping. 1.5 must not become 1, or the
+		// peer's answer to request 1.5 is handed to whoever is waiting on
+		// request 1 — for session/request_permission that is an approval the
+		// user never gave, delivered as a valid result.
+		{"fractional must not truncate", 1.5, 0, false},
+		{"negative fractional must not truncate", -1.5, 0, false},
+		{"+Inf", math.Inf(1), 0, false},
+		{"-Inf", math.Inf(-1), 0, false},
+		{"NaN", math.NaN(), 0, false},
+		{"beyond int64 range", 1e19, 0, false},
+		{"integral float is fine", float64(7), 7, true},
+		{"fractional json.Number", json.Number("1.5"), 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := numericID(tc.in)
