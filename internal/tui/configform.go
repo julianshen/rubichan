@@ -162,28 +162,32 @@ func (c *ConfigForm) Save() error {
 		c.cfg.Agent.MaxTurns = v
 	}
 
-	if c.cfg.Provider.Default == "anthropic" {
-		switch {
-		case c.cfg.Provider.Anthropic.APIKey != "":
-			c.cfg.Provider.Anthropic.APIKeySource = "config"
-		case c.origAnthropicAPIKeySource == "config":
-			// Key was previously config-sourced and has now been
-			// explicitly cleared — reset to "env" (this app's own
-			// default for "no key configured") rather than leaving
-			// APIKeySource="config" pointing at an empty value, which
-			// ResolveAPIKey rejects outright.
-			c.cfg.Provider.Anthropic.APIKeySource = "env"
-		}
-		// else: key was already blank (e.g. env-sourced) and still is —
-		// leave APIKeySource exactly as it was.
+	// Anthropic/Zai key-source reconciliation runs unconditionally, not
+	// gated on which provider is currently selected: huh's WithHideFunc
+	// only hides a group's UI, it doesn't stop the user from clearing a
+	// field while that group was visible and then navigating back to
+	// switch the provider selection before finishing the form. Gating
+	// this on Provider.Default would skip reconciling whichever
+	// provider's group the user isn't on by the time Save() runs, even
+	// though its key may have just been cleared.
+	switch {
+	case c.cfg.Provider.Anthropic.APIKey != "":
+		c.cfg.Provider.Anthropic.APIKeySource = "config"
+	case c.origAnthropicAPIKeySource == "config":
+		// Key was previously config-sourced and has now been explicitly
+		// cleared — reset to "env" (this app's own default for "no key
+		// configured") rather than leaving APIKeySource="config"
+		// pointing at an empty value, which ResolveAPIKey rejects
+		// outright.
+		c.cfg.Provider.Anthropic.APIKeySource = "env"
 	}
-	if c.cfg.Provider.Default == "zai" {
-		switch {
-		case c.cfg.Provider.Zai.APIKey != "":
-			c.cfg.Provider.Zai.APIKeySource = "config"
-		case c.origZaiAPIKeySource == "config":
-			c.cfg.Provider.Zai.APIKeySource = "env"
-		}
+	// else: key was already blank (e.g. env-sourced) and still is — leave
+	// APIKeySource exactly as it was.
+	switch {
+	case c.cfg.Provider.Zai.APIKey != "":
+		c.cfg.Provider.Zai.APIKeySource = "config"
+	case c.origZaiAPIKeySource == "config":
+		c.cfg.Provider.Zai.APIKeySource = "env"
 	}
 	if c.cfg.Provider.Default == "openai" {
 		existing, found := findOpenAICompatibleEntry(c.cfg, "openai")

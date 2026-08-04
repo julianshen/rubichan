@@ -148,21 +148,22 @@ func (b *BootstrapForm) Config() *config.Config { return b.cfg }
 // Save persists the config. It copies the OpenAI key into the correct config
 // entry if the user selected the OpenAI provider.
 func (b *BootstrapForm) Save() error {
-	if b.cfg.Provider.Default == "anthropic" {
-		switch {
-		case b.cfg.Provider.Anthropic.APIKey != "":
-			b.cfg.Provider.Anthropic.APIKeySource = "config"
-		case b.origAnthropicAPIKeySource == "config":
-			b.cfg.Provider.Anthropic.APIKeySource = "env"
-		}
+	// Not gated on Provider.Default — see the matching comment in
+	// ConfigForm.Save() (configform.go): a key can be typed or cleared
+	// while its provider's group was visible, then the selection changed
+	// before the wizard finishes, and reconciliation must still apply to
+	// whichever provider's key actually changed.
+	switch {
+	case b.cfg.Provider.Anthropic.APIKey != "":
+		b.cfg.Provider.Anthropic.APIKeySource = "config"
+	case b.origAnthropicAPIKeySource == "config":
+		b.cfg.Provider.Anthropic.APIKeySource = "env"
 	}
-	if b.cfg.Provider.Default == "zai" {
-		switch {
-		case b.cfg.Provider.Zai.APIKey != "":
-			b.cfg.Provider.Zai.APIKeySource = "config"
-		case b.origZaiAPIKeySource == "config":
-			b.cfg.Provider.Zai.APIKeySource = "env"
-		}
+	switch {
+	case b.cfg.Provider.Zai.APIKey != "":
+		b.cfg.Provider.Zai.APIKeySource = "config"
+	case b.origZaiAPIKeySource == "config":
+		b.cfg.Provider.Zai.APIKeySource = "env"
 	}
 	if b.cfg.Provider.Default == "openai" && b.openaiKey != "" {
 		baseURL := b.openaiBaseURL

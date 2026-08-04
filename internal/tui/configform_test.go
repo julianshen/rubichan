@@ -251,6 +251,33 @@ func TestConfigFormSaveLeavesEnvSourcedZaiKeyUntouched(t *testing.T) {
 	assert.Equal(t, "env", loaded.Provider.Zai.APIKeySource, "an untouched env-sourced key must not be reset")
 }
 
+func TestConfigFormSaveClearingKeyThenSwitchingProviderStillResetsSource(t *testing.T) {
+	// Reproduces a realistic multi-step edit: the user clears a
+	// config-sourced Anthropic key, then navigates back to the provider
+	// group and switches the selection to Z.ai before finishing the form.
+	// Provider.Default at Save() time is "zai", not "anthropic" — the
+	// reconciliation must still apply to Anthropic's now-stale
+	// APIKeySource, since it isn't gated on which provider ends up
+	// selected.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	cfg := config.DefaultConfig()
+	cfg.Provider.Default = "anthropic"
+	cfg.Provider.Anthropic.APIKeySource = "config"
+	cfg.Provider.Anthropic.APIKey = "sk-ant-old"
+
+	form := NewConfigForm(cfg, path)
+	cfg.Provider.Anthropic.APIKey = "" // cleared while still on the Anthropic group
+	cfg.Provider.Default = "zai"       // then switched away before finishing
+	require.NoError(t, form.Save())
+
+	loaded, err := config.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "zai", loaded.Provider.Default)
+	assert.Empty(t, loaded.Provider.Anthropic.APIKey)
+	assert.Equal(t, "env", loaded.Provider.Anthropic.APIKeySource, "clearing a key must reset its APIKeySource even if a different provider ends up selected by the time the form completes")
+}
+
 func TestConfigFormSaveOpenAIPreservesExtraHeadersOnUpdate(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
