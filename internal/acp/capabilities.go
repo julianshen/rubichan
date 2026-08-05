@@ -105,6 +105,12 @@ func (cr *CapabilityRegistry) GetMethods() []string {
 // misclassifies any handler error that happens to mention a missing method.
 var ErrMethodNotFound = errors.New("acp: method not found")
 
+// ErrInvalidParams reports that a request's params were malformed or failed
+// validation. A handler wraps it so the connection can answer -32602 rather
+// than -32603: the first tells a client its own payload is wrong and can be
+// corrected, the second tells it the agent is broken and retrying is futile.
+var ErrInvalidParams = errors.New("acp: invalid params")
+
 // Call invokes a registered method handler.
 func (cr *CapabilityRegistry) Call(method string, params json.RawMessage) (json.RawMessage, error) {
 	cr.mu.RLock()

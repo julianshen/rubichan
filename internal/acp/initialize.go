@@ -105,7 +105,9 @@ func RegisterInitialize(registry *CapabilityRegistry, cfg InitializeConfig) {
 	registry.RegisterMethod(MethodInitialize, func(params json.RawMessage) (json.RawMessage, error) {
 		var req InitializeParams
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, fmt.Errorf("initialize: %w", err)
+			// Wrapped so the connection answers -32602: the client's payload
+			// is wrong, which is something it can fix.
+			return nil, fmt.Errorf("initialize: %w: %v", ErrInvalidParams, err)
 		}
 
 		// The spec requires answering an unsupported version with the latest we
