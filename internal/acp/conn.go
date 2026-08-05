@@ -211,8 +211,11 @@ func (c *Conn) serveRequest(ctx context.Context, line []byte) {
 		result, err := c.registry.Call(req.Method, req.Params)
 		if err != nil {
 			code := ErrorCodeInternalError
-			if errors.Is(err, ErrMethodNotFound) {
+			switch {
+			case errors.Is(err, ErrMethodNotFound):
 				code = ErrorCodeMethodNotFound
+			case errors.Is(err, ErrInvalidParams):
+				code = ErrorCodeInvalidParams
 			}
 			_ = c.write(Response{
 				JSONRPC: "2.0",

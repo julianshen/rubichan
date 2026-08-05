@@ -121,3 +121,32 @@ func TestInitializeOverTheWire(t *testing.T) {
 }
 
 var _ = context.Background
+
+// TestInitializeMalformedParamsIsInvalidParams pins the JSON-RPC code a client
+// sees when its own payload is wrong. -32602 says "your request was malformed";
+// -32603 says "the agent broke". The distinction is the difference between a
+// client that can correct itself and one that retries forever against an agent
+// it believes is faulty.
+//
+// The old server returned InvalidParams here. Conn defaults unclassified
+// handler errors to InternalError, so the code regressed when initialize moved
+// into the registry — a coverage gap the deletion opened.
+func TestInitializeMalformedParamsIsInvalidParams(t *testing.T) {
+	t.Parallel()
+
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterInitialize(registry, agentConfig())
+	_, p := newConnPair(t, registry)
+
+	_, err := p.toConn.Write(append(mustJSON(t, acp.Request{
+		JSONRPC: "2.0", ID: int64(1), Method: "initialize",
+		Params: json.RawMessage(`{"protocolVersion":"one"}`),
+	}), '\n'))
+	require.NoError(t, err)
+
+	var resp acp.Response
+	p.decode(t, &resp)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, acp.ErrorCodeInvalidParams, resp.Error.Code,
+		"a client's malformed payload is its fault to fix, not an agent failure")
+}
