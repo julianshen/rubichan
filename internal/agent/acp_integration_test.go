@@ -26,6 +26,9 @@ func TestAgentACPPromptMethod(t *testing.T) {
 	}
 
 	result, err := registry.Call(req.Method, req.Params)
+	if errors.Is(err, acp.ErrMethodNotFound) {
+		t.Fatalf("%s is not registered", req.Method)
+	}
 	if err != nil {
 		return // a handler error is an acceptable outcome for a stub provider
 	}
@@ -50,7 +53,11 @@ func TestAgentACPToolExecution(t *testing.T) {
 		Params:  json.RawMessage(`{"tool":"unknown_tool","input":{"path":"main.go"}}`),
 	}
 
-	if _, err := registry.Call(req.Method, req.Params); err == nil {
+	_, err := registry.Call(req.Method, req.Params)
+	if errors.Is(err, acp.ErrMethodNotFound) {
+		t.Fatalf("%s is not registered", req.Method)
+	}
+	if err == nil {
 		t.Error("expected error for non-existent tool")
 	}
 }
@@ -68,6 +75,9 @@ func TestAgentACPSkillMethods(t *testing.T) {
 	}
 
 	result, err := registry.Call(req.Method, req.Params)
+	if errors.Is(err, acp.ErrMethodNotFound) {
+		t.Fatalf("%s is not registered", req.Method)
+	}
 	if result == nil && err == nil {
 		t.Error("expected result or error")
 	}
@@ -86,6 +96,9 @@ func TestAgentACPSecurityMethods(t *testing.T) {
 	}
 
 	result, err := registry.Call(req.Method, req.Params)
+	if errors.Is(err, acp.ErrMethodNotFound) {
+		t.Fatalf("%s is not registered", req.Method)
+	}
 	if result == nil && err == nil {
 		t.Error("expected result or error")
 	}
@@ -223,5 +236,61 @@ func TestNewACPRegistryServesTheHandshake(t *testing.T) {
 	}
 	if got.AuthMethods == nil {
 		t.Error("authMethods must be present even when empty")
+	}
+}
+
+// TestNewACPRegistryDoesNotAdvertiseWhatItCannotServe ties the handshake's
+// claims to the methods actually registered. embeddedContext means the agent
+// accepts embedded ContentBlock::Resource data in session/prompt; declaring it
+// while session/prompt is unregistered tells a client it may send something
+// that will fail. That is the mistake the adapters deleted in #339 made in the
+// other direction — calling methods the peer does not serve — and it is no
+// better pointed this way.
+func TestNewACPRegistryDoesNotAdvertiseWhatItCannotServe(t *testing.T) {
+	registry := agent.NewACPRegistry(createTestAgent(t))
+
+	raw, err := registry.Call("initialize", json.RawMessage(
+		`{"protocolVersion":1,"clientCapabilities":{}}`))
+	if err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	var got acp.InitializeResult
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	_, promptErr := registry.Call("session/prompt", json.RawMessage(`{}`))
+	servesSessionPrompt := !errors.Is(promptErr, acp.ErrMethodNotFound)
+
+	if got.AgentCapabilities.Prompt.EmbeddedContext && !servesSessionPrompt {
+		t.Error("embeddedContext advertised, but session/prompt is not registered")
+	}
+	if got.AgentCapabilities.LoadSession {
+		t.Error("loadSession advertised, but session/load is not registered")
+	}
+}
+
+// TestNewACPRegistryRetainsClientCapabilities pins that what the client offers
+// is kept rather than parsed and dropped. RegisterInitialize provides the hook;
+// a registry that does not supply it discards the information entirely, which
+// is worse than never having asked.
+func TestNewACPRegistryRetainsClientCapabilities(t *testing.T) {
+	a := createTestAgent(t)
+	registry := agent.NewACPRegistry(a)
+
+	if _, err := registry.Call("initialize", json.RawMessage(
+		`{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":false},"terminal":true}}`)); err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+
+	got := a.ClientCapabilities()
+	if !got.FS.ReadTextFile {
+		t.Error("client offered fs.readTextFile; the agent did not record it")
+	}
+	if got.FS.WriteTextFile {
+		t.Error("client did not offer fs.writeTextFile; the agent must not assume it")
+	}
+	if !got.Terminal {
+		t.Error("client offered terminal; the agent did not record it")
 	}
 }

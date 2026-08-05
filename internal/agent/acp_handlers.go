@@ -41,12 +41,16 @@ func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
 
 	acp.RegisterInitialize(registry, acp.InitializeConfig{
 		AgentInfo: acp.AgentInfo{Name: "rubichan", Version: agentVersion},
-		Capabilities: acp.AgentCapabilities{
-			// Declared conservatively: each of these is a promise the client
-			// may hold us to, and claiming one we do not honour is the mistake
-			// the deleted mode adapters made in the other direction.
-			LoadSession: false,
-			Prompt:      acp.PromptCapabilities{EmbeddedContext: true},
+		// Every field here is false, and stays false until the method behind it
+		// is registered. embeddedContext means the agent accepts embedded
+		// ContentBlock::Resource data in session/prompt; loadSession means it
+		// serves session/load. Neither exists yet, and advertising a capability
+		// whose method is unregistered tells a client it may send something
+		// that will fail — the same defect as the deleted adapters, pointed the
+		// other way. These flip on in the slice that registers the handler.
+		Capabilities: acp.AgentCapabilities{},
+		OnInitialized: func(caps acp.ClientCapabilities, _ acp.AgentInfo) {
+			a.setClientCapabilities(caps)
 		},
 	})
 
@@ -200,4 +204,21 @@ func (a *Agent) Approve(decision acp.SecurityApprovalResponse) error {
 	// In a full implementation, this would record the approval decision
 	// and notify the security engine to proceed or escalate.
 	return nil
+}
+
+// setClientCapabilities records what the peer offered during the handshake.
+func (a *Agent) setClientCapabilities(caps acp.ClientCapabilities) {
+	a.acpClientCapsMu.Lock()
+	defer a.acpClientCapsMu.Unlock()
+	a.acpClientCaps = caps
+}
+
+// ClientCapabilities reports what the connected ACP client said it can do.
+// Zero until a handshake completes, which is the safe default: it means the
+// agent assumes the client offers nothing rather than assuming it offers
+// everything.
+func (a *Agent) ClientCapabilities() acp.ClientCapabilities {
+	a.acpClientCapsMu.RLock()
+	defer a.acpClientCapsMu.RUnlock()
+	return a.acpClientCaps
 }

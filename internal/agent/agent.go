@@ -18,6 +18,7 @@ import (
 
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 
+	"github.com/julianshen/rubichan/internal/acp"
 	"github.com/julianshen/rubichan/internal/agent/errorclass"
 	"github.com/julianshen/rubichan/internal/checkpoint"
 	"github.com/julianshen/rubichan/internal/config"
@@ -463,6 +464,12 @@ func WithStopHookRegistry(registry *hooks.StopHookRegistry) AgentOption {
 
 // Agent orchestrates the conversation loop between the user, LLM, and tools.
 type Agent struct {
+	// acpClientCaps is what the connected ACP client offered at handshake.
+	// Guarded because the handshake runs on the connection's goroutine while
+	// readers may be anywhere.
+	acpClientCaps   acp.ClientCapabilities
+	acpClientCapsMu sync.RWMutex
+
 	provider            provider.LLMProvider
 	tools               *tools.Registry
 	conversation        *Conversation
