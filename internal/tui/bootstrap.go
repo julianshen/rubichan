@@ -39,6 +39,17 @@ type BootstrapForm struct {
 	savePath      string
 	openaiKey     string
 	openaiBaseURL string
+
+	// origAnthropicAPIKeySource/origZaiAPIKeySource capture each
+	// provider's APIKeySource as cfg started (from config.DefaultConfig()
+	// today, always "env" for Anthropic and unset for Z.ai — see the
+	// matching field in ConfigForm for the full rationale). Kept here too
+	// so Save()'s logic — and its "clear a config-sourced key resets the
+	// source" behavior — stays identical between the first-run wizard and
+	// the in-session /config editor, even though only the latter can load
+	// an existing config-sourced key to begin with.
+	origAnthropicAPIKeySource string
+	origZaiAPIKeySource       string
 }
 
 // NewBootstrapForm creates a multi-step setup wizard.
@@ -48,8 +59,10 @@ func NewBootstrapForm(savePath string) *BootstrapForm {
 	// openaiKey is a staging area. After the form completes, Save() copies
 	// it into the correct OpenAI-compatible provider config entry.
 	bf := &BootstrapForm{
-		cfg:      cfg,
-		savePath: savePath,
+		cfg:                       cfg,
+		savePath:                  savePath,
+		origAnthropicAPIKeySource: cfg.Provider.Anthropic.APIKeySource,
+		origZaiAPIKeySource:       cfg.Provider.Zai.APIKeySource,
 	}
 
 	providerGroup := huh.NewGroup(
@@ -135,11 +148,22 @@ func (b *BootstrapForm) Config() *config.Config { return b.cfg }
 // Save persists the config. It copies the OpenAI key into the correct config
 // entry if the user selected the OpenAI provider.
 func (b *BootstrapForm) Save() error {
-	if b.cfg.Provider.Default == "anthropic" && b.cfg.Provider.Anthropic.APIKey != "" {
+	// Not gated on Provider.Default — see the matching comment in
+	// ConfigForm.Save() (configform.go): a key can be typed or cleared
+	// while its provider's group was visible, then the selection changed
+	// before the wizard finishes, and reconciliation must still apply to
+	// whichever provider's key actually changed.
+	switch {
+	case b.cfg.Provider.Anthropic.APIKey != "":
 		b.cfg.Provider.Anthropic.APIKeySource = "config"
+	case b.origAnthropicAPIKeySource == "config":
+		b.cfg.Provider.Anthropic.APIKeySource = "env"
 	}
-	if b.cfg.Provider.Default == "zai" && b.cfg.Provider.Zai.APIKey != "" {
+	switch {
+	case b.cfg.Provider.Zai.APIKey != "":
 		b.cfg.Provider.Zai.APIKeySource = "config"
+	case b.origZaiAPIKeySource == "config":
+		b.cfg.Provider.Zai.APIKeySource = "env"
 	}
 	if b.cfg.Provider.Default == "openai" && b.openaiKey != "" {
 		baseURL := b.openaiBaseURL

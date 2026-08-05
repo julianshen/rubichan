@@ -18,14 +18,27 @@ type ConfigForm struct {
 	maxTurnsStr   string
 	openaiKey     string // staging field, mirrors BootstrapForm; copied into cfg.Provider.OpenAI on Save
 	openaiBaseURL string // staging field, mirrors BootstrapForm
+
+	// origAnthropicAPIKeySource/origZaiAPIKeySource capture each
+	// provider's APIKeySource as loaded, before the form can mutate the
+	// directly-bound APIKey field. Save() needs this to tell "the key
+	// field is blank because it was always env-sourced" (leave
+	// APIKeySource untouched) apart from "the key field is blank because
+	// the user just cleared a previously config-sourced key" (reset
+	// APIKeySource, or it's left pointing at a config value that no
+	// longer exists).
+	origAnthropicAPIKeySource string
+	origZaiAPIKeySource       string
 }
 
 // NewConfigForm creates a config editor form populated from the given config.
 func NewConfigForm(cfg *config.Config, savePath string) *ConfigForm {
 	cf := &ConfigForm{
-		cfg:         cfg,
-		savePath:    savePath,
-		maxTurnsStr: fmt.Sprintf("%d", cfg.Agent.MaxTurns),
+		cfg:                       cfg,
+		savePath:                  savePath,
+		maxTurnsStr:               fmt.Sprintf("%d", cfg.Agent.MaxTurns),
+		origAnthropicAPIKeySource: cfg.Provider.Anthropic.APIKeySource,
+		origZaiAPIKeySource:       cfg.Provider.Zai.APIKeySource,
 	}
 
 	if oc, ok := findOpenAICompatibleEntry(cfg, "openai"); ok {
@@ -149,11 +162,32 @@ func (c *ConfigForm) Save() error {
 		c.cfg.Agent.MaxTurns = v
 	}
 
-	if c.cfg.Provider.Default == "anthropic" && c.cfg.Provider.Anthropic.APIKey != "" {
+	// Anthropic/Zai key-source reconciliation runs unconditionally, not
+	// gated on which provider is currently selected: huh's WithHideFunc
+	// only hides a group's UI, it doesn't stop the user from clearing a
+	// field while that group was visible and then navigating back to
+	// switch the provider selection before finishing the form. Gating
+	// this on Provider.Default would skip reconciling whichever
+	// provider's group the user isn't on by the time Save() runs, even
+	// though its key may have just been cleared.
+	switch {
+	case c.cfg.Provider.Anthropic.APIKey != "":
 		c.cfg.Provider.Anthropic.APIKeySource = "config"
+	case c.origAnthropicAPIKeySource == "config":
+		// Key was previously config-sourced and has now been explicitly
+		// cleared — reset to "env" (this app's own default for "no key
+		// configured") rather than leaving APIKeySource="config"
+		// pointing at an empty value, which ResolveAPIKey rejects
+		// outright.
+		c.cfg.Provider.Anthropic.APIKeySource = "env"
 	}
-	if c.cfg.Provider.Default == "zai" && c.cfg.Provider.Zai.APIKey != "" {
+	// else: key was already blank (e.g. env-sourced) and still is — leave
+	// APIKeySource exactly as it was.
+	switch {
+	case c.cfg.Provider.Zai.APIKey != "":
 		c.cfg.Provider.Zai.APIKeySource = "config"
+	case c.origZaiAPIKeySource == "config":
+		c.cfg.Provider.Zai.APIKeySource = "env"
 	}
 	if c.cfg.Provider.Default == "openai" {
 		existing, found := findOpenAICompatibleEntry(c.cfg, "openai")
