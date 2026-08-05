@@ -103,12 +103,29 @@ type InitializeConfig struct {
 // RegisterInitialize wires the ACP handshake into a registry.
 func RegisterInitialize(registry *CapabilityRegistry, cfg InitializeConfig) {
 	registry.RegisterMethod(MethodInitialize, func(params json.RawMessage) (json.RawMessage, error) {
-		var req InitializeParams
-		if err := json.Unmarshal(params, &req); err != nil {
+		// protocolVersion is decoded through a pointer because ACP marks it
+		// required and an omitted or null integer would otherwise unmarshal to
+		// 0 with no error. The agent would then answer version 1 to a client
+		// that never said what it speaks, making the negotiation a fiction.
+		var raw struct {
+			ProtocolVersion    *int               `json:"protocolVersion"`
+			ClientCapabilities ClientCapabilities `json:"clientCapabilities"`
+			ClientInfo         *ClientInfo        `json:"clientInfo,omitempty"`
+		}
+		if err := json.Unmarshal(params, &raw); err != nil {
 			// Wrapped so the connection answers -32602: the client's payload
 			// is wrong, which is something it can fix.
 			return nil, fmt.Errorf("initialize: %w: %v", ErrInvalidParams, err)
 		}
+		if raw.ProtocolVersion == nil {
+			return nil, fmt.Errorf("initialize: %w: protocolVersion is required", ErrInvalidParams)
+		}
+		req := InitializeParams{
+			ProtocolVersion:    *raw.ProtocolVersion,
+			ClientCapabilities: raw.ClientCapabilities,
+			ClientInfo:         raw.ClientInfo,
+		}
+		_ = req.ProtocolVersion // read, never echoed; see below
 
 		// The spec requires answering an unsupported version with the latest we
 		// support rather than failing: version selection is the client's call,

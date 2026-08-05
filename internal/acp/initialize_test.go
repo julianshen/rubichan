@@ -150,3 +150,27 @@ func TestInitializeMalformedParamsIsInvalidParams(t *testing.T) {
 	assert.Equal(t, acp.ErrorCodeInvalidParams, resp.Error.Code,
 		"a client's malformed payload is its fault to fix, not an agent failure")
 }
+
+// TestInitializeRequiresProtocolVersion pins that the field ACP marks required
+// is actually required. An omitted or null integer unmarshals to 0 with no
+// error, so without an explicit presence check `{"clientCapabilities":{}}`
+// completes as a successful handshake — the agent would answer version 1 to a
+// client that never said what it speaks, and negotiation would be a fiction.
+func TestInitializeRequiresProtocolVersion(t *testing.T) {
+	t.Parallel()
+
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterInitialize(registry, agentConfig())
+
+	for _, tc := range []struct{ name, params string }{
+		{"omitted", `{"clientCapabilities":{}}`},
+		{"null", `{"protocolVersion":null,"clientCapabilities":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := registry.Call("initialize", json.RawMessage(tc.params))
+			require.Error(t, err, "a required field cannot default silently to 0")
+			assert.ErrorIs(t, err, acp.ErrInvalidParams,
+				"the client's payload is incomplete, which is its to fix")
+		})
+	}
+}
