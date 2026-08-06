@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/provider"
@@ -122,4 +123,39 @@ func TestConversationClear(t *testing.T) {
 
 	assert.Empty(t, conv.Messages())
 	assert.Equal(t, "my system prompt", conv.SystemPrompt(), "system prompt should be preserved after clear")
+}
+
+// TestConversationIsSafeForConcurrentUse pins that a Conversation may be read
+// while it is being written.
+//
+// This is not a hypothetical pairing invented to justify a lock. Agent.Turn
+// runs its loop on its own goroutine, and for the length of that turn the
+// periodic summarizer reads the same Conversation from a timer goroutine —
+// see the closure passed to StartAgentSummarization in agent.go, which calls
+// conversation.Messages(). Writer and reader are both production code, and
+// they overlap by design.
+func TestConversationIsSafeForConcurrentUse(t *testing.T) {
+	conv := NewConversation("system")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			conv.AddAssistant([]provider.ContentBlock{{Type: "text", Text: "reply"}})
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			// Messages copies, so a torn read here corrupts the copy the
+			// summarizer is about to send to the model, not just this test.
+			_ = conv.Messages()
+			_ = conv.Len()
+		}
+	}()
+
+	wg.Wait()
 }
