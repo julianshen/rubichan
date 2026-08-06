@@ -1319,12 +1319,13 @@ func TestRunLoop_MaxTokens_WithToolCalls_DoesNotRetry(t *testing.T) {
 	assert.Equal(t, 0, recoveryEvents, "should not emit recovery events when max_tokens has tool calls")
 }
 
-type maxTokensWithToolProvider struct {
-	callCount int
-}
+// maxTokensWithToolProvider carries no call counter on purpose. Stream is
+// reached from the turn goroutine and, concurrently, from the background
+// session-memory task, so an unsynchronized field here races — and this test
+// asserts on emitted recovery events, never on a count.
+type maxTokensWithToolProvider struct{}
 
 func (m *maxTokensWithToolProvider) Stream(_ context.Context, _ provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
-	m.callCount++
 	ch := make(chan provider.StreamEvent, 4)
 	ch <- provider.StreamEvent{Type: "text_delta", Text: "partial response"}
 	ch <- provider.StreamEvent{

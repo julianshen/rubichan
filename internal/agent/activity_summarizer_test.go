@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,10 @@ func TestStartAgentSummarization(t *testing.T) {
 	summaryInterval = 50 * time.Millisecond
 	defer func() { summaryInterval = oldInterval }()
 
+	// The summarizer invokes onSummary from its own goroutine, so the capture
+	// it writes needs a lock. time.Sleep below orders the two in wall-clock
+	// terms but establishes no happens-before edge.
+	var mu sync.Mutex
 	var summaryReceived string
 	callModel := func(ctx context.Context, messages []provider.Message, systemPrompt string) (string, error) {
 		return "Reading test.go", nil
@@ -51,6 +56,8 @@ func TestStartAgentSummarization(t *testing.T) {
 		}
 	}
 	onSummary := func(taskID, summary string) {
+		mu.Lock()
+		defer mu.Unlock()
 		summaryReceived = summary
 	}
 
@@ -58,7 +65,10 @@ func TestStartAgentSummarization(t *testing.T) {
 	require.NotNil(t, handle)
 
 	time.Sleep(150 * time.Millisecond)
-	require.Equal(t, "Reading test.go", summaryReceived)
+	mu.Lock()
+	got := summaryReceived
+	mu.Unlock()
+	require.Equal(t, "Reading test.go", got)
 
 	handle.Stop()
 }
@@ -159,8 +169,12 @@ func TestSummarizerPreviousSummaryTracking(t *testing.T) {
 		}
 	}
 
+	// Same as above: onSummary runs on the summarizer's goroutine.
+	var mu sync.Mutex
 	var summaries []string
 	onSummary := func(taskID, summary string) {
+		mu.Lock()
+		defer mu.Unlock()
 		summaries = append(summaries, summary)
 	}
 
@@ -168,9 +182,12 @@ func TestSummarizerPreviousSummaryTracking(t *testing.T) {
 	require.NotNil(t, handle)
 
 	time.Sleep(200 * time.Millisecond)
-	require.GreaterOrEqual(t, len(summaries), 2)
-	require.Equal(t, "First summary", summaries[0])
-	require.Equal(t, "Second summary", summaries[1])
+	mu.Lock()
+	got := append([]string(nil), summaries...)
+	mu.Unlock()
+	require.GreaterOrEqual(t, len(got), 2)
+	require.Equal(t, "First summary", got[0])
+	require.Equal(t, "Second summary", got[1])
 
 	handle.Stop()
 }
