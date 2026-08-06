@@ -167,14 +167,14 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) error
 		messageBudget = 0
 	}
 	// Compute signals once; inject into strategies that support dynamic adjustment.
-	signals := ComputeConversationSignals(conv.messages)
+	signals := ComputeConversationSignals(conv.Messages())
 	for _, s := range cm.strategies {
 		if sa, ok := s.(SignalAware); ok {
 			sa.SetSignals(signals)
 		}
 	}
 
-	beforeTokens := estimateMessageTokens(conv.messages)
+	beforeTokens := estimateMessageTokens(conv.Messages())
 	anyStrategySucceeded := false
 
 	for i, s := range cm.strategies {
@@ -183,20 +183,20 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) error
 		if i > 0 && !cm.ExceedsBudget(conv) {
 			break
 		}
-		result, err := s.Compact(ctx, conv.messages, messageBudget)
+		result, err := s.Compact(ctx, conv.Messages(), messageBudget)
 		if err != nil {
 			continue
 		}
-		conv.messages = result
+		conv.LoadFromMessages(result)
 		anyStrategySucceeded = true
 	}
 
 	// Apply collapse store projection after strategies run.
 	if cm.collapseStore != nil && cm.collapseStore.IsEnabled() && cm.collapseStore.HasCommits() {
-		conv.messages = cm.collapseStore.ProjectView(conv.messages)
+		conv.LoadFromMessages(cm.collapseStore.ProjectView(conv.Messages()))
 	}
 
-	afterTokens := estimateMessageTokens(conv.messages)
+	afterTokens := estimateMessageTokens(conv.Messages())
 	shrank := afterTokens < beforeTokens
 
 	// Real progress requires BOTH a non-erroring strategy AND an actual
@@ -219,7 +219,7 @@ func (cm *ContextManager) Compact(ctx context.Context, conv *Conversation) error
 // a ~4 chars per token heuristic with +10 overhead per content block.
 func (cm *ContextManager) EstimateTokens(conv *Conversation) int {
 	total := len(conv.SystemPrompt())/4 + 10
-	total += estimateMessageTokens(conv.messages)
+	total += estimateMessageTokens(conv.Messages())
 	return total
 }
 
@@ -253,7 +253,7 @@ func (cm *ContextManager) MeasureUsage(conv *Conversation, systemPrompt, skillPr
 		toolTokens += len(td.Name)/4 + len(td.Description)/4 + len(td.InputSchema)/4 + 30
 	}
 
-	convTokens := estimateMessageTokens(conv.messages)
+	convTokens := estimateMessageTokens(conv.Messages())
 
 	cm.mu.Lock()
 	cm.budget.SkillPrompts = skillTokens
@@ -284,10 +284,10 @@ func (cm *ContextManager) Budget() ContextBudget {
 func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) CompactResult {
 	result := CompactResult{
 		BeforeTokens:   cm.EstimateTokens(conv),
-		BeforeMsgCount: len(conv.messages),
+		BeforeMsgCount: conv.Len(),
 	}
 
-	if len(conv.messages) == 0 {
+	if conv.Len() == 0 {
 		result.AfterTokens = cm.EstimateTokens(conv)
 		result.AfterMsgCount = 0
 		return result
@@ -301,7 +301,7 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 		messageBudget = 0
 	}
 
-	signals := ComputeConversationSignals(conv.messages)
+	signals := ComputeConversationSignals(conv.Messages())
 	for _, s := range cm.strategies {
 		if sa, ok := s.(SignalAware); ok {
 			sa.SetSignals(signals)
@@ -309,9 +309,9 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 	}
 
 	for _, s := range cm.strategies {
-		tokensBefore := estimateMessageTokens(conv.messages)
-		countBefore := len(conv.messages)
-		msgs, err := s.Compact(ctx, conv.messages, messageBudget)
+		tokensBefore := estimateMessageTokens(conv.Messages())
+		countBefore := conv.Len()
+		msgs, err := s.Compact(ctx, conv.Messages(), messageBudget)
 		if err != nil {
 			continue
 		}
@@ -321,7 +321,7 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 			result.StrategiesRun = append(result.StrategiesRun, s.Name())
 		}
 		// If strategy supports Snip, capture the result for telemetry.
-		// Use msgs (post-Compact) rather than conv.messages (pre-Compact)
+		// Use msgs (post-Compact) rather than conv.Messages() (pre-Compact)
 		// to ensure SnipResult reflects the actual compacted state.
 		if snipper, ok := s.(interface {
 			Snip([]Message, int) SnipResult
@@ -331,16 +331,16 @@ func (cm *ContextManager) ForceCompact(ctx context.Context, conv *Conversation) 
 				result.SnipResults = append(result.SnipResults, snip)
 			}
 		}
-		conv.messages = msgs
+		conv.LoadFromMessages(msgs)
 	}
 
 	// Apply collapse store projection.
 	if cm.collapseStore != nil && cm.collapseStore.IsEnabled() && cm.collapseStore.HasCommits() {
-		conv.messages = cm.collapseStore.ProjectView(conv.messages)
+		conv.LoadFromMessages(cm.collapseStore.ProjectView(conv.Messages()))
 	}
 
 	result.AfterTokens = cm.EstimateTokens(conv)
-	result.AfterMsgCount = len(conv.messages)
+	result.AfterMsgCount = conv.Len()
 	return result
 }
 
