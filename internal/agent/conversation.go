@@ -42,6 +42,18 @@ func (c *Conversation) SystemPrompt() string {
 }
 
 // Messages returns a copy of all messages in the conversation.
+//
+// The copy is shallow: the returned slice is independent, but each message's
+// Content slice and Metadata map still alias the conversation's own. Callers
+// must treat everything reachable from a returned Message as read-only. A
+// caller that mutates a Content element or a Metadata entry writes through to
+// the conversation, outside c.mu, and races every other holder of that message.
+//
+// This is an ownership rule the type states rather than enforces. Deep-cloning
+// each message at every egress would enforce it, at the cost of copying every
+// content block on a path that runs before each LLM request — and no current
+// reader mutates. If that stops being true, clone at ingress and egress rather
+// than hoping.
 func (c *Conversation) Messages() []provider.Message {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
