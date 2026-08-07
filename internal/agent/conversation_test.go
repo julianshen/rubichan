@@ -1,10 +1,14 @@
 package agent
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -158,4 +162,58 @@ func TestConversationIsSafeForConcurrentUse(t *testing.T) {
 	}()
 
 	wg.Wait()
+}
+
+// TestForceCompactWaitsForActiveTurn pins that user-initiated compaction is
+// serialized with the turn goroutine.
+//
+// Conversation's lock makes each method atomic, which stops the memory race but
+// not a lost update: ContextManager.ForceCompact reads a snapshot with
+// Messages(), transforms it, and writes it back with LoadFromMessages(). A
+// message appended between those two calls is absent from the snapshot and is
+// destroyed by the write-back. /compact is reachable from the TUI and the CLI
+// while a turn is running, so this is a user-visible way to lose an assistant
+// reply.
+//
+// Every other external mutator — Clear, and the session/model setters — already
+// takes turnMu. ForceCompact was the one that did not.
+//
+// Note this deliberately does not apply to agentCompactor.ForceCompact, which
+// backs the compact_context tool. That runs during tool execution, on the turn
+// goroutine, while turnMu is already held; taking it there would self-deadlock.
+func TestForceCompactWaitsForActiveTurn(t *testing.T) {
+	cfg := &config.Config{
+		Provider: config.ProviderConfig{Model: "test-model"},
+		Agent:    config.AgentConfig{MaxTurns: 5, ContextBudget: 100000},
+	}
+	a := New(&mockProvider{events: []provider.StreamEvent{
+		{Type: "text_delta", Text: "ok"},
+		{Type: "stop"},
+	}}, tools.NewRegistry(), autoApprove, cfg)
+
+	// Stand in for a turn in flight: Turn holds turnMu from before it spawns
+	// its goroutine until that goroutine's deferred unlock.
+	a.turnMu.Lock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = a.ForceCompact(context.Background())
+	}()
+
+	select {
+	case <-done:
+		a.turnMu.Unlock()
+		t.Fatal("ForceCompact completed while a turn held turnMu: an append racing its " +
+			"read-modify-write would be silently discarded")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	a.turnMu.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ForceCompact did not proceed once the turn released turnMu")
+	}
 }

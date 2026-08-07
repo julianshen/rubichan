@@ -1179,7 +1179,25 @@ func (a *Agent) ContextWindowStatus() ContextWindowStatus {
 
 // ForceCompact triggers manual compaction and returns before/after metrics.
 // The error return is always nil currently — reserved for future strategy errors.
+//
+// It waits for any turn in flight. Compaction is a read-modify-write across two
+// Conversation calls — snapshot with Messages, transform, replace with
+// LoadFromMessages — and Conversation's lock makes each of those atomic without
+// making the trio one transaction. A message appended by the turn goroutine
+// between the snapshot and the write-back is not in the snapshot, so the
+// write-back destroys it. /compact is reachable from the TUI and the CLI during
+// a turn, which makes that a user-visible way to lose an assistant reply.
+//
+// Blocking rather than failing keeps this consistent with every other external
+// mutator here — Clear and the session/model setters all take turnMu.
+//
+// This must not be applied to agentCompactor.ForceCompact: that backs the
+// compact_context tool, which the model invokes during tool execution, on the
+// turn goroutine, while turnMu is already held. Taking the lock there would
+// self-deadlock and hang the turn forever holding it.
 func (a *Agent) ForceCompact(ctx context.Context) (agentsdk.CompactResult, error) {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
 	result := a.context.ForceCompact(ctx, a.conversation)
 	return result, nil
 }
