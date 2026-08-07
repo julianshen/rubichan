@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -38,13 +37,20 @@ func TestSummaryHandleStop(t *testing.T) {
 func TestStartAgentSummarization(t *testing.T) {
 	oldInterval := summaryInterval
 	summaryInterval = 50 * time.Millisecond
-	defer func() { summaryInterval = oldInterval }()
+	// Restored via Cleanup rather than defer so it is ordered against the
+	// summarizer's Stop, which is also a Cleanup. Cleanups run last-registered
+	// first, so registering the restore here and Stop below means Stop wins:
+	// the summarizer is halted before the global it reads is written back. A
+	// defer would run before every Cleanup and restore the interval underneath
+	// a still-running scheduleNext.
+	t.Cleanup(func() { summaryInterval = oldInterval })
 
-	// The summarizer invokes onSummary from its own goroutine, so the capture
-	// it writes needs a lock. time.Sleep below orders the two in wall-clock
-	// terms but establishes no happens-before edge.
-	var mu sync.Mutex
-	var summaryReceived string
+	// The summarizer invokes onSummary from its own goroutine. A buffered
+	// channel both carries the value and supplies the happens-before edge, so
+	// the test waits for the callback to actually run instead of sleeping and
+	// hoping. Buffered and non-blocking to send, so a late tick after the
+	// assertion cannot wedge the summarizer goroutine.
+	received := make(chan string, 4)
 	callModel := func(ctx context.Context, messages []provider.Message, systemPrompt string) (string, error) {
 		return "Reading test.go", nil
 	}
@@ -56,21 +62,23 @@ func TestStartAgentSummarization(t *testing.T) {
 		}
 	}
 	onSummary := func(taskID, summary string) {
-		mu.Lock()
-		defer mu.Unlock()
-		summaryReceived = summary
+		select {
+		case received <- summary:
+		default:
+		}
 	}
 
 	handle := StartAgentSummarization("task-1", callModel, "system", getMessages, onSummary)
 	require.NotNil(t, handle)
+	// Registered before the assertion so a failure still stops the summarizer.
+	t.Cleanup(handle.Stop)
 
-	time.Sleep(150 * time.Millisecond)
-	mu.Lock()
-	got := summaryReceived
-	mu.Unlock()
-	require.Equal(t, "Reading test.go", got)
-
-	handle.Stop()
+	select {
+	case got := <-received:
+		require.Equal(t, "Reading test.go", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("summarizer produced no summary")
+	}
 }
 
 func TestSummarizerNotEnoughMessages(t *testing.T) {
@@ -151,7 +159,9 @@ func TestFilterIncompleteToolCallsNoToolUse(t *testing.T) {
 func TestSummarizerPreviousSummaryTracking(t *testing.T) {
 	oldInterval := summaryInterval
 	summaryInterval = 50 * time.Millisecond
-	defer func() { summaryInterval = oldInterval }()
+	// Cleanup, not defer — see TestStartAgentSummarization for why the ordering
+	// against handle.Stop matters.
+	t.Cleanup(func() { summaryInterval = oldInterval })
 
 	callCount := 0
 	callModel := func(ctx context.Context, messages []provider.Message, systemPrompt string) (string, error) {
@@ -169,25 +179,30 @@ func TestSummarizerPreviousSummaryTracking(t *testing.T) {
 		}
 	}
 
-	// Same as above: onSummary runs on the summarizer's goroutine.
-	var mu sync.Mutex
-	var summaries []string
+	// Same as above: onSummary runs on the summarizer's goroutine, so the test
+	// waits for two callbacks to actually complete rather than sleeping for a
+	// duration it hopes is long enough.
+	received := make(chan string, 8)
 	onSummary := func(taskID, summary string) {
-		mu.Lock()
-		defer mu.Unlock()
-		summaries = append(summaries, summary)
+		select {
+		case received <- summary:
+		default:
+		}
 	}
 
 	handle := StartAgentSummarization("task-1", callModel, "system", getMessages, onSummary)
 	require.NotNil(t, handle)
+	t.Cleanup(handle.Stop)
 
-	time.Sleep(200 * time.Millisecond)
-	mu.Lock()
-	got := append([]string(nil), summaries...)
-	mu.Unlock()
-	require.GreaterOrEqual(t, len(got), 2)
+	var got []string
+	for len(got) < 2 {
+		select {
+		case s := <-received:
+			got = append(got, s)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d summaries arrived, want 2", len(got))
+		}
+	}
 	require.Equal(t, "First summary", got[0])
 	require.Equal(t, "Second summary", got[1])
-
-	handle.Stop()
 }
