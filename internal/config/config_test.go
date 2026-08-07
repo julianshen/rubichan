@@ -17,6 +17,8 @@ func TestDefaultConfig(t *testing.T) {
 	// Model defaulting is provider-dependent and resolved by
 	// cmd/rubichan's loadConfig() after the provider is finalized, not here.
 	assert.Empty(t, cfg.Provider.Model)
+	assert.Equal(t, "env", cfg.Provider.Anthropic.APIKeySource)
+	assert.Equal(t, "env", cfg.Provider.Zai.APIKeySource, "Zai must default to \"env\" like Anthropic, or ResolveAPIKey rejects it outright regardless of Z_AI_API_KEY")
 	assert.Equal(t, 50, cfg.Agent.MaxTurns)
 	assert.Equal(t, "prompt", cfg.Agent.ApprovalMode)
 	assert.Equal(t, 100000, cfg.Agent.ContextBudget)

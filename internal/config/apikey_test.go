@@ -107,6 +107,20 @@ func TestHasUsableCredentialsForProviderZaiEnv(t *testing.T) {
 	assert.True(t, HasUsableCredentialsForProvider(cfg, "zai"))
 }
 
+// TestHasUsableCredentialsForProviderZaiDefaultConfigPicksUpEnv reproduces
+// the real-world path: a user sets provider.default = "zai" but never adds
+// an explicit api_key_source under [provider.zai], relying on
+// DefaultConfig()'s own default (as Anthropic users already can). Without a
+// default, Zai.APIKeySource stays "" and ResolveAPIKey's default case
+// rejects it outright, so Z_AI_API_KEY is never consulted.
+func TestHasUsableCredentialsForProviderZaiDefaultConfigPicksUpEnv(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.Default = "zai"
+
+	t.Setenv("Z_AI_API_KEY", "zai-env-key")
+	assert.True(t, HasUsableCredentialsForProvider(cfg, "zai"))
+}
+
 func TestHasUsableCredentialsNilConfig(t *testing.T) {
 	t.Parallel()
 
