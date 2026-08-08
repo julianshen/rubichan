@@ -88,9 +88,15 @@ func runACP() error {
 		return fmt.Errorf("creating provider: %w", err)
 	}
 
+	// Detected once and used twice: tool registration reads it, and the agent
+	// needs it too. Interactive, headless and shell all pass it through
+	// WithCapabilities; ACP dropping it would silently ignore tool-count
+	// limits, discovery hints and configured reasoning effort.
+	modelCaps := provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model)
+
 	registry := tools.NewRegistry()
 	toolsCfg := ToolsConfig{
-		ModelCapabilities: provider.DetectCapabilities(cfg.Provider.Default, cfg.Provider.Model),
+		ModelCapabilities: modelCaps,
 		ProjectContext: ProjectContext{
 			AppleProjectDetected: xcode.DiscoverProject(cwd).Type != "none",
 			AppleSkillRequested:  containsSkill("apple-dev", skillsFlag),
@@ -121,6 +127,7 @@ func runACP() error {
 
 	a := agent.New(p, registry, approvalFunc, cfg,
 		agent.WithWorkingDir(cwd),
+		agent.WithCapabilities(modelCaps),
 		agent.WithApprovalChecker(composite),
 	)
 
