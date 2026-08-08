@@ -13,97 +13,6 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
-// TestAgentACPPromptMethod verifies that the agent/prompt method handles requests correctly.
-func TestAgentACPPromptMethod(t *testing.T) {
-	registry := agent.NewACPRegistry(createTestAgent(t))
-
-	// Send prompt request
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      2,
-		Method:  "agent/prompt",
-		Params:  json.RawMessage(`{"prompt":"test prompt","maxTurns":1}`),
-	}
-
-	result, err := registry.Call(req.Method, req.Params)
-	if errors.Is(err, acp.ErrMethodNotFound) {
-		t.Fatalf("%s is not registered", req.Method)
-	}
-	if err != nil {
-		return // a handler error is an acceptable outcome for a stub provider
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(result, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal result: %v", err)
-	}
-	if status, ok := decoded["status"].(string); !ok || status != "complete" {
-		t.Errorf("expected status='complete', got %v", decoded["status"])
-	}
-}
-
-// TestAgentACPToolExecution verifies that the tool/execute method works correctly.
-func TestAgentACPToolExecution(t *testing.T) {
-	registry := agent.NewACPRegistry(createTestAgent(t))
-
-	// Send tool execution request
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      3,
-		Method:  "tool/execute",
-		Params:  json.RawMessage(`{"tool":"unknown_tool","input":{"path":"main.go"}}`),
-	}
-
-	_, err := registry.Call(req.Method, req.Params)
-	if errors.Is(err, acp.ErrMethodNotFound) {
-		t.Fatalf("%s is not registered", req.Method)
-	}
-	if err == nil {
-		t.Error("expected error for non-existent tool")
-	}
-}
-
-// TestAgentACPSkillMethods verifies that skill methods are properly registered.
-func TestAgentACPSkillMethods(t *testing.T) {
-	registry := agent.NewACPRegistry(createTestAgent(t))
-
-	// Test skill/invoke
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      4,
-		Method:  "skill/invoke",
-		Params:  json.RawMessage(`{"skillName":"test","action":"transform","input":{}}`),
-	}
-
-	result, err := registry.Call(req.Method, req.Params)
-	if errors.Is(err, acp.ErrMethodNotFound) {
-		t.Fatalf("%s is not registered", req.Method)
-	}
-	if result == nil && err == nil {
-		t.Error("expected result or error")
-	}
-}
-
-// TestAgentACPSecurityMethods verifies that security methods are properly registered.
-func TestAgentACPSecurityMethods(t *testing.T) {
-	registry := agent.NewACPRegistry(createTestAgent(t))
-
-	// Test security/scan
-	req := acp.Request{
-		JSONRPC: "2.0",
-		ID:      5,
-		Method:  "security/scan",
-		Params:  json.RawMessage(`{"scope":"project","target":"./","interactive":false}`),
-	}
-
-	result, err := registry.Call(req.Method, req.Params)
-	if errors.Is(err, acp.ErrMethodNotFound) {
-		t.Fatalf("%s is not registered", req.Method)
-	}
-	if result == nil && err == nil {
-		t.Error("expected result or error")
-	}
-}
-
 // TestNewACPRegistryComposesOverPlainAgent pins the Transport seam: the ACP
 // surface is composed over an agent at the composition root, with no core flag
 // or field involved — a plain agent plus NewACPRegistry yields a registry whose
@@ -146,11 +55,14 @@ func TestNewACPRegistryComposesOverPlainAgent(t *testing.T) {
 		t.Error("registered tool did not appear as an ACP capability")
 	}
 
-	// A registered agent method must be routed — a handler error is fine, but
-	// ErrMethodNotFound means it was never wired.
-	if _, err := registry.Call("skill/invoke",
-		json.RawMessage(`{"skillName":"test","action":"transform","input":{}}`)); errors.Is(err, acp.ErrMethodNotFound) {
-		t.Error("skill/invoke not registered on the composed registry")
+	// A registered method must be routed — a handler error is fine, but
+	// ErrMethodNotFound means it was never wired. This checks initialize
+	// because it is now the only method NewACPRegistry registers: the session
+	// methods come from serveACP, and the skill/security stubs were removed for
+	// answering with fabricated success.
+	if _, err := registry.Call("initialize",
+		json.RawMessage(`{"protocolVersion":1,"clientCapabilities":{}}`)); errors.Is(err, acp.ErrMethodNotFound) {
+		t.Error("initialize not registered on the composed registry")
 	}
 }
 
@@ -292,5 +204,50 @@ func TestNewACPRegistryRetainsClientCapabilities(t *testing.T) {
 	}
 	if !got.Terminal {
 		t.Error("client offered terminal; the agent did not record it")
+	}
+}
+
+// TestNewACPRegistryServesNothingItCannotBack is the gate that made shipping
+// --acp safe. Until a mode actually served this registry, five registered
+// methods fabricated success and nobody could reach them:
+//
+//	security/scan     answered "no findings" without scanning anything
+//	security/approve  accepted a decision and recorded it nowhere
+//	skill/invoke      reported success for any skill name
+//	skill/list        reported an empty catalogue as fact
+//	skill/manifest    reported any name as "loaded"
+//
+// A security scan that answers "clean" without scanning does not fail, it
+// reassures — which is worse than not answering. Two more had to go with them:
+// agent/prompt ran a turn straight off the registry, bypassing the handshake
+// gate, the cwd check and the capability gate that session/prompt enforces;
+// tool/execute returned a successful JSON-RPC response whose payload said
+// "not_implemented", which is a lie told in a success envelope.
+//
+// A method that is absent answers -32601 and tells the client the truth.
+func TestNewACPRegistryServesNothingItCannotBack(t *testing.T) {
+	registry := agent.NewACPRegistry(createTestAgent(t))
+
+	for _, method := range []string{
+		"security/scan",
+		"security/approve",
+		"skill/invoke",
+		"skill/list",
+		"skill/manifest",
+		"agent/prompt",
+		"tool/execute",
+	} {
+		_, err := registry.Call(method, json.RawMessage(`{}`))
+		if !errors.Is(err, acp.ErrMethodNotFound) {
+			t.Errorf("%s is still registered: an unimplemented method must be absent, not answer with a fabricated success (got %v)", method, err)
+		}
+	}
+
+	// The honest set stays reachable; this is not a blanket teardown. Only
+	// initialize is checked here: the session methods are registered by
+	// serveACP once a connection exists, because their prompt handler streams
+	// through it.
+	if _, err := registry.Call("initialize", json.RawMessage(`{}`)); errors.Is(err, acp.ErrMethodNotFound) {
+		t.Error("initialize must remain registered")
 	}
 }
