@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/julianshen/rubichan/internal/acp"
+	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -223,3 +226,64 @@ func (c *acpClient) result(t *testing.T, id int, v any) {
 }
 
 func (c *acpClient) close() { _ = c.w.Close() }
+
+// acpStubProvider is a provider that is never actually streamed from: the
+// ServeACP test only completes a handshake, which touches no provider.
+type acpStubProvider struct{}
+
+func (acpStubProvider) Stream(context.Context, provider.CompletionRequest) (<-chan provider.StreamEvent, error) {
+	ch := make(chan provider.StreamEvent)
+	close(ch)
+	return ch, nil
+}
+
+func (acpStubProvider) Name() string { return "acp-stub" }
+
+// TestServeACPWiresARealAgent covers the exported entry point rather than the
+// seam beneath it. It asserts only that a real Agent can be served and answer
+// its handshake — the turn behaviour is covered against an injected turn, which
+// does not need a live provider.
+func TestServeACPWiresARealAgent(t *testing.T) {
+	t.Parallel()
+
+	a := New(
+		acpStubProvider{},
+		tools.NewRegistry(),
+		func(context.Context, string, json.RawMessage) (bool, error) { return true, nil },
+		&config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Agent:    config.AgentConfig{MaxTurns: 1},
+		},
+	)
+
+	serverR, clientW := io.Pipe()
+	clientR, serverW := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = ServeACP(ctx, a, serverR, serverW)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = clientW.Close()
+		_ = serverW.Close()
+	})
+
+	client := &acpClient{w: clientW, r: bufio.NewScanner(clientR), enc: json.NewEncoder(clientW)}
+	client.send(t, 1, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	})
+
+	var got acp.InitializeResult
+	client.result(t, 1, &got)
+	assert.Equal(t, "rubichan", got.AgentInfo.Name)
+
+	client.close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServeACP did not return after the client hung up")
+	}
+}
