@@ -58,8 +58,6 @@ func stopReasonFor(r agentsdk.TurnExitReason) (acp.StopReason, error) {
 	case agentsdk.ExitCompleted,
 		agentsdk.ExitTaskComplete,
 		agentsdk.ExitStopHookPrevented,
-		agentsdk.ExitNoProgress,
-		agentsdk.ExitEmptyResponse,
 		agentsdk.ExitDiminishingReturns:
 		return acp.StopEndTurn, nil
 
@@ -75,13 +73,21 @@ func stopReasonFor(r agentsdk.TurnExitReason) (acp.StopReason, error) {
 	// Everything below is a failed turn. ExitUnknown is included on purpose:
 	// it is documented as a bug, and answering it as a completed turn would
 	// hide the code path that forgot to set a reason.
+	// ExitNoProgress and ExitEmptyResponse are here because the agent emits an
+	// explicit error event immediately before each — tool_phase.go for the
+	// first, assemble_turn.go for the second. They are the agent declaring the
+	// turn failed, so end_turn would contradict it. The empty-response case is
+	// the worst of the two: the client would receive a clean stop reason and
+	// not one chunk of assistant text.
 	case agentsdk.ExitUnknown,
 		agentsdk.ExitProviderError,
 		agentsdk.ExitRateLimited,
 		agentsdk.ExitSkillActivationFailed,
 		agentsdk.ExitCompactionFailed,
 		agentsdk.ExitContextOverflow,
-		agentsdk.ExitPanic:
+		agentsdk.ExitPanic,
+		agentsdk.ExitNoProgress,
+		agentsdk.ExitEmptyResponse:
 		return "", fmt.Errorf("turn failed: %s", r)
 
 	default:
@@ -136,13 +142,24 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 		}
 
 		var (
-			exit  agentsdk.TurnExitReason
-			ended bool
+			exit    agentsdk.TurnExitReason
+			ended   bool
+			lastErr error
 		)
 		for ev := range events {
 			switch ev.Type {
 			case agentsdk.EventTextDelta:
 				notify(acp.AgentMessageChunk(ev.Text))
+			case "error":
+				// Retained, not reported yet. The agent emits error events it
+				// then recovers from — a model fallback is one — so the done
+				// event decides the outcome. But when the turn does fail, this
+				// is the only text saying *why*: the exit reason is a category,
+				// not a diagnosis. Dropping it left the client with
+				// "turn failed: empty_response" and nothing else.
+				if ev.Error != nil {
+					lastErr = ev.Error
+				}
 			case "tool_call":
 				if ev.ToolCall != nil {
 					notify(acp.ToolCall(ev.ToolCall.ID, ev.ToolCall.Name))
@@ -165,7 +182,12 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 		if !ended {
 			return "", fmt.Errorf("turn ended without a done event")
 		}
-		return stopReasonFor(exit)
+
+		stop, err := stopReasonFor(exit)
+		if err != nil && lastErr != nil {
+			return "", fmt.Errorf("%w: %v", err, lastErr)
+		}
+		return stop, err
 	}
 }
 
