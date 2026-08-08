@@ -299,6 +299,33 @@ func (c *Conn) Request(ctx context.Context, method string, params any) (json.Raw
 	}
 }
 
+// Notify sends a one-way message to the peer: no id, so no answer is expected
+// and none may be sent. This is the direction ACP streams a turn on —
+// session/update carries every agent_message_chunk, tool_call and plan entry
+// while session/prompt is still running.
+//
+// It refuses once the connection has stopped serving. Unlike Request there is
+// no response to wait on, so without this check a caller could not tell a
+// delivered update from one written into a closed stream.
+func (c *Conn) Notify(method string, params any) error {
+	raw, err := marshalParams(params)
+	if err != nil {
+		return fmt.Errorf("marshal params for %s: %w", method, err)
+	}
+
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return fmt.Errorf("%s: %w", method, ErrConnClosed)
+	}
+
+	if err := c.write(Notification{JSONRPC: "2.0", Method: method, Params: raw}); err != nil {
+		return fmt.Errorf("send %s: %w", method, err)
+	}
+	return nil
+}
+
 // failPending closes every waiting channel so Request calls return an error
 // rather than blocking forever once the connection is gone.
 func (c *Conn) failPending() {
