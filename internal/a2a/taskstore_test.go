@@ -58,3 +58,20 @@ func TestStoreTaskStoreUpdateNotFound(t *testing.T) {
 	err = ts.Update(ctx, task)
 	require.Error(t, err)
 }
+
+func TestStoreTaskStoreGetUnmarshalError(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Insert corrupt JSON directly into the database, bypassing the normal
+	// Create path which always marshals valid JSON. This exercises the
+	// unmarshal error path in Get.
+	require.NoError(t, s.CreateA2ATask("client", "task-1", "ctx-1", "submitted", "not valid json"))
+
+	ts := NewStoreTaskStore(s, "client")
+	ctx := context.Background()
+
+	_, err = ts.Get(ctx, "task-1")
+	assert.Error(t, err)
+}
