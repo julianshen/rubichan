@@ -225,10 +225,30 @@ func RegisterSession(registry *CapabilityRegistry, cfg SessionConfig) {
 		// for any other directory cannot be served. Validating that cwd was
 		// absolute and then ignoring it was worse than not validating at all:
 		// it made the field look honoured.
-		if filepath.Clean(req.Cwd) != filepath.Clean(cfg.WorkingDir) {
+		// Both sides are resolved to absolute form first. The agent's working
+		// directory may itself be relative — WithWorkingDir stores what it is
+		// given and construction only fills it from os.Getwd when empty — while
+		// ACP requires the client's cwd to be absolute. Comparing with Clean
+		// alone preserves that difference and would reject every valid request
+		// for the very directory the tools operate in.
+		//
+		// Empty is checked before resolving, not after: filepath.Abs("")
+		// returns the process's own directory, which would quietly turn "the
+		// caller never said which directory it serves" into "serve wherever
+		// this process happens to be running".
+		if cfg.WorkingDir == "" {
+			return nil, fmt.Errorf(
+				"session/new: %w: this agent was wired without a working directory, so it can serve no session",
+				ErrInvalidParams)
+		}
+		served, err := filepath.Abs(cfg.WorkingDir)
+		if err != nil {
+			return nil, fmt.Errorf("session/new: resolve agent working directory %q: %w", cfg.WorkingDir, err)
+		}
+		if filepath.Clean(req.Cwd) != served {
 			return nil, fmt.Errorf(
 				"session/new: %w: this agent serves only %q, not %q; its working directory is fixed at startup",
-				ErrInvalidParams, cfg.WorkingDir, req.Cwd)
+				ErrInvalidParams, served, req.Cwd)
 		}
 
 		// ACP defines a session as an independent context with its own history.

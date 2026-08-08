@@ -332,18 +332,14 @@ func TestServeACPWiresARealAgent(t *testing.T) {
 // store it creates, and that store is per connection — so serving one Agent
 // twice produced two "sole" sessions sharing a single conversation, which is
 // the exact defect the guard was added to prevent, one level up.
+//
+// The claim is permanent. An earlier version released it on return, which left
+// the sequential case broken: a later connection would open a fresh session and
+// inherit the earlier one's history off the agent.
 func TestServeACPRefusesASecondConnectionToOneAgent(t *testing.T) {
 	t.Parallel()
 
-	a := New(
-		acpStubProvider{},
-		tools.NewRegistry(),
-		func(context.Context, string, json.RawMessage) (bool, error) { return true, nil },
-		&config.Config{
-			Provider: config.ProviderConfig{Model: "test-model"},
-			Agent:    config.AgentConfig{MaxTurns: 1},
-		},
-	)
+	a := newACPTestAgent(t)
 
 	firstR, firstW := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -361,10 +357,11 @@ func TestServeACPRefusesASecondConnectionToOneAgent(t *testing.T) {
 
 	err := ServeACP(context.Background(), a, strings.NewReader(""), io.Discard)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already serving")
+	assert.Contains(t, err.Error(), "already served")
 
-	// Releasing the claim matters as much as taking it: an agent that could be
-	// served exactly once per process would be worse than one that refuses.
+	// End the first connection, then try again. This is the sequential case:
+	// the second client would get a new session id backed by the first
+	// client's conversation, so it must still be refused.
 	cancel()
 	_ = firstW.Close()
 	select {
@@ -372,5 +369,23 @@ func TestServeACPRefusesASecondConnectionToOneAgent(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the first ServeACP did not return")
 	}
-	assert.False(t, a.acpServing.Load(), "the claim must be released when serving ends")
+
+	err = ServeACP(context.Background(), a, strings.NewReader(""), io.Discard)
+	require.Error(t, err,
+		"a finished connection must not free the agent: its conversation carries over")
+	assert.Contains(t, err.Error(), "already served")
+}
+
+// newACPTestAgent builds an agent that can be served but never streamed from.
+func newACPTestAgent(t *testing.T) *Agent {
+	t.Helper()
+	return New(
+		acpStubProvider{},
+		tools.NewRegistry(),
+		func(context.Context, string, json.RawMessage) (bool, error) { return true, nil },
+		&config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Agent:    config.AgentConfig{MaxTurns: 1},
+		},
+	)
 }

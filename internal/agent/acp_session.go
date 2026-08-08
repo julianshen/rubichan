@@ -202,13 +202,22 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 // connection would get its own session store, pass its own sole-session check,
 // and still append to the first connection's history.
 func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
+	// The claim is permanent, not held for the duration of the connection.
+	//
+	// Releasing it on return was the obvious thing and it was wrong: the
+	// conversation lives on the agent and nothing resets it between
+	// connections, so a second client would open a fresh ACP session and
+	// inherit the first client's history. That is a cross-client leak, and it
+	// is worse than a one-shot API.
+	//
+	// Making reuse safe means resetting or replacing every piece of
+	// session-owned agent state — conversation, context manager, session
+	// memory, persistence — which is the per-session-state feature this slice
+	// deliberately does not attempt. Until that exists, an agent serves ACP
+	// once and a second connection needs a second agent.
 	if !a.acpServing.CompareAndSwap(false, true) {
-		return fmt.Errorf("acp: this agent is already serving a connection; construct a second agent to serve another")
+		return fmt.Errorf("acp: this agent has already served an ACP connection; construct a new agent to serve another, because its conversation would otherwise carry over")
 	}
-	// Released rather than latched, so an agent can serve again once the first
-	// connection ends. A one-shot claim would be a worse bug than the one it
-	// fixes.
-	defer a.acpServing.Store(false)
 
 	registry, handshake := newACPRegistry(a)
 	return serveACP(ctx, r, w, acpServeConfig{
