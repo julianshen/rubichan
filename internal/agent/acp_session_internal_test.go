@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/acp"
@@ -26,8 +27,6 @@ func TestStopReasonForCoversEveryExitReason(t *testing.T) {
 		agentsdk.ExitCompleted:          acp.StopEndTurn,
 		agentsdk.ExitTaskComplete:       acp.StopEndTurn,
 		agentsdk.ExitStopHookPrevented:  acp.StopEndTurn,
-		agentsdk.ExitNoProgress:         acp.StopEndTurn,
-		agentsdk.ExitEmptyResponse:      acp.StopEndTurn,
 		agentsdk.ExitDiminishingReturns: acp.StopEndTurn,
 		agentsdk.ExitMaxTurns:           acp.StopMaxTurnRequests,
 		agentsdk.ExitCancelled:          acp.StopCancelled,
@@ -47,6 +46,12 @@ func TestStopReasonForCoversEveryExitReason(t *testing.T) {
 		agentsdk.ExitCompactionFailed,
 		agentsdk.ExitContextOverflow,
 		agentsdk.ExitPanic,
+		// The agent emits an explicit error event immediately before each of
+		// these two — tool_phase.go for no-progress, assemble_turn.go for an
+		// empty response. Reporting end_turn would tell the client the model
+		// finished cleanly on a turn the agent itself just declared failed.
+		agentsdk.ExitNoProgress,
+		agentsdk.ExitEmptyResponse,
 	}
 
 	for reason, want := range ended {
@@ -206,4 +211,55 @@ func TestACPPromptReportsATurnThatNeverStarted(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "start turn")
+}
+
+// TestACPPromptCarriesTheAgentsOwnErrorText covers the error events the adapter
+// used to drop on the floor. The agent emits one immediately before
+// ExitNoProgress and ExitEmptyResponse, and it is the only thing that says what
+// actually went wrong — the exit reason alone is a category, not a diagnosis.
+func TestACPPromptCarriesTheAgentsOwnErrorText(t *testing.T) {
+	t.Parallel()
+
+	turn := func(_ context.Context, _ string) (<-chan agentsdk.TurnEvent, error) {
+		ch := make(chan agentsdk.TurnEvent, 2)
+		ch <- agentsdk.TurnEvent{
+			Type:  "error",
+			Error: errors.New("detected no progress after 3 repeated tool-only rounds"),
+		}
+		ch <- agentsdk.TurnEvent{Type: "done", ExitReason: agentsdk.ExitNoProgress}
+		close(ch)
+		return ch, nil
+	}
+
+	_, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+		SessionID: "sess-1",
+		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "repeated tool-only rounds",
+		"the agent said why it failed; that must reach the client")
+}
+
+// TestACPPromptDoesNotFailATurnThatRecovered keeps the error capture from
+// turning a survivable hiccup into a failed turn. The agent emits error events
+// it then recovers from — a model fallback, for instance — and the done event
+// is what decides the outcome.
+func TestACPPromptDoesNotFailATurnThatRecovered(t *testing.T) {
+	t.Parallel()
+
+	turn := func(_ context.Context, _ string) (<-chan agentsdk.TurnEvent, error) {
+		ch := make(chan agentsdk.TurnEvent, 3)
+		ch <- agentsdk.TurnEvent{Type: "error", Error: errors.New("transient provider hiccup")}
+		ch <- agentsdk.TurnEvent{Type: "text_delta", Text: "recovered"}
+		ch <- agentsdk.TurnEvent{Type: "done", ExitReason: agentsdk.ExitCompleted}
+		close(ch)
+		return ch, nil
+	}
+
+	stop, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+		SessionID: "sess-1",
+		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
+	})
+	require.NoError(t, err, "the done event decides the outcome, not a recovered error")
+	assert.Equal(t, acp.StopEndTurn, stop)
 }
