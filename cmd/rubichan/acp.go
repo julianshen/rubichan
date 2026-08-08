@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/folderaccess"
@@ -61,6 +63,14 @@ func runACP() error {
 		cfg.Agent.MaxTurns = maxTurnsFlag
 	}
 
+	// Signals are the only cancellation path this mode has. ACP's session/cancel
+	// is unimplementable while Handler carries no context, and the drain now
+	// waits without a deadline — so without this, a turn wedged in a provider
+	// call after the editor disconnects would keep the process alive forever.
+	// An editor that terminates its agent subprocess sends one of these.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
@@ -111,6 +121,22 @@ func runACP() error {
 		defer cleanup()
 	}
 
+	// Every other mode wires these; ACP skipping them made it the odd one out
+	// in ways a user would only discover by their absence.
+	if err := wireAppleDev(cwd, registry, toolsCfg); err != nil {
+		return fmt.Errorf("wiring apple dev tools: %w", err)
+	}
+
+	// --skills was read for the apple-dev check above and otherwise ignored, so
+	// a client launching with --skills got none of them.
+	rt, skillCloser, err := createSkillRuntime(ctx, registry, p, cfg, "acp", cwd, cfgDir)
+	if err != nil {
+		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if skillCloser != nil {
+		defer skillCloser.Close()
+	}
+
 	// The approval posture the consent check above already forced the caller to
 	// choose. Hierarchical deny policies still apply, so an org-level
 	// restriction is not lost by opting in.
@@ -125,14 +151,22 @@ func runACP() error {
 		return true, nil
 	}
 
+	// The tool security pipeline. Interactive and headless both install it, and
+	// ACP omitting it meant .security.yaml and Agent.ToolRules denials were not
+	// enforced — on the one mode that auto-approves every call, so the rule
+	// engine was the only thing left saying no.
+	pipeline := buildPipeline(registry, cfg, cwd, rt)
+
 	a := agent.New(p, registry, approvalFunc, cfg,
 		agent.WithWorkingDir(cwd),
 		agent.WithCapabilities(modelCaps),
 		agent.WithApprovalChecker(composite),
+		agent.WithSkillRuntime(rt),
+		agent.WithToolMiddlewares(pipeline.Middlewares),
 	)
 
-	// Background, not a timeout: an ACP connection lives as long as the client
-	// keeps it open. --timeout governs a single headless run and would cut a
-	// live editor session off mid-conversation.
-	return agent.ServeACP(context.Background(), a, os.Stdin, os.Stdout)
+	// Signal-cancellable, not a timeout: an ACP connection lives as long as the
+	// client keeps it open, and --timeout governs a single headless run, so it
+	// would cut a live editor session off mid-conversation.
+	return agent.ServeACP(ctx, a, os.Stdin, os.Stdout)
 }
