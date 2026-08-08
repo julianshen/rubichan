@@ -948,13 +948,21 @@ func (s *Store) GetA2ATask(role, id string) (data string, state string, err erro
 }
 
 // UpdateA2ATask overwrites a task's state and data blob.
+// Returns an error if the task does not exist.
 func (s *Store) UpdateA2ATask(role, id, state, data string) error {
-	_, err := s.db.Exec(
+	result, err := s.db.Exec(
 		`UPDATE a2a_tasks SET state = ?, data = ?, updated_at = datetime('now') WHERE role = ? AND id = ?`,
 		state, data, role, id,
 	)
 	if err != nil {
 		return fmt.Errorf("update a2a task: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update a2a task rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("update a2a task: task %q (role %q) not found", id, role)
 	}
 	return nil
 }

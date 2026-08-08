@@ -1356,3 +1356,14 @@ func TestA2ATaskRoleIsolation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "working", state)
 }
+
+func TestA2ATaskUpdateNotFound(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Try to update a task that was never created
+	err = store.UpdateA2ATask("client", "missing", "completed", `{}`)
+	assert.Error(t, err)
+	assert.Equal(t, "update a2a task: task \"missing\" (role \"client\") not found", err.Error())
+}
