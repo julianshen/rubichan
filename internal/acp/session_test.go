@@ -222,3 +222,56 @@ func TestSessionPromptReportsRefusalWithoutInventingOne(t *testing.T) {
 	assert.NotErrorIs(t, err, acp.ErrInvalidParams,
 		"the agent failed, not the client's payload; -32603, not -32602")
 }
+
+// TestSessionUpdateShapes pins the wire shape of the notifications a turn
+// streams back. The discriminator is a field named sessionUpdate, not the
+// JSON-RPC method, and a client demultiplexes on it — so a wrong or missing
+// discriminator is a silently ignored update rather than a loud failure.
+func TestSessionUpdateShapes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("agent message chunk", func(t *testing.T) {
+		t.Parallel()
+
+		got := decodeUpdate(t, acp.NewSessionNotification("sess-1",
+			acp.AgentMessageChunk("hello")))
+		assert.Equal(t, "sess-1", got["sessionId"])
+		update := got["update"].(map[string]any)
+		assert.Equal(t, "agent_message_chunk", update["sessionUpdate"])
+		content := update["content"].(map[string]any)
+		assert.Equal(t, "text", content["type"])
+		assert.Equal(t, "hello", content["text"])
+	})
+
+	t.Run("tool call", func(t *testing.T) {
+		t.Parallel()
+
+		got := decodeUpdate(t, acp.NewSessionNotification("sess-1",
+			acp.ToolCall("call-1", "read_file")))
+		update := got["update"].(map[string]any)
+		assert.Equal(t, "tool_call", update["sessionUpdate"])
+		assert.Equal(t, "call-1", update["toolCallId"])
+		assert.Equal(t, "read_file", update["title"])
+		assert.Equal(t, "pending", update["status"])
+	})
+
+	t.Run("tool call update carries a terminal status", func(t *testing.T) {
+		t.Parallel()
+
+		got := decodeUpdate(t, acp.NewSessionNotification("sess-1",
+			acp.ToolCallUpdate("call-1", acp.ToolCallFailed)))
+		update := got["update"].(map[string]any)
+		assert.Equal(t, "tool_call_update", update["sessionUpdate"])
+		assert.Equal(t, "call-1", update["toolCallId"])
+		assert.Equal(t, "failed", update["status"])
+	})
+}
+
+func decodeUpdate(t *testing.T, n acp.SessionNotification) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(n)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(raw, &got))
+	return got
+}
