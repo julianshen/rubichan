@@ -95,6 +95,10 @@ type InitializeConfig struct {
 	AgentInfo    AgentInfo
 	Capabilities AgentCapabilities
 	AuthMethods  []AuthMethod
+	// Handshake, when set, is marked complete once this handshake succeeds.
+	// The session methods read it to enforce ACP's ordering rule.
+	Handshake *Handshake
+
 	// OnInitialized receives the peer's capabilities once negotiated, so the
 	// agent can avoid requesting things the client never offered.
 	OnInitialized func(ClientCapabilities, AgentInfo)
@@ -141,6 +145,10 @@ func RegisterInitialize(registry *CapabilityRegistry, cfg InitializeConfig) {
 		if result.AuthMethods == nil {
 			result.AuthMethods = []AuthMethod{}
 		}
+
+		// Marked before the result is marshalled but after every validation
+		// above, so a rejected handshake does not unlock the session methods.
+		cfg.Handshake.MarkComplete()
 
 		if cfg.OnInitialized != nil {
 			cfg.OnInitialized(req.ClientCapabilities, cfg.AgentInfo)

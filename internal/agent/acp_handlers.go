@@ -38,14 +38,24 @@ func acpAgentCapabilities() acp.AgentCapabilities {
 // acp.Conn, which takes a registry and owns the framing. Callers wrap it with
 // acp.NewConn(r, w, registry) where a mode actually serves ACP.
 func NewACPRegistry(a *Agent) *acp.CapabilityRegistry {
-	registry := acp.NewCapabilityRegistry()
-	a.registerACPCapabilities(registry)
+	registry, _ := newACPRegistry(a)
 	return registry
+}
+
+// newACPRegistry also returns the handshake the registry's initialize marks, so
+// a caller wiring session methods can gate them on it. Returning it rather than
+// reaching back into the registry keeps the ordering rule explicit at the
+// composition root instead of hidden inside the registry.
+func newACPRegistry(a *Agent) (*acp.CapabilityRegistry, *acp.Handshake) {
+	registry := acp.NewCapabilityRegistry()
+	handshake := acp.NewHandshake()
+	a.registerACPCapabilities(registry, handshake)
+	return registry, handshake
 }
 
 // registerACPCapabilities registers all ACP capabilities and method
 // handlers on the given registry.
-func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
+func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry, handshake *acp.Handshake) {
 	for _, toolName := range a.tools.Names() {
 		tool, ok := a.tools.Get(toolName)
 		if !ok {
@@ -61,6 +71,7 @@ func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
 	acp.RegisterInitialize(registry, acp.InitializeConfig{
 		AgentInfo:    acp.AgentInfo{Name: "rubichan", Version: agentVersion},
 		Capabilities: acpAgentCapabilities(),
+		Handshake:    handshake,
 		OnInitialized: func(caps acp.ClientCapabilities, _ acp.AgentInfo) {
 			a.setClientCapabilities(caps)
 		},
