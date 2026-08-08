@@ -9,7 +9,7 @@ import (
 )
 
 // TaskStore persists Task state so a crash mid-poll or mid-execution is
-// recoverable rather than silently forgetten. Server and client sides
+// recoverable rather than silently forgotten. Server and client sides
 // each own their own TaskStore instance (see NewStoreTaskStore's role
 // parameter).
 type TaskStore interface {

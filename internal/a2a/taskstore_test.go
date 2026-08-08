@@ -31,3 +31,30 @@ func TestStoreTaskStoreCreateGetUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, TaskCompleted, got.State)
 }
+
+func TestStoreTaskStoreGetNotFound(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	ts := NewStoreTaskStore(s, "client")
+	ctx := context.Background()
+
+	// Attempt to get a task that was never created.
+	_, err = ts.Get(ctx, "nonexistent-id")
+	require.Error(t, err)
+}
+
+func TestStoreTaskStoreUpdateNotFound(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	ts := NewStoreTaskStore(s, "client")
+	ctx := context.Background()
+
+	// Attempt to update a task that was never created.
+	task := Task{ID: "nonexistent-id", ContextID: "ctx-1", State: TaskCompleted}
+	err = ts.Update(ctx, task)
+	require.Error(t, err)
+}
