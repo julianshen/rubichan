@@ -10,7 +10,6 @@ import (
 	"log"
 	"math"
 	"sync"
-	"time"
 )
 
 // maxMessageSize caps a single JSON-RPC message at 10 MB, which accommodates
@@ -22,12 +21,6 @@ const maxMessageSize = 10 * 1024 * 1024
 // handler before the read loop pauses. Generous enough that ordinary streaming
 // never blocks, small enough that a flood cannot grow without limit.
 const notificationBacklog = 256
-
-// inFlightDrainGrace bounds how long Serve waits on handlers that are still
-// answering when the stream ends. Long enough for a handler to finish
-// marshalling and writing; short enough that a wedged one does not keep the
-// process alive after its client has gone.
-const inFlightDrainGrace = 5 * time.Second
 
 // Conn is a bidirectional ACP connection over a single byte stream.
 //
@@ -125,7 +118,7 @@ func (c *Conn) Serve(ctx context.Context) error {
 	// The close is safe because only dispatch sends, and dispatch runs on this
 	// goroutine — once the loop below exits there are no further senders.
 	defer close(c.notifications)
-	defer c.drainInFlight()
+	defer c.drainInFlight(ctx)
 	defer c.failPending()
 
 	lines := make(chan []byte)
@@ -251,16 +244,21 @@ func (c *Conn) serveRequest(ctx context.Context, line []byte) {
 	}()
 }
 
-// drainInFlight waits for handlers that are mid-answer, bounded so one wedged
-// handler cannot hold the process open forever.
+// drainInFlight waits for handlers that are mid-answer, until they finish or
+// the caller cancels.
 //
-// The bound is a deliberate asymmetry with Request, which is released
-// immediately by failPending. A caller blocked in Request can be told the
-// connection died; a peer waiting on a response has no such channel, so it is
-// worth a short wait to deliver what was already computed. Beyond that the
-// client has almost certainly gone, and a turn still running has nowhere to
-// send its output anyway.
-func (c *Conn) drainInFlight() {
+// This deliberately has no fixed deadline. An earlier version used a five
+// second grace, which sounded prudent and was wrong: a session/prompt handler
+// runs an entire turn — provider latency plus tool calls — so any realistic
+// prompt outlived the cutoff and lost its response to the very half-close this
+// drain exists to support. A bound short enough to contain a wedged handler is
+// necessarily far shorter than a legitimate turn, so the two cannot be
+// separated by time.
+//
+// ctx is the escape hatch instead, which puts the decision where it belongs:
+// the caller that started Serve is the one that knows whether it wants to stop
+// waiting.
+func (c *Conn) drainInFlight(ctx context.Context) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -269,8 +267,8 @@ func (c *Conn) drainInFlight() {
 
 	select {
 	case <-done:
-	case <-time.After(inFlightDrainGrace):
-		log.Printf("acp: gave up waiting for in-flight handlers after %s", inFlightDrainGrace)
+	case <-ctx.Done():
+		log.Printf("acp: cancelled with handlers still answering; their responses are lost")
 	}
 }
 

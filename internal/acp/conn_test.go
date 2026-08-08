@@ -684,3 +684,39 @@ func TestConnReleasesANestedRequestAtEOF(t *testing.T) {
 	assert.Contains(t, out.String(), `"done":true`,
 		"the handler still owes its own response, and the writer is open until Serve returns")
 }
+
+// TestConnDrainStopsOnCancel pins the escape hatch that replaced the fixed
+// drain deadline.
+//
+// The deadline was five seconds, which is shorter than any real session/prompt
+// turn, so it lost exactly the responses the drain was added to preserve. There
+// is no duration that separates a wedged handler from a legitimate turn, so the
+// caller decides instead: cancelling the context Serve was given stops the wait.
+func TestConnDrainStopsOnCancel(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	registry := acp.NewCapabilityRegistry()
+	registry.RegisterMethod("wedged", func(json.RawMessage) (json.RawMessage, error) {
+		<-release // outlives Serve, as a hung handler would
+		return json.RawMessage(`{}`), nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c := acp.NewConn(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"wedged"}`+"\n"), &safeBuffer{}, registry)
+
+	served := make(chan error, 1)
+	go func() { served <- c.Serve(ctx) }()
+
+	// Let the handler start, then withdraw the caller's patience.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-served:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelling the serve context did not end the drain")
+	}
+}
