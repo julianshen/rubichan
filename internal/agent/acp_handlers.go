@@ -11,6 +11,25 @@ import (
 // agentVersion is reported to peers in the initialize handshake.
 const agentVersion = "1.0.0"
 
+// acpAgentCapabilities is what this agent tells an ACP client it can do.
+//
+// It is a single function rather than a literal at each use because two places
+// now depend on it: the handshake publishes it, and session/prompt gates
+// incoming content on it. Restating it in both would let the agent advertise
+// one set and enforce another, which is the specific dishonesty the prompt
+// decoder exists to prevent.
+//
+// Every field is false, and stays false until the method behind it is
+// registered. embeddedContext means the agent accepts embedded
+// ContentBlock::Resource data in session/prompt; loadSession means it serves
+// session/load. Neither exists yet, and advertising a capability whose method
+// is unregistered tells a client it may send something that will fail — the
+// same defect as the deleted adapters, pointed the other way. These flip on in
+// the slice that registers the handler.
+func acpAgentCapabilities() acp.AgentCapabilities {
+	return acp.AgentCapabilities{}
+}
+
 // NewACPRegistry builds the capability registry an ACP peer is served from:
 // the agent's tools plus its method handlers. This is a composition-root
 // operation — the agent core holds no ACP state.
@@ -40,15 +59,8 @@ func (a *Agent) registerACPCapabilities(registry *acp.CapabilityRegistry) {
 	}
 
 	acp.RegisterInitialize(registry, acp.InitializeConfig{
-		AgentInfo: acp.AgentInfo{Name: "rubichan", Version: agentVersion},
-		// Every field here is false, and stays false until the method behind it
-		// is registered. embeddedContext means the agent accepts embedded
-		// ContentBlock::Resource data in session/prompt; loadSession means it
-		// serves session/load. Neither exists yet, and advertising a capability
-		// whose method is unregistered tells a client it may send something
-		// that will fail — the same defect as the deleted adapters, pointed the
-		// other way. These flip on in the slice that registers the handler.
-		Capabilities: acp.AgentCapabilities{},
+		AgentInfo:    acp.AgentInfo{Name: "rubichan", Version: agentVersion},
+		Capabilities: acpAgentCapabilities(),
 		OnInitialized: func(caps acp.ClientCapabilities, _ acp.AgentInfo) {
 			a.setClientCapabilities(caps)
 		},
