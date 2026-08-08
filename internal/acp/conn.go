@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"sync"
+	"time"
 )
 
 // maxMessageSize caps a single JSON-RPC message at 10 MB, which accommodates
@@ -21,6 +22,12 @@ const maxMessageSize = 10 * 1024 * 1024
 // handler before the read loop pauses. Generous enough that ordinary streaming
 // never blocks, small enough that a flood cannot grow without limit.
 const notificationBacklog = 256
+
+// inFlightDrainGrace bounds how long Serve waits on handlers that are still
+// answering when the stream ends. Long enough for a handler to finish
+// marshalling and writing; short enough that a wedged one does not keep the
+// process alive after its client has gone.
+const inFlightDrainGrace = 5 * time.Second
 
 // Conn is a bidirectional ACP connection over a single byte stream.
 //
@@ -50,6 +57,11 @@ type Conn struct {
 	// writeMu serialises writes. Requests, responses and notifications share
 	// one stream, and an interleaved write corrupts the wire.
 	writeMu sync.Mutex
+
+	// inFlight counts request handlers that have started and owe a response.
+	// Serve drains them before returning, or a client that closes its write
+	// side gets a clean stream close and no answer.
+	inFlight sync.WaitGroup
 
 	mu      sync.Mutex
 	nextID  int64
@@ -91,10 +103,11 @@ func (c *Conn) Serve(ctx context.Context) error {
 		}
 	}()
 
-	// Defers run last-registered-first, and the order matters. failPending is
-	// registered last so it runs first: callers blocked in Request are released
-	// before anything else is torn down. Closing the notification channel then
-	// lets the worker drain and exit on its own.
+	// Defers run last-registered-first, and the order matters. drainInFlight is
+	// registered last so it runs first: handlers that already started still owe
+	// the peer a response, and the writer is still open until Serve returns.
+	// failPending then releases anyone blocked in Request, and closing the
+	// notification channel lets that worker drain and exit on its own.
 	//
 	// Serve deliberately does not wait for that worker. A handler that wedges
 	// would otherwise hold shutdown open indefinitely and keep every pending
@@ -106,6 +119,7 @@ func (c *Conn) Serve(ctx context.Context) error {
 	// goroutine — once the loop below exits there are no further senders.
 	defer close(c.notifications)
 	defer c.failPending()
+	defer c.drainInFlight()
 
 	lines := make(chan []byte)
 	scanErr := make(chan error, 1)
@@ -207,7 +221,9 @@ func (c *Conn) serveRequest(ctx context.Context, line []byte) {
 		return
 	}
 
+	c.inFlight.Add(1)
 	go func() {
+		defer c.inFlight.Done()
 		result, err := c.registry.Call(req.Method, req.Params)
 		if err != nil {
 			code := ErrorCodeInternalError
@@ -226,6 +242,29 @@ func (c *Conn) serveRequest(ctx context.Context, line []byte) {
 		}
 		_ = c.write(Response{JSONRPC: "2.0", ID: req.ID, Result: &result})
 	}()
+}
+
+// drainInFlight waits for handlers that are mid-answer, bounded so one wedged
+// handler cannot hold the process open forever.
+//
+// The bound is a deliberate asymmetry with Request, which is released
+// immediately by failPending. A caller blocked in Request can be told the
+// connection died; a peer waiting on a response has no such channel, so it is
+// worth a short wait to deliver what was already computed. Beyond that the
+// client has almost certainly gone, and a turn still running has nowhere to
+// send its output anyway.
+func (c *Conn) drainInFlight() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.inFlight.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(inFlightDrainGrace):
+		log.Printf("acp: gave up waiting for in-flight handlers after %s", inFlightDrainGrace)
+	}
 }
 
 // routeResponse hands a response to whichever Request call is waiting on its

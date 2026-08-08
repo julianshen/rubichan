@@ -1,11 +1,13 @@
 package acp_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -579,4 +581,53 @@ func TestConnNotifyFailsOnceClosed(t *testing.T) {
 
 	err := c.Notify("session/update", map[string]any{"sessionId": "sess-1"})
 	assert.ErrorIs(t, err, acp.ErrConnClosed)
+}
+
+// TestConnAnswersARequestThatArrivesBeforeEOF covers a client that sends a
+// request and immediately closes its write side — a legitimate pattern, and
+// what a shell pipeline does by default.
+//
+// serveRequest answers on its own goroutine so a handler may call Request
+// mid-turn. That left Serve free to return the instant the reader hit EOF,
+// while the handler was still marshalling its reply, so the response was never
+// written. The client saw a clean stream close and no answer, which is
+// indistinguishable from an agent that ignored it.
+func TestConnAnswersARequestThatArrivesBeforeEOF(t *testing.T) {
+	t.Parallel()
+
+	registry := acp.NewCapabilityRegistry()
+	registry.RegisterMethod("slow", func(json.RawMessage) (json.RawMessage, error) {
+		// Long enough that a Serve which does not wait will lose the race
+		// deterministically rather than flakily.
+		time.Sleep(50 * time.Millisecond)
+		return json.RawMessage(`{"answered":true}`), nil
+	})
+
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"slow"}` + "\n")
+	var out safeBuffer
+
+	c := acp.NewConn(in, &out, registry)
+	require.NoError(t, c.Serve(context.Background()))
+
+	assert.Contains(t, out.String(), `"answered":true`,
+		"Serve returned before the handler could write; the client loses the response it is waiting for")
+}
+
+// safeBuffer is a writer that tolerates the handler goroutine and the test
+// goroutine touching it around shutdown.
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
