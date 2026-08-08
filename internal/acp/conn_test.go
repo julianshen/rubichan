@@ -698,8 +698,13 @@ func TestConnDrainStopsOnCancel(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 
+	// Signalled on entry rather than waited for by clock: a sleep long enough to
+	// be safe on a loaded worker is a guess, and if cancel lands before the
+	// handler reaches inFlight the test passes without a drain to cancel.
+	started := make(chan struct{})
 	registry := acp.NewCapabilityRegistry()
 	registry.RegisterMethod("wedged", func(json.RawMessage) (json.RawMessage, error) {
+		close(started)
 		<-release // outlives Serve, as a hung handler would
 		return json.RawMessage(`{}`), nil
 	})
@@ -710,8 +715,7 @@ func TestConnDrainStopsOnCancel(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- c.Serve(ctx) }()
 
-	// Let the handler start, then withdraw the caller's patience.
-	time.Sleep(50 * time.Millisecond)
+	<-started // the handler is in flight; now withdraw the caller's patience
 	cancel()
 
 	select {
