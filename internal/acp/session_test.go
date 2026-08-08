@@ -223,6 +223,11 @@ func TestSessionPromptReportsRefusalWithoutInventingOne(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, acp.ErrInvalidParams,
 		"the agent failed, not the client's payload; -32603, not -32602")
+	// Pinned positively as well: NotErrorIs alone passes for any error that is
+	// not ErrInvalidParams, so a regression returning some unrelated failure
+	// would still satisfy it.
+	assert.ErrorIs(t, err, assert.AnError,
+		"the handler's own failure must reach the caller")
 }
 
 // TestSessionUpdateShapes pins the wire shape of the notifications a turn
@@ -238,9 +243,9 @@ func TestSessionUpdateShapes(t *testing.T) {
 		got := decodeUpdate(t, acp.NewSessionNotification("sess-1",
 			acp.AgentMessageChunk("hello")))
 		assert.Equal(t, "sess-1", got["sessionId"])
-		update := got["update"].(map[string]any)
+		update := requireObject(t, got["update"])
 		assert.Equal(t, "agent_message_chunk", update["sessionUpdate"])
-		content := update["content"].(map[string]any)
+		content := requireObject(t, update["content"])
 		assert.Equal(t, "text", content["type"])
 		assert.Equal(t, "hello", content["text"])
 	})
@@ -250,7 +255,7 @@ func TestSessionUpdateShapes(t *testing.T) {
 
 		got := decodeUpdate(t, acp.NewSessionNotification("sess-1",
 			acp.ToolCall("call-1", "read_file")))
-		update := got["update"].(map[string]any)
+		update := requireObject(t, got["update"])
 		assert.Equal(t, "tool_call", update["sessionUpdate"])
 		assert.Equal(t, "call-1", update["toolCallId"])
 		assert.Equal(t, "read_file", update["title"])
@@ -262,11 +267,22 @@ func TestSessionUpdateShapes(t *testing.T) {
 
 		got := decodeUpdate(t, acp.NewSessionNotification("sess-1",
 			acp.ToolCallUpdate("call-1", acp.ToolCallFailed)))
-		update := got["update"].(map[string]any)
+		update := requireObject(t, got["update"])
 		assert.Equal(t, "tool_call_update", update["sessionUpdate"])
 		assert.Equal(t, "call-1", update["toolCallId"])
 		assert.Equal(t, "failed", update["status"])
 	})
+}
+
+// requireObject asserts a field decoded to a JSON object before indexing it. A
+// bare type assertion panics on a shape change, and a panic takes down the test
+// binary's goroutine — so a wire-shape regression would report less than it
+// could, hiding the sibling subtests behind the first one to break.
+func requireObject(t *testing.T, v any) map[string]any {
+	t.Helper()
+	obj, ok := v.(map[string]any)
+	require.True(t, ok, "expected a JSON object, got %T", v)
+	return obj
 }
 
 func decodeUpdate(t *testing.T, n acp.SessionNotification) map[string]any {

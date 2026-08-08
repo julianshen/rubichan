@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Rubichan is a Go-based AI Coding Agent specified in `spec.md` (v1.1, Feb 2026). It is currently in the **specification phase** — no implementation code exists yet. The spec defines a terminal-first CLI tool with three execution modes: Interactive (Bubble Tea TUI), Headless (CI/CD pipes), and Wiki Generator (batch documentation).
+Rubichan is a Go-based AI Coding Agent originally specified in `spec.md` (v1.1, Feb 2026). The spec defines a terminal-first CLI tool with three execution modes: Interactive (Bubble Tea TUI), Headless (CI/CD pipes), and Wiki Generator (batch documentation).
+
+**The project is implemented, not in the specification phase.** This line previously said "no implementation code exists yet", which stopped being true long ago and contradicted the rest of this file. Where `spec.md` and the code disagree, the code is what ships — check it before planning against the spec.
 
 The spec is the single source of truth. Always consult `spec.md` before making architectural decisions.
 
