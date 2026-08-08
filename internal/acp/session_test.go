@@ -3,6 +3,7 @@ package acp_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"sync"
 	"testing"
 
@@ -471,4 +472,49 @@ func TestSessionPromptRefusesASecondConcurrentTurn(t *testing.T) {
 	// The guard must clear, or the session would be usable exactly once.
 	_, err = registry.Call("session/prompt", prompt)
 	assert.NoError(t, err, "a finished turn releases the session")
+}
+
+// TestSessionNewResolvesARelativeWorkingDir covers an agent constructed with a
+// relative working-directory override. WithWorkingDir stores the value as
+// given and New only fills it from os.Getwd when empty, so it can stay
+// relative — while ACP requires the client's cwd to be absolute.
+//
+// Comparing the two with Clean alone preserves that distinction and rejects
+// every valid request for the very directory the tools operate in.
+func TestSessionNewResolvesARelativeWorkingDir(t *testing.T) {
+	t.Parallel()
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	cfg := sessionConfig(nil)
+	cfg.WorkingDir = "." // relative, names the process's own directory
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, cfg)
+
+	_, err = registry.Call("session/new", json.RawMessage(
+		`{"cwd":"`+wd+`","mcpServers":[]}`))
+	assert.NoError(t, err, "the absolute client cwd names the same directory as %q", cfg.WorkingDir)
+}
+
+// TestSessionNewRefusesWhenNoWorkingDirWasWired guards the empty case against
+// the absolute-path resolution added for relative overrides. filepath.Abs("")
+// returns the process's own directory, so resolving before checking would turn
+// "the caller never said which directory it serves" into "serve wherever this
+// process happens to be running".
+func TestSessionNewRefusesWhenNoWorkingDirWasWired(t *testing.T) {
+	t.Parallel()
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	cfg := sessionConfig(nil)
+	cfg.WorkingDir = ""
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, cfg)
+
+	_, err = registry.Call("session/new", json.RawMessage(
+		`{"cwd":"`+wd+`","mcpServers":[]}`))
+	require.Error(t, err, "an unwired agent must not silently serve the process directory")
+	assert.ErrorIs(t, err, acp.ErrInvalidParams)
 }
