@@ -304,9 +304,15 @@ func (c *Conn) Request(ctx context.Context, method string, params any) (json.Raw
 // session/update carries every agent_message_chunk, tool_call and plan entry
 // while session/prompt is still running.
 //
-// It refuses once the connection has stopped serving. Unlike Request there is
-// no response to wait on, so without this check a caller could not tell a
-// delivered update from one written into a closed stream.
+// It refuses sends *observed* to be after close, and that is the whole of the
+// guarantee. The closed check and the write are not one atomic step: Serve can
+// return in the window between them, so a nil error means the write did not
+// fail, not that the peer received anything.
+//
+// Closing the window would mean holding a lock across the write and having
+// failPending take it too — which lets one stalled peer block every Request on
+// the connection. A dropped update during teardown is the cheaper failure, so
+// the race is accepted and stated rather than papered over.
 func (c *Conn) Notify(method string, params any) error {
 	raw, err := marshalParams(params)
 	if err != nil {
