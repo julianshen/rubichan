@@ -1314,3 +1314,45 @@ func TestDeleteEmptySessionsSkipsForkedSources(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, got, "fork source should not be deleted")
 }
+
+func TestA2ATaskCRUD(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.CreateA2ATask("client", "task-1", "ctx-1", "submitted", `{"id":"task-1"}`))
+
+	data, state, err := store.GetA2ATask("client", "task-1")
+	require.NoError(t, err)
+	assert.Equal(t, "submitted", state)
+	assert.JSONEq(t, `{"id":"task-1"}`, data)
+
+	require.NoError(t, store.UpdateA2ATask("client", "task-1", "completed", `{"id":"task-1","state":"completed"}`))
+
+	data, state, err = store.GetA2ATask("client", "task-1")
+	require.NoError(t, err)
+	assert.Equal(t, "completed", state)
+	assert.JSONEq(t, `{"id":"task-1","state":"completed"}`, data)
+}
+
+func TestA2ATaskGetNotFound(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	_, _, err = store.GetA2ATask("client", "missing")
+	assert.Error(t, err)
+}
+
+func TestA2ATaskRoleIsolation(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.CreateA2ATask("server", "task-1", "ctx-1", "working", `{}`))
+	require.NoError(t, store.CreateA2ATask("client", "task-1", "ctx-1", "submitted", `{}`))
+
+	_, state, err := store.GetA2ATask("server", "task-1")
+	require.NoError(t, err)
+	assert.Equal(t, "working", state)
+}
