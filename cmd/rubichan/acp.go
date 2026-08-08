@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/folderaccess"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
@@ -24,14 +25,20 @@ import (
 // machine with nobody having agreed to it. Headless can default to
 // auto-approval because a person typed the command that started it; here the
 // caller is an editor, and the person may not know a tool ran at all.
+//
+// --approve-cwd deliberately does NOT satisfy this. It governs folder access —
+// whether the agent may work in this directory at all — and grants no scope
+// over which tools may run unattended once it does. Accepting it here, as an
+// earlier version did, promised a restriction that nothing implemented.
 func checkACPToolConsent() error {
-	if autoApprove || approveCwd {
+	if autoApprove {
 		return nil
 	}
 	return fmt.Errorf(
 		"--acp cannot ask for tool approval: this agent does not implement ACP's session/request_permission, " +
 			"so a client cannot be prompted before a tool runs. Re-run with --auto-approve to accept unattended " +
-			"tool execution, or --approve-cwd to limit it to the working directory")
+			"tool execution. (--approve-cwd does not substitute: it grants folder access, not a limit on which " +
+			"tools may run.)")
 }
 
 // runACP serves the Agent Client Protocol over stdin/stdout until the client
@@ -57,6 +64,23 @@ func runACP() error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
+	}
+
+	// The same folder-access gate interactive and headless apply. Without it
+	// ACP would be the one mode that works in a directory the user never
+	// approved — and it is the mode where the user is least likely to notice,
+	// because an editor started it.
+	cfgDir, err := configDir()
+	if err != nil {
+		return fmt.Errorf("resolving config directory: %w", err)
+	}
+	st, err := openStore(cfgDir)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer st.Close()
+	if err := folderaccess.EnsureApprovedNonInteractive(st, cwd, autoApprove, approveCwd); err != nil {
+		return err
 	}
 
 	p, err := provider.NewProviderWithDebug(cfg, debugMode)
