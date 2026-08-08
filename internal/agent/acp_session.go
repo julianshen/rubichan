@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/julianshen/rubichan/internal/acp"
@@ -166,4 +167,39 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 		}
 		return stopReasonFor(exit)
 	}
+}
+
+// ServeACP serves the Agent Client Protocol over r/w until the stream ends or
+// ctx is cancelled.
+//
+// This is the composition root for ACP: the agent core holds no protocol state,
+// so the registry, the connection and the session wiring are assembled here and
+// nowhere else.
+func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
+	return serveACP(ctx, r, w, NewACPRegistry(a), acpAgentCapabilities(), a.Turn)
+}
+
+// serveACP is ServeACP with its collaborators passed in, so the wiring can be
+// exercised against a turn that does not need a live provider.
+func serveACP(
+	ctx context.Context,
+	r io.Reader,
+	w io.Writer,
+	registry *acp.CapabilityRegistry,
+	caps acp.AgentCapabilities,
+	turn turnFunc,
+) error {
+	conn := acp.NewConn(r, w, registry)
+
+	// Session methods are registered after the connection exists because the
+	// prompt handler streams through it, and the connection is built from the
+	// registry. Ordering it this way is safe rather than merely convenient:
+	// RegisterMethod is mutex-guarded, and Serve has not started reading yet, so
+	// no request can arrive against a half-populated registry.
+	acp.RegisterSession(registry, acp.SessionConfig{
+		Capabilities: caps,
+		Prompt:       acpPromptFunc(conn, turn),
+	})
+
+	return conn.Serve(ctx)
 }
