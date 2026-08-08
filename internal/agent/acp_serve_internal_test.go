@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -324,4 +325,52 @@ func TestServeACPWiresARealAgent(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ServeACP did not return after the client hung up")
 	}
+}
+
+// TestServeACPRefusesASecondConnectionToOneAgent closes the session-isolation
+// hole at connection scope. RegisterSession's sole-session guard lives in the
+// store it creates, and that store is per connection — so serving one Agent
+// twice produced two "sole" sessions sharing a single conversation, which is
+// the exact defect the guard was added to prevent, one level up.
+func TestServeACPRefusesASecondConnectionToOneAgent(t *testing.T) {
+	t.Parallel()
+
+	a := New(
+		acpStubProvider{},
+		tools.NewRegistry(),
+		func(context.Context, string, json.RawMessage) (bool, error) { return true, nil },
+		&config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Agent:    config.AgentConfig{MaxTurns: 1},
+		},
+	)
+
+	firstR, firstW := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- ServeACP(ctx, a, firstR, io.Discard) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = firstW.Close()
+	})
+
+	// Wait for the first connection to have claimed the agent, rather than
+	// racing it: the claim happens on the serving goroutine.
+	require.Eventually(t, a.acpServing.Load, 2*time.Second, 5*time.Millisecond,
+		"the first ServeACP never claimed the agent")
+
+	err := ServeACP(context.Background(), a, strings.NewReader(""), io.Discard)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already serving")
+
+	// Releasing the claim matters as much as taking it: an agent that could be
+	// served exactly once per process would be worse than one that refuses.
+	cancel()
+	_ = firstW.Close()
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first ServeACP did not return")
+	}
+	assert.False(t, a.acpServing.Load(), "the claim must be released when serving ends")
 }

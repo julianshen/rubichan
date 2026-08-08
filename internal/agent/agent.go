@@ -470,6 +470,14 @@ type Agent struct {
 	acpClientCaps   acp.ClientCapabilities
 	acpClientCapsMu sync.RWMutex
 
+	// acpServing marks this agent as bound to one ACP connection.
+	//
+	// The sole-session guard lives in the session store, which ServeACP creates
+	// per connection — so without a claim at this scope, serving one agent
+	// twice yields two "sole" sessions sharing this agent's single
+	// conversation, which is the very thing that guard exists to prevent.
+	acpServing atomic.Bool
+
 	provider            provider.LLMProvider
 	tools               *tools.Registry
 	conversation        *Conversation

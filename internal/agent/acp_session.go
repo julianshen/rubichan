@@ -197,7 +197,19 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 // This is the composition root for ACP: the agent core holds no protocol state,
 // so the registry, the connection and the session wiring are assembled here and
 // nowhere else.
+// One agent serves one connection at a time. Every session opened on any
+// connection runs through this agent's single conversation, so a second
+// connection would get its own session store, pass its own sole-session check,
+// and still append to the first connection's history.
 func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
+	if !a.acpServing.CompareAndSwap(false, true) {
+		return fmt.Errorf("acp: this agent is already serving a connection; construct a second agent to serve another")
+	}
+	// Released rather than latched, so an agent can serve again once the first
+	// connection ends. A one-shot claim would be a worse bug than the one it
+	// fixes.
+	defer a.acpServing.Store(false)
+
 	registry, handshake := newACPRegistry(a)
 	return serveACP(ctx, r, w, acpServeConfig{
 		Registry:     registry,
