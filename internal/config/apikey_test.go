@@ -118,7 +118,7 @@ func TestHasUsableCredentialsForProviderZaiDefaultConfigPicksUpEnv(t *testing.T)
 	cfg.Provider.Default = "zai"
 
 	t.Setenv("Z_AI_API_KEY", "zai-env-key")
-	assert.True(t, HasUsableCredentialsForProvider(cfg, "zai"))
+	assert.True(t, HasUsableCredentialsForProvider(cfg, cfg.Provider.Default))
 }
 
 func TestHasUsableCredentialsNilConfig(t *testing.T) {
