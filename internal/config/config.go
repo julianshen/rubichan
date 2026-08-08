@@ -415,6 +415,9 @@ func DefaultConfig() *Config {
 			Anthropic: AnthropicProviderConfig{
 				APIKeySource: "env",
 			},
+			Zai: ZaiProviderConfig{
+				APIKeySource: "env",
+			},
 		},
 		Agent: AgentConfig{
 			MaxTurns:               50,
