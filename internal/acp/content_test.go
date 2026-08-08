@@ -125,3 +125,32 @@ func TestPromptContentRejectsMalformedArray(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, acp.ErrInvalidParams)
 }
+
+// TestPromptContentRejectsAnEmptyPrompt covers the two payloads that decode
+// cleanly into no content at all. Both would otherwise reach the model as an
+// empty string: a turn is started, a conversation gains an empty user message,
+// and real tokens are spent answering nothing.
+//
+// null and [] are treated alike deliberately. They differ only in whether the
+// resulting slice is nil, which is not a distinction a client meant to draw,
+// and neither carries the prompt the method exists to deliver.
+func TestPromptContentRejectsAnEmptyPrompt(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"null", `null`},
+		{"empty array", `[]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := acp.DecodePromptContent(json.RawMessage(tc.raw), acp.PromptCapabilities{})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, acp.ErrInvalidParams)
+			assert.Contains(t, err.Error(), "at least one")
+		})
+	}
+}

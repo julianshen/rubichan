@@ -66,6 +66,15 @@ func DecodePromptContent(raw json.RawMessage, caps PromptCapabilities) ([]Conten
 		return nil, fmt.Errorf("%w: prompt: %v", ErrInvalidParams, err)
 	}
 
+	// null and [] both decode without error into no content at all. Neither is
+	// a prompt, and letting either through starts a turn against an empty
+	// string: the conversation gains an empty user message and the model is
+	// paid to answer nothing. They differ only in whether the slice is nil,
+	// which is not a distinction any client meant to draw.
+	if len(blocks) == 0 {
+		return nil, fmt.Errorf("%w: prompt must contain at least one content block", ErrInvalidParams)
+	}
+
 	for i, b := range blocks {
 		if err := checkAdmissible(b.Type, caps); err != nil {
 			return nil, fmt.Errorf("%w: prompt[%d]: %v", ErrInvalidParams, i, err)
