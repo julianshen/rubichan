@@ -176,6 +176,7 @@ func (c *Client) Stream(ctx context.Context, msg Message) (<-chan Task, error) {
 		for {
 			select {
 			case <-ctx.Done():
+				drainSSEEvents(events)
 				return
 			case raw, ok := <-events:
 				if !ok {
@@ -188,6 +189,7 @@ func (c *Client) Stream(ctx context.Context, msg Message) (<-chan Task, error) {
 				select {
 				case out <- task:
 				case <-ctx.Done():
+					drainSSEEvents(events)
 					return
 				}
 				switch task.State {
@@ -198,4 +200,18 @@ func (c *Client) Stream(ctx context.Context, msg Message) (<-chan Task, error) {
 		}
 	}()
 	return out, nil
+}
+
+// drainSSEEvents keeps receiving from events, discarding every value,
+// until the channel closes. parseSSEEvents' producer goroutine may be
+// blocked mid-send on this channel (its buffer is small relative to how
+// much a single bufio.Scanner read can pull off the wire); abandoning the
+// channel here without draining would leave that goroutine parked forever,
+// since closing resp.Body only unblocks a goroutine blocked on reading the
+// body, not one blocked on a channel send. Draining lets the producer's
+// send succeed, so it resumes scanning, exhausts the (finite) body, and
+// closes the channel itself.
+func drainSSEEvents(events <-chan json.RawMessage) {
+	for range events {
+	}
 }

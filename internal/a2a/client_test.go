@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -303,6 +305,67 @@ func TestClientStreamContextCanceled(t *testing.T) {
 	// Channel should eventually close
 	_, ok := <-ch
 	assert.False(t, ok, "channel should close after context canceled")
+}
+
+// TestClientStreamContextCanceledDoesNotLeakGoroutine reproduces a leak
+// where parseSSEEvents' producer goroutine blocks forever on an unguarded
+// channel send. The handler below writes far more events than the SSE
+// channel's 8-slot buffer can hold, all before the client has read a
+// single one off the wire -- exactly the shape that lets a single
+// bufio.Scanner.Scan() burst-read many lines in one shot, filling (and
+// overflowing) the buffer before the consumer ever drains it. The test
+// then reads exactly one Task and cancels the context, which is when a
+// non-draining forwarding goroutine would abandon the channel and leave
+// the producer permanently blocked on its next send.
+func TestClientStreamContextCanceledDoesNotLeakGoroutine(t *testing.T) {
+	const numEvents = 20
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < numEvents; i++ {
+			task := Task{ID: "task-1", State: TaskWorking}
+			taskJSON, _ := json.Marshal(task)
+			_, _ = w.Write([]byte("event: message\ndata: "))
+			_, _ = w.Write(taskJSON)
+			_, _ = w.Write([]byte("\n\n"))
+		}
+		// Handler returns without blocking: all events are written in one
+		// burst before the client reads any of them, and only a finite
+		// amount of data is ever produced.
+	})
+	srv := testutil.NewServer(t, handler)
+	defer srv.Close()
+
+	baseline := runtime.NumGoroutine()
+
+	client := NewClient(srv.URL, "", srv.Client())
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := client.Stream(ctx, Message{Role: "user", Parts: []Part{{Kind: "text", Text: "hi"}}})
+	require.NoError(t, err)
+
+	task := <-ch
+	assert.Equal(t, "task-1", task.ID)
+
+	cancel()
+
+	// Poll from this goroutine directly rather than via require.Eventually:
+	// Eventually spawns a fresh checker goroutine per tick and would count
+	// itself in runtime.NumGoroutine(), which permanently offsets the
+	// measurement above baseline and makes the condition unsatisfiable
+	// even once the real leak is fixed.
+	deadline := time.Now().Add(2 * time.Second)
+	var last int
+	for {
+		last = runtime.NumGoroutine()
+		if last <= baseline {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines spawned by Stream should be cleaned up after context cancellation; got %d, baseline %d", last, baseline)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestClientStreamResponseError(t *testing.T) {
