@@ -99,6 +99,35 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	assert.Equal(t, 50, cfg.Agent.MaxTurns)
 }
 
+func TestDefaultConfigA2A(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	assert.Equal(t, "127.0.0.1:9910", cfg.A2A.ServeAddr)
+	assert.True(t, cfg.A2A.RequireAuth)
+	assert.Empty(t, cfg.A2A.Agents)
+}
+
+func TestLoadA2AAgents(t *testing.T) {
+	t.Parallel()
+
+	tomlContent := `
+[[a2a.agents]]
+name = "research-bot"
+url = "https://example.com"
+api_key_source = "env"
+`
+	tmpFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(tomlContent), 0644))
+
+	cfg, err := Load(tmpFile)
+	require.NoError(t, err)
+	require.Len(t, cfg.A2A.Agents, 1)
+	assert.Equal(t, "research-bot", cfg.A2A.Agents[0].Name)
+	assert.Equal(t, "https://example.com", cfg.A2A.Agents[0].URL)
+	assert.Equal(t, "env", cfg.A2A.Agents[0].APIKeySource)
+}
+
 func TestLoadInvalidTOML(t *testing.T) {
 	t.Parallel()
 
