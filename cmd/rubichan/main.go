@@ -98,6 +98,7 @@ var (
 	eventLogPath     string
 
 	headless     bool
+	acpFlag      bool
 	promptFlag   string
 	fileFlag     string
 	modeFlag     string
@@ -348,6 +349,9 @@ func main() {
 				}
 				return runWikiHeadless(cfg, cwd, wikiOutFlag, wikiFormatFlag, wikiConcurrencyFlag)
 			}
+			if acpFlag {
+				return runACP()
+			}
 			if headless {
 				return runHeadless()
 			}
@@ -380,6 +384,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&approveCwd, "approve-cwd", false, "approve access to the current working directory in headless mode without enabling full auto-approval")
 	rootCmd.PersistentFlags().StringVar(&eventLogPath, "event-log", "", "write structured interactive session events to the given JSONL file")
 	rootCmd.PersistentFlags().BoolVar(&headless, "headless", false, "run in non-interactive headless mode")
+	rootCmd.PersistentFlags().BoolVar(&acpFlag, "acp", false, "serve the Agent Client Protocol over stdin/stdout for an editor client")
 	rootCmd.PersistentFlags().StringVar(&promptFlag, "prompt", "", "prompt text for headless mode")
 	rootCmd.PersistentFlags().StringVar(&fileFlag, "file", "", "read prompt from file for headless mode")
 	rootCmd.PersistentFlags().StringVar(&modeFlag, "mode", "", "headless mode (e.g. code-review)")
