@@ -177,3 +177,33 @@ func TestACPPromptRejectsATurnThatNeverFinished(t *testing.T) {
 	})
 	assert.Error(t, err)
 }
+
+// TestStopReasonForRejectsAReasonItDoesNotKnow exercises the guard branch. It
+// is unreachable through the agent's own constants, which is the point: if one
+// is ever added without being classified, this is the behaviour it gets —
+// a refusal naming the gap, not a silent end_turn.
+func TestStopReasonForRejectsAReasonItDoesNotKnow(t *testing.T) {
+	t.Parallel()
+
+	_, err := stopReasonFor(agentsdk.TurnExitReason(9999))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unclassified")
+}
+
+// TestACPPromptReportsATurnThatNeverStarted covers the failure before any event
+// exists. There is nothing to stream and no exit reason to map, so the error
+// has to carry the outcome by itself.
+func TestACPPromptReportsATurnThatNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	turn := func(context.Context, string) (<-chan agentsdk.TurnEvent, error) {
+		return nil, assert.AnError
+	}
+
+	_, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+		SessionID: "sess-1",
+		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "start turn")
+}
