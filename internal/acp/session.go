@@ -49,6 +49,16 @@ type SessionConfig struct {
 	// the content it claims to accept.
 	Capabilities AgentCapabilities
 
+	// WorkingDir is the only directory this agent can serve a session for. The
+	// agent freezes its working directory at construction, so a session opened
+	// against anything else would run every file and shell tool somewhere the
+	// client did not ask for.
+	//
+	// An empty value therefore refuses every session/new rather than accepting
+	// all of them: it means the caller never said which directory it serves,
+	// and guessing is what this field exists to prevent.
+	WorkingDir string
+
 	// Prompt runs a turn. A nil Prompt means session/prompt is unserved, and
 	// the method reports that rather than pretending to have run.
 	Prompt PromptFunc
@@ -89,7 +99,10 @@ type session struct {
 // goroutines — Conn serves each inbound request on its own — so every access is
 // guarded.
 type sessionStore struct {
-	mu       sync.RWMutex
+	mu sync.RWMutex
+	// claimed marks the single session slot as taken, including the window
+	// between reserving it and the session actually existing.
+	claimed  bool
 	sessions map[string]session
 }
 
@@ -97,6 +110,33 @@ func (s *sessionStore) add(id string, sess session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[id] = sess
+}
+
+// claimSole reserves the single session this agent can host, or reports that it
+// is already taken. Checking and claiming happen under one lock: two
+// session/new calls arriving together would otherwise both observe an empty
+// store and both succeed.
+//
+// The claim is a flag rather than a placeholder entry in the map, so a lookup
+// can never find a session that was only reserved.
+func (s *sessionStore) claimSole() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.claimed {
+		return fmt.Errorf("%w: this agent hosts one session at a time and already has one; close it or open a second connection",
+			ErrInvalidParams)
+	}
+	s.claimed = true
+	return nil
+}
+
+// releaseSole undoes a claim whose session was never created. Without it, a
+// failure between claiming and adding would leave the connection permanently
+// unable to open the session it is allowed.
+func (s *sessionStore) releaseSole() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.claimed = false
 }
 
 func (s *sessionStore) get(id string) (session, bool) {
@@ -140,8 +180,28 @@ func RegisterSession(registry *CapabilityRegistry, cfg SessionConfig) {
 			return nil, fmt.Errorf("session/new: %w: additionalDirectories is not supported; this agent works only in cwd", ErrInvalidParams)
 		}
 
+		// The agent's working directory is frozen at construction, so a session
+		// for any other directory cannot be served. Validating that cwd was
+		// absolute and then ignoring it was worse than not validating at all:
+		// it made the field look honoured.
+		if filepath.Clean(req.Cwd) != filepath.Clean(cfg.WorkingDir) {
+			return nil, fmt.Errorf(
+				"session/new: %w: this agent serves only %q, not %q; its working directory is fixed at startup",
+				ErrInvalidParams, cfg.WorkingDir, req.Cwd)
+		}
+
+		// ACP defines a session as an independent context with its own history.
+		// This agent owns exactly one conversation, so a second session id would
+		// hand the client something that looks isolated and silently shares the
+		// first session's history, tool state and workspace. Refusing is the
+		// honest position until a session can own its own agent state.
+		if err := store.claimSole(); err != nil {
+			return nil, fmt.Errorf("session/new: %w", err)
+		}
+
 		id, err := newSessionID()
 		if err != nil {
+			store.releaseSole()
 			return nil, fmt.Errorf("session/new: %w", err)
 		}
 		store.add(id, session{cwd: req.Cwd})

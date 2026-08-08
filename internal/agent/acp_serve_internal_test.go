@@ -142,7 +142,7 @@ func startACP(t *testing.T, turn turnFunc) (*acpClient, chan struct{}) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = serveACP(ctx, serverR, serverW, registry, acpAgentCapabilities(), turn)
+		_ = serveACP(ctx, serverR, serverW, registry, acpAgentCapabilities(), "/repo", turn)
 	}()
 	t.Cleanup(func() {
 		cancel()
