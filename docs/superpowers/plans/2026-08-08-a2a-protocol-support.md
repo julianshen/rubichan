@@ -704,6 +704,7 @@ func (c *Client) Stream(ctx context.Context, msg Message) (<-chan Task, error) {
 				}
 				switch task.State {
 				case TaskCompleted, TaskFailed, TaskCanceled, TaskRejected:
+					drainSSEEvents(events)
 					return
 				}
 			}
@@ -738,6 +739,22 @@ channel send, so the parser goroutine leaks permanently. `drainSSEEvents`
 keeps consuming (and discarding) events after cancellation so the blocked
 producer's send succeeds, it resumes scanning, exhausts the body, and
 exits normally.
+
+**Pitfall avoided here (third exit path):** the same leak class applies
+to the terminal-state `switch` case above, not just the two `ctx.Done()`
+branches. A server can write a burst of SSE events in one unflushed
+response where an early event already carries a terminal task state and
+more events follow it in the same burst (e.g. 20 events written at once,
+with event 5 being `TaskCompleted` and events 6–20 still queued behind
+it). The forwarding goroutine sees the terminal snapshot at event 5 and,
+without `drainSSEEvents`, would return immediately — abandoning
+`parseSSEEvents`' producer goroutine while it's still blocked mid-send on
+the (by-then full) 8-slot buffer, leaking it forever, identical to the
+`ctx.Done()` case. The terminal-state case must drain exactly like the
+other two exit paths before returning; a fix that only covers
+`ctx.Done()` handles cancellation but not a terminal state arriving mid-
+burst, which is the more common real-world trigger since servers don't
+need a client to cancel anything to produce this shape.
 
 - [ ] **Step 4: Run test to verify it passes**
 
