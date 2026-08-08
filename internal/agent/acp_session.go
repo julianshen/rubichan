@@ -198,31 +198,38 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 // so the registry, the connection and the session wiring are assembled here and
 // nowhere else.
 func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
-	return serveACP(ctx, r, w, NewACPRegistry(a), acpAgentCapabilities(), a.WorkingDir(), a.Turn)
+	return serveACP(ctx, r, w, acpServeConfig{
+		Registry:     NewACPRegistry(a),
+		Capabilities: acpAgentCapabilities(),
+		WorkingDir:   a.WorkingDir(),
+		Turn:         a.Turn,
+	})
+}
+
+// acpServeConfig is what serving ACP needs from its surroundings. Grouped into
+// a struct rather than passed positionally because the list had grown past the
+// point where a caller could tell two adjacent strings apart.
+type acpServeConfig struct {
+	Registry     *acp.CapabilityRegistry
+	Capabilities acp.AgentCapabilities
+	WorkingDir   string
+	Turn         turnFunc
 }
 
 // serveACP is ServeACP with its collaborators passed in, so the wiring can be
 // exercised against a turn that does not need a live provider.
-func serveACP(
-	ctx context.Context,
-	r io.Reader,
-	w io.Writer,
-	registry *acp.CapabilityRegistry,
-	caps acp.AgentCapabilities,
-	workingDir string,
-	turn turnFunc,
-) error {
-	conn := acp.NewConn(r, w, registry)
+func serveACP(ctx context.Context, r io.Reader, w io.Writer, cfg acpServeConfig) error {
+	conn := acp.NewConn(r, w, cfg.Registry)
 
 	// Session methods are registered after the connection exists because the
 	// prompt handler streams through it, and the connection is built from the
 	// registry. Ordering it this way is safe rather than merely convenient:
 	// RegisterMethod is mutex-guarded, and Serve has not started reading yet, so
 	// no request can arrive against a half-populated registry.
-	acp.RegisterSession(registry, acp.SessionConfig{
-		Capabilities: caps,
-		WorkingDir:   workingDir,
-		Prompt:       acpPromptFunc(conn, turn),
+	acp.RegisterSession(cfg.Registry, acp.SessionConfig{
+		Capabilities: cfg.Capabilities,
+		WorkingDir:   cfg.WorkingDir,
+		Prompt:       acpPromptFunc(conn, cfg.Turn),
 	})
 
 	return conn.Serve(ctx)
