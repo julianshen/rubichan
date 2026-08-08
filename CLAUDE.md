@@ -49,20 +49,24 @@ Do not add capabilities to ACP on the assumption that something consumes them â€
 
 Note also that `internal/acp` is **not** the repository's MCP support: that lives in `internal/tools/mcp` and `internal/skills/mcpbackend`.
 
-## Build Commands (planned)
+## Build Commands
+
+The entrypoint is `cmd/rubichan`. This block previously said `./cmd/agent`
+throughout, and `cmd/` has only ever contained `rubichan` â€” none of those
+commands ran. `wiki` was likewise shown as a subcommand; it is a flag.
 
 ```bash
-go build ./cmd/agent              # Build binary
+go build ./cmd/rubichan           # Build binary
 go test ./...                     # Run all tests
 go test -cover ./...              # Tests with coverage
 go test ./internal/agent/...      # Test specific package
 go test -run TestFunctionName     # Run single test
 golangci-lint run ./...           # Lint
 gofmt -l .                        # Check formatting
-go run ./cmd/agent                # Run interactive mode
-go run ./cmd/agent --headless     # Run headless mode
-go run ./cmd/agent --acp --auto-approve  # Serve ACP over stdio to an editor client
-go run ./cmd/agent wiki           # Run wiki generator
+go run ./cmd/rubichan                     # Interactive mode
+go run ./cmd/rubichan --headless          # Headless mode
+go run ./cmd/rubichan --wiki              # Wiki generator
+go run ./cmd/rubichan --acp --auto-approve  # Serve ACP over stdio to an editor client
 ```
 
 ## Key Design Decisions

@@ -631,3 +631,56 @@ func (b *safeBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// TestConnReleasesANestedRequestAtEOF covers a handler that is itself waiting
+// on the peer when the stream ends — session/prompt asking for a tool approval
+// mid-turn is the case that matters.
+//
+// Shutdown has to fail pending calls before it drains handlers. Draining first
+// deadlocks the two against each other: the drain waits for the handler, the
+// handler waits for an answer that can no longer arrive, and neither moves
+// until the grace period expires. That turns a prompt connection-loss signal
+// into a five-second stall.
+func TestConnReleasesANestedRequestAtEOF(t *testing.T) {
+	t.Parallel()
+
+	nested := make(chan error, 1)
+	registry := acp.NewCapabilityRegistry()
+
+	var c *acp.Conn
+	ready := make(chan struct{})
+	registry.RegisterMethod("asks", func(json.RawMessage) (json.RawMessage, error) {
+		<-ready
+		// The peer has gone; this can never be answered.
+		_, err := c.Request(context.Background(), "session/request_permission", map[string]any{})
+		nested <- err
+		return json.RawMessage(`{"done":true}`), nil
+	})
+
+	var out safeBuffer
+	c = acp.NewConn(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"asks"}`+"\n"), &out, registry)
+
+	served := make(chan error, 1)
+	go func() {
+		close(ready)
+		served <- c.Serve(context.Background())
+	}()
+
+	select {
+	case err := <-nested:
+		assert.ErrorIs(t, err, acp.ErrConnClosed,
+			"a nested Request must be told the connection died, not left to time out")
+	case <-time.After(2 * time.Second):
+		t.Fatal("nested Request was not released; shutdown is waiting out the drain grace period")
+	}
+
+	select {
+	case err := <-served:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return")
+	}
+
+	assert.Contains(t, out.String(), `"done":true`,
+		"the handler still owes its own response, and the writer is open until Serve returns")
+}

@@ -103,11 +103,18 @@ func (c *Conn) Serve(ctx context.Context) error {
 		}
 	}()
 
-	// Defers run last-registered-first, and the order matters. drainInFlight is
-	// registered last so it runs first: handlers that already started still owe
-	// the peer a response, and the writer is still open until Serve returns.
-	// failPending then releases anyone blocked in Request, and closing the
-	// notification channel lets that worker drain and exit on its own.
+	// Defers run last-registered-first, and the order matters.
+	//
+	// failPending is registered last so it runs first. A handler that is itself
+	// blocked in Request cannot finish until its call is released, so draining
+	// before failing them deadlocks the two against each other until the grace
+	// period expires — turning a prompt connection-loss signal into a five
+	// second stall. Releasing first lets those handlers observe ErrConnClosed
+	// immediately and then write their own response, because the writer stays
+	// open until Serve returns.
+	//
+	// Closing the notification channel last lets that worker drain and exit on
+	// its own.
 	//
 	// Serve deliberately does not wait for that worker. A handler that wedges
 	// would otherwise hold shutdown open indefinitely and keep every pending
@@ -118,8 +125,8 @@ func (c *Conn) Serve(ctx context.Context) error {
 	// The close is safe because only dispatch sends, and dispatch runs on this
 	// goroutine — once the loop below exits there are no further senders.
 	defer close(c.notifications)
-	defer c.failPending()
 	defer c.drainInFlight()
+	defer c.failPending()
 
 	lines := make(chan []byte)
 	scanErr := make(chan error, 1)

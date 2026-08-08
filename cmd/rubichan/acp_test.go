@@ -39,19 +39,30 @@ func TestACPAcceptsAnExplicitOptIn(t *testing.T) {
 	prevAuto, prevApproveCwd := autoApprove, approveCwd
 	t.Cleanup(func() { autoApprove, approveCwd = prevAuto, prevApproveCwd })
 
-	for _, tc := range []struct {
-		name       string
-		auto       bool
-		approveCwd bool
-	}{
-		{"auto-approve", true, false},
-		{"approve-cwd", false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			autoApprove, approveCwd = tc.auto, tc.approveCwd
-			if err := checkACPToolConsent(); err != nil {
-				t.Errorf("an explicit opt-in must be accepted, got: %v", err)
-			}
-		})
+	autoApprove, approveCwd = true, false
+	if err := checkACPToolConsent(); err != nil {
+		t.Errorf("an explicit opt-in must be accepted, got: %v", err)
+	}
+}
+
+// TestACPApproveCwdIsNotToolConsent pins a correction. An earlier version
+// accepted --approve-cwd here, which was wrong twice over: the flag governs
+// folder access rather than tool approval, and nothing downstream scoped tool
+// execution to the directory — AlwaysAutoApprove approved everything either
+// way. The refusal text promised a restriction that did not exist.
+//
+// --approve-cwd still has its real meaning in this mode; it is just not consent
+// to run tools unattended.
+func TestACPApproveCwdIsNotToolConsent(t *testing.T) {
+	prevAuto, prevApproveCwd := autoApprove, approveCwd
+	t.Cleanup(func() { autoApprove, approveCwd = prevAuto, prevApproveCwd })
+
+	autoApprove, approveCwd = false, true
+	err := checkACPToolConsent()
+	if err == nil {
+		t.Fatal("--approve-cwd must not be accepted as consent to run tools unattended")
+	}
+	if !strings.Contains(err.Error(), "--approve-cwd does not substitute") {
+		t.Errorf("the refusal must say why --approve-cwd is not enough, got: %v", err)
 	}
 }
