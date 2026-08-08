@@ -198,10 +198,12 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 // so the registry, the connection and the session wiring are assembled here and
 // nowhere else.
 func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
+	registry, handshake := newACPRegistry(a)
 	return serveACP(ctx, r, w, acpServeConfig{
-		Registry:     NewACPRegistry(a),
+		Registry:     registry,
 		Capabilities: acpAgentCapabilities(),
 		WorkingDir:   a.WorkingDir(),
+		Handshake:    handshake,
 		Turn:         a.Turn,
 	})
 }
@@ -213,7 +215,10 @@ type acpServeConfig struct {
 	Registry     *acp.CapabilityRegistry
 	Capabilities acp.AgentCapabilities
 	WorkingDir   string
-	Turn         turnFunc
+	// Handshake gates the session methods on initialize. Nil disables the
+	// check, which is what a test serving no handshake wants.
+	Handshake *acp.Handshake
+	Turn      turnFunc
 }
 
 // serveACP is ServeACP with its collaborators passed in, so the wiring can be
@@ -229,6 +234,7 @@ func serveACP(ctx context.Context, r io.Reader, w io.Writer, cfg acpServeConfig)
 	acp.RegisterSession(cfg.Registry, acp.SessionConfig{
 		Capabilities: cfg.Capabilities,
 		WorkingDir:   cfg.WorkingDir,
+		Handshake:    cfg.Handshake,
 		Prompt:       acpPromptFunc(conn, cfg.Turn),
 	})
 

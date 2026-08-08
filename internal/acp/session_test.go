@@ -3,6 +3,7 @@ package acp_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/acp"
@@ -379,4 +380,79 @@ func TestSessionNewRefusesASecondSession(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "one session",
 		"the client must learn the limit, not receive an id that lies about isolation")
+}
+
+// TestSessionMethodsRequireTheHandshake pins ACP's ordering rule: initialize
+// comes first. A client that skips it has negotiated no protocol version and
+// declared no capabilities, so serving it a session means running turns for a
+// peer whose contract is unknown.
+func TestSessionMethodsRequireTheHandshake(t *testing.T) {
+	t.Parallel()
+
+	handshake := acp.NewHandshake()
+	cfg := sessionConfig(func(context.Context, acp.PromptRequest) (acp.StopReason, error) {
+		return acp.StopEndTurn, nil
+	})
+	cfg.Handshake = handshake
+
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, cfg)
+
+	_, err := registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "initialize")
+
+	handshake.MarkComplete()
+
+	_, err = registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
+	assert.NoError(t, err, "once the handshake is done the session opens normally")
+}
+
+// TestSessionPromptRefusesASecondConcurrentTurn pins ACP's one-turn-per-session
+// rule. A session has a single conversation; two turns running against it would
+// interleave their session/update streams and append to the same history in an
+// order neither client asked for.
+func TestSessionPromptRefusesASecondConcurrentTurn(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	// Only the first turn blocks. The third call at the end of this test reuses
+	// the same handler, so signalling unconditionally would re-close a closed
+	// channel and re-block on a drained one.
+	var once sync.Once
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, sessionConfig(
+		func(context.Context, acp.PromptRequest) (acp.StopReason, error) {
+			once.Do(func() {
+				close(started)
+				<-release
+			})
+			return acp.StopEndTurn, nil
+		}))
+
+	raw, err := registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
+	require.NoError(t, err)
+	var created acp.NewSessionResult
+	require.NoError(t, json.Unmarshal(raw, &created))
+
+	prompt := json.RawMessage(`{"sessionId":"` + created.SessionID + `","prompt":[{"type":"text","text":"hi"}]}`)
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := registry.Call("session/prompt", prompt)
+		first <- err
+	}()
+	<-started
+
+	_, err = registry.Call("session/prompt", prompt)
+	require.Error(t, err, "the session already has a turn in flight")
+	assert.Contains(t, err.Error(), "active turn")
+
+	close(release)
+	require.NoError(t, <-first)
+
+	// The guard must clear, or the session would be usable exactly once.
+	_, err = registry.Call("session/prompt", prompt)
+	assert.NoError(t, err, "a finished turn releases the session")
 }

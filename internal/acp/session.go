@@ -59,6 +59,11 @@ type SessionConfig struct {
 	// and guessing is what this field exists to prevent.
 	WorkingDir string
 
+	// Handshake gates the session methods on initialize having completed. A
+	// nil value disables the check, which is what a registry serving no
+	// handshake wants.
+	Handshake *Handshake
+
 	// Prompt runs a turn. A nil Prompt means session/prompt is unserved, and
 	// the method reports that rather than pretending to have run.
 	Prompt PromptFunc
@@ -93,6 +98,10 @@ type PromptResult struct {
 // session is the state a sessionId stands for.
 type session struct {
 	cwd string
+	// active marks a turn in flight. ACP allows one turn per session: a second
+	// would interleave its session/update stream with the first's and append to
+	// the same conversation in an order neither client asked for.
+	active bool
 }
 
 // sessionStore holds live sessions. Sessions are reached from handler
@@ -139,6 +148,35 @@ func (s *sessionStore) releaseSole() {
 	s.claimed = false
 }
 
+// beginTurn marks a session busy, or reports that it already is. Test and set
+// happen under one lock so two prompts arriving together cannot both find the
+// session idle.
+func (s *sessionStore) beginTurn(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return fmt.Errorf("%w: unknown sessionId %q", ErrInvalidParams, id)
+	}
+	if sess.active {
+		return fmt.Errorf("%w: session %q already has an active turn; wait for it to finish or cancel it", ErrInvalidParams, id)
+	}
+	sess.active = true
+	s.sessions[id] = sess
+	return nil
+}
+
+// endTurn releases a session for the next prompt. Deferred by the handler, so a
+// turn that fails or panics does not leave the session permanently busy.
+func (s *sessionStore) endTurn(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[id]; ok {
+		sess.active = false
+		s.sessions[id] = sess
+	}
+}
+
 func (s *sessionStore) get(id string) (session, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -151,6 +189,9 @@ func RegisterSession(registry *CapabilityRegistry, cfg SessionConfig) {
 	store := &sessionStore{sessions: make(map[string]session)}
 
 	registry.RegisterMethod(MethodSessionNew, func(params json.RawMessage) (json.RawMessage, error) {
+		if !cfg.Handshake.IsComplete() {
+			return nil, fmt.Errorf("session/new: %w: initialize must complete first", ErrInvalidParams)
+		}
 		var req NewSessionParams
 		if err := json.Unmarshal(params, &req); err != nil {
 			return nil, fmt.Errorf("session/new: %w: %v", ErrInvalidParams, err)
@@ -210,6 +251,9 @@ func RegisterSession(registry *CapabilityRegistry, cfg SessionConfig) {
 	})
 
 	registry.RegisterMethod(MethodSessionPrompt, func(params json.RawMessage) (json.RawMessage, error) {
+		if !cfg.Handshake.IsComplete() {
+			return nil, fmt.Errorf("session/prompt: %w: initialize must complete first", ErrInvalidParams)
+		}
 		var req PromptParams
 		if err := json.Unmarshal(params, &req); err != nil {
 			return nil, fmt.Errorf("session/prompt: %w: %v", ErrInvalidParams, err)
@@ -228,6 +272,14 @@ func RegisterSession(registry *CapabilityRegistry, cfg SessionConfig) {
 		if cfg.Prompt == nil {
 			return nil, fmt.Errorf("session/prompt: no prompt handler is registered")
 		}
+
+		// ACP allows one turn per session. Claimed after validation so a
+		// rejected payload does not occupy the session, and released on every
+		// exit so a failed turn does not wedge it shut.
+		if err := store.beginTurn(req.SessionID); err != nil {
+			return nil, fmt.Errorf("session/prompt: %w", err)
+		}
+		defer store.endTurn(req.SessionID)
 
 		// context.Background, and that is a real limitation rather than a
 		// convenience: Handler takes only params, so there is no request context

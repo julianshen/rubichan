@@ -105,7 +105,16 @@ func TestServeACPRefusesAPromptForAnUnopenedSession(t *testing.T) {
 
 	client, _ := startACP(t, nil)
 
-	client.send(t, 1, "session/prompt", map[string]any{
+	// The handshake first, or the refusal under test would be masked by the
+	// ordering check rather than the session lookup.
+	client.send(t, 1, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	})
+	var initResult acp.InitializeResult
+	client.result(t, 1, &initResult)
+
+	client.send(t, 2, "session/prompt", map[string]any{
 		"sessionId": "never-minted",
 		"prompt":    []any{map[string]any{"type": "text", "text": "hello"}},
 	})
@@ -114,6 +123,27 @@ func TestServeACPRefusesAPromptForAnUnopenedSession(t *testing.T) {
 	require.NotNil(t, msg.Error)
 	assert.Equal(t, acp.ErrorCodeInvalidParams, msg.Error.Code,
 		"an unknown session is the client's mistake to fix")
+	assert.Contains(t, msg.Error.Message, "never-minted")
+}
+
+// TestServeACPRefusesASessionBeforeInitialize pins ACP's ordering rule over the
+// wire. A client that skips the handshake has agreed no protocol version and
+// declared no capabilities, so serving it a session would mean running turns
+// under a contract neither side stated.
+func TestServeACPRefusesASessionBeforeInitialize(t *testing.T) {
+	t.Parallel()
+
+	client, _ := startACP(t, nil)
+
+	client.send(t, 1, "session/new", map[string]any{
+		"cwd":        "/repo",
+		"mcpServers": []any{},
+	})
+
+	msg := client.read(t)
+	require.NotNil(t, msg.Error)
+	assert.Equal(t, acp.ErrorCodeInvalidParams, msg.Error.Code)
+	assert.Contains(t, msg.Error.Message, "initialize")
 }
 
 // acpClient is the far side of a served ACP connection.
@@ -133,9 +163,11 @@ func startACP(t *testing.T, turn turnFunc) (*acpClient, chan struct{}) {
 	// test is about the session wiring, and NewACPRegistry needs a live Agent
 	// to enumerate tools from.
 	registry := acp.NewCapabilityRegistry()
+	handshake := acp.NewHandshake()
 	acp.RegisterInitialize(registry, acp.InitializeConfig{
 		AgentInfo:    acp.AgentInfo{Name: "rubichan", Version: agentVersion},
 		Capabilities: acpAgentCapabilities(),
+		Handshake:    handshake,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -146,6 +178,7 @@ func startACP(t *testing.T, turn turnFunc) (*acpClient, chan struct{}) {
 			Registry:     registry,
 			Capabilities: acpAgentCapabilities(),
 			WorkingDir:   "/repo",
+			Handshake:    handshake,
 			Turn:         turn,
 		})
 	}()
