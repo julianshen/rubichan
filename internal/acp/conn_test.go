@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -535,4 +536,47 @@ func TestConnShutdownIsNotHeldByABlockedNotification(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("pending Request was never released")
 	}
+}
+
+// TestConnNotifySendsNoID is the agent->client direction ACP carries every
+// session/update on. A notification is distinguished from a request purely by
+// the absence of an id: send one with an id and the peer is obliged to answer
+// something nothing is waiting for, which leaves an unmatched response on a
+// stream that correlates strictly by id.
+func TestConnNotifySendsNoID(t *testing.T) {
+	t.Parallel()
+
+	c, p := newConnPair(t, acp.NewCapabilityRegistry())
+
+	// Sent from a goroutine because the pair is joined by an io.Pipe, which is
+	// unbuffered: the write blocks until this test reads it.
+	sent := make(chan error, 1)
+	go func() {
+		sent <- c.Notify("session/update", map[string]any{
+			"sessionId": "sess-1",
+			"update":    map[string]any{"sessionUpdate": "agent_message_chunk"},
+		})
+	}()
+
+	var got map[string]any
+	p.decode(t, &got)
+	require.NoError(t, <-sent)
+
+	assert.Equal(t, "2.0", got["jsonrpc"])
+	assert.Equal(t, "session/update", got["method"])
+	_, hasID := got["id"]
+	assert.False(t, hasID, "a notification carries no id; an id makes it a request")
+}
+
+// TestConnNotifyFailsOnceClosed keeps a caller from believing a turn update was
+// delivered after the connection went away. Notify has no response to wait on,
+// so a silent success is indistinguishable from a delivered message.
+func TestConnNotifyFailsOnceClosed(t *testing.T) {
+	t.Parallel()
+
+	c := acp.NewConn(strings.NewReader(""), io.Discard, acp.NewCapabilityRegistry())
+	require.NoError(t, c.Serve(context.Background()))
+
+	err := c.Notify("session/update", map[string]any{"sessionId": "sess-1"})
+	assert.ErrorIs(t, err, acp.ErrConnClosed)
 }
