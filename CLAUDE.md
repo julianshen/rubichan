@@ -26,19 +26,22 @@ All three modes share a common **Agent Core** (`internal/agent/`) with mode-spec
 
 Public SDK lives in `pkg/skillsdk/` — stable interface for skill authors. Everything in `internal/` is private.
 
-## ACP Protocol Integration — dormant, no production caller
+## ACP Protocol Integration — a working protocol layer, still no production caller
 
 **This section previously described ACP as "the standardized backbone for agent-mode communication." That was aspirational, not descriptive.** A Phase 3 audit (see `docs/MODULAR_CORE_REDESIGN.md`) established that the mode adapters that were supposed to be ACP's consumers could not complete a single operation against the server, and they have since been deleted.
 
 Current state, so nobody plans against the old claim:
 
-- **`internal/acp` has no production caller.** `agent.NewACPServer` is constructed only in tests. `grep -rn "NewACPServer" --include=*.go . | grep -v _test.go` returns its own definition and nothing else.
+- **`internal/acp` still has no production caller.** `agent.ServeACP` is the composition root — registry, connection and session wiring in one call — but nothing in `cmd/rubichan/main.go` invokes it. There is no `--acp` flag. `grep -rn "ServeACP" --include=*.go . | grep -v _test.go` returns its own definition and nothing else.
 - **The three execution modes do not use ACP.** All are implemented inline in `cmd/rubichan/main.go`, but they do not share a shape: interactive and headless bind directly to `internal/agent`, while `--wiki` calls `runWikiHeadless`, which drives `internal/wiki.Run` and never constructs an agent at all. Do not look for a wiki agent integration point; there isn't one.
-- **Registered methods are `agent/prompt`, `tool/execute`, `skill/{invoke,list,manifest}`, `security/{scan,approve}`, plus `initialize` and `shutdown`.** `tool/execute` is an explicit `not_implemented` stub.
+- **Registered methods are `initialize`, `session/new`, `session/prompt`, `agent/prompt`, `tool/execute`, `skill/{invoke,list,manifest}`, `security/{scan,approve}`, and `shutdown`.** `tool/execute` is an explicit `not_implemented` stub. `agent/prompt` predates the session methods and is not an ACP method at all — `session/prompt` is the spec-defined one.
+- **A turn can now be conducted end to end.** `session/new` mints a session against an absolute cwd; `session/prompt` decodes content, runs the turn, streams `session/update` notifications, and closes with a `stopReason`. `internal/agent/acp_serve_internal_test.go` drives that whole sequence over a pipe.
+- **Server-initiated dispatch exists in one direction only.** `Conn.Notify` sends notifications — that is what carries `session/update` — so streaming output works. There is still no mid-turn `session/request_permission`: `Conn.Request` can express it, but nothing calls it.
+- **A turn cannot be cancelled.** `Handler` takes only `params`, so there is no request context to derive from and `session/cancel` is unimplementable until a context is threaded through every handler in the package.
+- **Declared capabilities are all false, and that is enforced, not just documented.** `acpAgentCapabilities()` is the single source: the handshake publishes it and `session/prompt` gates incoming content on it. So `image`, `audio` and `resource` content blocks are refused, and `session/new` refuses `mcpServers` and `additionalDirectories` rather than accepting and ignoring them.
 - **The method constants in `types.go` are largely unwired**, in two degrees. `tools/list`, `tools/call` and `resources/list` are referenced only by `methods_test.go`, which round-trips them through JSON. `resources/read`, `prompts/list`, `prompts/call` and `sampling/createMessage` have **no reference anywhere in the tree** — not even a test. None of the seven is registered or sent.
-- **There is no server-initiated dispatch.** `Notification` and `notifications/{progress,log}` are declared but never constructed; `ResponseDispatcher` correlates strictly by request ID and drops unmatched messages. So no streaming output and no mid-turn approval.
 
-Do not treat ACP as a live interface, and do not add capabilities to it on the assumption that something consumes them. Whether it should be revived against a real protocol or removed is an open decision.
+Do not add capabilities to ACP on the assumption that something consumes them — flip a capability flag on in the same change that registers the method behind it, never before. Whether ACP should get a mode that actually calls `ServeACP`, or be removed, is still an open decision.
 
 Note also that `internal/acp` is **not** the repository's MCP support: that lives in `internal/tools/mcp` and `internal/skills/mcpbackend`.
 
