@@ -99,6 +99,13 @@ const (
 	MethodInitialize = "initialize"
 	MethodShutdown   = "shutdown"
 
+	// Session methods
+	MethodSessionNew    = "session/new"
+	MethodSessionPrompt = "session/prompt"
+	// MethodSessionUpdate is a notification the agent sends, not a method it
+	// serves: it carries turn events back to the client during session/prompt.
+	MethodSessionUpdate = "session/update"
+
 	// Rubichan-specific extensions
 	MethodSkillInvoke     = "skill/invoke"
 	MethodSkillList       = "skill/list"
