@@ -15,29 +15,30 @@ import (
 func sessionConfig(prompt acp.PromptFunc) acp.SessionConfig {
 	return acp.SessionConfig{
 		Capabilities: acp.AgentCapabilities{},
+		WorkingDir:   "/repo",
 		Prompt:       prompt,
 	}
 }
 
-// TestSessionNewMintsDistinctIDs covers the method every ACP conversation opens
-// with. The ids must differ: session/prompt routes by id, so a collision would
-// deliver one client's turn into another's conversation.
-func TestSessionNewMintsDistinctIDs(t *testing.T) {
+// TestSessionNewMintsASessionID covers the method every ACP conversation opens
+// with.
+//
+// This previously asserted that two calls yield different ids. That assertion
+// is gone because a second session/new is now refused outright — see
+// TestSessionNewRefusesASecondSession for why an id that lies about isolation
+// is worse than no id at all.
+func TestSessionNewMintsASessionID(t *testing.T) {
 	t.Parallel()
 
 	registry := acp.NewCapabilityRegistry()
 	acp.RegisterSession(registry, sessionConfig(nil))
 
-	newSession := func() string {
-		raw, err := registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
-		require.NoError(t, err)
-		var got acp.NewSessionResult
-		require.NoError(t, json.Unmarshal(raw, &got))
-		require.NotEmpty(t, got.SessionID)
-		return got.SessionID
-	}
+	raw, err := registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
+	require.NoError(t, err)
 
-	assert.NotEqual(t, newSession(), newSession())
+	var got acp.NewSessionResult
+	require.NoError(t, json.Unmarshal(raw, &got))
+	assert.NotEmpty(t, got.SessionID)
 }
 
 // TestSessionNewRequiresAnAbsoluteCwd pins the spec's constraint on cwd. A
@@ -315,4 +316,67 @@ func TestSessionMethodsRejectMalformedParams(t *testing.T) {
 			assert.ErrorIs(t, err, acp.ErrInvalidParams)
 		})
 	}
+}
+
+// TestSessionNewRefusesADirectoryItCannotServe is the fix for accepting a cwd
+// and then ignoring it. The agent's working directory is frozen when it is
+// constructed, so a session opened for anywhere else would run every file and
+// shell tool against the startup directory while the client believed otherwise.
+//
+// Validating that cwd is absolute and then discarding it was worse than not
+// validating at all: it looked like the field had been honoured.
+func TestSessionNewRefusesADirectoryItCannotServe(t *testing.T) {
+	t.Parallel()
+
+	cfg := sessionConfig(nil)
+	cfg.WorkingDir = "/repo"
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, cfg)
+
+	_, err := registry.Call("session/new", json.RawMessage(`{"cwd":"/other-project","mcpServers":[]}`))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, acp.ErrInvalidParams)
+	assert.Contains(t, err.Error(), "/other-project")
+	assert.Contains(t, err.Error(), "/repo", "the client needs to know which directory it can have")
+}
+
+// TestSessionNewAcceptsItsOwnDirectory covers the matching case, including a
+// non-canonical spelling of the same path.
+func TestSessionNewAcceptsItsOwnDirectory(t *testing.T) {
+	t.Parallel()
+
+	// A fresh registry per spelling: the single-session limit would refuse the
+	// second call regardless of its cwd, which would hide what is under test.
+	for _, cwd := range []string{"/repo", "/repo/", "/repo/./"} {
+		cfg := sessionConfig(nil)
+		cfg.WorkingDir = "/repo"
+		registry := acp.NewCapabilityRegistry()
+		acp.RegisterSession(registry, cfg)
+
+		_, err := registry.Call("session/new", json.RawMessage(`{"cwd":"`+cwd+`","mcpServers":[]}`))
+		assert.NoError(t, err, "cwd %q names the agent's own directory", cwd)
+	}
+}
+
+// TestSessionNewRefusesASecondSession pins the session-isolation limit. ACP
+// says a session is an independent context with its own history; this agent
+// owns exactly one conversation, so a second session id would hand the client
+// a fresh-looking session that silently shares the first one's history.
+//
+// Refusing is the honest position until sessions get their own agent state.
+func TestSessionNewRefusesASecondSession(t *testing.T) {
+	t.Parallel()
+
+	cfg := sessionConfig(nil)
+	cfg.WorkingDir = "/repo"
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, cfg)
+
+	_, err := registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
+	require.NoError(t, err)
+
+	_, err = registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "one session",
+		"the client must learn the limit, not receive an id that lies about isolation")
 }

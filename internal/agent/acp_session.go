@@ -198,7 +198,7 @@ func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
 // so the registry, the connection and the session wiring are assembled here and
 // nowhere else.
 func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
-	return serveACP(ctx, r, w, NewACPRegistry(a), acpAgentCapabilities(), a.Turn)
+	return serveACP(ctx, r, w, NewACPRegistry(a), acpAgentCapabilities(), a.WorkingDir(), a.Turn)
 }
 
 // serveACP is ServeACP with its collaborators passed in, so the wiring can be
@@ -209,6 +209,7 @@ func serveACP(
 	w io.Writer,
 	registry *acp.CapabilityRegistry,
 	caps acp.AgentCapabilities,
+	workingDir string,
 	turn turnFunc,
 ) error {
 	conn := acp.NewConn(r, w, registry)
@@ -220,6 +221,7 @@ func serveACP(
 	// no request can arrive against a half-populated registry.
 	acp.RegisterSession(registry, acp.SessionConfig{
 		Capabilities: caps,
+		WorkingDir:   workingDir,
 		Prompt:       acpPromptFunc(conn, turn),
 	})
 
