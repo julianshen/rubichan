@@ -194,6 +194,7 @@ func (c *Client) Stream(ctx context.Context, msg Message) (<-chan Task, error) {
 				}
 				switch task.State {
 				case TaskCompleted, TaskFailed, TaskCanceled, TaskRejected:
+					drainSSEEvents(events)
 					return
 				}
 			}

@@ -448,6 +448,108 @@ func TestClientStreamTerminalStates(t *testing.T) {
 	}
 }
 
+// TestClientStreamTerminalStateDoesNotLeakGoroutine reproduces the leak in
+// the third exit path of Stream()'s forwarding goroutine: the terminal-state
+// switch case returned immediately without draining the events channel --
+// the same leak class as the ctx.Done() paths fixed for
+// TestClientStreamContextCanceledDoesNotLeakGoroutine. The handler below
+// writes a burst of events, all before the client reads any of them, where
+// an early event (not the last) carries a terminal task state. If the
+// forwarding goroutine returns on that terminal snapshot without draining,
+// parseSSEEvents' producer goroutine is left blocked forever on its next
+// send into the (by-then full) 8-slot buffered channel, since the burst
+// contains more events than the terminal-state consumer will ever read.
+func TestClientStreamTerminalStateDoesNotLeakGoroutine(t *testing.T) {
+	const numEvents = 20
+	const terminalAt = 5 // 1-indexed position of the terminal-state event
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 1; i <= numEvents; i++ {
+			state := TaskWorking
+			if i == terminalAt {
+				state = TaskCompleted
+			}
+			task := Task{ID: "task-1", State: state}
+			taskJSON, _ := json.Marshal(task)
+			_, _ = w.Write([]byte("event: message\ndata: "))
+			_, _ = w.Write(taskJSON)
+			_, _ = w.Write([]byte("\n\n"))
+		}
+		// Handler returns without blocking or flushing per-event: all
+		// events are written in one burst before the client reads any of
+		// them, and a terminal-state event (at position 5) is followed by
+		// 15 more events still sitting unread when it's seen.
+	})
+	srv := testutil.NewServer(t, handler)
+	defer srv.Close()
+
+	baseline := runtime.NumGoroutine()
+
+	client := NewClient(srv.URL, "", srv.Client())
+	ch, err := client.Stream(context.Background(), Message{Role: "user", Parts: []Part{{Kind: "text", Text: "hi"}}})
+	require.NoError(t, err)
+
+	var last Task
+	for task := range ch {
+		last = task
+		if task.State == TaskCompleted {
+			break
+		}
+	}
+	assert.Equal(t, TaskCompleted, last.State)
+
+	// Poll from this goroutine directly rather than via require.Eventually
+	// -- see TestClientStreamContextCanceledDoesNotLeakGoroutine for why.
+	deadline := time.Now().Add(2 * time.Second)
+	var lastCount int
+	for {
+		lastCount = runtime.NumGoroutine()
+		if lastCount <= baseline {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines spawned by Stream should be cleaned up after terminal state; got %d, baseline %d", lastCount, baseline)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestClientStreamEndsWithoutTerminalState covers the events-channel-closed
+// path distinct from the terminal-state path above: the stream ends (the
+// handler returns, parseSSEEvents exhausts the body and closes its channel)
+// without any event ever carrying a terminal task state. Stream()'s
+// forwarding goroutine must close its own output channel cleanly in that
+// case too.
+func TestClientStreamEndsWithoutTerminalState(t *testing.T) {
+	handler := http.NewServeMux()
+	handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		task := Task{ID: "task-1", State: TaskWorking}
+		taskJSON, _ := json.Marshal(task)
+		_, _ = w.Write([]byte("event: message\ndata: "))
+		_, _ = w.Write(taskJSON)
+		_, _ = w.Write([]byte("\n\n"))
+		flusher.Flush()
+		// Handler returns without ever sending a terminal-state event: the
+		// stream just ends.
+	})
+	srv := testutil.NewServer(t, handler)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "", srv.Client())
+	ch, err := client.Stream(context.Background(), Message{Role: "user", Parts: []Part{{Kind: "text", Text: "hi"}}})
+	require.NoError(t, err)
+
+	task := <-ch
+	assert.Equal(t, TaskWorking, task.State)
+
+	_, ok := <-ch
+	assert.False(t, ok, "channel should close when the stream ends without a terminal state")
+}
+
 func mustMarshal(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(v)
