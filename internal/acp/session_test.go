@@ -275,3 +275,44 @@ func decodeUpdate(t *testing.T, n acp.SessionNotification) map[string]any {
 	require.NoError(t, json.Unmarshal(raw, &got))
 	return got
 }
+
+// TestSessionPromptWithNoHandlerSaysSo covers a registry wired without a prompt
+// handler. Answering a stop reason would report a turn that never ran; the
+// client is told the method is unserved instead.
+func TestSessionPromptWithNoHandlerSaysSo(t *testing.T) {
+	t.Parallel()
+
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, sessionConfig(nil))
+
+	raw, err := registry.Call("session/new", json.RawMessage(`{"cwd":"/repo","mcpServers":[]}`))
+	require.NoError(t, err)
+	var created acp.NewSessionResult
+	require.NoError(t, json.Unmarshal(raw, &created))
+
+	_, err = registry.Call("session/prompt", json.RawMessage(
+		`{"sessionId":"`+created.SessionID+`","prompt":[{"type":"text","text":"hi"}]}`))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, acp.ErrInvalidParams,
+		"the client's payload was fine; the agent is the one missing a handler")
+}
+
+// TestSessionMethodsRejectMalformedParams covers the decode failure both
+// methods share. Malformed JSON is the client's to fix, so it must not surface
+// as an internal error.
+func TestSessionMethodsRejectMalformedParams(t *testing.T) {
+	t.Parallel()
+
+	registry := acp.NewCapabilityRegistry()
+	acp.RegisterSession(registry, sessionConfig(nil))
+
+	for _, method := range []string{"session/new", "session/prompt"} {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := registry.Call(method, json.RawMessage(`{"cwd":`))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, acp.ErrInvalidParams)
+		})
+	}
+}

@@ -114,3 +114,14 @@ func TestPromptContentRejectsUnknownVariant(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, acp.ErrInvalidParams)
 }
+
+// TestPromptContentRejectsMalformedArray covers the decode failure itself. A
+// prompt that is not an array of blocks is the client's mistake, and answering
+// -32603 would tell it the agent is broken and retrying is pointless.
+func TestPromptContentRejectsMalformedArray(t *testing.T) {
+	t.Parallel()
+
+	_, err := acp.DecodePromptContent(json.RawMessage(`{"not":"an array"}`), acp.PromptCapabilities{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, acp.ErrInvalidParams)
+}
