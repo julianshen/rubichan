@@ -28,22 +28,24 @@ All three modes share a common **Agent Core** (`internal/agent/`) with mode-spec
 
 Public SDK lives in `pkg/skillsdk/` — stable interface for skill authors. Everything in `internal/` is private.
 
-## ACP Protocol Integration — a working protocol layer, still no production caller
+## ACP Protocol Integration — served by `--acp`
 
 **This section previously described ACP as "the standardized backbone for agent-mode communication." That was aspirational, not descriptive.** A Phase 3 audit (see `docs/MODULAR_CORE_REDESIGN.md`) established that the mode adapters that were supposed to be ACP's consumers could not complete a single operation against the server, and they have since been deleted.
 
 Current state, so nobody plans against the old claim:
 
-- **`internal/acp` still has no production caller.** `agent.ServeACP` is the composition root — registry, connection and session wiring in one call — but nothing in `cmd/rubichan/main.go` invokes it. There is no `--acp` flag. `grep -rn "ServeACP" --include=*.go . | grep -v _test.go` returns its own definition and nothing else.
-- **The three execution modes do not use ACP.** All are implemented inline in `cmd/rubichan/main.go`, but they do not share a shape: interactive and headless bind directly to `internal/agent`, while `--wiki` calls `runWikiHeadless`, which drives `internal/wiki.Run` and never constructs an agent at all. Do not look for a wiki agent integration point; there isn't one.
-- **Registered methods are `initialize`, `session/new`, `session/prompt`, `agent/prompt`, `tool/execute`, `skill/{invoke,list,manifest}`, `security/{scan,approve}`, and `shutdown`.** `tool/execute` is an explicit `not_implemented` stub. `agent/prompt` predates the session methods and is not an ACP method at all — `session/prompt` is the spec-defined one.
+- **`--acp` serves the protocol over stdin/stdout.** `runACP` in `cmd/rubichan/acp.go` builds an agent and calls `agent.ServeACP`, which is the composition root — registry, connection and session wiring in one call. The editor spawns the process and speaks JSON-RPC down the pipe, so **stdout is part of the protocol**: nothing may print there. Diagnostics go to stderr.
+- **`--acp` refuses to start without `--auto-approve` or `--approve-cwd`.** ACP's tool-approval mechanism is `session/request_permission`, which is unimplemented, so a served agent cannot ask before running a shell command. Silently auto-approving would hand whatever spawned the process arbitrary command execution with nobody agreeing to it.
+- **The other three execution modes do not use ACP.** All are implemented inline in `cmd/rubichan/main.go`, but they do not share a shape: interactive and headless bind directly to `internal/agent`, while `--wiki` calls `runWikiHeadless`, which drives `internal/wiki.Run` and never constructs an agent at all. Do not look for a wiki agent integration point; there isn't one.
+- **Registered methods are `initialize`, `session/new` and `session/prompt`, and nothing else.** Seven others were removed when `--acp` made them reachable: `security/{scan,approve}` and `skill/{invoke,list,manifest}` fabricated success (a scan answering "no findings" without scanning), `agent/prompt` ran a turn straight off the registry bypassing every session guard, and `tool/execute` returned a success envelope whose payload said `not_implemented`. An absent method answers `-32601`, which is true. Do not re-add one without an implementation behind it.
 - **A turn can now be conducted end to end.** `session/new` mints a session against an absolute cwd; `session/prompt` decodes content, runs the turn, streams `session/update` notifications, and closes with a `stopReason`. `internal/agent/acp_serve_internal_test.go` drives that whole sequence over a pipe.
 - **Server-initiated dispatch exists in one direction only.** `Conn.Notify` sends notifications — that is what carries `session/update` — so streaming output works. There is still no mid-turn `session/request_permission`: `Conn.Request` can express it, but nothing calls it.
+- **One agent serves one ACP connection, ever.** The claim in `ServeACP` is permanent, not held for the connection: the conversation lives on the agent and nothing resets it between connections, so reuse would hand a later client the earlier one's history. `session/new` likewise refuses a second session, and refuses any `cwd` but the agent's own — the working directory is frozen at construction. Per-session agent state is the feature that lifts all three.
 - **A turn cannot be cancelled.** `Handler` takes only `params`, so there is no request context to derive from and `session/cancel` is unimplementable until a context is threaded through every handler in the package.
 - **Declared capabilities are all false, and that is enforced, not just documented.** `acpAgentCapabilities()` is the single source: the handshake publishes it and `session/prompt` gates incoming content on it. So `image`, `audio` and `resource` content blocks are refused, and `session/new` refuses `mcpServers` and `additionalDirectories` rather than accepting and ignoring them.
 - **The method constants in `types.go` are largely unwired**, in two degrees. `tools/list`, `tools/call` and `resources/list` are referenced only by `methods_test.go`, which round-trips them through JSON. `resources/read`, `prompts/list`, `prompts/call` and `sampling/createMessage` have **no reference anywhere in the tree** — not even a test. None of the seven is registered or sent.
 
-Do not add capabilities to ACP on the assumption that something consumes them — flip a capability flag on in the same change that registers the method behind it, never before. Whether ACP should get a mode that actually calls `ServeACP`, or be removed, is still an open decision.
+Do not add capabilities to ACP on the assumption that something consumes them — flip a capability flag on in the same change that registers the method behind it, never before. The same rule now applies to methods: `--acp` means anything registered is reachable by a real client, so a handler that cannot do its job must not be registered at all.
 
 Note also that `internal/acp` is **not** the repository's MCP support: that lives in `internal/tools/mcp` and `internal/skills/mcpbackend`.
 
@@ -59,6 +61,7 @@ golangci-lint run ./...           # Lint
 gofmt -l .                        # Check formatting
 go run ./cmd/agent                # Run interactive mode
 go run ./cmd/agent --headless     # Run headless mode
+go run ./cmd/agent --acp --auto-approve  # Serve ACP over stdio to an editor client
 go run ./cmd/agent wiki           # Run wiki generator
 ```
 
