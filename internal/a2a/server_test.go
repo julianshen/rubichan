@@ -112,6 +112,105 @@ func TestServerMessageSendCompletes(t *testing.T) {
 	assert.Contains(t, task.Artifacts[0].Parts[0].Text, "42")
 }
 
+func TestServerMessageStreamPushesEvents(t *testing.T) {
+	a := newTestAgent(t, "42")
+	store := newMemoryTaskStore()
+	srv := NewServer(a, store, AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "message/stream",
+		Params: mustMarshal(t, sendParams{Message: Message{Role: "user", Parts: []Part{{Kind: "text", Text: "hi"}}}}),
+	})
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := parseSSEEvents(resp.Body)
+	var last Task
+	for raw := range events {
+		require.NoError(t, json.Unmarshal(raw, &last))
+	}
+	assert.Equal(t, TaskCompleted, last.State)
+}
+
+func TestServerHandleMessageStreamInvalidParams(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "message/stream",
+		Params: json.RawMessage(`{"message": 123}`),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.NotNil(t, rpcResp.Error)
+	assert.Equal(t, -32602, rpcResp.Error.Code)
+}
+
+// TestServerMessageStreamLogsTaskStoreWriteFailures is the message/stream
+// analog of TestServerMessageSendLogsTaskStoreWriteFailures: TaskStore
+// Create/Update failures during streaming must be logged as warnings
+// without breaking the SSE response.
+func TestServerMessageStreamLogsTaskStoreWriteFailures(t *testing.T) {
+	a := newTestAgent(t, "ok")
+	srv := NewServer(a, &erroringTaskStore{
+		createErr: errors.New("create boom"),
+		updateErr: errors.New("update boom"),
+	}, AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	var logBuf bytes.Buffer
+	prevOutput := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&logBuf)
+	defer func() {
+		log.SetOutput(prevOutput)
+		log.SetFlags(prevFlags)
+	}()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "message/stream",
+		Params: mustMarshal(t, sendParams{Message: Message{Role: "user", Parts: []Part{{Kind: "text", Text: "test"}}}}),
+	})
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := parseSSEEvents(resp.Body)
+	var last Task
+	for raw := range events {
+		require.NoError(t, json.Unmarshal(raw, &last))
+	}
+	assert.Equal(t, TaskCompleted, last.State, "task should complete despite store failures")
+
+	logged := logBuf.String()
+	assert.Contains(t, logged, "warning:", "failed store operations must be logged as warnings")
+	assert.Contains(t, logged, "create boom", "create failure must be logged")
+	assert.Contains(t, logged, "update boom", "update failures must be logged")
+}
+
 func TestServerHandleAgentCard(t *testing.T) {
 	a := newTestAgent(t, "unused")
 	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")

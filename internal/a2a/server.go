@@ -54,6 +54,8 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "message/send":
 		s.handleMessageSend(w, r, req)
+	case "message/stream":
+		s.handleMessageStream(w, r, req)
 	default:
 		s.writeError(w, req.ID, -32601, "method not found: "+req.Method)
 	}
@@ -88,6 +90,50 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req R
 
 	result, _ := json.Marshal(task)
 	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
+}
+
+func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req RPCRequest) {
+	var params sendParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeError(w, req.ID, -32602, "invalid params: "+err.Error())
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.writeError(w, req.ID, -32603, "streaming unsupported by this response writer")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+
+	ctx := r.Context()
+	task := Task{ID: newTaskID(), ContextID: newTaskID(), State: TaskSubmitted}
+	if err := s.tasks.Create(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store create failed for task %s: %v", task.ID, err)
+	}
+	writeSSETask(w, flusher, task)
+
+	task.State = TaskWorking
+	if err := s.tasks.Update(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+	}
+	writeSSETask(w, flusher, task)
+
+	task = s.runTurn(ctx, task, messageText(params.Message))
+	if err := s.tasks.Update(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+	}
+	writeSSETask(w, flusher, task)
+}
+
+func writeSSETask(w http.ResponseWriter, flusher http.Flusher, task Task) {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+	flusher.Flush()
 }
 
 // runTurn drives task through a real agent turn, mirroring
