@@ -101,6 +101,17 @@ func (r *Registry) Names() []string {
 	return names
 }
 
+// Tools returns every registered tool, in no particular order.
+func (r *Registry) Tools() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Tool, 0, len(r.tools))
+	for _, t := range r.tools {
+		out = append(out, t)
+	}
+	return out
+}
+
 // All returns ToolDef representations of all registered tools,
 // sorted alphabetically by name for deterministic ordering. Tools
 // implementing SearchHinter contribute their hint to the definition.
