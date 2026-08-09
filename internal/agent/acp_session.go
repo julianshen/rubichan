@@ -10,10 +10,16 @@ import (
 	"github.com/julianshen/rubichan/pkg/agentsdk"
 )
 
-// Notifier is the half of an ACP connection a running turn needs: the ability
-// to push an update without waiting for an answer. Narrowed to one method so a
-// turn cannot originate requests, and so tests need not stand up a connection.
-type Notifier interface {
+// peer is what a running turn needs from the ACP connection, in both
+// directions: Notify pushes a session/update without waiting, and Request
+// originates a call the client must answer — which is how the agent asks
+// permission before a tool runs.
+//
+// It is an interface rather than *acp.Conn so tests need not stand up a
+// connection, and it is exactly two methods so a turn cannot reach the rest of
+// the connection's surface.
+type peer interface {
+	acp.Requester
 	Notify(method string, params any) error
 }
 
@@ -127,7 +133,7 @@ func promptText(blocks []acp.ContentBlock) string {
 // This is not decoration: session/prompt's result carries only a stop reason,
 // so without these the client would learn that a turn finished and never what
 // it said.
-func acpPromptFunc(n Notifier, turn turnFunc) acp.PromptFunc {
+func acpPromptFunc(n peer, turn turnFunc) acp.PromptFunc {
 	return func(ctx context.Context, req acp.PromptRequest) (acp.StopReason, error) {
 		events, err := turn(ctx, promptText(req.Prompt))
 		if err != nil {
