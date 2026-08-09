@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -71,13 +72,19 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req R
 
 	task := Task{ID: newTaskID(), ContextID: newTaskID(), State: TaskSubmitted}
 	ctx := r.Context()
-	_ = s.tasks.Create(ctx, task)
+	if err := s.tasks.Create(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store create failed for task %s: %v", task.ID, err)
+	}
 
 	task.State = TaskWorking
-	_ = s.tasks.Update(ctx, task)
+	if err := s.tasks.Update(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+	}
 
 	task = s.runTurn(ctx, task, messageText(params.Message))
-	_ = s.tasks.Update(ctx, task)
+	if err := s.tasks.Update(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+	}
 
 	result, _ := json.Marshal(task)
 	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})

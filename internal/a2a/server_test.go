@@ -1,9 +1,12 @@
 package a2a
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -239,4 +242,65 @@ func TestServerRunTurnRecoversPanic(t *testing.T) {
 
 	assert.Equal(t, TaskFailed, result.State)
 	assert.Contains(t, result.Error, "panic")
+}
+
+// erroringTaskStore is a TaskStore fake whose Create/Update always fail,
+// for exercising the server's error-visibility logging.
+type erroringTaskStore struct {
+	createErr error
+	updateErr error
+}
+
+func (e *erroringTaskStore) Create(_ context.Context, _ Task) error { return e.createErr }
+func (e *erroringTaskStore) Get(_ context.Context, id string) (Task, error) {
+	return Task{}, fmt.Errorf("task %s not found", id)
+}
+func (e *erroringTaskStore) Update(_ context.Context, _ Task) error { return e.updateErr }
+
+// TestServerMessageSendLogsTaskStoreWriteFailures is a regression test for
+// TaskStore write errors being silently swallowed. Create/Update failures
+// must be logged as warnings, without failing the message/send response.
+func TestServerMessageSendLogsTaskStoreWriteFailures(t *testing.T) {
+	a := newTestAgent(t, "ok")
+	srv := NewServer(a, &erroringTaskStore{
+		createErr: errors.New("create boom"),
+		updateErr: errors.New("update boom"),
+	}, AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	var logBuf bytes.Buffer
+	prevOutput := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&logBuf)
+	defer func() {
+		log.SetOutput(prevOutput)
+		log.SetFlags(prevFlags)
+	}()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "message/send",
+		Params: mustMarshal(t, struct {
+			Message Message `json:"message"`
+		}{Message: Message{Role: "user", Parts: []Part{{Kind: "text", Text: "test"}}}}),
+	})
+
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.Nil(t, rpcResp.Error, "message/send should not fail when TaskStore fails")
+
+	var task Task
+	require.NoError(t, json.Unmarshal(rpcResp.Result, &task))
+	assert.Equal(t, TaskCompleted, task.State, "task should complete despite store failures")
+	assert.Contains(t, task.Artifacts[0].Parts[0].Text, "ok")
+
+	logged := logBuf.String()
+	assert.Contains(t, logged, "warning:", "failed store operations must be logged as warnings")
+	assert.Contains(t, logged, "create boom", "create failure must be logged")
+	assert.Contains(t, logged, "update boom", "update failures must be logged")
 }
