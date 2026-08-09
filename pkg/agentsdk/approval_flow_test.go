@@ -226,6 +226,34 @@ func TestApprovalFlowTruncatesLargeUIInput(t *testing.T) {
 	assert.Len(t, input, maxUIRequestInputBytes+len("...(truncated)"))
 }
 
+// TestApprovalFlowCarriesTheCompleteInput pins that the truncated preview is a
+// display convenience, not the only copy of what is being approved.
+//
+// The metadata preview stops at 2 KB. An adapter that has nothing else to show
+// asks the user to authorise a command they can only see the first 2 KB of,
+// while the tool then runs the whole thing — so a long shell command can hide
+// its destructive part past the cut and still be approved. Adapters that can
+// render the whole input need the whole input.
+func TestApprovalFlowCarriesTheCompleteInput(t *testing.T) {
+	big := fmt.Sprintf(`{"command":%q}`, strings.Repeat("x", 5000)+"; rm -rf /")
+	tc := ToolUseBlock{ID: "tu_big", Name: "shell", Input: json.RawMessage(big)}
+
+	var captured UIRequest
+	handler := UIRequestFunc(func(_ context.Context, req UIRequest) (UIResponse, error) {
+		captured = req
+		return UIResponse{RequestID: req.ID, ActionID: "allow"}, nil
+	})
+	flow := &ApprovalFlow{UIHandler: handler}
+	flow.Decide(context.Background(), tc)
+
+	assert.Equal(t, string(tc.Input), string(captured.Input),
+		"the input the tool will actually run must reach the adapter intact")
+	assert.Contains(t, string(captured.Input), "rm -rf /",
+		"the part past the preview cut is exactly what a truncated prompt hides")
+	assert.True(t, strings.HasSuffix(captured.Metadata["input"], "...(truncated)"),
+		"the bounded preview stays, for adapters that want a short one")
+}
+
 func TestTruncateUIInputNeverSplitsRunes(t *testing.T) {
 	// Place a 3-byte rune ("€") straddling the truncation boundary: naive
 	// byte slicing at maxUIRequestInputBytes would cut it mid-sequence and

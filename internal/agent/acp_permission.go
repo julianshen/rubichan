@@ -96,10 +96,19 @@ func (p *ACPPermissions) Request(ctx context.Context, req agentsdk.UIRequest) (a
 //
 // The tool's name is preferred as the title over the flow's phrasing because
 // the tool_call update already streamed uses the name, and a client matches the
-// two by id and shows one entry. The input travels as displayable content
-// rather than as rawInput: the approval flow truncates long inputs to a
-// preview, and a truncated preview is not valid JSON — but it is still the only
-// thing that tells a user whether they are approving `ls` or `rm -rf /`.
+// two by id and shows one entry.
+//
+// The input travels complete, twice: as rawInput, which is ACP's structured
+// field for it, and as displayable content for clients that render only that.
+// It is deliberately taken from UIRequest.Input rather than from the metadata
+// preview — the preview stops at 2 KB, so a shell command longer than that
+// would be approved on its prefix while the tool went on to run the whole
+// thing, putting anything destructive past the cut outside what the user
+// actually agreed to.
+//
+// Falling back to the preview when Input is absent is the safe direction: some
+// visible description beats none, and every caller in this repository sets
+// Input.
 func permissionToolCall(req agentsdk.UIRequest) acp.PermissionToolCall {
 	call := acp.PermissionToolCall{
 		ToolCallID: req.ID,
@@ -109,8 +118,14 @@ func permissionToolCall(req agentsdk.UIRequest) acp.PermissionToolCall {
 	if name := req.Metadata["tool"]; name != "" {
 		call.Title = name
 	}
-	if input := req.Metadata["input"]; input != "" {
-		call.Content = []acp.ToolCallContent{acp.TextToolCallContent(input)}
+
+	shown := req.Metadata["input"]
+	if len(req.Input) > 0 {
+		call.RawInput = req.Input
+		shown = string(req.Input)
+	}
+	if shown != "" {
+		call.Content = []acp.ToolCallContent{acp.TextToolCallContent(shown)}
 	}
 	return call
 }

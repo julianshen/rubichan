@@ -34,6 +34,11 @@ type PermissionToolCall struct {
 	Title      string            `json:"title,omitempty"`
 	Status     ToolCallStatus    `json:"status,omitempty"`
 	Content    []ToolCallContent `json:"content,omitempty"`
+	// RawInput is the structured input the tool will run with, complete. A
+	// client that renders it is showing the user what they are approving; one
+	// that renders a shortened form instead still has the whole thing to
+	// expand.
+	RawInput json.RawMessage `json:"rawInput,omitempty"`
 }
 
 // ToolCallContent carries displayable detail about a tool call.

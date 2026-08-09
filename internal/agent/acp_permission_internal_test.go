@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/acp"
@@ -111,6 +112,39 @@ func TestACPPermissionsShowsWhatIsBeingApproved(t *testing.T) {
 	assert.Equal(t, "shell", sent.ToolCall.Title)
 	require.Len(t, sent.ToolCall.Content, 1)
 	assert.Contains(t, sent.ToolCall.Content[0].Content.Text, "rm -rf /")
+}
+
+// TestACPPermissionsSendsTheWholeCommandNotAPreview closes the gap between
+// "the user was shown something" and "the user was shown what will run".
+//
+// The approval flow's metadata preview stops at 2 KB. A shell command longer
+// than that would be approved on its prefix while the tool executed the whole
+// thing, so anything destructive past the cut gets consent it was never shown
+// for. The complete input travels as rawInput, which is ACP's field for exactly
+// this.
+func TestACPPermissionsSendsTheWholeCommandNotAPreview(t *testing.T) {
+	t.Parallel()
+
+	full := `{"command":"` + strings.Repeat("x", 5000) + `; rm -rf /"}`
+	req := approvalRequest()
+	req.Input = json.RawMessage(full)
+	req.Metadata["input"] = full[:2048] + "...(truncated)"
+
+	client := &fakePeer{answer: `{"outcome":{"outcome":"cancelled"}}`}
+	perms := NewACPPermissions()
+	perms.bind(client, "sess-1")
+
+	_, err := perms.Request(context.Background(), req)
+	require.NoError(t, err)
+
+	var sent acp.RequestPermissionParams
+	require.NoError(t, json.Unmarshal(client.asked[0], &sent))
+
+	assert.JSONEq(t, full, string(sent.ToolCall.RawInput),
+		"the client must receive the input the tool will actually run")
+	require.Len(t, sent.ToolCall.Content, 1)
+	assert.Contains(t, sent.ToolCall.Content[0].Content.Text, "rm -rf /",
+		"the displayable copy must not stop before the part that matters")
 }
 
 // TestACPPermissionsOffersOnlyChoicesItCanKeep pins the option list to what
