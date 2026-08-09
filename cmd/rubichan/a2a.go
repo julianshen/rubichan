@@ -1,0 +1,135 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/julianshen/rubichan/internal/a2a"
+	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/config"
+	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/tools"
+)
+
+var (
+	a2aServeAddr   string
+	a2aServeNoAuth bool
+)
+
+func a2aCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "a2a",
+		Short: "A2A (Agent2Agent) protocol commands",
+	}
+	cmd.AddCommand(a2aServeCmd())
+	return cmd
+}
+
+func a2aServeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Expose rubichan as a callable A2A agent",
+		Long: `Start an HTTP server implementing the A2A (Agent2Agent) protocol,
+so other agents can discover and call rubichan.
+
+Endpoints:
+  GET  /.well-known/agent.json   Agent Card
+  POST /                         JSON-RPC 2.0 (message/send, message/stream, tasks/get, tasks/cancel)`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runA2AServe()
+		},
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	cmd.Flags().StringVar(&a2aServeAddr, "addr", "127.0.0.1:9910", "listen address (host:port)")
+	cmd.Flags().BoolVar(&a2aServeNoAuth, "no-auth", false, "disable auth (refuses to bind on a non-loopback address unless set)")
+	return cmd
+}
+
+func runA2AServe() error {
+	cfg, err := config.Load("")
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if a2aServeAddr != "" {
+		cfg.A2A.ServeAddr = a2aServeAddr
+	}
+	requireAuth := cfg.A2A.RequireAuth && !a2aServeNoAuth
+
+	host, _, err := net.SplitHostPort(cfg.A2A.ServeAddr)
+	if err != nil {
+		return fmt.Errorf("parse addr: %w", err)
+	}
+	if !requireAuth && host != "127.0.0.1" && host != "localhost" {
+		return fmt.Errorf("refusing to bind %s without auth; pass an api key or use --addr on loopback only", cfg.A2A.ServeAddr)
+	}
+
+	apiKey, err := config.ResolveAPIKey(cfg.A2A.APIKeySource, cfg.A2A.APIKey, "RUBICHAN_A2A_API_KEY")
+	if requireAuth && err != nil {
+		return fmt.Errorf("resolve a2a api key: %w", err)
+	}
+
+	llm, err := provider.NewProviderWithDebug(cfg, debugMode)
+	if err != nil {
+		return fmt.Errorf("create provider: %w", err)
+	}
+
+	registry := tools.NewRegistry()
+	if _, err := registerCoreTools(".", registry, cfg, ToolsConfig{}, tools.NewDiffTracker(), 120*time.Second); err != nil {
+		return fmt.Errorf("register tools: %w", err)
+	}
+
+	approve := func(context.Context, string, json.RawMessage) (bool, error) { return true, nil }
+	a := agent.New(llm, registry, approve, cfg)
+
+	cfgDir, err := configDir()
+	if err != nil {
+		return fmt.Errorf("resolve config directory: %w", err)
+	}
+	st, err := openStore(cfgDir)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer st.Close()
+
+	card := a2a.BuildAgentCard(registry, "rubichan", "A terminal-first AI coding agent", "http://"+cfg.A2A.ServeAddr)
+	srv := a2a.NewServer(a, a2a.NewStoreTaskStore(st, "server"), card, requireAuth, apiKey)
+
+	ln, err := net.Listen("tcp", cfg.A2A.ServeAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", cfg.A2A.ServeAddr, err)
+	}
+
+	log.Printf("rubichan a2a serve: listening on %s", ln.Addr())
+	if !requireAuth {
+		log.Print("rubichan a2a serve: WARNING: auth disabled")
+	}
+
+	httpSrv := &http.Server{Handler: srv.Handler()}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.Serve(ln) }()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		log.Print("rubichan a2a serve: shutting down...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return httpSrv.Shutdown(shutdownCtx)
+	}
+}
