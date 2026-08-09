@@ -37,7 +37,7 @@ func TestServeACPCarriesAWholeConversation(t *testing.T) {
 		return ch, nil
 	}
 
-	client, done := startACP(t, turn)
+	client, done := startACP(t, turn, nil)
 
 	// initialize
 	client.send(t, 1, "initialize", map[string]any{
@@ -99,12 +99,96 @@ func TestServeACPCarriesAWholeConversation(t *testing.T) {
 	}
 }
 
+// TestServeACPAsksTheClientBeforeRunningATool drives the permission round trip
+// over a real connection, in the middle of a real turn.
+//
+// This is the case Conn was built bidirectional for and that nothing exercised
+// until now: the agent originates a request while it is still answering one,
+// and blocks on the client's reply. Proving it against a fake requester would
+// not have shown that the connection can carry a request in that direction
+// without deadlocking against the read loop that brings the answer back.
+func TestServeACPAsksTheClientBeforeRunningATool(t *testing.T) {
+	t.Parallel()
+
+	perms := NewACPPermissions()
+	decided := make(chan agentsdk.UIResponse, 1)
+
+	// Stands in for a tool that needs approval: the turn asks, and does not
+	// proceed until the client answers.
+	turn := func(ctx context.Context, _ string) (<-chan agentsdk.TurnEvent, error) {
+		ch := make(chan agentsdk.TurnEvent, 2)
+		go func() {
+			defer close(ch)
+			resp, err := perms.Request(ctx, approvalRequest())
+			if err != nil {
+				ch <- agentsdk.TurnEvent{Type: "done", ExitReason: agentsdk.ExitProviderError}
+				return
+			}
+			decided <- resp
+			ch <- agentsdk.TurnEvent{Type: "done", ExitReason: agentsdk.ExitCompleted}
+		}()
+		return ch, nil
+	}
+
+	client, _ := startACP(t, turn, perms)
+
+	client.send(t, 1, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	})
+	var initResult acp.InitializeResult
+	client.result(t, 1, &initResult)
+
+	client.send(t, 2, "session/new", map[string]any{"cwd": "/repo"})
+	var created acp.NewSessionResult
+	client.result(t, 2, &created)
+
+	client.send(t, 3, "session/prompt", map[string]any{
+		"sessionId": created.SessionID,
+		"prompt":    []any{map[string]any{"type": "text", "text": "delete everything"}},
+	})
+
+	var asked acp.RequestPermissionParams
+	var stop acp.PromptResult
+	for {
+		msg := client.read(t)
+		if msg.Method == acp.MethodSessionRequestPermission {
+			require.NoError(t, json.Unmarshal(msg.Params, &asked))
+			client.respond(t, msg.ID, acp.RequestPermissionResult{
+				Outcome: acp.PermissionOutcome{
+					Outcome:  acp.OutcomeSelected,
+					OptionID: "allow-once",
+				},
+			})
+			continue
+		}
+		if msg.Method != "" {
+			continue // a session/update
+		}
+		require.Nil(t, msg.Error, "session/prompt failed: %v", msg.Error)
+		require.NoError(t, json.Unmarshal(*msg.Result, &stop))
+		break
+	}
+
+	assert.Equal(t, created.SessionID, asked.SessionID,
+		"the permission request must address the session whose turn is asking")
+	assert.Equal(t, "shell", asked.ToolCall.Title)
+	assert.Equal(t, acp.StopEndTurn, stop.StopReason)
+
+	select {
+	case resp := <-decided:
+		assert.Equal(t, "allow", resp.ActionID, "the client said allow; the turn must see it")
+	case <-time.After(2 * time.Second):
+		t.Fatal("the turn never received the client's decision")
+	}
+}
+
 // TestServeACPRefusesAPromptForAnUnopenedSession pins that the session check is
 // live over the wire, not only in the handler's unit test.
 func TestServeACPRefusesAPromptForAnUnopenedSession(t *testing.T) {
 	t.Parallel()
 
-	client, _ := startACP(t, nil)
+	client, _ := startACP(t, nil, nil)
 
 	// The handshake first, or the refusal under test would be masked by the
 	// ordering check rather than the session lookup.
@@ -134,7 +218,7 @@ func TestServeACPRefusesAPromptForAnUnopenedSession(t *testing.T) {
 func TestServeACPRefusesASessionBeforeInitialize(t *testing.T) {
 	t.Parallel()
 
-	client, _ := startACP(t, nil)
+	client, _ := startACP(t, nil, nil)
 
 	client.send(t, 1, "session/new", map[string]any{
 		"cwd":        "/repo",
@@ -154,7 +238,7 @@ type acpClient struct {
 	enc *json.Encoder
 }
 
-func startACP(t *testing.T, turn turnFunc) (*acpClient, chan struct{}) {
+func startACP(t *testing.T, turn turnFunc, perms *ACPPermissions) (*acpClient, chan struct{}) {
 	t.Helper()
 
 	serverR, clientW := io.Pipe()
@@ -181,6 +265,7 @@ func startACP(t *testing.T, turn turnFunc) (*acpClient, chan struct{}) {
 			WorkingDir:   "/repo",
 			Handshake:    handshake,
 			Turn:         turn,
+			Permissions:  perms,
 		})
 	}()
 	t.Cleanup(func() {
@@ -264,6 +349,27 @@ func (c *acpClient) result(t *testing.T, id int, v any) {
 	}
 }
 
+// respond answers a request the agent sent us. session/request_permission is
+// the only one that travels in this direction, and it is a request rather than
+// a notification, so a client that does not answer wedges the turn.
+func (c *acpClient) respond(t *testing.T, id any, result any) {
+	t.Helper()
+	raw, err := json.Marshal(result)
+	require.NoError(t, err)
+	msg := json.RawMessage(raw)
+
+	sent := make(chan error, 1)
+	go func() {
+		sent <- c.enc.Encode(acp.Response{JSONRPC: "2.0", ID: id, Result: &msg})
+	}()
+	select {
+	case err := <-sent:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the served connection never read our response")
+	}
+}
+
 func (c *acpClient) close() { _ = c.w.Close() }
 
 // acpStubProvider is a provider that is never actually streamed from: the
@@ -301,7 +407,7 @@ func TestServeACPWiresARealAgent(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = ServeACP(ctx, a, serverR, serverW)
+		_ = ServeACP(ctx, a, serverR, serverW, nil)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -344,7 +450,7 @@ func TestServeACPRefusesASecondConnectionToOneAgent(t *testing.T) {
 	firstR, firstW := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	firstDone := make(chan error, 1)
-	go func() { firstDone <- ServeACP(ctx, a, firstR, io.Discard) }()
+	go func() { firstDone <- ServeACP(ctx, a, firstR, io.Discard, nil) }()
 	t.Cleanup(func() {
 		cancel()
 		_ = firstW.Close()
@@ -355,7 +461,7 @@ func TestServeACPRefusesASecondConnectionToOneAgent(t *testing.T) {
 	require.Eventually(t, a.acpServing.Load, 2*time.Second, 5*time.Millisecond,
 		"the first ServeACP never claimed the agent")
 
-	err := ServeACP(context.Background(), a, strings.NewReader(""), io.Discard)
+	err := ServeACP(context.Background(), a, strings.NewReader(""), io.Discard, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already served")
 
@@ -370,7 +476,7 @@ func TestServeACPRefusesASecondConnectionToOneAgent(t *testing.T) {
 		t.Fatal("the first ServeACP did not return")
 	}
 
-	err = ServeACP(context.Background(), a, strings.NewReader(""), io.Discard)
+	err = ServeACP(context.Background(), a, strings.NewReader(""), io.Discard, nil)
 	require.Error(t, err,
 		"a finished connection must not free the agent: its conversation carries over")
 	assert.Contains(t, err.Error(), "already served")

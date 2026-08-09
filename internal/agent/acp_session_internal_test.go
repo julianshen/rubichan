@@ -150,7 +150,7 @@ func TestACPPromptStreamsTheTurn(t *testing.T) {
 	}
 
 	client := &fakePeer{}
-	prompt := acpPromptFunc(client, turn)
+	prompt := acpPromptFunc(client, turn, nil)
 
 	stop, err := prompt(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
@@ -179,7 +179,7 @@ func TestACPPromptReportsATurnThatBroke(t *testing.T) {
 		return ch, nil
 	}
 
-	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn, nil)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -199,7 +199,7 @@ func TestACPPromptRejectsATurnThatNeverFinished(t *testing.T) {
 		return ch, nil
 	}
 
-	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn, nil)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -228,7 +228,7 @@ func TestACPPromptReportsATurnThatNeverStarted(t *testing.T) {
 		return nil, assert.AnError
 	}
 
-	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn, nil)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -254,7 +254,7 @@ func TestACPPromptCarriesTheAgentsOwnErrorText(t *testing.T) {
 		return ch, nil
 	}
 
-	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn, nil)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -279,7 +279,7 @@ func TestACPPromptDoesNotFailATurnThatRecovered(t *testing.T) {
 		return ch, nil
 	}
 
-	stop, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
+	stop, err := acpPromptFunc(&fakePeer{}, turn, nil)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
