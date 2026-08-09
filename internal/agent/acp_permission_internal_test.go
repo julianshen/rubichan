@@ -102,9 +102,9 @@ func TestACPPermissionsShowsWhatIsBeingApproved(t *testing.T) {
 	_, err := perms.Request(context.Background(), approvalRequest())
 	require.NoError(t, err)
 
-	require.Len(t, client.asked, 1)
+	require.Len(t, client.requests(), 1)
 	var sent acp.RequestPermissionParams
-	require.NoError(t, json.Unmarshal(client.asked[0], &sent))
+	require.NoError(t, json.Unmarshal(client.requests()[0], &sent))
 
 	assert.Equal(t, "sess-1", sent.SessionID)
 	assert.Equal(t, "call-1", sent.ToolCall.ToolCallID,
@@ -138,7 +138,7 @@ func TestACPPermissionsSendsTheWholeCommandNotAPreview(t *testing.T) {
 	require.NoError(t, err)
 
 	var sent acp.RequestPermissionParams
-	require.NoError(t, json.Unmarshal(client.asked[0], &sent))
+	require.NoError(t, json.Unmarshal(client.requests()[0], &sent))
 
 	assert.JSONEq(t, full, string(sent.ToolCall.RawInput),
 		"the client must receive the input the tool will actually run")
@@ -163,7 +163,7 @@ func TestACPPermissionsOffersOnlyChoicesItCanKeep(t *testing.T) {
 	require.NoError(t, err)
 
 	var sent acp.RequestPermissionParams
-	require.NoError(t, json.Unmarshal(client.asked[0], &sent))
+	require.NoError(t, json.Unmarshal(client.requests()[0], &sent))
 
 	require.Len(t, sent.Options, 2)
 	for _, opt := range sent.Options {

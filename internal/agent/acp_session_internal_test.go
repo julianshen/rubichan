@@ -95,19 +95,27 @@ func TestPromptTextRendersTheBlocksTheAgentAccepts(t *testing.T) {
 // fakePeer records what a turn streamed instead of writing it to a stream, and
 // answers whatever the turn asks the client.
 type fakePeer struct {
-	sent []acp.SessionNotification
-
 	// answer is the result every Request resolves to; askErr fails it instead.
-	answer  string
-	askErr  error
-	asked   []json.RawMessage
-	askedMu sync.Mutex
+	answer string
+	askErr error
+
+	// One mutex for both records. A turn streams updates from the loop that
+	// consumes its events while a tool asks permission from wherever it runs,
+	// so the two arrive on different goroutines. Guarding only one of them
+	// would surface as a race report pointing at the code under test.
+	mu    sync.Mutex
+	sent  []acp.SessionNotification
+	asked []json.RawMessage
 }
 
 func (f *fakePeer) Notify(_ string, params any) error {
-	if n, ok := params.(acp.SessionNotification); ok {
-		f.sent = append(f.sent, n)
+	n, ok := params.(acp.SessionNotification)
+	if !ok {
+		return nil
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, n)
 	return nil
 }
 
@@ -116,13 +124,28 @@ func (f *fakePeer) Request(_ context.Context, _ string, params any) (json.RawMes
 	if err != nil {
 		return nil, err
 	}
-	f.askedMu.Lock()
+	f.mu.Lock()
 	f.asked = append(f.asked, raw)
-	f.askedMu.Unlock()
+	f.mu.Unlock()
 	if f.askErr != nil {
 		return nil, f.askErr
 	}
 	return json.RawMessage(f.answer), nil
+}
+
+// updates and requests are how tests read what the turn sent. They take the
+// lock because a writer may still be running: reading the slices directly is
+// the same race the mutex above exists to prevent, just on the other side.
+func (f *fakePeer) updates() []acp.SessionNotification {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]acp.SessionNotification(nil), f.sent...)
+}
+
+func (f *fakePeer) requests() []json.RawMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]json.RawMessage(nil), f.asked...)
 }
 
 // TestACPPromptStreamsTheTurn is the whole point of the slice: assistant text
@@ -160,8 +183,8 @@ func TestACPPromptStreamsTheTurn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, acp.StopEndTurn, stop)
 
-	require.Len(t, client.sent, 4, "two text chunks, one tool call, one tool update")
-	for _, n := range client.sent {
+	require.Len(t, client.updates(), 4, "two text chunks, one tool call, one tool update")
+	for _, n := range client.updates() {
 		assert.Equal(t, "sess-1", n.SessionID)
 	}
 }
