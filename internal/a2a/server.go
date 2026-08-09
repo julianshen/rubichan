@@ -2,6 +2,7 @@ package a2a
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -72,7 +73,8 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) authorized(r *http.Request) bool {
 	got := r.Header.Get("Authorization")
-	return got == "Bearer "+s.apiKey
+	expected := "Bearer " + s.apiKey
+	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
 }
 
 type taskIDParams struct {
