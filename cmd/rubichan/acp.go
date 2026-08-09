@@ -168,5 +168,5 @@ func runACP() error {
 	// Signal-cancellable, not a timeout: an ACP connection lives as long as the
 	// client keeps it open, and --timeout governs a single headless run, so it
 	// would cut a live editor session off mid-conversation.
-	return agent.ServeACP(ctx, a, os.Stdin, os.Stdout)
+	return agent.ServeACP(ctx, a, os.Stdin, os.Stdout, nil)
 }

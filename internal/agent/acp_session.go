@@ -133,8 +133,18 @@ func promptText(blocks []acp.ContentBlock) string {
 // This is not decoration: session/prompt's result carries only a stop reason,
 // so without these the client would learn that a turn finished and never what
 // it said.
-func acpPromptFunc(n peer, turn turnFunc) acp.PromptFunc {
+func acpPromptFunc(n peer, turn turnFunc, perms *ACPPermissions) acp.PromptFunc {
 	return func(ctx context.Context, req acp.PromptRequest) (acp.StopReason, error) {
+		// Bound before the turn starts and released when it ends, because a
+		// permission request carries this session's id and there is nobody to
+		// ask outside a turn. Safe as a single binding rather than a map
+		// because a session serves one turn at a time and this agent hosts one
+		// session — the two guards session.go already enforces.
+		if perms != nil {
+			perms.bind(n, req.SessionID)
+			defer perms.unbind()
+		}
+
 		events, err := turn(ctx, promptText(req.Prompt))
 		if err != nil {
 			return "", fmt.Errorf("start turn: %w", err)
@@ -207,7 +217,12 @@ func acpPromptFunc(n peer, turn turnFunc) acp.PromptFunc {
 // connection runs through this agent's single conversation, so a second
 // connection would get its own session store, pass its own sole-session check,
 // and still append to the first connection's history.
-func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
+// perms routes tool approval to the client for the duration of each turn. It
+// is passed in rather than read off the agent because the agent core holds no
+// protocol state: the caller that built the agent with this handler installed
+// is the one that knows to hand it over. Nil leaves the agent's own approval
+// wiring in charge, which is what --auto-approve wants.
+func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer, perms *ACPPermissions) error {
 	// The claim is permanent, not held for the duration of the connection.
 	//
 	// Releasing it on return was the obvious thing and it was wrong: the
@@ -232,6 +247,7 @@ func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer) error {
 		WorkingDir:   a.WorkingDir(),
 		Handshake:    handshake,
 		Turn:         a.Turn,
+		Permissions:  perms,
 	})
 }
 
@@ -246,6 +262,11 @@ type acpServeConfig struct {
 	// check, which is what a test serving no handshake wants.
 	Handshake *acp.Handshake
 	Turn      turnFunc
+
+	// Permissions routes tool approval to the client. Nil leaves the agent's
+	// own approval wiring in charge, which is what --auto-approve and a test
+	// that does not exercise approval both want.
+	Permissions *ACPPermissions
 }
 
 // serveACP is ServeACP with its collaborators passed in, so the wiring can be
@@ -262,7 +283,7 @@ func serveACP(ctx context.Context, r io.Reader, w io.Writer, cfg acpServeConfig)
 		Capabilities: cfg.Capabilities,
 		WorkingDir:   cfg.WorkingDir,
 		Handshake:    cfg.Handshake,
-		Prompt:       acpPromptFunc(conn, cfg.Turn),
+		Prompt:       acpPromptFunc(conn, cfg.Turn, cfg.Permissions),
 	})
 
 	return conn.Serve(ctx)
