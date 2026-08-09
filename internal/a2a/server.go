@@ -45,6 +45,11 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
+	if s.requireAuth && !s.authorized(r) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	var req RPCRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, 0, -32700, "parse error: "+err.Error())
@@ -56,9 +61,57 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		s.handleMessageSend(w, r, req)
 	case "message/stream":
 		s.handleMessageStream(w, r, req)
+	case "tasks/get":
+		s.handleTasksGet(w, r, req)
+	case "tasks/cancel":
+		s.handleTasksCancel(w, r, req)
 	default:
 		s.writeError(w, req.ID, -32601, "method not found: "+req.Method)
 	}
+}
+
+func (s *Server) authorized(r *http.Request) bool {
+	got := r.Header.Get("Authorization")
+	return got == "Bearer "+s.apiKey
+}
+
+type taskIDParams struct {
+	ID string `json:"id"`
+}
+
+func (s *Server) handleTasksGet(w http.ResponseWriter, r *http.Request, req RPCRequest) {
+	var params taskIDParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeError(w, req.ID, -32602, "invalid params: "+err.Error())
+		return
+	}
+	task, err := s.tasks.Get(r.Context(), params.ID)
+	if err != nil {
+		s.writeError(w, req.ID, -32000, "task not found: "+err.Error())
+		return
+	}
+	result, _ := json.Marshal(task)
+	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
+}
+
+func (s *Server) handleTasksCancel(w http.ResponseWriter, r *http.Request, req RPCRequest) {
+	var params taskIDParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeError(w, req.ID, -32602, "invalid params: "+err.Error())
+		return
+	}
+	ctx := r.Context()
+	task, err := s.tasks.Get(ctx, params.ID)
+	if err != nil {
+		s.writeError(w, req.ID, -32000, "task not found: "+err.Error())
+		return
+	}
+	task.State = TaskCanceled
+	if err := s.tasks.Update(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+	}
+	result, _ := json.Marshal(task)
+	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
 }
 
 type sendParams struct {

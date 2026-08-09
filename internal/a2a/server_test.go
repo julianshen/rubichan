@@ -343,6 +343,214 @@ func TestServerRunTurnRecoversPanic(t *testing.T) {
 	assert.Contains(t, result.Error, "panic")
 }
 
+func TestServerRequiresAuthWhenConfigured(t *testing.T) {
+	a := newTestAgent(t, "42")
+	store := newMemoryTaskStore()
+	srv := NewServer(a, store, AgentCard{Name: "rubichan"}, true, "secret")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(RPCRequest{JSONRPC: "2.0", ID: 1, Method: "tasks/get"})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestServerAcceptsMatchingBearerToken(t *testing.T) {
+	a := newTestAgent(t, "42")
+	store := newMemoryTaskStore()
+	srv := NewServer(a, store, AgentCard{Name: "rubichan"}, true, "secret")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	require.NoError(t, store.Create(context.Background(), Task{ID: "task-1", State: TaskWorking}))
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/get",
+		Params: mustMarshal(t, struct {
+			ID string `json:"id"`
+		}{ID: "task-1"}),
+	})
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer secret")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	var task Task
+	require.NoError(t, json.Unmarshal(rpcResp.Result, &task))
+	assert.Equal(t, TaskWorking, task.State)
+}
+
+func TestServerTasksCancel(t *testing.T) {
+	a := newTestAgent(t, "42")
+	store := newMemoryTaskStore()
+	srv := NewServer(a, store, AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	require.NoError(t, store.Create(context.Background(), Task{ID: "task-1", State: TaskWorking}))
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/cancel",
+		Params: mustMarshal(t, struct {
+			ID string `json:"id"`
+		}{ID: "task-1"}),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	task, err := store.Get(context.Background(), "task-1")
+	require.NoError(t, err)
+	assert.Equal(t, TaskCanceled, task.State)
+}
+
+func TestServerHandleTasksGetInvalidParams(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/get",
+		Params: json.RawMessage(`{"id": 123}`),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.NotNil(t, rpcResp.Error)
+	assert.Equal(t, -32602, rpcResp.Error.Code)
+}
+
+func TestServerHandleTasksGetNotFound(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/get",
+		Params: mustMarshal(t, taskIDParams{ID: "missing"}),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.NotNil(t, rpcResp.Error)
+	assert.Equal(t, -32000, rpcResp.Error.Code)
+}
+
+func TestServerHandleTasksCancelInvalidParams(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/cancel",
+		Params: json.RawMessage(`{"id": 123}`),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.NotNil(t, rpcResp.Error)
+	assert.Equal(t, -32602, rpcResp.Error.Code)
+}
+
+func TestServerHandleTasksCancelNotFound(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/cancel",
+		Params: mustMarshal(t, taskIDParams{ID: "missing"}),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.NotNil(t, rpcResp.Error)
+	assert.Equal(t, -32000, rpcResp.Error.Code)
+}
+
+// cancelUpdateErrorStore wraps a memoryTaskStore but forces Update to fail,
+// so a seeded task can still be Get() during tasks/cancel while exercising
+// the TaskStore-error-logging path this task's context calls for on any new
+// Update call (the existing log.Printf("warning: ...") convention, rather
+// than discarding the error as the brief's own snippet does).
+type cancelUpdateErrorStore struct {
+	*memoryTaskStore
+	updateErr error
+}
+
+func (c *cancelUpdateErrorStore) Update(_ context.Context, _ Task) error { return c.updateErr }
+
+func TestServerHandleTasksCancelLogsTaskStoreUpdateFailure(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	inner := newMemoryTaskStore()
+	require.NoError(t, inner.Create(context.Background(), Task{ID: "task-1", State: TaskWorking}))
+	store := &cancelUpdateErrorStore{memoryTaskStore: inner, updateErr: errors.New("update boom")}
+	srv := NewServer(a, store, AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	var logBuf bytes.Buffer
+	prevOutput := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&logBuf)
+	defer func() {
+		log.SetOutput(prevOutput)
+		log.SetFlags(prevFlags)
+	}()
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/cancel",
+		Params: mustMarshal(t, taskIDParams{ID: "task-1"}),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.Nil(t, rpcResp.Error, "tasks/cancel should still return the task despite store failures")
+
+	var task Task
+	require.NoError(t, json.Unmarshal(rpcResp.Result, &task))
+	assert.Equal(t, TaskCanceled, task.State, "response should reflect canceled state even if persisting it failed")
+
+	logged := logBuf.String()
+	assert.Contains(t, logged, "warning:", "failed store update must be logged as a warning")
+	assert.Contains(t, logged, "update boom", "update failure must be logged")
+}
+
 // erroringTaskStore is a TaskStore fake whose Create/Update always fail,
 // for exercising the server's error-visibility logging.
 type erroringTaskStore struct {
