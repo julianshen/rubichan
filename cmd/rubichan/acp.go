@@ -9,38 +9,48 @@ import (
 	"syscall"
 
 	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/folderaccess"
 	"github.com/julianshen/rubichan/internal/provider"
 	"github.com/julianshen/rubichan/internal/tools"
 	"github.com/julianshen/rubichan/internal/tools/xcode"
 )
 
-// checkACPToolConsent refuses to serve ACP without an explicit decision about
-// tool approval.
+// acpApprovalCheckers decides which tool calls skip the user entirely.
 //
-// ACP's mechanism for this is session/request_permission, which this agent does
-// not implement: Conn.Request can express the round trip, but nothing calls it.
-// So a served agent cannot ask the user before running a shell command.
+// A checker that answers AutoApproved short-circuits the approval flow before
+// the client is consulted, so AlwaysAutoApprove is added only when the user
+// asked for unattended execution. Adding it unconditionally — as this mode did
+// while it could not ask at all — would leave a permission prompt in the code
+// that no user ever sees.
 //
-// Auto-approving on the grounds that the mode is non-interactive would hand
-// whatever spawned the process arbitrary command execution on the user's
-// machine with nobody having agreed to it. Headless can default to
-// auto-approval because a person typed the command that started it; here the
-// caller is an editor, and the person may not know a tool ran at all.
+// --approve-cwd is deliberately not consulted. It governs folder access,
+// whether the agent may work in this directory at all, and grants no scope over
+// which tools may run unattended once it does.
 //
-// --approve-cwd deliberately does NOT satisfy this. It governs folder access —
-// whether the agent may work in this directory at all — and grants no scope
-// over which tools may run unattended once it does. Accepting it here, as an
-// earlier version did, promised a restriction that nothing implemented.
-func checkACPToolConsent() error {
-	if autoApprove {
-		return nil
+// Hierarchical deny policies come first either way, so an org-level restriction
+// survives an opt-in.
+func acpApprovalCheckers(cfg *config.Config, cwd string) []agent.ApprovalChecker {
+	var checkers []agent.ApprovalChecker
+	if hc := buildHierarchicalChecker(cfg, configPath, cwd); hc != nil {
+		checkers = append(checkers, hc)
 	}
-	return fmt.Errorf(
-		"--acp cannot ask for tool approval: this agent does not implement ACP's session/request_permission, " +
-			"so a client cannot be prompted before a tool runs. Re-run with --auto-approve to accept unattended " +
-			"tool execution. (--approve-cwd does not substitute: it grants folder access, not a limit on which " +
-			"tools may run.)")
+	if autoApprove {
+		checkers = append(checkers, agent.AlwaysAutoApprove{})
+	}
+	return checkers
+}
+
+// acpApprovalWithoutAClient is the backstop the agent falls back to when no UI
+// handler is installed.
+//
+// In this mode one always is, so reaching here means a wiring mistake rather
+// than a user decision — and answering "approved" would turn that mistake into
+// arbitrary command execution that nobody agreed to. Denying makes the mistake
+// visible in a tool result instead.
+func acpApprovalWithoutAClient(_ context.Context, tool string, _ json.RawMessage) (bool, error) {
+	return false, fmt.Errorf(
+		"acp: tool approval was not routed to the client, so nobody could be asked about %q", tool)
 }
 
 // runACP serves the Agent Client Protocol over stdin/stdout until the client
@@ -51,10 +61,6 @@ func checkACPToolConsent() error {
 // nothing else may write to it — diagnostics go to stderr, which is where Go's
 // log package already sends them.
 func runACP() error {
-	if err := checkACPToolConsent(); err != nil {
-		return err
-	}
-
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -137,30 +143,26 @@ func runACP() error {
 		defer skillCloser.Close()
 	}
 
-	// The approval posture the consent check above already forced the caller to
-	// choose. Hierarchical deny policies still apply, so an org-level
-	// restriction is not lost by opting in.
-	var checkers []agent.ApprovalChecker
-	if hc := buildHierarchicalChecker(cfg, configPath, cwd); hc != nil {
-		checkers = append(checkers, hc)
-	}
-	checkers = append(checkers, agent.AlwaysAutoApprove{})
-	composite := agent.NewCompositeApprovalChecker(checkers...)
+	composite := agent.NewCompositeApprovalChecker(acpApprovalCheckers(cfg, cwd)...)
 
-	approvalFunc := func(context.Context, string, json.RawMessage) (bool, error) {
-		return true, nil
-	}
+	// Tool approval goes to the editor: the agent asks over the same connection
+	// it is streaming the turn on, and the user answers in their client. This is
+	// what lifted the --auto-approve requirement this mode used to carry — it
+	// could not ask anyone, so the only alternative to refusing to start was
+	// running everything unattended.
+	perms := agent.NewACPPermissions()
 
 	// The tool security pipeline. Interactive and headless both install it, and
 	// ACP omitting it meant .security.yaml and Agent.ToolRules denials were not
-	// enforced — on the one mode that auto-approves every call, so the rule
-	// engine was the only thing left saying no.
+	// enforced. It matters most under --auto-approve, where the rule engine is
+	// the only thing left saying no.
 	pipeline := buildPipeline(registry, cfg, cwd, rt)
 
-	a := agent.New(p, registry, approvalFunc, cfg,
+	a := agent.New(p, registry, acpApprovalWithoutAClient, cfg,
 		agent.WithWorkingDir(cwd),
 		agent.WithCapabilities(modelCaps),
 		agent.WithApprovalChecker(composite),
+		agent.WithUIRequestHandler(perms),
 		agent.WithSkillRuntime(rt),
 		agent.WithToolMiddlewares(pipeline.Middlewares),
 	)
@@ -168,5 +170,5 @@ func runACP() error {
 	// Signal-cancellable, not a timeout: an ACP connection lives as long as the
 	// client keeps it open, and --timeout governs a single headless run, so it
 	// would cut a live editor session off mid-conversation.
-	return agent.ServeACP(ctx, a, os.Stdin, os.Stdout, nil)
+	return agent.ServeACP(ctx, a, os.Stdin, os.Stdout, perms)
 }
