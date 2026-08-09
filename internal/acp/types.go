@@ -105,6 +105,10 @@ const (
 	// MethodSessionUpdate is a notification the agent sends, not a method it
 	// serves: it carries turn events back to the client during session/prompt.
 	MethodSessionUpdate = "session/update"
+	// MethodSessionRequestPermission is a request the agent sends *to* the
+	// client mid-turn, and the only method on this list that travels in that
+	// direction and expects an answer.
+	MethodSessionRequestPermission = "session/request_permission"
 
 	// Rubichan-specific extensions
 	MethodSkillInvoke     = "skill/invoke"
