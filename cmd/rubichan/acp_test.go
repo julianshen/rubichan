@@ -1,68 +1,72 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/julianshen/rubichan/internal/agent"
+	"github.com/julianshen/rubichan/internal/config"
 )
 
-// TestACPRequiresExplicitToolConsent pins the safety posture of the ACP mode.
+// TestACPDoesNotAutoApproveWithoutTheFlag replaces the gate that used to refuse
+// to start this mode at all.
 //
-// ACP's answer to tool approval is session/request_permission, which this agent
-// does not implement — Conn.Request can express it, but nothing calls it. So an
-// ACP-served agent has no way to ask the user before running a shell command.
-//
-// That leaves two honest options and one dishonest one. Refusing to start is
-// honest. Requiring an explicit opt-in is honest. Silently auto-approving
-// because the mode happens to be non-interactive is not: the editor that
-// spawned the process would be granting arbitrary command execution on the
-// user's machine without anyone saying so.
-func TestACPRequiresExplicitToolConsent(t *testing.T) {
+// The refusal existed because a served agent could not ask anyone: ACP's
+// session/request_permission was unimplemented, so the only two postures were
+// "run everything unattended" and "do not serve". Now that the agent can ask,
+// the flag reverts to meaning what it means everywhere else — skip the user —
+// and the invariant worth pinning is that its absence does not silently skip
+// them anyway. AlwaysAutoApprove short-circuits the approval flow before the
+// client is ever consulted, so adding it unconditionally would put a permission
+// prompt in the code that no user ever sees.
+func TestACPDoesNotAutoApproveWithoutTheFlag(t *testing.T) {
 	prevAuto, prevApproveCwd := autoApprove, approveCwd
 	t.Cleanup(func() { autoApprove, approveCwd = prevAuto, prevApproveCwd })
 
-	autoApprove, approveCwd = false, false
-	err := checkACPToolConsent()
-	if err == nil {
-		t.Fatal("ACP mode must not start without an explicit tool-approval choice")
-	}
-	if !strings.Contains(err.Error(), "session/request_permission") {
-		t.Errorf("the refusal must name the missing capability so the reason is actionable, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--auto-approve") {
-		t.Errorf("the refusal must name the flag that resolves it, got: %v", err)
+	// --approve-cwd is set to pin the correction it already carried: it governs
+	// folder access, and grants no licence to run tools unattended.
+	autoApprove, approveCwd = false, true
+
+	checkers := acpApprovalCheckers(&config.Config{}, t.TempDir())
+	got := agent.NewCompositeApprovalChecker(checkers...).CheckApproval("shell", json.RawMessage(`{"command":"rm -rf /"}`))
+
+	if got == agent.AutoApproved || got == agent.TrustRuleApproved {
+		t.Fatalf("without --auto-approve a shell call must reach the user, got %v", got)
 	}
 }
 
-// TestACPAcceptsAnExplicitOptIn is the other half: having named the risk, the
-// mode must actually be usable once the user accepts it.
-func TestACPAcceptsAnExplicitOptIn(t *testing.T) {
+// TestACPAutoApprovesOnTheExplicitOptIn is the other half: a user who accepts
+// unattended execution gets it, and the client is not asked about every call.
+func TestACPAutoApprovesOnTheExplicitOptIn(t *testing.T) {
 	prevAuto, prevApproveCwd := autoApprove, approveCwd
 	t.Cleanup(func() { autoApprove, approveCwd = prevAuto, prevApproveCwd })
 
 	autoApprove, approveCwd = true, false
-	if err := checkACPToolConsent(); err != nil {
-		t.Errorf("an explicit opt-in must be accepted, got: %v", err)
+
+	checkers := acpApprovalCheckers(&config.Config{}, t.TempDir())
+	got := agent.NewCompositeApprovalChecker(checkers...).CheckApproval("shell", json.RawMessage(`{"command":"ls"}`))
+
+	if got != agent.AutoApproved {
+		t.Fatalf("--auto-approve must skip the prompt, got %v", got)
 	}
 }
 
-// TestACPApproveCwdIsNotToolConsent pins a correction. An earlier version
-// accepted --approve-cwd here, which was wrong twice over: the flag governs
-// folder access rather than tool approval, and nothing downstream scoped tool
-// execution to the directory — AlwaysAutoApprove approved everything either
-// way. The refusal text promised a restriction that did not exist.
+// TestACPApprovalWithoutAClientDenies covers the backstop.
 //
-// --approve-cwd still has its real meaning in this mode; it is just not consent
-// to run tools unattended.
-func TestACPApproveCwdIsNotToolConsent(t *testing.T) {
-	prevAuto, prevApproveCwd := autoApprove, approveCwd
-	t.Cleanup(func() { autoApprove, approveCwd = prevAuto, prevApproveCwd })
+// The agent's approval flow prefers the UI handler and falls back to this
+// function, so it runs only if the handler was never installed — a wiring
+// mistake rather than a user decision. Returning true there, as this mode did
+// while it demanded --auto-approve, would turn that mistake into silent
+// unattended execution.
+func TestACPApprovalWithoutAClientDenies(t *testing.T) {
+	approved, err := acpApprovalWithoutAClient(context.Background(), "shell", json.RawMessage(`{}`))
 
-	autoApprove, approveCwd = false, true
-	err := checkACPToolConsent()
-	if err == nil {
-		t.Fatal("--approve-cwd must not be accepted as consent to run tools unattended")
+	if approved {
+		t.Fatal("a tool must not run when nobody was asked")
 	}
-	if !strings.Contains(err.Error(), "--approve-cwd does not substitute") {
-		t.Errorf("the refusal must say why --approve-cwd is not enough, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "shell") {
+		t.Errorf("the refusal must name the tool it refused, got: %v", err)
 	}
 }
