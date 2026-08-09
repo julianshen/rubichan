@@ -91,6 +91,11 @@ func (f *ApprovalFlow) requestApproval(ctx context.Context, tc ToolUseBlock) (ap
 			{ID: "allow_always", Label: "Always Allow"},
 			{ID: "deny_always", Label: "Always Deny", Style: "danger"},
 		},
+		// The bounded preview is for adapters with a fixed-height prompt; Input
+		// is the same payload unabridged, for adapters that can show it all.
+		// Only the preview used to travel, which meant a tool input past the
+		// cut was approved on its prefix and then executed in full.
+		Input: tc.Input,
 		Metadata: map[string]string{
 			"tool":  tc.Name,
 			"input": truncateUIInput(tc.Input),

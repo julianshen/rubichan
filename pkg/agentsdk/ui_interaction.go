@@ -40,6 +40,16 @@ type UIRequest struct {
 	Actions        []UIAction        // available actions for the user
 	TimeoutSeconds int               // optional timeout hint (0 = adapter default)
 	Metadata       map[string]string // optional transport-safe key/value hints
+
+	// Input is the unabridged payload the pending action will run with, for
+	// adapters that can render it in full.
+	//
+	// Metadata carries a bounded preview of the same thing, which is what a
+	// fixed-height prompt wants. It is a preview only: an adapter that treats
+	// it as the whole input asks the user to authorise the first 2 KB of a
+	// command whose remainder runs anyway. Approval flows populate this;
+	// adapters that only ever show a summary may ignore it.
+	Input json.RawMessage
 }
 
 // UIUpdate carries an incremental update for a previously emitted UI request.
