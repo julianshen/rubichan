@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/julianshen/rubichan/internal/acp"
@@ -90,16 +92,37 @@ func TestPromptTextRendersTheBlocksTheAgentAccepts(t *testing.T) {
 	assert.Contains(t, got, "file:///src/main.go")
 }
 
-// fakeNotifier records what a turn streamed instead of writing it to a stream.
-type fakeNotifier struct {
+// fakePeer records what a turn streamed instead of writing it to a stream, and
+// answers whatever the turn asks the client.
+type fakePeer struct {
 	sent []acp.SessionNotification
+
+	// answer is the result every Request resolves to; askErr fails it instead.
+	answer  string
+	askErr  error
+	asked   []json.RawMessage
+	askedMu sync.Mutex
 }
 
-func (f *fakeNotifier) Notify(method string, params any) error {
+func (f *fakePeer) Notify(_ string, params any) error {
 	if n, ok := params.(acp.SessionNotification); ok {
 		f.sent = append(f.sent, n)
 	}
 	return nil
+}
+
+func (f *fakePeer) Request(_ context.Context, _ string, params any) (json.RawMessage, error) {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	f.askedMu.Lock()
+	f.asked = append(f.asked, raw)
+	f.askedMu.Unlock()
+	if f.askErr != nil {
+		return nil, f.askErr
+	}
+	return json.RawMessage(f.answer), nil
 }
 
 // TestACPPromptStreamsTheTurn is the whole point of the slice: assistant text
@@ -126,8 +149,8 @@ func TestACPPromptStreamsTheTurn(t *testing.T) {
 		return ch, nil
 	}
 
-	notifier := &fakeNotifier{}
-	prompt := acpPromptFunc(notifier, turn)
+	client := &fakePeer{}
+	prompt := acpPromptFunc(client, turn)
 
 	stop, err := prompt(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
@@ -137,8 +160,8 @@ func TestACPPromptStreamsTheTurn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, acp.StopEndTurn, stop)
 
-	require.Len(t, notifier.sent, 4, "two text chunks, one tool call, one tool update")
-	for _, n := range notifier.sent {
+	require.Len(t, client.sent, 4, "two text chunks, one tool call, one tool update")
+	for _, n := range client.sent {
 		assert.Equal(t, "sess-1", n.SessionID)
 	}
 }
@@ -156,7 +179,7 @@ func TestACPPromptReportsATurnThatBroke(t *testing.T) {
 		return ch, nil
 	}
 
-	_, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -176,7 +199,7 @@ func TestACPPromptRejectsATurnThatNeverFinished(t *testing.T) {
 		return ch, nil
 	}
 
-	_, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -205,7 +228,7 @@ func TestACPPromptReportsATurnThatNeverStarted(t *testing.T) {
 		return nil, assert.AnError
 	}
 
-	_, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -231,7 +254,7 @@ func TestACPPromptCarriesTheAgentsOwnErrorText(t *testing.T) {
 		return ch, nil
 	}
 
-	_, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+	_, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
@@ -256,7 +279,7 @@ func TestACPPromptDoesNotFailATurnThatRecovered(t *testing.T) {
 		return ch, nil
 	}
 
-	stop, err := acpPromptFunc(&fakeNotifier{}, turn)(context.Background(), acp.PromptRequest{
+	stop, err := acpPromptFunc(&fakePeer{}, turn)(context.Background(), acp.PromptRequest{
 		SessionID: "sess-1",
 		Prompt:    []acp.ContentBlock{{Type: acp.ContentText, Text: "hi"}},
 	})
