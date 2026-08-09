@@ -71,6 +71,22 @@ func TestACPPermissionsRefusesWhenNobodyIsConnected(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestACPPermissionsDeniesWhenTheClientCannotAnswer covers the client half of
+// the same principle: a session is bound, but the request failed. Clients are
+// not obliged to have implemented session/request_permission, and one that
+// answers -32601 arrives here — as a tool that does not run, rather than as one
+// that runs because asking did not work.
+func TestACPPermissionsDeniesWhenTheClientCannotAnswer(t *testing.T) {
+	t.Parallel()
+
+	perms := NewACPPermissions()
+	perms.bind(&fakePeer{askErr: acp.ErrMethodNotFound}, "sess-1")
+
+	_, err := perms.Request(context.Background(), approvalRequest())
+
+	require.Error(t, err)
+}
+
 // TestACPPermissionsShowsWhatIsBeingApproved is the difference between consent
 // and a dialog. A client that renders only "Approve shell tool call" asks the
 // user to authorise a command they were never shown, so the tool name and the
