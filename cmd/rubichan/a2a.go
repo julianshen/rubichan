@@ -44,9 +44,13 @@ so other agents can discover and call rubichan.
 
 Endpoints:
   GET  /.well-known/agent.json   Agent Card
-  POST /                         JSON-RPC 2.0 (message/send, message/stream, tasks/get, tasks/cancel)`,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runA2AServe()
+  POST /                         JSON-RPC 2.0 (message/send, message/stream, tasks/get, tasks/cancel)
+
+This server is network-facing: any authenticated caller can invoke every
+enabled tool. Use --tools to restrict which tools are exposed to remote
+callers (defaults to all tools, matching interactive mode).`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runA2AServe(cmd)
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -56,14 +60,26 @@ Endpoints:
 	return cmd
 }
 
-func runA2AServe() error {
+// resolveA2AServeAddr decides which listen address to use: the --addr flag
+// wins only when the user explicitly passed it; otherwise config.toml's
+// a2a.serve_addr (or its own default) is left in place. Extracted so the
+// precedence logic is unit-testable without starting a real server.
+func resolveA2AServeAddr(addrChanged bool, flagAddr, cfgAddr string) string {
+	if addrChanged {
+		return flagAddr
+	}
+	return cfgAddr
+}
+
+func runA2AServe(cmd *cobra.Command) error {
 	cfg, err := config.Load("")
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if a2aServeAddr != "" {
-		cfg.A2A.ServeAddr = a2aServeAddr
-	}
+	// Only let the flag override config.toml's a2a.serve_addr when the user
+	// actually passed --addr; the flag's non-empty default would otherwise
+	// silently clobber the config value on every run.
+	cfg.A2A.ServeAddr = resolveA2AServeAddr(cmd.Flags().Changed("addr"), a2aServeAddr, cfg.A2A.ServeAddr)
 	requireAuth := cfg.A2A.RequireAuth && !a2aServeNoAuth
 
 	host, _, err := net.SplitHostPort(cfg.A2A.ServeAddr)
@@ -85,7 +101,11 @@ func runA2AServe() error {
 	}
 
 	registry := tools.NewRegistry()
-	if _, err := registerCoreTools(".", registry, cfg, ToolsConfig{}, tools.NewDiffTracker(), 120*time.Second); err != nil {
+	// This server is network-facing: without --tools, every core tool (including
+	// shell and file write) is exposed to any authenticated caller. Operators
+	// serving untrusted callers should pass --tools to restrict exposure.
+	toolsCfg := ToolsConfig{CLIOverrides: parseToolsFlag(toolsFlag)}
+	if _, err := registerCoreTools(".", registry, cfg, toolsCfg, tools.NewDiffTracker(), 120*time.Second); err != nil {
 		return fmt.Errorf("register tools: %w", err)
 	}
 
