@@ -67,13 +67,23 @@ func (d *DispatchTool) Execute(ctx context.Context, input json.RawMessage) (agen
 	}
 	best := matches[0]
 
-	url, apiKey, err := resolveAgentURL(d.cfg, best)
+	return d.dispatchTo(ctx, best, in.TaskDescription)
+}
+
+// dispatchTo sends taskDescription to the named agent, polling until the
+// resulting task reaches a terminal state (or the configured pollFor
+// deadline passes), and formats the outcome as a single ToolResult prefixed
+// with the agent's name. It is the unit of work reused for both the
+// single-best-match path and, when fanout is requested, once per matched
+// agent.
+func (d *DispatchTool) dispatchTo(ctx context.Context, name, taskDescription string) (agentsdk.ToolResult, error) {
+	url, apiKey, err := resolveAgentURL(d.cfg, name)
 	if err != nil {
 		return agentsdk.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
 	client := a2a.NewClient(url, apiKey, d.httpClient)
-	msg := a2a.Message{Role: "user", Parts: []a2a.Part{{Kind: "text", Text: in.TaskDescription}}}
+	msg := a2a.Message{Role: "user", Parts: []a2a.Part{{Kind: "text", Text: taskDescription}}}
 
 	deadline := time.Now().Add(d.pollFor)
 
@@ -81,7 +91,7 @@ func (d *DispatchTool) Execute(ctx context.Context, input json.RawMessage) (agen
 	task, err := client.Send(sendCtx, msg)
 	cancel()
 	if err != nil {
-		return agentsdk.ToolResult{Content: fmt.Sprintf("dispatch to %s failed: %v", best, err), IsError: true}, nil
+		return agentsdk.ToolResult{Content: fmt.Sprintf("dispatch to %s failed: %v", name, err), IsError: true}, nil
 	}
 
 	// Not every A2A agent responds synchronously the way rubichan's own
@@ -112,13 +122,13 @@ func (d *DispatchTool) Execute(ctx context.Context, input json.RawMessage) (agen
 
 	if task.State != a2a.TaskCompleted {
 		if !isTerminal(task.State) {
-			return agentsdk.ToolResult{Content: fmt.Sprintf("gave up waiting for %s after %s: task last reported state %q", best, d.pollFor, task.State), IsError: true}, nil
+			return agentsdk.ToolResult{Content: fmt.Sprintf("gave up waiting for %s after %s: task last reported state %q", name, d.pollFor, task.State), IsError: true}, nil
 		}
-		return agentsdk.ToolResult{Content: fmt.Sprintf("%s ended in state %q: %s", best, task.State, task.Error), IsError: true}, nil
+		return agentsdk.ToolResult{Content: fmt.Sprintf("%s ended in state %q: %s", name, task.State, task.Error), IsError: true}, nil
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "[%s] ", best)
+	fmt.Fprintf(&b, "[%s] ", name)
 	for _, art := range task.Artifacts {
 		for _, p := range art.Parts {
 			b.WriteString(p.Text)
