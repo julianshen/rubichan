@@ -220,9 +220,19 @@ func acpPromptFunc(n peer, turn turnFunc, perms *ACPPermissions) acp.PromptFunc 
 // perms routes tool approval to the client for the duration of each turn. It
 // is passed in rather than read off the agent because the agent core holds no
 // protocol state: the caller that built the agent with this handler installed
-// is the one that knows to hand it over. Nil leaves the agent's own approval
-// wiring in charge, which is what --auto-approve wants.
+// is the one that knows to hand it over. Nil means no ACP routing, which is
+// what --auto-approve and a test that never reaches approval both want.
+//
+// Because it must be stated twice, the two statements are checked against each
+// other first — see checkPermissionWiring.
 func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer, perms *ACPPermissions) error {
+	// Before the claim below, which is permanent: a caller refused for a wiring
+	// mistake must be able to fix it and serve, rather than being told the
+	// agent is spent.
+	if err := checkPermissionWiring(a, perms); err != nil {
+		return err
+	}
+
 	// The claim is permanent, not held for the duration of the connection.
 	//
 	// Releasing it on return was the obvious thing and it was wrong: the
@@ -249,6 +259,31 @@ func ServeACP(ctx context.Context, a *Agent, r io.Reader, w io.Writer, perms *AC
 		Turn:         a.Turn,
 		Permissions:  perms,
 	})
+}
+
+// checkPermissionWiring rejects an agent whose installed approval handler is
+// not the one ServeACP was given.
+//
+// An ACPPermissions has to be named in two places: installed on the agent as
+// its approval UI, and handed here so a turn can bind it to the live
+// connection. Naming only the first leaves it permanently unbound, and the
+// symptom arrives late and misleadingly — the first tool call of a real
+// conversation fails with "no session is active", which reads as a protocol
+// fault rather than a missing argument. Failing here says what is actually
+// wrong, before a client has connected.
+//
+// Only ACPPermissions is checked. A different UIRequestHandler is a deliberate
+// choice to answer approvals some other way, and is none of this function's
+// business.
+func checkPermissionWiring(a *Agent, perms *ACPPermissions) error {
+	installed, ok := a.uiRequestHandler.(*ACPPermissions)
+	if !ok || installed == perms {
+		return nil
+	}
+	if perms == nil {
+		return fmt.Errorf("acp: the agent's approval UI is an ACPPermissions but ServeACP was given none, so nothing would ever bind it to this connection and every tool approval would fail mid-turn; pass the same handler here")
+	}
+	return fmt.Errorf("acp: the agent's approval UI is a different ACPPermissions than ServeACP was given; the installed one would never be bound, so pass the same handler to both")
 }
 
 // acpServeConfig is what serving ACP needs from its surroundings. Grouped into

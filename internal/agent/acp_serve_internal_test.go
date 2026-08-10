@@ -433,6 +433,42 @@ func TestServeACPWiresARealAgent(t *testing.T) {
 	}
 }
 
+// TestServeACPRefusesAHandlerItWasNotGiven catches a wiring mistake at startup
+// rather than at the first tool call.
+//
+// An ACPPermissions has to be stated twice — installed on the agent as its
+// approval UI, and handed to ServeACP so a turn can bind it to the live
+// connection. State only the first and nothing ever binds it, so every tool
+// approval fails with "no session is active" once the user is mid-conversation,
+// which reads as a protocol fault rather than a missing argument. The check runs
+// before the connection claim, so a refused call does not burn the agent.
+func TestServeACPRefusesAHandlerItWasNotGiven(t *testing.T) {
+	t.Parallel()
+
+	perms := NewACPPermissions()
+	a := New(acpStubProvider{}, tools.NewRegistry(), nil,
+		&config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Agent:    config.AgentConfig{MaxTurns: 1},
+		},
+		WithUIRequestHandler(perms),
+	)
+
+	err := ServeACP(context.Background(), a, strings.NewReader(""), io.Discard, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ACPPermissions")
+
+	// Handing over a *different* handler is the same mistake wearing an
+	// argument: the installed one still never binds.
+	err = ServeACP(context.Background(), a, strings.NewReader(""), io.Discard, NewACPPermissions())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "different")
+
+	// The agent is still usable once the caller passes what it installed.
+	assert.NoError(t, ServeACP(context.Background(), a, strings.NewReader(""), io.Discard, perms),
+		"a refused wiring check must not consume the agent's one connection")
+}
+
 // TestServeACPRefusesASecondConnectionToOneAgent closes the session-isolation
 // hole at connection scope. RegisterSession's sole-session guard lives in the
 // store it creates, and that store is per connection — so serving one Agent
