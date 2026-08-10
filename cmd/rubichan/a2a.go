@@ -32,9 +32,9 @@ var (
 func buildA2ARegistry(ctx context.Context, cfg *config.Config) *a2a.Registry {
 	reg := a2a.NewRegistry()
 	for _, agentCfg := range cfg.A2A.Agents {
-		apiKey, _ := config.ResolveAPIKey(agentCfg.APIKeySource, agentCfg.APIKey, "")
+		apiKey, _ := config.ResolveAPIKey(agentCfg.APIKeySource, agentCfg.APIKey, config.OpenAICompatibleEnvVar(agentCfg.Name))
 		client := a2a.NewClient(agentCfg.URL, apiKey, nil)
-		card, err := client.Discover(ctx)
+		card, err := discoverWithTimeout(ctx, client, agentDiscoverTimeout)
 		if err != nil {
 			log.Printf("a2a: could not discover configured agent %q: %v", agentCfg.Name, err)
 			continue
@@ -42,6 +42,17 @@ func buildA2ARegistry(ctx context.Context, cfg *config.Config) *a2a.Registry {
 		reg.Add(agentCfg.Name, *card)
 	}
 	return reg
+}
+
+// agentDiscoverTimeout bounds each configured agent's discovery attempt
+// during startup so one slow or unreachable agent (firewalled, stale
+// address, VPN-only) cannot hang the CLI's startup indefinitely.
+const agentDiscoverTimeout = 5 * time.Second
+
+func discoverWithTimeout(ctx context.Context, client *a2a.Client, timeout time.Duration) (*a2a.AgentCard, error) {
+	discoverCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return client.Discover(discoverCtx)
 }
 
 func a2aCmd() *cobra.Command {
