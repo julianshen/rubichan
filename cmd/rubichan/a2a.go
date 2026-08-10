@@ -164,7 +164,17 @@ func runA2AServe(cmd *cobra.Command) error {
 		log.Print("rubichan a2a serve: WARNING: auth disabled")
 	}
 
-	httpSrv := &http.Server{Handler: srv.Handler()}
+	httpSrv := &http.Server{
+		Handler: srv.Handler(),
+		// Bounds how long the server waits for request headers to arrive,
+		// closing the Slowloris-style hole of a client that opens a
+		// connection and trickles headers forever. Deliberately not a
+		// blanket ReadTimeout (which bounds the whole request, body
+		// included): this server needs to allow long-running agent turns
+		// and SSE streams once headers are in. Matches the precedent in
+		// internal/transport/ws/server.go's ReadTimeout value.
+		ReadHeaderTimeout: 15 * time.Second,
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
