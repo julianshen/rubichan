@@ -132,6 +132,64 @@ func TestDispatchToolTaskNotCompleted(t *testing.T) {
 	assert.Contains(t, result.Content, "something went wrong")
 }
 
+// TestDispatchToolFanout is a regression test for the finding that
+// a2a_dispatch dropped the design spec's fanout parameter: with fanout=true,
+// every agent Registry.Match returns (not just the best match) should be
+// called, and all their results should appear in the output, each prefixed
+// with its own agent name.
+func TestDispatchToolFanout(t *testing.T) {
+	weatherHandler := http.NewServeMux()
+	weatherHandler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRPCRequest(t, r)
+		writeRPCResult(t, w, req, a2a.Task{
+			ID: "task-weather", State: a2a.TaskCompleted,
+			Artifacts: []a2a.Artifact{{Parts: []a2a.Part{{Kind: "text", Text: "sunny"}}}},
+		})
+	})
+	weatherSrv := testutil.NewServer(t, weatherHandler)
+	defer weatherSrv.Close()
+
+	newsHandler := http.NewServeMux()
+	newsHandler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRPCRequest(t, r)
+		writeRPCResult(t, w, req, a2a.Task{
+			ID: "task-news", State: a2a.TaskCompleted,
+			Artifacts: []a2a.Artifact{{Parts: []a2a.Part{{Kind: "text", Text: "breaking news"}}}},
+		})
+	})
+	newsSrv := testutil.NewServer(t, newsHandler)
+	defer newsSrv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.A2A.Agents = []config.A2AAgentConfig{
+		{Name: "weather-bot", URL: weatherSrv.URL},
+		{Name: "news-bot", URL: newsSrv.URL},
+	}
+
+	reg := a2a.NewRegistry()
+	reg.Add("weather-bot", a2a.AgentCard{
+		Name:   "weather-bot",
+		Skills: []a2a.Skill{{ID: "forecast", Tags: []string{"today"}}},
+	})
+	reg.Add("news-bot", a2a.AgentCard{
+		Name:   "news-bot",
+		Skills: []a2a.Skill{{ID: "headlines", Tags: []string{"today"}}},
+	})
+
+	tool := NewDispatchTool(cfg, reg)
+
+	input, err := json.Marshal(map[string]any{"task_description": "what's happening today", "fanout": true})
+	require.NoError(t, err)
+
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "[weather-bot]")
+	assert.Contains(t, result.Content, "sunny")
+	assert.Contains(t, result.Content, "[news-bot]")
+	assert.Contains(t, result.Content, "breaking news")
+}
+
 // TestDispatchToolPollsUntilCompleted is a regression test for the finding
 // that DispatchTool.Execute treated any non-TaskCompleted state returned by
 // Send as a hard failure, even though Send's own contract allows returning

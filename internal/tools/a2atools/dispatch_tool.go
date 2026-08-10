@@ -45,7 +45,8 @@ func (d *DispatchTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"task_description": {"type": "string", "description": "What needs to be done"}
+			"task_description": {"type": "string", "description": "What needs to be done"},
+			"fanout": {"type": "boolean", "description": "If true, dispatch to every matching agent above the threshold instead of just the best match"}
 		},
 		"required": ["task_description"]
 	}`)
@@ -53,6 +54,7 @@ func (d *DispatchTool) InputSchema() json.RawMessage {
 
 type dispatchInput struct {
 	TaskDescription string `json:"task_description"`
+	Fanout          bool   `json:"fanout"`
 }
 
 func (d *DispatchTool) Execute(ctx context.Context, input json.RawMessage) (agentsdk.ToolResult, error) {
@@ -65,9 +67,32 @@ func (d *DispatchTool) Execute(ctx context.Context, input json.RawMessage) (agen
 	if len(matches) == 0 {
 		return agentsdk.ToolResult{Content: "no known agent matches this task description", IsError: true}, nil
 	}
-	best := matches[0]
 
-	return d.dispatchTo(ctx, best, in.TaskDescription)
+	if !in.Fanout {
+		return d.dispatchTo(ctx, matches[0], in.TaskDescription)
+	}
+
+	// fanout=true: Registry.Match already excludes agents with zero
+	// tag/word overlap (see registry.go), so its full result list already
+	// is "every agent with a genuine match" — call each one and return all
+	// results together, uninterpreted, for the calling agent turn to
+	// synthesize itself (per the design spec's Phase 3 data flow).
+	var b strings.Builder
+	anySucceeded := false
+	for i, name := range matches {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		res, err := d.dispatchTo(ctx, name, in.TaskDescription)
+		if err != nil {
+			return agentsdk.ToolResult{}, err
+		}
+		b.WriteString(res.Content)
+		if !res.IsError {
+			anySucceeded = true
+		}
+	}
+	return agentsdk.ToolResult{Content: b.String(), IsError: !anySucceeded}, nil
 }
 
 // dispatchTo sends taskDescription to the named agent, polling until the
