@@ -73,7 +73,9 @@ func (r *Registry) Match(taskDescription string) []string {
 func wordSet(s string) map[string]bool {
 	out := make(map[string]bool)
 	for _, w := range strings.Fields(strings.ToLower(s)) {
-		out[strings.Trim(w, ".,!?'\"")] = true
+		if trimmed := strings.Trim(w, ".,!?'\""); trimmed != "" {
+			out[trimmed] = true
+		}
 	}
 	return out
 }
