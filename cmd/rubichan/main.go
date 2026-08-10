@@ -55,6 +55,7 @@ import (
 	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/internal/tools/a2atools"
 	"github.com/julianshen/rubichan/internal/tools/browser"
 	dbtools "github.com/julianshen/rubichan/internal/tools/db"
 	gittools "github.com/julianshen/rubichan/internal/tools/git"
@@ -1125,6 +1126,16 @@ func runInteractive() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+
+	// a2a_call needs *store.Store to persist task state, which doesn't exist
+	// yet at wireExtendedTools' call site — register it here instead, once
+	// the store is available (same reasoning as the notes tool below).
+	if toolsCfg.ShouldEnable("a2a_call") {
+		if err := registry.Register(a2atools.NewCallTool(cfg, s)); err != nil {
+			return fmt.Errorf("registering a2a_call tool: %w", err)
+		}
+	}
+
 	if err := folderaccess.EnsureApprovedInteractive(s, cwd, os.Stdin, os.Stderr, autoApprove, approveCwd); err != nil {
 		return err
 	}
@@ -1615,6 +1626,16 @@ func runHeadless() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+
+	// a2a_call needs *store.Store to persist task state, which doesn't exist
+	// yet at wireExtendedTools' call site — register it here instead, once
+	// the store is available (same reasoning as the notes tool below).
+	if headlessToolsCfg.ShouldEnable("a2a_call") {
+		if err := registry.Register(a2atools.NewCallTool(cfg, s)); err != nil {
+			return fmt.Errorf("registering a2a_call tool: %w", err)
+		}
+	}
+
 	if err := folderaccess.EnsureApprovedNonInteractive(s, cwd, autoApprove, approveCwd); err != nil {
 		return err
 	}
@@ -2210,6 +2231,7 @@ func wireWiki(cwd string, registry *tools.Registry, llm wiki.LLMCompleter, tools
 }
 
 func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig) error {
+	a2aReg := buildA2ARegistry(context.Background(), cfg)
 	for _, tool := range []tools.Tool{
 		httptool.NewGetTool(),
 		httptool.NewPostTool(),
@@ -2223,6 +2245,8 @@ func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config,
 		gittools.NewShowTool(cwd),
 		gittools.NewBlameTool(cwd),
 		dbtools.NewQueryTool(cwd),
+		a2atools.NewDiscoverTool(cfg),
+		a2atools.NewDispatchTool(cfg, a2aReg),
 	} {
 		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {

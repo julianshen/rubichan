@@ -26,6 +26,24 @@ var (
 	a2aServeNoAuth bool
 )
 
+// buildA2ARegistry discovers every configured [[a2a.agents]] entry and
+// populates a Registry. An agent that fails to respond is logged and
+// skipped, not fatal — a2a_dispatch simply won't route to it.
+func buildA2ARegistry(ctx context.Context, cfg *config.Config) *a2a.Registry {
+	reg := a2a.NewRegistry()
+	for _, agentCfg := range cfg.A2A.Agents {
+		apiKey, _ := config.ResolveAPIKey(agentCfg.APIKeySource, agentCfg.APIKey, "")
+		client := a2a.NewClient(agentCfg.URL, apiKey, nil)
+		card, err := client.Discover(ctx)
+		if err != nil {
+			log.Printf("a2a: could not discover configured agent %q: %v", agentCfg.Name, err)
+			continue
+		}
+		reg.Add(agentCfg.Name, *card)
+	}
+	return reg
+}
+
 func a2aCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "a2a",
