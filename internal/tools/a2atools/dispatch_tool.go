@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/julianshen/rubichan/internal/a2a"
 	"github.com/julianshen/rubichan/internal/config"
@@ -19,11 +20,18 @@ type DispatchTool struct {
 	cfg        *config.Config
 	registry   *a2a.Registry
 	httpClient *http.Client
+	pollEvery  time.Duration // overridable in tests
+	pollFor    time.Duration
 }
 
 // NewDispatchTool creates a DispatchTool over reg.
 func NewDispatchTool(cfg *config.Config, reg *a2a.Registry) *DispatchTool {
-	return &DispatchTool{cfg: cfg, registry: reg}
+	return &DispatchTool{
+		cfg:       cfg,
+		registry:  reg,
+		pollEvery: 500 * time.Millisecond,
+		pollFor:   2 * time.Minute,
+	}
 }
 
 func (d *DispatchTool) Name() string { return "a2a_dispatch" }
@@ -65,11 +73,47 @@ func (d *DispatchTool) Execute(ctx context.Context, input json.RawMessage) (agen
 	}
 
 	client := a2a.NewClient(url, apiKey, d.httpClient)
-	task, err := client.Send(ctx, a2a.Message{Role: "user", Parts: []a2a.Part{{Kind: "text", Text: in.TaskDescription}}})
+	msg := a2a.Message{Role: "user", Parts: []a2a.Part{{Kind: "text", Text: in.TaskDescription}}}
+
+	deadline := time.Now().Add(d.pollFor)
+
+	sendCtx, cancel := context.WithTimeout(ctx, d.pollFor)
+	task, err := client.Send(sendCtx, msg)
+	cancel()
 	if err != nil {
 		return agentsdk.ToolResult{Content: fmt.Sprintf("dispatch to %s failed: %v", best, err), IsError: true}, nil
 	}
+
+	// Not every A2A agent responds synchronously the way rubichan's own
+	// server currently does; Send may legitimately return a task still in
+	// submitted/working state. Poll until it reaches a terminal state or
+	// the deadline passes.
+	for !isTerminal(task.State) && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return agentsdk.ToolResult{Content: "dispatch canceled", IsError: true}, nil
+		case <-time.After(d.pollEvery):
+		}
+
+		// Bound each poll call so a remote agent that accepts the
+		// connection but never responds can't block Execute past the
+		// configured pollFor budget.
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		pollCtx, cancel := context.WithTimeout(ctx, remaining)
+		task, err = client.GetTask(pollCtx, task.ID)
+		cancel()
+		if err != nil {
+			return agentsdk.ToolResult{Content: fmt.Sprintf("poll failed: %v", err), IsError: true}, nil
+		}
+	}
+
 	if task.State != a2a.TaskCompleted {
+		if !isTerminal(task.State) {
+			return agentsdk.ToolResult{Content: fmt.Sprintf("gave up waiting for %s after %s: task last reported state %q", best, d.pollFor, task.State), IsError: true}, nil
+		}
 		return agentsdk.ToolResult{Content: fmt.Sprintf("%s ended in state %q: %s", best, task.State, task.Error), IsError: true}, nil
 	}
 
