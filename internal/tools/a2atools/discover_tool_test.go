@@ -119,3 +119,48 @@ func TestDiscoverToolDiscoverFails(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content, "discover failed")
 }
+
+// TestDiscoverToolRejectsPrivateAddress guards against the SSRF finding
+// where resolveAgentURL happily accepted any raw http(s) URL and handed it
+// straight to the A2A client with no restriction, letting an LLM-controlled
+// "agent" argument reach internal-only addresses (e.g. cloud metadata
+// endpoints, localhost services). httpClient is intentionally left nil so
+// Execute exercises the production default (defaultA2AHTTPClient), not a
+// test seam — this is the exact path a real deployment would take.
+func TestDiscoverToolRejectsPrivateAddress(t *testing.T) {
+	tool := NewDiscoverTool(config.DefaultConfig())
+
+	input, err := json.Marshal(map[string]string{"agent": "http://127.0.0.1:1/"})
+	require.NoError(t, err)
+
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "private or local addresses")
+}
+
+// TestDiscoverToolDefaultClientAllowsMemScheme confirms the SSRF guard
+// added above doesn't collateral-damage internal/testutil's mem:// hermetic
+// test transport, which the rest of this package's test suite depends on.
+// httpClient is left nil so this exercises defaultA2AHTTPClient's fallback
+// for non-HTTP(S) schemes, not the httpClient-override test seam used
+// elsewhere in this file.
+func TestDiscoverToolDefaultClientAllowsMemScheme(t *testing.T) {
+	handler := http.NewServeMux()
+	handler.HandleFunc("/.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"remote","description":"d","skills":[]}`))
+	})
+	srv := testutil.NewServer(t, handler)
+	defer srv.Close()
+
+	tool := NewDiscoverTool(config.DefaultConfig())
+
+	input, err := json.Marshal(map[string]string{"agent": srv.URL})
+	require.NoError(t, err)
+
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content, "remote")
+}

@@ -95,6 +95,34 @@ func TestDispatchToolResolveAgentURLFailure(t *testing.T) {
 	assert.Contains(t, result.Content, "not a configured")
 }
 
+// TestDispatchToolRejectsPrivateAddress guards against the SSRF finding:
+// a2a_dispatch resolves the matched agent's configured URL through the same
+// resolveAgentURL/httpClient path as a2a_discover and a2a_call, so a
+// misconfigured (or attacker-influenced) [[a2a.agents]] entry pointing at an
+// internal address must be blocked too — the check applies uniformly, with
+// no allowlist exemption for configured agents, matching internal/tools/http.
+// httpClient is left nil to exercise the production default.
+func TestDispatchToolRejectsPrivateAddress(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.A2A.Agents = []config.A2AAgentConfig{{Name: "internal-bot", URL: "http://127.0.0.1:1/"}}
+
+	reg := a2a.NewRegistry()
+	reg.Add("internal-bot", a2a.AgentCard{
+		Name:   "internal-bot",
+		Skills: []a2a.Skill{{ID: "probe", Tags: []string{"probe"}}},
+	})
+
+	tool := NewDispatchTool(cfg, reg)
+
+	input, err := json.Marshal(map[string]string{"task_description": "probe"})
+	require.NoError(t, err)
+
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "private or local addresses")
+}
+
 func TestDispatchToolTaskNotCompleted(t *testing.T) {
 	handler := http.NewServeMux()
 	handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

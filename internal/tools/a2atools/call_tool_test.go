@@ -53,6 +53,28 @@ func TestCallToolSyncCompletion(t *testing.T) {
 	assert.Contains(t, result.Content, "42")
 }
 
+// TestCallToolRejectsPrivateAddress guards against the SSRF finding shared
+// by all three a2atools tools: a raw "agent" URL argument must not reach
+// internal/private addresses. httpClient is left nil to exercise the
+// production default (defaultA2AHTTPClient), not the httpClient-override
+// test seam used elsewhere in this file.
+func TestCallToolRejectsPrivateAddress(t *testing.T) {
+	s, err := store.NewStore(":memory:")
+	require.NoError(t, err)
+	defer s.Close()
+
+	cfg := config.DefaultConfig()
+	tool := NewCallTool(cfg, s)
+
+	input, err := json.Marshal(map[string]string{"agent": "http://127.0.0.1:1/", "message": "hi"})
+	require.NoError(t, err)
+
+	result, err := tool.Execute(context.Background(), input)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content, "private or local addresses")
+}
+
 // writeRPCResult encodes v as the result of a successful JSON-RPC response
 // matching req's ID.
 func writeRPCResult(t *testing.T, w http.ResponseWriter, req a2a.RPCRequest, v any) {

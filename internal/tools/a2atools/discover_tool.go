@@ -19,7 +19,7 @@ import (
 // DiscoverTool fetches an A2A agent's Agent Card.
 type DiscoverTool struct {
 	cfg        *config.Config
-	httpClient *http.Client // overridable in tests; nil means a2a.NewClient's own default
+	httpClient *http.Client // overridable in tests; nil means defaultA2AHTTPClient (SSRF-guarded)
 }
 
 // NewDiscoverTool creates a DiscoverTool that resolves configured agent
@@ -93,7 +93,7 @@ func (d *DiscoverTool) Execute(ctx context.Context, input json.RawMessage) (agen
 		return agentsdk.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
-	client := a2a.NewClient(url, apiKey, d.httpClient)
+	client := a2a.NewClient(url, apiKey, httpClientOrDefault(d.httpClient))
 	card, err := client.Discover(ctx)
 	if err != nil {
 		return agentsdk.ToolResult{Content: fmt.Sprintf("discover failed: %v", err), IsError: true}, nil

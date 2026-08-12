@@ -19,7 +19,7 @@ import (
 type DispatchTool struct {
 	cfg        *config.Config
 	registry   *a2a.Registry
-	httpClient *http.Client
+	httpClient *http.Client  // overridable in tests; nil means defaultA2AHTTPClient (SSRF-guarded)
 	pollEvery  time.Duration // overridable in tests
 	pollFor    time.Duration
 }
@@ -107,7 +107,7 @@ func (d *DispatchTool) dispatchTo(ctx context.Context, name, taskDescription str
 		return agentsdk.ToolResult{Content: err.Error(), IsError: true}, nil
 	}
 
-	client := a2a.NewClient(url, apiKey, d.httpClient)
+	client := a2a.NewClient(url, apiKey, httpClientOrDefault(d.httpClient))
 	msg := a2a.Message{Role: "user", Parts: []a2a.Part{{Kind: "text", Text: taskDescription}}}
 
 	deadline := time.Now().Add(d.pollFor)
