@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/julianshen/rubichan/internal/a2a"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/testutil"
+	"github.com/julianshen/rubichan/internal/tools"
 )
 
 func TestBuildA2ARegistryPopulatesFromConfig(t *testing.T) {
@@ -103,4 +106,67 @@ func TestBuildA2ARegistryBoundsPerAgentDiscoveryTimeout(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatal("buildA2ARegistry did not return within the bounded timeout; a stalled agent hung startup")
 	}
+}
+
+// TestWireExtendedToolsSkipsA2ADiscoveryWhenDispatchDisabled proves that
+// wireExtendedTools does not pay buildA2ARegistry's discovery cost (up to
+// agentDiscoverTimeout per configured agent, serialized) when a2a_dispatch —
+// its only consumer — is not in the enabled tool set. Before the fix,
+// buildA2ARegistry ran unconditionally on every startup regardless of
+// whether the tool it feeds would ever be registered. The configured agent
+// here points at a real, responsive server; a tripwire flag proves its
+// discovery endpoint is never hit when the gate is off.
+func TestWireExtendedToolsSkipsA2ADiscoveryWhenDispatchDisabled(t *testing.T) {
+	var discoveryCalled atomic.Bool
+	handler := http.NewServeMux()
+	handler.HandleFunc("/.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+		discoveryCalled.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"tripwire"}`))
+	})
+	srv := testutil.NewServer(t, handler)
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.A2A.Agents = []config.A2AAgentConfig{{Name: "tripwire", URL: srv.URL}}
+
+	registry := tools.NewRegistry()
+	// CLIOverrides acts as ShouldEnable's explicit-whitelist branch; leaving
+	// a2a_dispatch out of it means ShouldEnable("a2a_dispatch") is false,
+	// which is what should gate buildA2ARegistry off.
+	toolsCfg := ToolsConfig{CLIOverrides: map[string]bool{}}
+
+	err := wireExtendedToolsContext(context.Background(), t.TempDir(), registry, cfg, toolsCfg)
+	require.NoError(t, err)
+	assert.False(t, discoveryCalled.Load(), "a2a_dispatch is disabled; buildA2ARegistry must not attempt discovery")
+	_, ok := registry.Get("a2a_dispatch")
+	assert.False(t, ok, "a2a_dispatch must not be registered when disabled")
+}
+
+// TestWireExtendedToolsRunsA2ADiscoveryWhenDispatchEnabled is the
+// complementary case: when a2a_dispatch is explicitly enabled, discovery
+// must still run and populate the tool's registry, proving the gate added
+// for the disabled case doesn't also break the enabled path.
+func TestWireExtendedToolsRunsA2ADiscoveryWhenDispatchEnabled(t *testing.T) {
+	var discoveryCalled atomic.Bool
+	handler := http.NewServeMux()
+	handler.HandleFunc("/.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+		discoveryCalled.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"weather-bot","skills":[{"id":"forecast","tags":["weather"]}]}`))
+	})
+	srv := testutil.NewServer(t, handler)
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.A2A.Agents = []config.A2AAgentConfig{{Name: "weather-bot", URL: srv.URL}}
+
+	registry := tools.NewRegistry()
+	toolsCfg := ToolsConfig{CLIOverrides: map[string]bool{"a2a_dispatch": true}}
+
+	err := wireExtendedToolsContext(context.Background(), t.TempDir(), registry, cfg, toolsCfg)
+	require.NoError(t, err)
+	assert.True(t, discoveryCalled.Load(), "a2a_dispatch is enabled; buildA2ARegistry should discover configured agents")
+	_, ok := registry.Get("a2a_dispatch")
+	assert.True(t, ok, "a2a_dispatch must be registered when enabled")
 }
