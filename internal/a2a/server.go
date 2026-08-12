@@ -109,7 +109,7 @@ func (s *Server) handleTasksGet(w http.ResponseWriter, r *http.Request, req RPCR
 		return
 	}
 	result, _ := json.Marshal(task)
-	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
+	s.writeResult(w, req.ID, result)
 }
 
 func (s *Server) handleTasksCancel(w http.ResponseWriter, r *http.Request, req RPCRequest) {
@@ -129,7 +129,7 @@ func (s *Server) handleTasksCancel(w http.ResponseWriter, r *http.Request, req R
 		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
 	}
 	result, _ := json.Marshal(task)
-	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
+	s.writeResult(w, req.ID, result)
 }
 
 type sendParams struct {
@@ -160,7 +160,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req R
 	}
 
 	result, _ := json.Marshal(task)
-	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: req.ID, Result: result})
+	s.writeResult(w, req.ID, result)
 }
 
 func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req RPCRequest) {
@@ -261,6 +261,14 @@ func messageText(m Message) string {
 func (s *Server) writeError(w http.ResponseWriter, id int64, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: id, Error: &RPCError{Code: code, Message: msg}})
+}
+
+// writeResult sets Content-Type like writeError already does and encodes a
+// successful JSON-RPC response. Shared by handleMessageSend, handleTasksGet
+// and handleTasksCancel so all three respond consistently.
+func (s *Server) writeResult(w http.ResponseWriter, id int64, result json.RawMessage) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: id, Result: result})
 }
 
 // taskIDCounter is incremented atomically because HTTP handlers for

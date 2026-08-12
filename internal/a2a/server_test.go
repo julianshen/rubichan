@@ -102,6 +102,9 @@ func TestServerMessageSendCompletes(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"),
+		"success responses must set Content-Type like writeError already does")
+
 	var rpcResp RPCResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
 	require.Nil(t, rpcResp.Error)
