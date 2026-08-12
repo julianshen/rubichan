@@ -72,6 +72,13 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
+	if s.apiKey == "" {
+		// An empty configured key must never authorize anything, even a
+		// client sending exactly "Bearer " (empty token) — otherwise a
+		// Server constructed with requireAuth=true and apiKey="" silently
+		// accepts every request.
+		return false
+	}
 	got := r.Header.Get("Authorization")
 	expected := "Bearer " + s.apiKey
 	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1

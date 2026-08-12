@@ -390,6 +390,34 @@ func TestServerAcceptsMatchingBearerToken(t *testing.T) {
 	assert.Equal(t, TaskWorking, task.State)
 }
 
+// TestServerRejectsEmptyConfiguredAPIKey is a regression test: authorized()
+// must never treat an empty configured apiKey as "anything goes." A Server
+// constructed with requireAuth=true and apiKey="" is a caller mistake (the
+// one current production call site avoids it via config.ResolveAPIKey), but
+// the type itself must not silently bypass auth for it.
+//
+// This exercises authorized() directly rather than over a real HTTP round
+// trip: net/textproto's header parsing trims trailing OWS from header
+// values, so a literal "Bearer " sent on the wire arrives as "Bearer" by
+// the time the server sees it — masking the bug this test targets.
+// Constructing the *http.Request in-process with Header.Set preserves the
+// exact trailing space.
+func TestServerRejectsEmptyConfiguredAPIKey(t *testing.T) {
+	srv := NewServer(nil, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, true, "")
+
+	// A client sending exactly "Bearer " (empty token) must not authorize
+	// against an empty configured apiKey.
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer ")
+	assert.False(t, srv.authorized(req), "empty token against empty configured key must be rejected")
+
+	// A non-empty wrong token against an empty configured key must also be
+	// rejected (this should already work, but confirm it stays true).
+	req2 := httptest.NewRequest(http.MethodPost, "/", nil)
+	req2.Header.Set("Authorization", "Bearer wrong-token")
+	assert.False(t, srv.authorized(req2))
+}
+
 func TestServerTasksCancel(t *testing.T) {
 	a := newTestAgent(t, "42")
 	store := newMemoryTaskStore()
