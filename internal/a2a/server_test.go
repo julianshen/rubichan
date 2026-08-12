@@ -227,6 +227,35 @@ func TestServerHandleAgentCard(t *testing.T) {
 	assert.Equal(t, "rubichan", card.Name)
 }
 
+// TestServerHandleRPCRejectsOversizedBody is a regression test for the
+// server decoding JSON-RPC request bodies with no size cap: an
+// unauthenticated or misbehaving client could stream an unbounded body and
+// exhaust server memory. The request is built directly (httptest.NewRequest
+// + ResponseRecorder, no real socket) rather than over httptest.NewServer,
+// because a real TCP round trip with a body this size is prone to blocking
+// or broken-pipe flakiness once the server stops reading mid-decode.
+//
+// The oversized payload is a single large JSON string value (not just
+// padding after a small valid object) so the decoder must actually consume
+// bytes past the cap to finish parsing — otherwise json.Decoder could stop
+// early after parsing a small leading value and never notice the excess.
+func TestServerHandleRPCRejectsOversizedBody(t *testing.T) {
+	srv := NewServer(nil, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")
+
+	huge := strings.Repeat("a", maxRPCRequestBytes+1024)
+	body := `{"jsonrpc":"2.0","id":1,"method":"message/send","params":"` + huge + `"}`
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.handleRPC(rec, req)
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&rpcResp))
+	require.NotNil(t, rpcResp.Error, "oversized body must be rejected, not decoded")
+	assert.Equal(t, -32700, rpcResp.Error.Code, "oversized body should surface as the existing parse-error path")
+}
+
 func TestServerHandleRPCParseError(t *testing.T) {
 	a := newTestAgent(t, "unused")
 	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")

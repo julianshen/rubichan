@@ -14,6 +14,13 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 )
 
+// maxRPCRequestBytes caps the size of a decoded JSON-RPC request body. The
+// server accepts connections from any authenticated client, so an unbounded
+// Decode(r.Body) would let a malicious or buggy caller exhaust server
+// memory by streaming an unbounded body. 10MB is generous enough for real
+// task messages while still being bounded.
+const maxRPCRequestBytes = 10 << 20
+
 // Server answers A2A protocol requests by driving a real agent.Agent turn
 // per task.
 type Server struct {
@@ -50,6 +57,8 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRPCRequestBytes)
 
 	var req RPCRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
