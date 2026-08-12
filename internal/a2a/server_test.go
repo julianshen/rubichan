@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider/anthropic"
@@ -448,6 +449,22 @@ func TestServerRejectsEmptyConfiguredAPIKey(t *testing.T) {
 	req2 := httptest.NewRequest(http.MethodPost, "/", nil)
 	req2.Header.Set("Authorization", "Bearer wrong-token")
 	assert.False(t, srv.authorized(req2))
+}
+
+// TestNewTaskIDIsUUIDBased is a regression test: newTaskID() used to be a
+// process-local sequential counter, which resets to 0 on every restart.
+// Those IDs are persisted in the shared a2a_tasks table where (role, id) is
+// the primary key, so after a restart "task-1" already exists from a
+// previous run and the first Create call after restart fails. IDs must now
+// be UUID-based so they never collide across process restarts.
+func TestNewTaskIDIsUUIDBased(t *testing.T) {
+	id1 := newTaskID()
+	id2 := newTaskID()
+
+	assert.NotEqual(t, id1, id2)
+	require.True(t, strings.HasPrefix(id1, "task-"), "expected task- prefix, got %s", id1)
+	_, err := uuid.Parse(strings.TrimPrefix(id1, "task-"))
+	assert.NoError(t, err, "task ID suffix must be a valid UUID, not a sequential counter")
 }
 
 func TestServerTasksCancel(t *testing.T) {

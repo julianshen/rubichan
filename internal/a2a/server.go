@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
-	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/agent"
 )
 
@@ -271,10 +270,11 @@ func (s *Server) writeResult(w http.ResponseWriter, id int64, result json.RawMes
 	_ = json.NewEncoder(w).Encode(RPCResponse{JSONRPC: "2.0", ID: id, Result: result})
 }
 
-// taskIDCounter is incremented atomically because HTTP handlers for
-// concurrent message/send requests race on task ID generation otherwise.
-var taskIDCounter atomic.Int64
-
+// newTaskID generates a UUID-based task ID. IDs are persisted in the shared
+// a2a_tasks table where (role, id) is the primary key, so a process-local
+// sequential counter would collide with previously-persisted tasks after a
+// restart ("task-1" already existing from a prior run). A UUID has no
+// process-local state to reset.
 func newTaskID() string {
-	return "task-" + strconv.FormatInt(taskIDCounter.Add(1), 10)
+	return "task-" + uuid.NewString()
 }
