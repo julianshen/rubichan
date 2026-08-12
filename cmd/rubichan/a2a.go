@@ -202,6 +202,14 @@ func runA2AServe(cmd *cobra.Command) error {
 		// and SSE streams once headers are in. Matches the precedent in
 		// internal/transport/ws/server.go's ReadTimeout value.
 		ReadHeaderTimeout: 15 * time.Second,
+		// Bounds how long an idle keep-alive connection may sit open once its
+		// request/response cycle completes. Unlike ReadHeaderTimeout, this
+		// only affects genuinely idle connections — an in-flight request or
+		// SSE stream is unaffected. Without it, idle keep-alive connections
+		// can accumulate indefinitely under load and exhaust file
+		// descriptors. 120s is generous enough not to punish normal client
+		// reuse while still reclaiming abandoned connections.
+		IdleTimeout: 120 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
