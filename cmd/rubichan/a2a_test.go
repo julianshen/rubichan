@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -64,4 +65,38 @@ func TestA2AServeAddrDidNotChange_NoConfigValue_KeepsDefault(t *testing.T) {
 	// package's own built-in default.
 	got := resolveA2AServeAddr(false, "127.0.0.1:9910", "127.0.0.1:9910")
 	assert.Equal(t, "127.0.0.1:9910", got)
+}
+
+// TestAddressAllowsNoAuth proves the loopback gate is decided from an actual
+// IP, not host text — the fix for the bug where a misconfigured resolver
+// (e.g. /etc/hosts mapping "localhost" to a non-loopback address) could
+// fool a text-based `host == "localhost"` check while the real bound
+// address wasn't loopback at all.
+func TestAddressAllowsNoAuth(t *testing.T) {
+	tests := []struct {
+		name string
+		ip   net.IP
+		want bool
+	}{
+		{"IPv4 loopback", net.ParseIP("127.0.0.1"), true},
+		{"IPv4 loopback range", net.ParseIP("127.5.5.5"), true},
+		{"IPv6 loopback", net.ParseIP("::1"), true},
+		{"private LAN address", net.ParseIP("192.168.1.10"), false},
+		{"public address", net.ParseIP("8.8.8.8"), false},
+		{"unspecified (0.0.0.0)", net.ParseIP("0.0.0.0"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, addressAllowsNoAuth(tt.ip))
+		})
+	}
+}
+
+// TestAdvertisedCardURL proves the Agent Card's URL is built from a
+// resolved net.Addr (as returned by a real listener's Addr() method) rather
+// than the pre-listen config string, so it never advertises an
+// OS-assigned-but-unresolved port like ":0".
+func TestAdvertisedCardURL(t *testing.T) {
+	addr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 54321}
+	assert.Equal(t, "http://127.0.0.1:54321", advertisedCardURL(addr))
 }

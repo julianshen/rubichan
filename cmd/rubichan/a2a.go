@@ -100,6 +100,27 @@ func resolveA2AServeAddr(addrChanged bool, flagAddr, cfgAddr string) string {
 	return cfgAddr
 }
 
+// addressAllowsNoAuth reports whether ip is a loopback address, the only
+// class runA2AServe will bind to with auth disabled. Callers must check this
+// against the listener's actual resolved address (ln.Addr()), not the
+// pre-resolution host text — a hosts-file or DNS misconfiguration can make a
+// text check like `host == "localhost"` pass while the real bound address
+// isn't loopback at all. Extracted so this decision is unit-testable without
+// starting a real listener.
+func addressAllowsNoAuth(ip net.IP) bool {
+	return ip.IsLoopback()
+}
+
+// advertisedCardURL builds the Agent Card's base URL from the listener's
+// actual resolved address. Building it from the pre-listen config string
+// instead would advertise an unreachable address whenever the configured
+// port is 0 (OS-assigned), since the real port is only known after
+// net.Listen succeeds. Extracted so this decision is unit-testable without
+// starting a real listener.
+func advertisedCardURL(addr net.Addr) string {
+	return "http://" + addr.String()
+}
+
 func runA2AServe(cmd *cobra.Command) error {
 	cfg, err := config.Load("")
 	if err != nil {
@@ -110,14 +131,6 @@ func runA2AServe(cmd *cobra.Command) error {
 	// silently clobber the config value on every run.
 	cfg.A2A.ServeAddr = resolveA2AServeAddr(cmd.Flags().Changed("addr"), a2aServeAddr, cfg.A2A.ServeAddr)
 	requireAuth := cfg.A2A.RequireAuth && !a2aServeNoAuth
-
-	host, _, err := net.SplitHostPort(cfg.A2A.ServeAddr)
-	if err != nil {
-		return fmt.Errorf("parse addr: %w", err)
-	}
-	if !requireAuth && host != "127.0.0.1" && host != "localhost" {
-		return fmt.Errorf("refusing to bind %s without auth; pass an api key or use --addr on loopback only", cfg.A2A.ServeAddr)
-	}
 
 	apiKey, err := config.ResolveAPIKey(cfg.A2A.APIKeySource, cfg.A2A.APIKey, "RUBICHAN_A2A_API_KEY")
 	if requireAuth && err != nil {
@@ -151,13 +164,28 @@ func runA2AServe(cmd *cobra.Command) error {
 	}
 	defer st.Close()
 
-	card := a2a.BuildAgentCard(registry, "rubichan", "A terminal-first AI coding agent", "http://"+cfg.A2A.ServeAddr)
-	srv := a2a.NewServer(a, a2a.NewStoreTaskStore(st, "server"), card, requireAuth, apiKey)
-
 	ln, err := net.Listen("tcp", cfg.A2A.ServeAddr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", cfg.A2A.ServeAddr, err)
 	}
+
+	// Gate --no-auth against the listener's actual resolved address, not the
+	// pre-resolution host text: a misconfigured resolver (e.g. /etc/hosts
+	// mapping "localhost" to a non-loopback IP) could otherwise pass a text
+	// check while binding to an address reachable off-host.
+	if !requireAuth {
+		tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+		if !ok || !addressAllowsNoAuth(tcpAddr.IP) {
+			ln.Close()
+			return fmt.Errorf("refusing to bind %s without auth; pass an api key or use --addr on loopback only", cfg.A2A.ServeAddr)
+		}
+	}
+
+	// Built from the listener's actual bound address, not the pre-listen
+	// config string, so the card advertises a connectable URL even when
+	// --addr requested an OS-assigned port (e.g. 127.0.0.1:0).
+	card := a2a.BuildAgentCard(registry, "rubichan", "A terminal-first AI coding agent", advertisedCardURL(ln.Addr()))
+	srv := a2a.NewServer(a, a2a.NewStoreTaskStore(st, "server"), card, requireAuth, apiKey)
 
 	log.Printf("rubichan a2a serve: listening on %s", ln.Addr())
 	if !requireAuth {
