@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/julianshen/rubichan/internal/agent"
@@ -28,6 +29,14 @@ type Server struct {
 	card        AgentCard
 	requireAuth bool
 	apiKey      string
+
+	// cancels holds the context.CancelFunc for each task's in-flight
+	// runTurn call, keyed by task ID, so tasks/cancel can actually
+	// interrupt the running turn rather than only marking the task
+	// canceled in the store. Entries are added in handleMessageSend /
+	// handleMessageStream just before starting the turn and removed once
+	// the turn returns (success, failure, or cancellation).
+	cancels sync.Map // map[string]context.CancelFunc
 }
 
 // NewServer creates a Server. When requireAuth is true, every JSON-RPC
@@ -124,11 +133,65 @@ func (s *Server) handleTasksCancel(w http.ResponseWriter, r *http.Request, req R
 		return
 	}
 	task.State = TaskCanceled
+	// Persist TaskCanceled before invoking the turn's CancelFunc: this
+	// ordering minimizes (though, per the check-then-update race noted on
+	// s.finishTurn, cannot eliminate) the window in which the send
+	// handler's own "is this task already canceled?" check reads stale
+	// TaskWorking state and overwrites this cancellation.
 	if err := s.tasks.Update(ctx, task); err != nil {
 		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
 	}
+	s.cancelRunningTurn(task.ID)
 	result, _ := json.Marshal(task)
 	s.writeResult(w, req.ID, result)
+}
+
+// cancelRunningTurn interrupts the in-flight runTurn call for taskID, if
+// one is currently tracked. It is a no-op if the task has no running turn
+// (already finished, or was never started via message/send).
+func (s *Server) cancelRunningTurn(taskID string) {
+	if cancel, ok := s.cancels.Load(taskID); ok {
+		if cancelFn, ok := cancel.(context.CancelFunc); ok {
+			cancelFn()
+		}
+	}
+}
+
+// trackTurn derives a cancelable context for taskID's runTurn call and
+// registers it in s.cancels so a concurrent tasks/cancel can interrupt it.
+// The returned done func must be deferred by the caller: it cancels the
+// context (releasing its resources even on the normal-completion path) and
+// removes the map entry so it cannot leak or be canceled twice.
+func (s *Server) trackTurn(ctx context.Context, taskID string) (turnCtx context.Context, done func()) {
+	turnCtx, cancel := context.WithCancel(ctx)
+	s.cancels.Store(taskID, cancel)
+	return turnCtx, func() {
+		cancel()
+		s.cancels.Delete(taskID)
+	}
+}
+
+// finishTurn decides what a handler should persist and return after
+// runTurn completes for task. If the store already holds TaskCanceled for
+// this task's ID — meaning tasks/cancel raced with the turn finishing on
+// its own — the canceled task from the store is returned as-is and the
+// caller must not overwrite it with task's locally-computed terminal
+// state (TaskCompleted/TaskFailed).
+//
+// Known limitation: this is a check-then-update against ctx, the same ctx
+// tasks/cancel writes through, and is not atomic against a concurrent
+// Update landing between the Get here and the caller's own Update. A
+// fully race-free version would need the TaskStore to support a
+// conditional/compare-and-swap update, which is out of scope for this fix
+// — the store interface has no such primitive today. This closes the
+// overwhelming majority of cases (in particular, the ordering exercised by
+// this package's own cancellation test) but is not an airtight guarantee
+// under arbitrary interleaving.
+func (s *Server) finishTurn(ctx context.Context, task Task) (result Task, alreadyCanceled bool) {
+	if current, err := s.tasks.Get(ctx, task.ID); err == nil && current.State == TaskCanceled {
+		return current, true
+	}
+	return task, false
 }
 
 type sendParams struct {
@@ -153,9 +216,15 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req R
 		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
 	}
 
-	task = s.runTurn(ctx, task, messageText(params.Message))
-	if err := s.tasks.Update(ctx, task); err != nil {
-		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+	turnCtx, done := s.trackTurn(ctx, task.ID)
+	task = s.runTurn(turnCtx, task, messageText(params.Message))
+	done()
+
+	task, alreadyCanceled := s.finishTurn(ctx, task)
+	if !alreadyCanceled {
+		if err := s.tasks.Update(ctx, task); err != nil {
+			log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+		}
 	}
 
 	result, _ := json.Marshal(task)
@@ -190,9 +259,15 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 	}
 	writeSSETask(w, flusher, task)
 
-	task = s.runTurn(ctx, task, messageText(params.Message))
-	if err := s.tasks.Update(ctx, task); err != nil {
-		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+	turnCtx, done := s.trackTurn(ctx, task.ID)
+	task = s.runTurn(turnCtx, task, messageText(params.Message))
+	done()
+
+	task, alreadyCanceled := s.finishTurn(ctx, task)
+	if !alreadyCanceled {
+		if err := s.tasks.Update(ctx, task); err != nil {
+			log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
+		}
 	}
 	writeSSETask(w, flusher, task)
 }
