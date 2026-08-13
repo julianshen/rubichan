@@ -117,9 +117,7 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 // task isn't terminal yet, the caller polls GetTask.
 func (c *Client) Send(ctx context.Context, msg Message) (*Task, error) {
 	var task Task
-	if err := c.call(ctx, "message/send", struct {
-		Message Message `json:"message"`
-	}{Message: msg}, &task); err != nil {
+	if err := c.call(ctx, "message/send", sendParams{Message: msg}, &task); err != nil {
 		return nil, err
 	}
 	return &task, nil
@@ -128,9 +126,7 @@ func (c *Client) Send(ctx context.Context, msg Message) (*Task, error) {
 // GetTask fetches the current state of a previously created task.
 func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 	var task Task
-	if err := c.call(ctx, "tasks/get", struct {
-		ID string `json:"id"`
-	}{ID: taskID}, &task); err != nil {
+	if err := c.call(ctx, "tasks/get", taskIDParams{ID: taskID}, &task); err != nil {
 		return nil, err
 	}
 	return &task, nil
@@ -138,18 +134,14 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 
 // CancelTask requests cancellation of a running task.
 func (c *Client) CancelTask(ctx context.Context, taskID string) error {
-	return c.call(ctx, "tasks/cancel", struct {
-		ID string `json:"id"`
-	}{ID: taskID}, nil)
+	return c.call(ctx, "tasks/cancel", taskIDParams{ID: taskID}, nil)
 }
 
 // Stream makes a message/stream call and returns a channel of Task
 // snapshots, closed when the task reaches a terminal state, the stream
 // ends, or ctx is done.
 func (c *Client) Stream(ctx context.Context, msg Message) (<-chan Task, error) {
-	rawParams, err := json.Marshal(struct {
-		Message Message `json:"message"`
-	}{Message: msg})
+	rawParams, err := json.Marshal(sendParams{Message: msg})
 	if err != nil {
 		return nil, fmt.Errorf("marshal stream params: %w", err)
 	}

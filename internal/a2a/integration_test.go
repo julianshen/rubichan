@@ -31,8 +31,8 @@ func TestClientAgainstOwnServer(t *testing.T) {
 	streamCh, err := client.Stream(context.Background(), Message{Role: "user", Parts: []Part{{Kind: "text", Text: "again"}}})
 	require.NoError(t, err)
 	var last Task
-	for t := range streamCh {
-		last = t
+	for snapshot := range streamCh {
+		last = snapshot
 	}
 	assert.Equal(t, TaskCompleted, last.State)
 }
