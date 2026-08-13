@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,47 @@ func TestClientDiscover(t *testing.T) {
 	assert.Equal(t, "test-agent", card.Name)
 	assert.Equal(t, "echo", card.Skills[0].ID)
 	assert.True(t, card.Capabilities.Streaming)
+}
+
+// TestClientDiscoverTrimsTrailingSlashFromBaseURL guards against a
+// double-slash request path when the configured baseURL ends in "/".
+// http.ServeMux treats "//foo" as distinct from "/foo": instead of
+// serving the registered handler directly, it 301-redirects to the
+// cleaned path. Because Discover uses GET, http.DefaultClient follows
+// that redirect transparently, so asserting only on the *final* observed
+// path (or on Discover succeeding) can't tell a clean single request
+// apart from a raw-double-slash request that got silently redirected --
+// both end up decoding a valid card. This wraps the mux in a recorder
+// that sees the raw incoming path *before* ServeMux's own redirect
+// logic runs, so a pre-fix double-slash request is captured as a
+// distinct, visible entry: two recorded requests instead of one.
+func TestClientDiscoverTrimsTrailingSlashFromBaseURL(t *testing.T) {
+	var gotPaths []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"name": "test-agent",
+			"description": "a test agent",
+			"url": "` + r.Host + `",
+			"skills": [],
+			"capabilities": {}
+		}`))
+	})
+	recorder := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		mux.ServeHTTP(w, r)
+	})
+	srv := testutil.NewServer(t, recorder)
+	defer srv.Close()
+
+	client := NewClient(srv.URL+"/", "", srv.Client())
+	card, err := client.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, gotPaths, 1, "a trailing slash on baseURL must not trigger a redirect round trip: %v", gotPaths)
+	assert.Equal(t, "/.well-known/agent.json", gotPaths[0])
+	assert.Equal(t, "test-agent", card.Name)
 }
 
 func TestClientDiscoverNotFound(t *testing.T) {
@@ -103,6 +145,28 @@ func TestClientDiscoverInvalidJSON(t *testing.T) {
 	client := NewClient(srv.URL, "", srv.Client())
 	_, err := client.Discover(context.Background())
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parse agent card")
+}
+
+// TestClientDiscoverRejectsOversizedBody guards Discover against an
+// unbounded response body: the handler serves valid JSON syntactically,
+// but with a name field padded past maxAgentCardBytes, so a decoder
+// reading the full body would succeed. With the io.LimitReader cap in
+// place, the truncated stream cuts off mid-string and Decode fails
+// instead of allocating the full oversized payload.
+func TestClientDiscoverRejectsOversizedBody(t *testing.T) {
+	oversizedName := strings.Repeat("a", maxAgentCardBytes+1024)
+	handler := http.NewServeMux()
+	handler.HandleFunc("/.well-known/agent.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"` + oversizedName + `","skills":[],"capabilities":{}}`))
+	})
+	srv := testutil.NewServer(t, handler)
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "", srv.Client())
+	_, err := client.Discover(context.Background())
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse agent card")
 }
 

@@ -5,11 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
 var clientNextID int64 // shared across Clients; only uniqueness within a process matters
+
+// maxAgentCardBytes caps how much of a Discover response body is read. An
+// Agent Card is a small JSON document; this is generous headroom against a
+// hostile or broken remote agent streaming an unbounded response.
+const maxAgentCardBytes = 1 << 20 // 1MB
 
 // Client calls a remote A2A agent over HTTP + JSON-RPC 2.0.
 type Client struct {
@@ -25,6 +32,7 @@ func NewClient(baseURL, apiKey string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
 	return &Client{httpClient: httpClient, baseURL: baseURL, apiKey: apiKey}
 }
 
@@ -47,7 +55,7 @@ func (c *Client) Discover(ctx context.Context) (*AgentCard, error) {
 	}
 
 	var card AgentCard
-	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAgentCardBytes)).Decode(&card); err != nil {
 		return nil, fmt.Errorf("parse agent card: %w", err)
 	}
 	return &card, nil

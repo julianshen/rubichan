@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"log"
 	"strings"
 )
 
@@ -31,6 +32,9 @@ func parseSSEEvents(body io.Reader) <-chan json.RawMessage {
 				}
 				eventType = ""
 			}
+		}
+		if err := scanner.Err(); err != nil {
+			log.Printf("warning: a2a sse stream ended with a scan error: %v", err)
 		}
 	}()
 	return out
