@@ -22,6 +22,7 @@ type Config struct {
 	Hooks       HooksConfig       `toml:"hooks"`
 	LSP         LSPConfig         `toml:"lsp"`
 	Sandbox     SandboxConfig     `toml:"sandbox"`
+	A2A         A2AConfig         `toml:"a2a"`
 }
 
 // LSPConfig holds settings for language server protocol integration.
@@ -348,6 +349,25 @@ func (c MCPServerConfig) Validate() error {
 	return nil
 }
 
+// A2AConfig holds settings for A2A (Agent2Agent) protocol support:
+// which remote agents this instance knows about, and how it serves
+// itself as an agent when `rubichan a2a serve` runs.
+type A2AConfig struct {
+	Agents       []A2AAgentConfig `toml:"agents"`
+	ServeAddr    string           `toml:"serve_addr"`
+	RequireAuth  bool             `toml:"require_auth"`
+	APIKeySource string           `toml:"api_key_source"`
+	APIKey       string           `toml:"api_key"`
+}
+
+// A2AAgentConfig describes one remote A2A agent this instance can call.
+type A2AAgentConfig struct {
+	Name         string `toml:"name"`
+	URL          string `toml:"url"`
+	APIKeySource string `toml:"api_key_source"`
+	APIKey       string `toml:"api_key"`
+}
+
 // Load reads a TOML config file from the given path and returns a Config.
 // The returned Config starts with default values and is overridden by values
 // found in the file.
@@ -446,6 +466,10 @@ func DefaultConfig() *Config {
 		Worktree: WorktreeConfig{
 			MaxCount:    5,
 			AutoCleanup: true,
+		},
+		A2A: A2AConfig{
+			ServeAddr:   "127.0.0.1:9910",
+			RequireAuth: true,
 		},
 	}
 }

@@ -210,6 +210,16 @@ func createTables(db *sql.DB) error {
 			approved_at  DATETIME NOT NULL DEFAULT (datetime('now')),
 			PRIMARY KEY (project_path, hook_hash)
 		)`,
+		`CREATE TABLE IF NOT EXISTS a2a_tasks (
+			role       TEXT NOT NULL,
+			id         TEXT NOT NULL,
+			context_id TEXT NOT NULL,
+			state      TEXT NOT NULL,
+			data       TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (role, id)
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -908,4 +918,51 @@ func (s *Store) GetSnapshot(sessionID string) ([]provider.Message, error) {
 		return nil, fmt.Errorf("unmarshal snapshot: %w", err)
 	}
 	return msgs, nil
+}
+
+// CreateA2ATask records a new A2A task. role distinguishes tasks this
+// instance is executing ("server") from tasks it's waiting on as a
+// caller ("client"), so both sides can share the table without their
+// task IDs colliding. data is the caller's full JSON-marshaled task
+// snapshot, stored opaquely.
+func (s *Store) CreateA2ATask(role, id, contextID, state, data string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO a2a_tasks (role, id, context_id, state, data) VALUES (?, ?, ?, ?, ?)`,
+		role, id, contextID, state, data,
+	)
+	if err != nil {
+		return fmt.Errorf("create a2a task: %w", err)
+	}
+	return nil
+}
+
+// GetA2ATask returns the stored data blob and state for a task.
+func (s *Store) GetA2ATask(role, id string) (data string, state string, err error) {
+	err = s.db.QueryRow(
+		`SELECT data, state FROM a2a_tasks WHERE role = ? AND id = ?`, role, id,
+	).Scan(&data, &state)
+	if err != nil {
+		return "", "", fmt.Errorf("get a2a task: %w", err)
+	}
+	return data, state, nil
+}
+
+// UpdateA2ATask overwrites a task's state and data blob.
+// Returns an error if the task does not exist.
+func (s *Store) UpdateA2ATask(role, id, state, data string) error {
+	result, err := s.db.Exec(
+		`UPDATE a2a_tasks SET state = ?, data = ?, updated_at = datetime('now') WHERE role = ? AND id = ?`,
+		state, data, role, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update a2a task: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update a2a task rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("update a2a task: task %q (role %q) not found", id, role)
+	}
+	return nil
 }

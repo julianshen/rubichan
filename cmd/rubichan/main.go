@@ -55,6 +55,7 @@ import (
 	"github.com/julianshen/rubichan/internal/terminal"
 	"github.com/julianshen/rubichan/internal/toolexec"
 	"github.com/julianshen/rubichan/internal/tools"
+	"github.com/julianshen/rubichan/internal/tools/a2atools"
 	"github.com/julianshen/rubichan/internal/tools/browser"
 	dbtools "github.com/julianshen/rubichan/internal/tools/db"
 	gittools "github.com/julianshen/rubichan/internal/tools/git"
@@ -428,6 +429,7 @@ func main() {
 	rootCmd.AddCommand(initCmd())
 	rootCmd.AddCommand(serveCmd())
 	rootCmd.AddCommand(shellCmd())
+	rootCmd.AddCommand(a2aCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var exitErr *runner.ExitError
@@ -1066,7 +1068,7 @@ func runInteractive() error {
 		CLIOverrides: allowed,
 	}
 
-	coreResult, err := registerCoreTools(cwd, registry, cfg, toolsCfg, diffTracker, 120*time.Second)
+	coreResult, err := registerCoreToolsContext(runCtx, cwd, registry, cfg, toolsCfg, diffTracker, 120*time.Second)
 	if err != nil {
 		return err
 	}
@@ -1129,6 +1131,16 @@ func runInteractive() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+
+	// a2a_call needs *store.Store to persist task state, which doesn't exist
+	// yet at wireExtendedTools' call site — register it here instead, once
+	// the store is available (same reasoning as the notes tool below).
+	if toolsCfg.ShouldEnable("a2a_call") {
+		if err := registry.Register(a2atools.NewCallTool(cfg, s)); err != nil {
+			return fmt.Errorf("registering a2a_call tool: %w", err)
+		}
+	}
+
 	if err := folderaccess.EnsureApprovedInteractive(s, cwd, os.Stdin, os.Stderr, autoApprove, approveCwd); err != nil {
 		return err
 	}
@@ -1571,7 +1583,7 @@ func runHeadless() error {
 		HeadlessMode: true,
 	}
 
-	headlessCoreResult, err := registerCoreTools(cwd, registry, cfg, headlessToolsCfg, headlessDiffTracker, timeoutFlag)
+	headlessCoreResult, err := registerCoreToolsContext(ctx, cwd, registry, cfg, headlessToolsCfg, headlessDiffTracker, timeoutFlag)
 	if err != nil {
 		return err
 	}
@@ -1619,6 +1631,16 @@ func runHeadless() error {
 		return fmt.Errorf("opening store: %w", err)
 	}
 	defer s.Close()
+
+	// a2a_call needs *store.Store to persist task state, which doesn't exist
+	// yet at wireExtendedTools' call site — register it here instead, once
+	// the store is available (same reasoning as the notes tool below).
+	if headlessToolsCfg.ShouldEnable("a2a_call") {
+		if err := registry.Register(a2atools.NewCallTool(cfg, s)); err != nil {
+			return fmt.Errorf("registering a2a_call tool: %w", err)
+		}
+	}
+
 	if err := folderaccess.EnsureApprovedNonInteractive(s, cwd, autoApprove, approveCwd); err != nil {
 		return err
 	}
@@ -2112,7 +2134,22 @@ type coreToolsResult struct {
 // registerCoreTools registers the standard tool set (file, shell, search,
 // process, extended, LSP) into the given registry. It is shared between
 // interactive and headless modes to eliminate duplication.
+//
+// This variant threads context.Background() into the extended-tool wiring
+// (see wireExtendedTools), which is fine for callers that don't have a
+// real lifecycle context of their own to offer. Callers that do — currently
+// runInteractive and runHeadless — should call registerCoreToolsContext
+// instead so startup-time work (e.g. A2A agent discovery) can be canceled
+// along with the rest of the run.
 func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig, diffTracker *tools.DiffTracker, shellTimeout time.Duration) (*coreToolsResult, error) {
+	return registerCoreToolsContext(context.Background(), cwd, registry, cfg, toolsCfg, diffTracker, shellTimeout)
+}
+
+// registerCoreToolsContext is registerCoreTools with an explicit context,
+// threaded through to wireExtendedTools so its A2A registry discovery can be
+// canceled by the caller's own lifecycle rather than only its internal
+// per-agent timeout.
+func registerCoreToolsContext(ctx context.Context, cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig, diffTracker *tools.DiffTracker, shellTimeout time.Duration) (*coreToolsResult, error) {
 	result := &coreToolsResult{}
 
 	var fileTool *tools.FileTool
@@ -2155,7 +2192,7 @@ func registerCoreTools(cwd string, registry *tools.Registry, cfg *config.Config,
 	// "run_command" or "write_file" still resolve to the correct tool.
 	tools.RegisterDefaultAliases(registry)
 
-	if err := wireExtendedTools(cwd, registry, cfg, toolsCfg); err != nil {
+	if err := wireExtendedToolsContext(ctx, cwd, registry, cfg, toolsCfg); err != nil {
 		return nil, err
 	}
 
@@ -2213,8 +2250,22 @@ func wireWiki(cwd string, registry *tools.Registry, llm wiki.LLMCompleter, tools
 	return nil
 }
 
+// wireExtendedTools registers the optional (non-core) tool set, using
+// context.Background() for any startup-time work that needs a context (see
+// wireExtendedToolsContext). Kept for callers without a real lifecycle
+// context of their own to offer.
 func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig) error {
-	for _, tool := range []tools.Tool{
+	return wireExtendedToolsContext(context.Background(), cwd, registry, cfg, toolsCfg)
+}
+
+// wireExtendedToolsContext is wireExtendedTools with an explicit context.
+// ctx should be the caller's real lifecycle context (e.g. the interactive
+// session's cancelable runCtx, or headless's timeout-bounded ctx): it's
+// threaded into buildA2ARegistry, whose per-agent discovery calls can
+// otherwise only be aborted by their own internal timeout, never by the
+// caller wanting to abort startup early.
+func wireExtendedToolsContext(ctx context.Context, cwd string, registry *tools.Registry, cfg *config.Config, toolsCfg ToolsConfig) error {
+	extendedTools := []tools.Tool{
 		httptool.NewGetTool(),
 		httptool.NewPostTool(),
 		httptool.NewPutTool(),
@@ -2227,7 +2278,17 @@ func wireExtendedTools(cwd string, registry *tools.Registry, cfg *config.Config,
 		gittools.NewShowTool(cwd),
 		gittools.NewBlameTool(cwd),
 		dbtools.NewQueryTool(cwd),
-	} {
+		a2atools.NewDiscoverTool(cfg),
+	}
+	// buildA2ARegistry discovers every configured [[a2a.agents]] entry, which
+	// costs up to agentDiscoverTimeout per agent, serialized. Only pay that
+	// cost when a2a_dispatch — its only consumer — will actually be
+	// registered.
+	if toolsCfg.ShouldEnable("a2a_dispatch") {
+		a2aReg := buildA2ARegistry(ctx, cfg)
+		extendedTools = append(extendedTools, a2atools.NewDispatchTool(cfg, a2aReg))
+	}
+	for _, tool := range extendedTools {
 		if toolsCfg.ShouldEnable(tool.Name()) {
 			if err := registry.Register(tool); err != nil {
 				return fmt.Errorf("registering tool %s: %w", tool.Name(), err)
