@@ -194,9 +194,21 @@ func runA2AServe(cmd *cobra.Command) error {
 		activeSkills = skillRT.GetActiveSkills()
 		// a2a serve is network-facing and --tools already restricts which
 		// core tools remote callers can reach; apply the same admission
-		// policy to skill-contributed tools so they can't bypass it.
-		// Matches runHeadless (the other policy-enforced, non-interactive
-		// mode), not runInteractive (which sets no admission func at all).
+		// policy to skill-contributed tools. Matches runHeadless (the
+		// other policy-enforced, non-interactive mode), not
+		// runInteractive (which sets no admission func at all).
+		//
+		// Known gap, inherited from runHeadless's identical pattern (not
+		// introduced here): createSkillRuntime already ran Discover and
+		// EvaluateAndActivate — and so already registered any skill that
+		// auto-activates via a matching file/keyword/language trigger —
+		// before this call happens. Those startup-activated skills' tools
+		// are NOT gated by --tools; only skills that (re-)activate mid-
+		// session, after this point, are. Closing this fully needs the
+		// admission func threaded into skillruntime.Options so it's in
+		// place before Discover/EvaluateAndActivate run — tracked
+		// separately since it also affects runHeadless, not something
+		// specific to a2a serve.
 		skillRT.SetToolAdmissionFunc(toolsCfg.ShouldEnable)
 		agentOpts = append(agentOpts, agent.WithSkillRuntime(skillRT))
 	}
