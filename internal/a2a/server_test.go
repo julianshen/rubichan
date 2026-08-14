@@ -871,6 +871,53 @@ func TestServerHandleTasksCancelNotFound(t *testing.T) {
 	assert.Equal(t, -32000, rpcResp.Error.Code)
 }
 
+// taskLocksLen counts the entries currently stored in srv.taskLocks. This is
+// a white-box inspection of an unexported field, mirroring the precedent set
+// by TestServerTaskLockSerializesCancelAndFinishTurn, which already reaches
+// into srv.lockFor from this same test package.
+func taskLocksLen(srv *Server) int {
+	n := 0
+	srv.taskLocks.Range(func(_, _ interface{}) bool {
+		n++
+		return true
+	})
+	return n
+}
+
+// TestServerHandleTasksCancelNotFoundDoesNotMintLock guards against the
+// finding that handleTasksCancel used to call lockFor(params.ID) before
+// checking whether the task exists, so a tasks/cancel call for a bogus task
+// ID would still permanently grow s.taskLocks (the map is never cleaned up,
+// by design — see the comment on the taskLocks field). Because that entry
+// is never reclaimed, a caller could grow the map with garbage IDs at the
+// cost of a bare HTTP round trip, with no LLM turn involved at all. The fix
+// is to check existence with an unlocked Get before ever calling lockFor.
+func TestServerHandleTasksCancelNotFoundDoesNotMintLock(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	srv := NewServer(a, newMemoryTaskStore(), AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	require.Equal(t, 0, taskLocksLen(srv), "precondition: no lock entries before any request")
+
+	reqBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tasks/cancel",
+		Params: mustMarshal(t, taskIDParams{ID: "bogus-nonexistent-id"}),
+	})
+	resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(reqBody)))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	require.NotNil(t, rpcResp.Error)
+	assert.Equal(t, -32000, rpcResp.Error.Code)
+
+	assert.Equal(t, 0, taskLocksLen(srv),
+		"tasks/cancel for a nonexistent task ID must not mint a taskLocks entry")
+}
+
 // cancelUpdateErrorStore wraps a memoryTaskStore but forces Update to fail,
 // so a seeded task can still be Get() during tasks/cancel while exercising
 // the TaskStore-error-logging path this task's context calls for on any new

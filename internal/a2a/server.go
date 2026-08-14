@@ -65,14 +65,15 @@ type Server struct {
 	// place is the safer choice until that refcounting is written and
 	// proven under -race; tracked as a follow-up, not silently ignored.
 	//
-	// Worst-case shape of the leak: lockFor(params.ID) in
-	// handleTasksCancel runs before the "does this task exist" check, so
-	// even a tasks/cancel call for a nonexistent task ID mints a permanent
-	// entry here. An authenticated caller could grow this map with
-	// arbitrary garbage IDs faster than real task IDs would arrive on
-	// their own. Still within the same "leave it, it's slow and bounded
-	// in severity, real fix is refcounting" decision above — called out
-	// explicitly because it's the worst case of it, not a separate issue.
+	// handleTasksCancel used to call lockFor(params.ID) before checking
+	// whether the task exists, so a tasks/cancel call for a nonexistent
+	// task ID minted a permanent entry here at the cost of a bare HTTP
+	// round trip — no real task, no LLM turn, faster than the accepted
+	// leak's normal rate. handleTasksCancel now does an unlocked
+	// s.tasks.Get existence check first and returns not-found without
+	// ever calling lockFor, so only IDs that name a real (or once-real)
+	// task mint an entry — back to the bounded-severity leak described
+	// above, not the unthrottled version.
 	taskLocks sync.Map // map[string]*sync.Mutex
 }
 
@@ -186,6 +187,22 @@ func (s *Server) handleTasksCancel(w http.ResponseWriter, r *http.Request, req R
 		return
 	}
 	ctx := r.Context()
+
+	// Existence check BEFORE ever calling lockFor: lockFor's LoadOrStore
+	// permanently mints a *sync.Mutex for params.ID (taskLocks is never
+	// cleaned up — see the field comment), so calling it for an ID that
+	// doesn't exist would let any caller grow that map at the cost of a
+	// bare HTTP round trip, no LLM turn required. This unlocked read is
+	// purely an existence gate, not a substitute for the lock-protected
+	// read below: the actual cancel/no-op decision still comes entirely
+	// from the re-read taken under the lock. TaskStore has no Delete
+	// method, so "found" here can never become "not found" by the time
+	// that locked re-read happens — no new TOCTOU gap is introduced by
+	// this pre-check.
+	if _, err := s.tasks.Get(ctx, params.ID); err != nil {
+		s.writeError(w, req.ID, -32000, "task not found: "+err.Error())
+		return
+	}
 
 	// Hold this task's lock across "read current state -> decide -> write"
 	// so this can't race with finishTurn's own read-decide-write sequence
