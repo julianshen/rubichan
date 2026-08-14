@@ -37,6 +37,65 @@ type Server struct {
 	// handleMessageStream just before starting the turn and removed once
 	// the turn returns (success, failure, or cancellation).
 	cancels sync.Map // map[string]context.CancelFunc
+
+	// taskLocks holds one *sync.Mutex per task ID ever seen by
+	// handleTasksCancel or finishTurn, serializing each task's
+	// "read current stored state, decide, write terminal state" sequence
+	// between those two call sites (see lockFor). This closes the
+	// check-then-update race documented on finishTurn's history.
+	//
+	// Deliberately NOT cleaned up. Entries here are not bounded the way
+	// s.cancels' are (s.cancels only holds entries for turns currently
+	// in flight; taskLocks would hold one entry per task ID ever
+	// processed, for the life of the process — a slow, unbounded memory
+	// leak of small (~48 byte) *sync.Mutex values). A naive "delete once
+	// terminal" was considered and rejected: deleting a sync.Map entry
+	// while a second goroutine has already loaded the same *sync.Mutex
+	// via lockFor's LoadOrStore, but not yet locked it, lets a third
+	// goroutine's later lockFor call install a *different* mutex for the
+	// same task ID — which would let the first and third goroutines run
+	// their critical sections concurrently, silently reopening the exact
+	// race this field exists to close. A correct version needs
+	// reference-counted entries (a wrapper struct with a refcount
+	// protected by its own small bookkeeping lock, decremented and
+	// conditionally deleted by whichever critical section releases it
+	// last) — real, but nontrivial, engineering that risks a subtle
+	// concurrency bug of its own. Per this project's "correctness over
+	// performance" rule, leaving the (bounded-severity, slow) leak in
+	// place is the safer choice until that refcounting is written and
+	// proven under -race; tracked as a follow-up, not silently ignored.
+	//
+	// Worst-case shape of the leak: lockFor(params.ID) in
+	// handleTasksCancel runs before the "does this task exist" check, so
+	// even a tasks/cancel call for a nonexistent task ID mints a permanent
+	// entry here. An authenticated caller could grow this map with
+	// arbitrary garbage IDs faster than real task IDs would arrive on
+	// their own. Still within the same "leave it, it's slow and bounded
+	// in severity, real fix is refcounting" decision above — called out
+	// explicitly because it's the worst case of it, not a separate issue.
+	taskLocks sync.Map // map[string]*sync.Mutex
+}
+
+// lockFor returns the *sync.Mutex serializing taskID's terminal-state
+// decisions between handleTasksCancel and finishTurn, creating one on
+// first use. Callers must hold this lock across the full
+// read-current-state -> decide -> write sequence, not just the write, or
+// the race it exists to close reopens.
+func (s *Server) lockFor(taskID string) *sync.Mutex {
+	actual, _ := s.taskLocks.LoadOrStore(taskID, &sync.Mutex{})
+	return actual.(*sync.Mutex)
+}
+
+// isTerminal reports whether state is one a Task does not transition out
+// of. TaskRejected is included for forward-compatibility even though no
+// handler in this package writes it today.
+func isTerminal(state TaskState) bool {
+	switch state {
+	case TaskCompleted, TaskFailed, TaskCanceled, TaskRejected:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewServer creates a Server. When requireAuth is true, every JSON-RPC
@@ -127,20 +186,44 @@ func (s *Server) handleTasksCancel(w http.ResponseWriter, r *http.Request, req R
 		return
 	}
 	ctx := r.Context()
+
+	// Hold this task's lock across "read current state -> decide -> write"
+	// so this can't race with finishTurn's own read-decide-write sequence
+	// for the same task ID (see lockFor and finishTurn). Whichever side
+	// acquires the lock first fully completes its decision — including the
+	// write — before the other observes the task's state.
+	mu := s.lockFor(params.ID)
+	mu.Lock()
 	task, err := s.tasks.Get(ctx, params.ID)
 	if err != nil {
+		mu.Unlock()
 		s.writeError(w, req.ID, -32000, "task not found: "+err.Error())
 		return
 	}
+	if isTerminal(task.State) {
+		// The task already reached a terminal state — its own turn
+		// completed/failed, a prior cancel already landed, or it was
+		// rejected — so canceling it now must be a no-op rather than an
+		// overwrite. Returning the stored task as-is preserves whatever
+		// terminal state it actually holds instead of forcing
+		// TaskCanceled over it.
+		mu.Unlock()
+		s.cancelRunningTurn(task.ID)
+		result, _ := json.Marshal(task)
+		s.writeResult(w, req.ID, result)
+		return
+	}
 	task.State = TaskCanceled
-	// Persist TaskCanceled before invoking the turn's CancelFunc: this
-	// ordering minimizes (though, per the check-then-update race noted on
-	// s.finishTurn, cannot eliminate) the window in which the send
-	// handler's own "is this task already canceled?" check reads stale
-	// TaskWorking state and overwrites this cancellation.
 	if err := s.tasks.Update(ctx, task); err != nil {
 		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
 	}
+	mu.Unlock()
+
+	// cancelRunningTurn is called outside the lock to keep mu's critical
+	// section limited to the persistence decision above — not because
+	// holding it here would deadlock. (context.CancelFunc never blocks, so
+	// calling it while another goroutine is parked on mu would be harmless
+	// too; this is a scope-minimization choice, not a safety requirement.)
 	s.cancelRunningTurn(task.ID)
 	result, _ := json.Marshal(task)
 	s.writeResult(w, req.ID, result)
@@ -171,25 +254,38 @@ func (s *Server) trackTurn(ctx context.Context, taskID string) (turnCtx context.
 	}
 }
 
-// finishTurn decides what a handler should persist and return after
-// runTurn completes for task. If the store already holds TaskCanceled for
-// this task's ID — meaning tasks/cancel raced with the turn finishing on
-// its own — the canceled task from the store is returned as-is and the
-// caller must not overwrite it with task's locally-computed terminal
-// state (TaskCompleted/TaskFailed).
+// finishTurn decides what to persist after runTurn completes for task, and
+// persists it itself. If the store already holds a terminal state for this
+// task's ID — in practice, TaskCanceled written by a concurrent
+// tasks/cancel — the stored task is returned as-is and task's
+// locally-computed terminal state (TaskCompleted/TaskFailed) is discarded
+// rather than persisted.
 //
-// Known limitation: this is a check-then-update against ctx, the same ctx
-// tasks/cancel writes through, and is not atomic against a concurrent
-// Update landing between the Get here and the caller's own Update. A
-// fully race-free version would need the TaskStore to support a
-// conditional/compare-and-swap update, which is out of scope for this fix
-// — the store interface has no such primitive today. This closes the
-// overwhelming majority of cases (in particular, the ordering exercised by
-// this package's own cancellation test) but is not an airtight guarantee
-// under arbitrary interleaving.
-func (s *Server) finishTurn(ctx context.Context, task Task) (result Task, alreadyCanceled bool) {
-	if current, err := s.tasks.Get(ctx, task.ID); err == nil && current.State == TaskCanceled {
+// Concurrency: the read-decide-write sequence runs under
+// s.lockFor(task.ID), the same per-task lock handleTasksCancel takes
+// around its own read-decide-write sequence. That closes the race this
+// method's doc comment used to describe as a "known limitation" requiring
+// a TaskStore compare-and-swap primitive — no such primitive is needed,
+// because both writers of a task's terminal state are in-process on the
+// same *Server and can serialize through an ordinary mutex instead of
+// needing atomicity at the storage layer.
+//
+// What's still open: this guarantee holds only for writers that take
+// s.lockFor(task.ID) around their read-decide-write sequence. Today that's
+// exactly this method and handleTasksCancel — the only two places that
+// write a task's terminal state. A hypothetical future writer added
+// without going through lockFor would reopen the race; nothing enforces
+// that discipline except this comment.
+func (s *Server) finishTurn(ctx context.Context, task Task) (result Task, alreadyTerminal bool) {
+	mu := s.lockFor(task.ID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if current, err := s.tasks.Get(ctx, task.ID); err == nil && isTerminal(current.State) {
 		return current, true
+	}
+	if err := s.tasks.Update(ctx, task); err != nil {
+		log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
 	}
 	return task, false
 }
@@ -217,15 +313,10 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req R
 	}
 
 	turnCtx, done := s.trackTurn(ctx, task.ID)
+	defer done()
 	task = s.runTurn(turnCtx, task, messageText(params.Message))
-	done()
 
-	task, alreadyCanceled := s.finishTurn(ctx, task)
-	if !alreadyCanceled {
-		if err := s.tasks.Update(ctx, task); err != nil {
-			log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
-		}
-	}
+	task, _ = s.finishTurn(ctx, task)
 
 	result, _ := json.Marshal(task)
 	s.writeResult(w, req.ID, result)
@@ -260,15 +351,10 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 	writeSSETask(w, flusher, task)
 
 	turnCtx, done := s.trackTurn(ctx, task.ID)
+	defer done()
 	task = s.runTurn(turnCtx, task, messageText(params.Message))
-	done()
 
-	task, alreadyCanceled := s.finishTurn(ctx, task)
-	if !alreadyCanceled {
-		if err := s.tasks.Update(ctx, task); err != nil {
-			log.Printf("warning: a2a server task store update failed for task %s: %v", task.ID, err)
-		}
-	}
+	task, _ = s.finishTurn(ctx, task)
 	writeSSETask(w, flusher, task)
 }
 

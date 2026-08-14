@@ -544,12 +544,17 @@ func newBlockingTestAgent(t *testing.T, started, observedCancel chan<- struct{})
 // as TaskCanceled rather than letting the turn's own completion overwrite
 // it with TaskCompleted/TaskFailed.
 //
-// Known limitation (documented, not silently assumed away): the "don't
-// overwrite an already-canceled task" check in handleMessageSend is a
-// check-then-update against the TaskStore, not atomic against a concurrent
-// write. This test's sequencing (cancel arrives, is observed by the stub,
-// *then* message/send is allowed to complete) sits comfortably inside the
-// race-free window; it does not prove the race is impossible in general.
+// This scenario used to be documented as sitting inside a "race-free
+// window" of a check-then-update that wasn't atomic in general. That's no
+// longer a caveat: handleTasksCancel and finishTurn now serialize their
+// read-decide-write sequences through the same per-task lock (see
+// Server.lockFor), so this outcome holds for any interleaving of the two,
+// not just this test's specific timing. See
+// TestServerTaskLockSerializesCancelAndFinishTurn for a test that exercises
+// the lock's serialization directly, and
+// TestServerTasksCancelIsNoOpForAlreadyTerminalTask for the companion
+// guarantee that a cancel landing *after* a task already finished no
+// longer overwrites it either.
 func TestServerTasksCancelStopsRunningTurnAndPreventsOverwrite(t *testing.T) {
 	started := make(chan struct{}, 1)
 	observedCancel := make(chan struct{}, 1)
@@ -620,6 +625,141 @@ func TestServerTasksCancelStopsRunningTurnAndPreventsOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, TaskCanceled, task.State,
 		"the canceled state must not be overwritten by the turn's own completion")
+}
+
+// TestServerTasksCancelIsNoOpForAlreadyTerminalTask covers the second gap
+// the terminal-state guard closes: a tasks/cancel call arriving after a
+// task has already reached a terminal state (here, TaskCompleted via a
+// normal message/send) must not overwrite that state with TaskCanceled.
+// Before this guard, once handleTasksCancel and finishTurn started
+// serializing through the same per-task lock, a late cancel would reliably
+// *win* the race against finishTurn's write instead of losing it — turning
+// the old overwrite bug into a new, more likely one. This test proves that
+// no longer happens.
+func TestServerTasksCancelIsNoOpForAlreadyTerminalTask(t *testing.T) {
+	a := newTestAgent(t, "42")
+	store := newMemoryTaskStore()
+	srv := NewServer(a, store, AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	sendBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "message/send",
+		Params: mustMarshal(t, sendParams{Message: Message{Role: "user", Parts: []Part{{Kind: "text", Text: "hi"}}}}),
+	})
+	sendResp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(sendBody)))
+	require.NoError(t, err)
+	defer sendResp.Body.Close()
+
+	var sendRPCResp RPCResponse
+	require.NoError(t, json.NewDecoder(sendResp.Body).Decode(&sendRPCResp))
+	var task Task
+	require.NoError(t, json.Unmarshal(sendRPCResp.Result, &task))
+	require.Equal(t, TaskCompleted, task.State, "precondition: task must finish before we try to cancel it")
+
+	cancelBody, _ := json.Marshal(RPCRequest{
+		JSONRPC: "2.0", ID: 2, Method: "tasks/cancel",
+		Params: mustMarshal(t, taskIDParams{ID: task.ID}),
+	})
+	cancelResp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(cancelBody)))
+	require.NoError(t, err)
+	defer cancelResp.Body.Close()
+
+	var cancelRPCResp RPCResponse
+	require.NoError(t, json.NewDecoder(cancelResp.Body).Decode(&cancelRPCResp))
+	require.Nil(t, cancelRPCResp.Error)
+	var cancelResult Task
+	require.NoError(t, json.Unmarshal(cancelRPCResp.Result, &cancelResult))
+	assert.Equal(t, TaskCompleted, cancelResult.State,
+		"tasks/cancel on an already-completed task must return its actual state, not force TaskCanceled")
+
+	stored, err := store.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, TaskCompleted, stored.State,
+		"canceling an already-completed task must not overwrite its stored state")
+}
+
+// TestServerTaskLockSerializesCancelAndFinishTurn deterministically proves
+// handleTasksCancel and finishTurn serialize through the exact same
+// per-task lock (Server.lockFor), rather than each merely taking *some*
+// mutex. It manually holds task-1's lock the way finishTurn would mid
+// read-decide-write, fires a concurrent tasks/cancel over real HTTP, and
+// confirms it blocks until the lock is released — then confirms it
+// observes the write made under the lock rather than racing ahead of it.
+//
+// This avoids sleeps as the correctness mechanism: the only timed wait is
+// a bounded "prove it hasn't already finished" check, which can only ever
+// produce a false failure (never a false pass) if the serialization is
+// actually broken, so it can't mask the bug this test exists to catch.
+func TestServerTaskLockSerializesCancelAndFinishTurn(t *testing.T) {
+	a := newTestAgent(t, "unused")
+	store := newMemoryTaskStore()
+	srv := NewServer(a, store, AgentCard{Name: "rubichan"}, false, "")
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	require.NoError(t, store.Create(context.Background(), Task{ID: "task-1", State: TaskWorking}))
+
+	// Simulate finishTurn having already read the current state and being
+	// mid-decision, just before it writes TaskCompleted.
+	mu := srv.lockFor("task-1")
+	mu.Lock()
+
+	cancelDone := make(chan *http.Response, 1)
+	cancelErr := make(chan error, 1)
+	go func() {
+		cancelBody, _ := json.Marshal(RPCRequest{
+			JSONRPC: "2.0", ID: 1, Method: "tasks/cancel",
+			Params: mustMarshal(t, taskIDParams{ID: "task-1"}),
+		})
+		resp, err := http.Post(ts.URL+"/", "application/json", strings.NewReader(string(cancelBody)))
+		if err != nil {
+			cancelErr <- err
+			return
+		}
+		cancelDone <- resp
+	}()
+
+	select {
+	case <-cancelDone:
+		t.Fatal("tasks/cancel completed while finishTurn's lock was held; the per-task mutex is not serializing")
+	case err := <-cancelErr:
+		t.Fatalf("tasks/cancel request failed: %v", err)
+	case <-time.After(200 * time.Millisecond):
+		// Expected: tasks/cancel is still blocked on mu.
+	}
+
+	// Perform the write finishTurn's own critical section would have made,
+	// then release the lock exactly as finishTurn's defer mu.Unlock() would.
+	task, err := store.Get(context.Background(), "task-1")
+	require.NoError(t, err)
+	task.State = TaskCompleted
+	require.NoError(t, store.Update(context.Background(), task))
+	mu.Unlock()
+
+	var resp *http.Response
+	select {
+	case resp = <-cancelDone:
+	case err := <-cancelErr:
+		t.Fatalf("tasks/cancel request failed: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("tasks/cancel never returned after the lock was released")
+	}
+	defer resp.Body.Close()
+
+	var rpcResp RPCResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	var result Task
+	require.NoError(t, json.Unmarshal(rpcResp.Result, &result))
+	assert.Equal(t, TaskCompleted, result.State,
+		"cancel must observe the write made under the lock, not race ahead of it")
+
+	stored, err := store.Get(context.Background(), "task-1")
+	require.NoError(t, err)
+	assert.Equal(t, TaskCompleted, stored.State,
+		"stored state must remain TaskCompleted once cancel is correctly serialized behind finishTurn's write")
 }
 
 func TestServerTasksCancel(t *testing.T) {
