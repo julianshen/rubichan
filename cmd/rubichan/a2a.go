@@ -18,8 +18,14 @@ import (
 	"github.com/julianshen/rubichan/internal/agent"
 	"github.com/julianshen/rubichan/internal/config"
 	"github.com/julianshen/rubichan/internal/provider"
+	"github.com/julianshen/rubichan/internal/skills"
 	"github.com/julianshen/rubichan/internal/tools"
 )
+
+// a2aServeMode is the mode string passed to createSkillRuntime for `a2a
+// serve`, matching the style of "interactive" and "headless" used by the
+// other two entrypoints in main.go.
+const a2aServeMode = "a2a-serve"
 
 var (
 	a2aServeAddr   string
@@ -151,9 +157,6 @@ func runA2AServe(cmd *cobra.Command) error {
 		return fmt.Errorf("register tools: %w", err)
 	}
 
-	approve := func(context.Context, string, json.RawMessage) (bool, error) { return true, nil }
-	a := agent.New(llm, registry, approve, cfg)
-
 	cfgDir, err := configDir()
 	if err != nil {
 		return fmt.Errorf("resolve config directory: %w", err)
@@ -163,6 +166,43 @@ func runA2AServe(cmd *cobra.Command) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Skill runtime, so the Agent Card advertises registered skills alongside
+	// core tools, and the serving agent can actually invoke them. Matches
+	// runInteractive/runHeadless in main.go, which treat skill-runtime
+	// construction failure as fatal rather than degrading silently to zero
+	// skills; a2a serve follows the same precedent.
+	skillRT, skillCloser, err := createSkillRuntime(ctx, registry, llm, cfg, a2aServeMode, cwd, cfgDir)
+	if err != nil {
+		return fmt.Errorf("creating skill runtime: %w", err)
+	}
+	if skillCloser != nil {
+		defer skillCloser.Close()
+	}
+	var activeSkills []*skills.Skill
+	agentOpts := []agent.AgentOption{}
+	if skillRT != nil {
+		emitSkillDiscoveryWarnings(os.Stderr, skillRT)
+		activeSkills = skillRT.GetActiveSkills()
+		// a2a serve is network-facing and --tools already restricts which
+		// core tools remote callers can reach; apply the same admission
+		// policy to skill-contributed tools so they can't bypass it.
+		// Matches runHeadless (the other policy-enforced, non-interactive
+		// mode), not runInteractive (which sets no admission func at all).
+		skillRT.SetToolAdmissionFunc(toolsCfg.ShouldEnable)
+		agentOpts = append(agentOpts, agent.WithSkillRuntime(skillRT))
+	}
+
+	approve := func(context.Context, string, json.RawMessage) (bool, error) { return true, nil }
+	a := agent.New(llm, registry, approve, cfg, agentOpts...)
 
 	ln, err := net.Listen("tcp", cfg.A2A.ServeAddr)
 	if err != nil {
@@ -184,7 +224,7 @@ func runA2AServe(cmd *cobra.Command) error {
 	// Built from the listener's actual bound address, not the pre-listen
 	// config string, so the card advertises a connectable URL even when
 	// --addr requested an OS-assigned port (e.g. 127.0.0.1:0).
-	card := a2a.BuildAgentCard(registry, "rubichan", "A terminal-first AI coding agent", advertisedCardURL(ln.Addr()))
+	card := a2a.BuildAgentCard(registry, activeSkills, "rubichan", "A terminal-first AI coding agent", advertisedCardURL(ln.Addr()))
 	srv := a2a.NewServer(a, a2a.NewStoreTaskStore(st, "server"), card, requireAuth, apiKey)
 
 	log.Printf("rubichan a2a serve: listening on %s", ln.Addr())
@@ -211,9 +251,6 @@ func runA2AServe(cmd *cobra.Command) error {
 		// reuse while still reclaiming abandoned connections.
 		IdleTimeout: 120 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.Serve(ln) }()
